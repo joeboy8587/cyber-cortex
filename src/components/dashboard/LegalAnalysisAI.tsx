@@ -229,7 +229,11 @@ export function LegalAnalysisAI() {
                       "biometric_monitoring", 
                       "aircraft_registry_enriched",
                       "legal_ada_violations_proper",
+                      "physician_verified_ecgs",
                       "josiah_unified_embeddings",
+                      "criminal_enterprise_command_structure",
+                      "prosecution_priority_correlations",
+                      "nuremberg_violations_evidence",
                       "chain_of_custody"
                     ].map((table) => (
                       <div

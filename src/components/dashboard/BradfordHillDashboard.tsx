@@ -26,7 +26,7 @@ export function BradfordHillDashboard() {
       // Fetch correlation statistics
       const { data: correlationData } = await supabase.functions.invoke("neon-query", {
         body: {
-          action: "custom",
+          action: "customQuery",
           query: `
             SELECT 
               COUNT(*) as total_correlations,
@@ -40,7 +40,7 @@ export function BradfordHillDashboard() {
       // Fetch biometric event counts
       const { data: biometricData } = await supabase.functions.invoke("neon-query", {
         body: {
-          action: "custom",
+          action: "customQuery",
           query: `SELECT COUNT(*) as total FROM biometric_monitoring`
         }
       });
@@ -48,7 +48,7 @@ export function BradfordHillDashboard() {
       // Fetch flight detection counts
       const { data: flightData } = await supabase.functions.invoke("neon-query", {
         body: {
-          action: "custom",
+          action: "customQuery",
           query: `SELECT COUNT(*) as total FROM live_flight_detections_rows`
         }
       });
@@ -56,7 +56,7 @@ export function BradfordHillDashboard() {
       // Fetch flagged aircraft patterns
       const { data: flaggedData } = await supabase.functions.invoke("neon-query", {
         body: {
-          action: "custom",
+          action: "customQuery",
           query: `
             SELECT COUNT(*) as total, COUNT(DISTINCT hex) as unique_hex 
             FROM flagged_aircraft_rows_rows

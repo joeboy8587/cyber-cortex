@@ -8,6 +8,7 @@ import { DataStreams } from "@/components/dashboard/DataStreams";
 import { NullHypothesisPanel } from "@/components/dashboard/NullHypothesisPanel";
 import { TableExplorer } from "@/components/dashboard/TableExplorer";
 import { SqlConsole } from "@/components/dashboard/SqlConsole";
+import { OutreachHub } from "@/components/dashboard/OutreachHub";
 
 const Index = () => {
   return (
@@ -48,6 +49,11 @@ const Index = () => {
               <NullHypothesisPanel />
             </div>
           </div>
+
+          {/* Outreach Hub - Full Width */}
+          <section>
+            <OutreachHub />
+          </section>
 
           {/* SQL Console - Full Width */}
           <section>

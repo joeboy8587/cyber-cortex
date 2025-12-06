@@ -9,6 +9,9 @@ import { NullHypothesisPanel } from "@/components/dashboard/NullHypothesisPanel"
 import { TableExplorer } from "@/components/dashboard/TableExplorer";
 import { SqlConsole } from "@/components/dashboard/SqlConsole";
 import { OutreachHub } from "@/components/dashboard/OutreachHub";
+import { BradfordHillDashboard } from "@/components/dashboard/BradfordHillDashboard";
+import { ConsentDocumentation } from "@/components/dashboard/ConsentDocumentation";
+import { EnterpriseProfiles } from "@/components/dashboard/EnterpriseProfiles";
 
 const Index = () => {
   return (
@@ -49,6 +52,13 @@ const Index = () => {
               <NullHypothesisPanel />
             </div>
           </div>
+
+          {/* Legal Recommendations Section */}
+          <section className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <BradfordHillDashboard />
+            <ConsentDocumentation />
+            <EnterpriseProfiles />
+          </section>
 
           {/* Outreach Hub - Full Width */}
           <section id="outreach-hub">

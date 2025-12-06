@@ -1,16 +1,20 @@
 import { useState, useRef } from "react";
 import { CyberPanel } from "@/components/ui/cyber-panel";
-import { Scale, Send, Loader2, FileText, AlertTriangle, CheckCircle2, Database, Brain } from "lucide-react";
+import { Scale, Send, Loader2, FileText, AlertTriangle, CheckCircle2, Database, Brain, Shield, Building2, Heart, AlertOctagon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
 const presetQueries = [
-  { label: "RICO Analysis", query: "Analyze RICO enterprise structure from aircraft data. Calculate pattern of racketeering activity using flight detection counts and operator networks.", type: "rico" },
-  { label: "Bradford Hill", query: "Calculate Bradford Hill causation criteria compliance. Analyze temporal correlations between aircraft presence and biometric distress events.", type: "bradford" },
-  { label: "ADA Violations", query: "Generate comprehensive ADA Title II violation summary using the legal_ada_violations_proper table.", type: "ada" },
-  { label: "Nuremberg Code", query: "Assess Nuremberg Code violations evidence. Analyze biometric monitoring without consent patterns.", type: "nuremberg" },
-  { label: "Evidence Summary", query: "Generate complete evidentiary summary across all tables for federal prosecution briefing.", type: "summary" },
+  { label: "RICO Analysis", query: "Analyze RICO enterprise structure from aircraft data and shell company network. Calculate pattern of racketeering activity using flight detection counts, operator networks, and criminal_enterprise_command_structure.", type: "rico" },
+  { label: "KCSO Pattern", query: "Analyze KCSO pattern of abuse using KCSO_Fact_Matrix_v1, Personal_Injury_Timeline, and clusters data. Connect to documented DOJ investigations, Guardian series, and $30.5M+ in verdicts.", type: "kcso" },
+  { label: "Shell Companies", query: "Analyze shell company RICO network from shell_companies, shell_company_network, and criminal_enterprise_command_structure tables. Map corporate veil piercing opportunities.", type: "shell" },
+  { label: "Bradford Hill", query: "Calculate Bradford Hill causation criteria compliance. Analyze temporal correlations between aircraft presence and biometric distress events using correlation tables.", type: "bradford" },
+  { label: "Personal Injury", query: "Generate personal injury timeline analysis from KCSO_Personal_Injury_Timeline, physician_verified_ecgs, and biometric_harm_analysis. Document physical harm evidence.", type: "injury" },
+  { label: "ADA Violations", query: "Generate comprehensive ADA Title II violation summary using the legal_ada_violations_proper table and disability targeting patterns.", type: "ada" },
+  { label: "Nuremberg Code", query: "Assess Nuremberg Code violations evidence. Analyze biometric monitoring without consent patterns and medical ethics concerns.", type: "nuremberg" },
+  { label: "Safety Evidence", query: "Analyze dead man's switch logs, emergency preservation orders, and coordinated operations analysis for safety/threat documentation.", type: "safety" },
+  { label: "Full Summary", query: "Generate complete evidentiary summary across all 265+ tables including KCSO evidence, shell companies, safety logs, and all forensic data for federal prosecution briefing.", type: "summary" },
 ];
 
 interface Finding {
@@ -123,6 +127,16 @@ export function LegalAnalysisAI() {
     setIsAnalyzing(false);
   };
 
+  const getTypeIcon = (type: string) => {
+    switch (type) {
+      case "kcso": return <Shield className="w-3 h-3" />;
+      case "shell": return <Building2 className="w-3 h-3" />;
+      case "injury": return <Heart className="w-3 h-3" />;
+      case "safety": return <AlertOctagon className="w-3 h-3" />;
+      default: return null;
+    }
+  };
+
   return (
     <CyberPanel
       title="Legal Analysis AI"
@@ -133,7 +147,7 @@ export function LegalAnalysisAI() {
         {/* Status indicator */}
         <div className="flex items-center gap-2 mb-3 text-xs">
           <Database className="w-3 h-3 text-primary" />
-          <span className="text-muted-foreground">Connected to NeonDB</span>
+          <span className="text-muted-foreground">Connected to NeonDB (265+ tables)</span>
           <span className="text-primary">•</span>
           <Brain className="w-3 h-3 text-secondary" />
           <span className="text-muted-foreground">Gemini 2.5 Pro</span>
@@ -163,7 +177,7 @@ export function LegalAnalysisAI() {
             </button>
           </div>
           
-          {/* Preset queries */}
+          {/* Preset queries - organized in rows */}
           <div className="flex flex-wrap gap-2 mt-3">
             {presetQueries.map((preset) => (
               <button
@@ -173,8 +187,14 @@ export function LegalAnalysisAI() {
                   handleAnalyze(preset.query, preset.type);
                 }}
                 disabled={isAnalyzing}
-                className="text-xs px-2 py-1 rounded bg-muted border border-border hover:border-primary hover:text-primary transition-colors disabled:opacity-50"
+                className={cn(
+                  "text-xs px-2 py-1 rounded bg-muted border border-border hover:border-primary hover:text-primary transition-colors disabled:opacity-50 flex items-center gap-1",
+                  preset.type === "kcso" && "border-destructive/50 hover:border-destructive hover:text-destructive",
+                  preset.type === "shell" && "border-warning/50 hover:border-warning hover:text-warning",
+                  preset.type === "safety" && "border-secondary/50 hover:border-secondary hover:text-secondary"
+                )}
               >
+                {getTypeIcon(preset.type)}
                 {preset.label}
               </button>
             ))}
@@ -225,13 +245,19 @@ export function LegalAnalysisAI() {
                   </h4>
                   <div className="grid grid-cols-2 gap-2">
                     {[
+                      "investigator_master_view_rows",
+                      "unified_timeline_enhanced",
                       "live_flight_detections_rows",
                       "biometric_monitoring", 
-                      "aircraft_registry_enriched",
-                      "legal_ada_violations_proper",
+                      "KCSO_Fact_Matrix_v1",
+                      "KCSO_Personal_Injury_Timeline",
+                      "criminal_enterprise_command_structure",
+                      "shell_companies",
+                      "dead_mans_switch_log",
+                      "emergency_preservation_order",
                       "physician_verified_ecgs",
                       "josiah_unified_embeddings",
-                      "criminal_enterprise_command_structure",
+                      "legal_ada_violations_proper",
                       "prosecution_priority_correlations",
                       "nuremberg_violations_evidence",
                       "chain_of_custody"
@@ -254,7 +280,7 @@ export function LegalAnalysisAI() {
             <div className="text-center py-8 text-muted-foreground">
               <Scale className="w-8 h-8 mx-auto mb-2 opacity-50" />
               <p className="text-sm">Select a preset or enter a custom legal analysis query</p>
-              <p className="text-xs mt-1">AI will query your full database for evidence</p>
+              <p className="text-xs mt-1">AI queries 265+ tables including KCSO evidence, shell companies, and safety data</p>
             </div>
           )}
         </div>

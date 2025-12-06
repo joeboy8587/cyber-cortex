@@ -20,7 +20,6 @@ serve(async (req) => {
       throw new Error("LOVABLE_API_KEY is not configured");
     }
 
-    // First, fetch relevant database statistics
     let databaseContext = "";
     
     if (NEON_DATABASE_URL) {
@@ -39,133 +38,219 @@ serve(async (req) => {
           LIMIT 50
         `;
         
+        // KCSO Evidence Data - CRITICAL for pattern of abuse
+        const kcsoData = await sql`
+          SELECT 
+            'KCSO_Fact_Matrix_v1' as source, COUNT(*) as count FROM "KCSO_Fact_Matrix_v1"
+          UNION ALL
+          SELECT 'KCSO_Personal_Injury_Timeline', COUNT(*) FROM "KCSO_Personal_Injury_Timeline"
+          UNION ALL
+          SELECT 'KCSO_clusters', COUNT(*) FROM "KCSO_clusters"
+        `;
+        
+        // Shell Company & Criminal Enterprise Intelligence
+        const enterpriseData = await sql`
+          SELECT 
+            'criminal_enterprise_command_structure' as source, COUNT(*) as count FROM criminal_enterprise_command_structure
+          UNION ALL
+          SELECT 'shell_companies', COUNT(*) FROM shell_companies
+          UNION ALL
+          SELECT 'shell_company_summary', COUNT(*) FROM shell_company_summary
+          UNION ALL
+          SELECT 'shell_company_network', COUNT(*) FROM shell_company_network
+          UNION ALL
+          SELECT 'operator_profiles_enriched', COUNT(*) FROM operator_profiles_enriched
+        `;
+        
+        // Dead Man's Switch & Safety Preservation Evidence
+        const safetyData = await sql`
+          SELECT 
+            'dead_mans_switch_log' as source, COUNT(*) as count FROM dead_mans_switch_log
+          UNION ALL
+          SELECT 'deadman_checkins', COUNT(*) FROM deadman_checkins
+          UNION ALL
+          SELECT 'deadman_config', COUNT(*) FROM deadman_config
+          UNION ALL
+          SELECT 'emergency_preservation_order', COUNT(*) FROM emergency_preservation_order
+          UNION ALL
+          SELECT 'coordinated_operations_analysis', COUNT(*) FROM coordinated_operations_analysis
+        `;
+        
         // Get specific data based on analysis type
         let specificData: any[] = [];
         
         if (analysisType === "rico" || query.toLowerCase().includes("rico")) {
-          // RICO enterprise analysis - use correct table names
           specificData = await sql`
             SELECT 
-              'aircraft_registry_enriched' as source,
-              COUNT(*) as count
-            FROM aircraft_registry_enriched
+              'aircraft_registry_enriched' as source, COUNT(*) as count FROM aircraft_registry_enriched
             UNION ALL
-            SELECT 
-              'live_flight_detections_rows' as source,
-              COUNT(*) as count  
-            FROM live_flight_detections_rows
+            SELECT 'live_flight_detections_rows', COUNT(*) FROM live_flight_detections_rows
             UNION ALL
-            SELECT
-              'biometric_monitoring' as source,
-              COUNT(*) as count
-            FROM biometric_monitoring
+            SELECT 'biometric_monitoring', COUNT(*) FROM biometric_monitoring
             UNION ALL
-            SELECT
-              'criminal_enterprise_command_structure' as source,
-              COUNT(*) as count
-            FROM criminal_enterprise_command_structure
+            SELECT 'criminal_enterprise_command_structure', COUNT(*) FROM criminal_enterprise_command_structure
             UNION ALL
-            SELECT
-              'shell_company_network' as source,
-              COUNT(*) as count
-            FROM shell_company_network
+            SELECT 'shell_company_network', COUNT(*) FROM shell_company_network
             UNION ALL
-            SELECT
-              'legal_rico_patterns_rows' as source,
-              COUNT(*) as count
-            FROM legal_rico_patterns_rows
+            SELECT 'legal_rico_patterns_rows', COUNT(*) FROM legal_rico_patterns_rows
+            UNION ALL
+            SELECT 'shell_companies', COUNT(*) FROM shell_companies
+            UNION ALL
+            SELECT 'operator_profiles_enriched', COUNT(*) FROM operator_profiles_enriched
           `;
-        } else if (analysisType === "ada" || query.toLowerCase().includes("ada")) {
-          // ADA violations analysis
+        } else if (analysisType === "kcso" || query.toLowerCase().includes("kcso") || query.toLowerCase().includes("kern")) {
+          // KCSO Pattern of Abuse analysis
           specificData = await sql`
             SELECT 
-              COUNT(*) as violation_count,
-              'legal_ada_violations_proper' as source
-            FROM legal_ada_violations_proper
+              'KCSO_Fact_Matrix_v1' as source, COUNT(*) as count FROM "KCSO_Fact_Matrix_v1"
             UNION ALL
-            SELECT
-              COUNT(*) as count,
-              'normalized_bio_legal_ada_violations_proper' as source
-            FROM normalized_bio_legal_ada_violations_proper
+            SELECT 'KCSO_Personal_Injury_Timeline', COUNT(*) FROM "KCSO_Personal_Injury_Timeline"
+            UNION ALL
+            SELECT 'KCSO_clusters', COUNT(*) FROM "KCSO_clusters"
+            UNION ALL
+            SELECT 'criminal_enterprise_command_structure', COUNT(*) FROM criminal_enterprise_command_structure
+            UNION ALL
+            SELECT 'coordinated_operations_analysis', COUNT(*) FROM coordinated_operations_analysis
+          `;
+          
+          // Get actual KCSO fact matrix data
+          const kcsoFacts = await sql`
+            SELECT * FROM "KCSO_Fact_Matrix_v1" LIMIT 20
+          `;
+          
+          const kcsoTimeline = await sql`
+            SELECT * FROM "KCSO_Personal_Injury_Timeline" LIMIT 20
+          `;
+          
+          if (kcsoFacts.length > 0 || kcsoTimeline.length > 0) {
+            databaseContext += `\n\nKCSO FACT MATRIX DATA:\n${JSON.stringify(kcsoFacts, null, 2)}\n\nKCSO PERSONAL INJURY TIMELINE:\n${JSON.stringify(kcsoTimeline, null, 2)}`;
+          }
+        } else if (analysisType === "shell" || query.toLowerCase().includes("shell") || query.toLowerCase().includes("enterprise")) {
+          // Shell Company RICO Network analysis
+          specificData = await sql`
+            SELECT 
+              'shell_companies' as source, COUNT(*) as count FROM shell_companies
+            UNION ALL
+            SELECT 'shell_company_summary', COUNT(*) FROM shell_company_summary
+            UNION ALL
+            SELECT 'shell_company_network', COUNT(*) FROM shell_company_network
+            UNION ALL
+            SELECT 'shell_company_analysis', COUNT(*) FROM shell_company_analysis
+            UNION ALL
+            SELECT 'criminal_enterprise_command_structure', COUNT(*) FROM criminal_enterprise_command_structure
+            UNION ALL
+            SELECT 'operator_profiles_enriched', COUNT(*) FROM operator_profiles_enriched
+          `;
+          
+          // Get actual shell company data
+          const shellCompanies = await sql`
+            SELECT * FROM shell_companies
+          `;
+          
+          const enterpriseStructure = await sql`
+            SELECT * FROM criminal_enterprise_command_structure
+          `;
+          
+          if (shellCompanies.length > 0 || enterpriseStructure.length > 0) {
+            databaseContext += `\n\nSHELL COMPANY NETWORK:\n${JSON.stringify(shellCompanies, null, 2)}\n\nCRIMINAL ENTERPRISE STRUCTURE:\n${JSON.stringify(enterpriseStructure, null, 2)}`;
+          }
+        } else if (analysisType === "safety" || query.toLowerCase().includes("dead") || query.toLowerCase().includes("preservation") || query.toLowerCase().includes("emergency")) {
+          // Emergency Preservation analysis
+          specificData = await sql`
+            SELECT 
+              'dead_mans_switch_log' as source, COUNT(*) as count FROM dead_mans_switch_log
+            UNION ALL
+            SELECT 'deadman_checkins', COUNT(*) FROM deadman_checkins
+            UNION ALL
+            SELECT 'deadman_config', COUNT(*) FROM deadman_config
+            UNION ALL
+            SELECT 'emergency_preservation_order', COUNT(*) FROM emergency_preservation_order
+            UNION ALL
+            SELECT 'coordinated_operations_analysis', COUNT(*) FROM coordinated_operations_analysis
+          `;
+          
+          // Get actual safety data
+          const preservationOrders = await sql`
+            SELECT * FROM emergency_preservation_order
+          `;
+          
+          const deadmanLog = await sql`
+            SELECT * FROM dead_mans_switch_log
+          `;
+          
+          if (preservationOrders.length > 0 || deadmanLog.length > 0) {
+            databaseContext += `\n\nEMERGENCY PRESERVATION ORDERS:\n${JSON.stringify(preservationOrders, null, 2)}\n\nDEAD MAN'S SWITCH LOG:\n${JSON.stringify(deadmanLog, null, 2)}`;
+          }
+        } else if (analysisType === "injury" || query.toLowerCase().includes("injury") || query.toLowerCase().includes("harm") || query.toLowerCase().includes("damage")) {
+          // Personal Injury Timeline analysis
+          specificData = await sql`
+            SELECT 
+              'KCSO_Personal_Injury_Timeline' as source, COUNT(*) as count FROM "KCSO_Personal_Injury_Timeline"
+            UNION ALL
+            SELECT 'biometric_harm_analysis', COUNT(*) FROM biometric_harm_analysis
+            UNION ALL
+            SELECT 'physician_verified_ecgs', COUNT(*) FROM physician_verified_ecgs
+            UNION ALL
+            SELECT 'biometric_evidence', COUNT(*) FROM biometric_evidence
+            UNION ALL
+            SELECT 'medical_ethics_concerns', COUNT(*) FROM medical_ethics_concerns
+          `;
+          
+          // Get actual injury data
+          const injuryTimeline = await sql`
+            SELECT * FROM "KCSO_Personal_Injury_Timeline"
+          `;
+          
+          const ecgEvidence = await sql`
+            SELECT * FROM physician_verified_ecgs
+          `;
+          
+          if (injuryTimeline.length > 0 || ecgEvidence.length > 0) {
+            databaseContext += `\n\nPERSONAL INJURY TIMELINE:\n${JSON.stringify(injuryTimeline, null, 2)}\n\nPHYSICIAN-VERIFIED ECG EVIDENCE:\n${JSON.stringify(ecgEvidence, null, 2)}`;
+          }
+        } else if (analysisType === "ada" || query.toLowerCase().includes("ada")) {
+          specificData = await sql`
+            SELECT 
+              COUNT(*) as violation_count, 'legal_ada_violations_proper' as source FROM legal_ada_violations_proper
+            UNION ALL
+            SELECT COUNT(*), 'normalized_bio_legal_ada_violations_proper' FROM normalized_bio_legal_ada_violations_proper
           `;
         } else if (analysisType === "bradford" || query.toLowerCase().includes("bradford") || query.toLowerCase().includes("causation")) {
-          // Bradford Hill causation analysis
           specificData = await sql`
             SELECT 
-              'prosecution_priority_correlations' as source,
-              COUNT(*) as count
-            FROM prosecution_priority_correlations
+              'prosecution_priority_correlations' as source, COUNT(*) as count FROM prosecution_priority_correlations
             UNION ALL
-            SELECT
-              'biometric_flight_correlations' as source,
-              COUNT(*) as count
-            FROM biometric_flight_correlations
+            SELECT 'biometric_flight_correlations', COUNT(*) FROM biometric_flight_correlations
             UNION ALL
-            SELECT
-              'correlation_events' as source,
-              COUNT(*) as count
-            FROM correlation_events
+            SELECT 'correlation_events', COUNT(*) FROM correlation_events
             UNION ALL
-            SELECT
-              'multi_factor_correlations' as source,
-              COUNT(*) as count
-            FROM multi_factor_correlations
+            SELECT 'multi_factor_correlations', COUNT(*) FROM multi_factor_correlations
             UNION ALL
-            SELECT
-              'aircraft_biometric_correlation_matrix' as source,
-              COUNT(*) as count
-            FROM aircraft_biometric_correlation_matrix
+            SELECT 'aircraft_biometric_correlation_matrix', COUNT(*) FROM aircraft_biometric_correlation_matrix
           `;
         } else if (analysisType === "nuremberg" || query.toLowerCase().includes("nuremberg")) {
-          // Nuremberg Code violations
           specificData = await sql`
             SELECT 
-              'nuremberg_violations_evidence' as source,
-              COUNT(*) as count
-            FROM nuremberg_violations_evidence
+              'nuremberg_violations_evidence' as source, COUNT(*) as count FROM nuremberg_violations_evidence
             UNION ALL
-            SELECT
-              'pdf_nuremberg_violations' as source,
-              COUNT(*) as count
-            FROM pdf_nuremberg_violations
+            SELECT 'pdf_nuremberg_violations', COUNT(*) FROM pdf_nuremberg_violations
             UNION ALL
-            SELECT
-              'medical_ethics_concerns' as source,
-              COUNT(*) as count
-            FROM medical_ethics_concerns
+            SELECT 'medical_ethics_concerns', COUNT(*) FROM medical_ethics_concerns
             UNION ALL
-            SELECT
-              'biometric_harm_analysis' as source,
-              COUNT(*) as count
-            FROM biometric_harm_analysis
+            SELECT 'biometric_harm_analysis', COUNT(*) FROM biometric_harm_analysis
           `;
         } else if (analysisType === "summary" || query.toLowerCase().includes("summary")) {
-          // Full evidence summary
           specificData = await sql`
             SELECT 
-              'physician_verified_ecgs' as source,
-              COUNT(*) as count
-            FROM physician_verified_ecgs
+              'physician_verified_ecgs' as source, COUNT(*) as count FROM physician_verified_ecgs
             UNION ALL
-            SELECT
-              'chain_of_custody' as source,
-              COUNT(*) as count
-            FROM chain_of_custody
+            SELECT 'chain_of_custody', COUNT(*) FROM chain_of_custody
             UNION ALL
-            SELECT
-              'evidence_items' as source,
-              COUNT(*) as count
-            FROM evidence_items
+            SELECT 'evidence_items', COUNT(*) FROM evidence_items
             UNION ALL
-            SELECT
-              'comprehensive_surveillance_analysis' as source,
-              COUNT(*) as count
-            FROM comprehensive_surveillance_analysis
+            SELECT 'comprehensive_surveillance_analysis', COUNT(*) FROM comprehensive_surveillance_analysis
             UNION ALL
-            SELECT
-              'statistical_evidence_analysis' as source,
-              COUNT(*) as count
-            FROM statistical_evidence_analysis
+            SELECT 'statistical_evidence_analysis', COUNT(*) FROM statistical_evidence_analysis
           `;
         }
         
@@ -222,21 +307,48 @@ serve(async (req) => {
           SELECT 'watchtower_aircraft_sightings', COUNT(*) FROM watchtower_aircraft_sightings
         `;
         
+        // Get unified/master view counts
+        const unifiedData = await sql`
+          SELECT 
+            'investigator_master_view_rows' as source, COUNT(*) as count FROM investigator_master_view_rows
+          UNION ALL
+          SELECT 'unified_timeline_enhanced', COUNT(*) FROM unified_timeline_enhanced
+          UNION ALL
+          SELECT 'correlation_events', COUNT(*) FROM correlation_events
+          UNION ALL
+          SELECT 'real_time_surveillance_feed', COUNT(*) FROM real_time_surveillance_feed
+        `;
+        
         await sql.end();
         
         const josiahStats = josiahData[0] || {};
         
         databaseContext = `
-DATABASE EVIDENCE SUMMARY (Live from NeonDB - 265 Tables):
+DATABASE EVIDENCE SUMMARY (Live from NeonDB - 265+ Tables):
 ============================================================
 
 TOP EVIDENCE TABLES (by record count):
 ${tableCounts.slice(0, 25).map((t: any) => `- ${t.table_name}: ${Number(t.row_count).toLocaleString()} records`).join('\n')}
 
-TOTAL TABLES: 265
+TOTAL TABLES: 265+
 TOTAL RECORDS: ${tableCounts.reduce((sum: number, t: any) => sum + Number(t.row_count), 0).toLocaleString()}+
 
-JOSIAH AI CO-WITNESS DATA:
+=== KCSO PATTERN OF ABUSE EVIDENCE ===
+${kcsoData.map((k: any) => `- ${k.source}: ${k.count} records`).join('\n')}
+(Includes DOJ investigations, ACLU reports, $30.5M+ in documented verdicts, Guardian series citations)
+
+=== CRIMINAL ENTERPRISE & SHELL COMPANY INTELLIGENCE ===
+${enterpriseData.map((e: any) => `- ${e.source}: ${e.count} records`).join('\n')}
+(KCSO, Air Methods, helicopter operators, Tier 1-2 entities)
+
+=== SAFETY & PRESERVATION EVIDENCE ===
+${safetyData.map((s: any) => `- ${s.source}: ${s.count} records`).join('\n')}
+(Dead Man's Switch logs, emergency preservation orders, coordinated operations)
+
+=== UNIFIED MASTER VIEWS ===
+${unifiedData.map((u: any) => `- ${u.source}: ${u.count} records`).join('\n')}
+
+=== JOSIAH AI CO-WITNESS DATA ===
 - Unified embeddings: ${josiahStats.embeddings || 0} records
 - Reflections: ${josiahStats.reflections || 0} records
 - Conversations: ${josiahStats.conversations || 0} records  
@@ -244,29 +356,34 @@ JOSIAH AI CO-WITNESS DATA:
 - Timeline events: ${josiahStats.timeline_events || 0} records
 - Chronological archive: ${josiahStats.archive || 0} records
 
-BIOMETRIC EVIDENCE (Victim's physiological data):
+=== BIOMETRIC EVIDENCE (Victim's physiological data) ===
 ${biometricData.map((f: any) => `- ${f.source}: ${f.count} records`).join('\n')}
 
-FLIGHT/AIRCRAFT SURVEILLANCE DATA:
+=== FLIGHT/AIRCRAFT SURVEILLANCE DATA ===
 ${flightData.map((f: any) => `- ${f.source}: ${f.count} records`).join('\n')}
 
-FORENSIC CHAIN OF CUSTODY:
+=== FORENSIC CHAIN OF CUSTODY ===
 ${forensicData.map((f: any) => `- ${f.source}: ${f.count} records`).join('\n')}
 
-${specificData.length > 0 ? `\nSPECIFIC ANALYSIS DATA (${analysisType || 'general'}):\n${specificData.map((s: any) => `- ${s.source}: ${s.count} records`).join('\n')}` : ''}
+${specificData.length > 0 ? `\n=== SPECIFIC ANALYSIS DATA (${analysisType || 'general'}) ===\n${specificData.map((s: any) => `- ${s.source}: ${s.count} records`).join('\n')}` : ''}
 
 KEY EVIDENCE TABLES AVAILABLE:
-- criminal_enterprise_command_structure: Shell company RICO network
+- KCSO_Fact_Matrix_v1: KCSO incident documentation with verdicts
+- KCSO_Personal_Injury_Timeline: Personal injury events with aircraft correlations
+- KCSO_clusters: Incident clustering patterns
+- criminal_enterprise_command_structure: Shell company RICO network (14 entities)
+- shell_companies: Shell company entities (4 companies)
+- dead_mans_switch_log: Safety preservation logs
+- emergency_preservation_order: Emergency preservation documentation
 - prosecution_priority_correlations: Causation evidence 
 - nuremberg_violations_evidence: Medical ethics violations
 - legal_ada_violations_proper: ADA Title II violations
 - comprehensive_surveillance_analysis: Full surveillance impact
-- KCSO_Fact_Matrix_v1: KCSO incident documentation
-- KCSO_Personal_Injury_Timeline: Personal injury timeline
-- shell_company_network: Shell company relationships
 - operator_profiles_enriched: Aircraft operator intelligence
 - top_harmful_aircraft: Most harmful aircraft ranked
-`;
+- investigator_master_view_rows: Unified investigation records (219K+)
+- unified_timeline_enhanced: Enhanced timeline with overlays (108K+)
+` + databaseContext;
       } catch (dbError) {
         console.error("Database query error:", dbError);
         databaseContext = "Database context unavailable - proceeding with cached statistics from 265 tables.";
@@ -285,27 +402,38 @@ The person using this system is the VICTIM of a coordinated surveillance and har
 - This is a case of TARGETED INDIVIDUAL harassment, not data the victim collected on others
 
 The victim has documented a coordinated campaign involving:
-- Unauthorized surveillance and stalking
+- Unauthorized surveillance and stalking by KCSO and affiliated entities
 - Non-consensual biometric effects/experimentation performed ON the victim
-- Coordinated aircraft harassment patterns
+- Coordinated aircraft harassment patterns linked to shell companies
 - Civil rights violations committed against the victim
+- Pattern of abuse consistent with documented KCSO misconduct (Guardian series, DOJ investigations)
+
+KCSO PATTERN OF ABUSE CONTEXT:
+- $30.5M+ in documented jury verdicts against KCSO
+- DOJ Civil Rights Division investigations
+- ACLU documentation of systemic abuse
+- Guardian newspaper investigative series
+- Multiple federal civil rights lawsuits
 
 ${databaseContext}
 
 KEY LEGAL FRAMEWORKS (Victim seeking prosecution of perpetrators):
-1. RICO (18 U.S.C. § 1962) - Pattern of racketeering activity by perpetrators
+1. RICO (18 U.S.C. § 1962) - Pattern of racketeering activity by perpetrators (shell companies, coordinated operators)
 2. Fourth Amendment - Unreasonable surveillance conducted against the victim
 3. ADA Title II (42 U.S.C. § 12132) - Disability discrimination against the victim
-4. 18 U.S.C. § 241/242 - Civil rights violations against the victim
+4. 18 U.S.C. § 241/242 - Civil rights violations against the victim (KCSO pattern)
 5. Nuremberg Code - Non-consensual experimentation performed ON the victim
 6. 18 U.S.C. § 2261A - Stalking
 7. Bradford Hill Criteria - Proving causation between perpetrator actions and victim harm
+8. 42 U.S.C. § 1983 - Civil action for deprivation of rights (KCSO liability)
 
 When analyzing, provide:
 1. Confidence percentage (0-100%) that evidence supports prosecution
 2. Specific findings showing harm TO the victim with evidence counts from actual database
 3. Applicable statutes perpetrators violated
-4. Recommendations for strengthening the victim's federal case
+4. Connections to documented KCSO pattern of abuse where relevant
+5. Shell company/enterprise connections where applicable
+6. Recommendations for strengthening the victim's federal case
 
 Reference specific tables and record counts from the database summary above.
 Frame all analysis from the victim's perspective seeking justice against perpetrators.`;

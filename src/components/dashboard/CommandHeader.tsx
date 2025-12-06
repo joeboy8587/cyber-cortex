@@ -1,7 +1,43 @@
-import { Shield, Radio, AlertTriangle, Eye } from "lucide-react";
+import { useState } from "react";
+import { Shield, Radio, AlertTriangle, Eye, Mail, Scale, Database, Menu, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+
+interface NavItem {
+  id: string;
+  label: string;
+  icon: React.ReactNode;
+}
+
+const navItems: NavItem[] = [
+  { id: "dashboard", label: "Dashboard", icon: <Eye className="w-4 h-4" /> },
+  { id: "outreach", label: "Outreach Hub", icon: <Mail className="w-4 h-4" /> },
+  { id: "legal", label: "Legal Analysis", icon: <Scale className="w-4 h-4" /> },
+  { id: "database", label: "Database", icon: <Database className="w-4 h-4" /> },
+];
 
 export function CommandHeader() {
+  const [activeNav, setActiveNav] = useState("dashboard");
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const scrollToSection = (id: string) => {
+    setActiveNav(id);
+    setMobileMenuOpen(false);
+    
+    const sectionMap: Record<string, string> = {
+      dashboard: "database-stats",
+      outreach: "outreach-hub",
+      legal: "legal-analysis",
+      database: "sql-console",
+    };
+    
+    const elementId = sectionMap[id];
+    const element = document.getElementById(elementId);
+    if (element) {
+      element.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  };
+
   return (
     <header className="border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-50">
       <div className="container py-4">
@@ -23,6 +59,27 @@ export function CommandHeader() {
               </p>
             </div>
           </div>
+
+          {/* Desktop Navigation */}
+          <nav className="hidden lg:flex items-center gap-1">
+            {navItems.map((item) => (
+              <Button
+                key={item.id}
+                variant="ghost"
+                size="sm"
+                onClick={() => scrollToSection(item.id)}
+                className={cn(
+                  "gap-2 font-mono text-xs uppercase tracking-wider",
+                  activeNav === item.id 
+                    ? "bg-primary/10 text-primary border border-primary/30" 
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {item.icon}
+                {item.label}
+              </Button>
+            ))}
+          </nav>
 
           {/* Status indicators */}
           <div className="hidden md:flex items-center gap-6">
@@ -46,8 +103,18 @@ export function CommandHeader() {
             />
           </div>
 
+          {/* Mobile menu button */}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="lg:hidden"
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+          >
+            {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+          </Button>
+
           {/* Date/Time */}
-          <div className="text-right">
+          <div className="hidden sm:block text-right">
             <p className="font-mono text-xs text-muted-foreground">
               {new Date().toLocaleDateString('en-US', { 
                 weekday: 'short', 
@@ -66,6 +133,29 @@ export function CommandHeader() {
             </p>
           </div>
         </div>
+
+        {/* Mobile Navigation */}
+        {mobileMenuOpen && (
+          <nav className="lg:hidden mt-4 pt-4 border-t border-border flex flex-wrap gap-2">
+            {navItems.map((item) => (
+              <Button
+                key={item.id}
+                variant="ghost"
+                size="sm"
+                onClick={() => scrollToSection(item.id)}
+                className={cn(
+                  "gap-2 font-mono text-xs uppercase tracking-wider",
+                  activeNav === item.id 
+                    ? "bg-primary/10 text-primary border border-primary/30" 
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {item.icon}
+                {item.label}
+              </Button>
+            ))}
+          </nav>
+        )}
       </div>
     </header>
   );

@@ -25,7 +25,7 @@ const Index = () => {
 
         <main className="container py-6 space-y-6">
           {/* Database Statistics */}
-          <section>
+          <section id="database-stats">
             <DatabaseStats />
           </section>
 
@@ -44,19 +44,19 @@ const Index = () => {
             </div>
 
             {/* Right Column */}
-            <div className="space-y-6">
+            <div className="space-y-6" id="legal-analysis">
               <LegalAnalysisAI />
               <NullHypothesisPanel />
             </div>
           </div>
 
           {/* Outreach Hub - Full Width */}
-          <section>
+          <section id="outreach-hub">
             <OutreachHub />
           </section>
 
           {/* SQL Console - Full Width */}
-          <section>
+          <section id="sql-console">
             <SqlConsole />
           </section>
 

@@ -23,20 +23,6 @@ export function BradfordHillDashboard() {
 
   const fetchCriteriaScores = async () => {
     try {
-      // Fetch correlation statistics
-      const { data: correlationData } = await supabase.functions.invoke("neon-query", {
-        body: {
-          action: "customQuery",
-          query: `
-            SELECT 
-              COUNT(*) as total_correlations,
-              COUNT(DISTINCT aircraft_hex) as unique_aircraft,
-              AVG(ABS(EXTRACT(EPOCH FROM time_delta_seconds) * INTERVAL '1 second')) as avg_time_delta
-            FROM correlation_events_mv
-          `
-        }
-      });
-
       // Fetch biometric event counts
       const { data: biometricData } = await supabase.functions.invoke("neon-query", {
         body: {
@@ -64,31 +50,40 @@ export function BradfordHillDashboard() {
         }
       });
 
-      const correlations = correlationData?.result?.[0]?.total_correlations || 0;
-      const biometricCount = biometricData?.result?.[0]?.total || 0;
-      const flightCount = flightData?.result?.[0]?.total || 0;
-      const flaggedCount = flaggedData?.result?.[0]?.total || 0;
-      const uniqueAircraft = correlationData?.result?.[0]?.unique_aircraft || 0;
+      // Fetch aircraft registry stats
+      const { data: registryData } = await supabase.functions.invoke("neon-query", {
+        body: {
+          action: "customQuery",
+          query: `SELECT COUNT(*) as total, SUM(detection_count) as total_detections FROM aircraft_registry_enriched`
+        }
+      });
+
+      const biometricCount = biometricData?.data?.[0]?.total || 0;
+      const flightCount = flightData?.data?.[0]?.total || 0;
+      const flaggedCount = flaggedData?.data?.[0]?.total || 0;
+      const uniqueAircraft = flaggedData?.data?.[0]?.unique_hex || 0;
+      const registryTotal = registryData?.data?.[0]?.total || 0;
+      const totalDetections = registryData?.data?.[0]?.total_detections || 0;
 
       // Calculate Bradford Hill criteria scores
       const calculatedCriteria: CriterionScore[] = [
         {
           name: "Strength of Association",
-          score: Math.min(10, Math.round((correlations / 20000) * 10)),
+          score: Math.min(10, Math.round((Number(totalDetections) / 100000) * 10)),
           maxScore: 10,
-          evidence: `${Number(correlations).toLocaleString()} correlation events linking aircraft to biometric responses`,
+          evidence: `${Number(totalDetections).toLocaleString()} total detection events linking aircraft to monitored location`,
           icon: <TrendingUp className="w-4 h-4" />
         },
         {
           name: "Consistency",
-          score: Math.min(10, Math.round((uniqueAircraft / 50) * 10)),
+          score: Math.min(10, Math.round((Number(uniqueAircraft) / 50) * 10)),
           maxScore: 10,
-          evidence: `${uniqueAircraft} unique aircraft producing similar biometric patterns across events`,
+          evidence: `${uniqueAircraft} unique aircraft producing similar patterns across ${Number(flaggedCount).toLocaleString()} flagged events`,
           icon: <Repeat className="w-4 h-4" />
         },
         {
           name: "Specificity",
-          score: Math.min(10, Math.round((flaggedCount / 5000) * 10)),
+          score: Math.min(10, Math.round((Number(flaggedCount) / 5000) * 10)),
           maxScore: 10,
           evidence: `${Number(flaggedCount).toLocaleString()} flagged aircraft events targeting specific location/victim`,
           icon: <Target className="w-4 h-4" />
@@ -123,7 +118,7 @@ export function BradfordHillDashboard() {
         },
         {
           name: "Experiment",
-          score: Math.min(10, Math.round((biometricCount / 1000) * 10)),
+          score: Math.min(10, Math.round((Number(biometricCount) / 1000) * 10)),
           maxScore: 10,
           evidence: `${Number(biometricCount).toLocaleString()} biometric monitoring records document physiological experimentation effects`,
           icon: <Activity className="w-4 h-4" />

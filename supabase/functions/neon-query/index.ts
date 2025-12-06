@@ -109,7 +109,12 @@ serve(async (req) => {
         if (!query) {
           throw new Error('Query is required');
         }
-        if (!query.trim().toUpperCase().startsWith('SELECT')) {
+        // Allow SELECT and WITH (CTEs) - block INSERT, UPDATE, DELETE, DROP, etc.
+        const normalizedQuery = query.trim().toUpperCase();
+        const isSelectQuery = normalizedQuery.startsWith('SELECT') || normalizedQuery.startsWith('WITH');
+        const hasDangerousKeywords = /\b(INSERT|UPDATE|DELETE|DROP|TRUNCATE|ALTER|CREATE|GRANT|REVOKE)\b/i.test(query);
+        
+        if (!isSelectQuery || hasDangerousKeywords) {
           throw new Error('Only SELECT queries are allowed');
         }
         result = await sql.unsafe(query);

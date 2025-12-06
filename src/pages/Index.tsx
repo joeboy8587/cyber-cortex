@@ -7,6 +7,7 @@ import { EvidenceTimeline } from "@/components/dashboard/EvidenceTimeline";
 import { DataStreams } from "@/components/dashboard/DataStreams";
 import { NullHypothesisPanel } from "@/components/dashboard/NullHypothesisPanel";
 import { TableExplorer } from "@/components/dashboard/TableExplorer";
+import { SqlConsole } from "@/components/dashboard/SqlConsole";
 
 const Index = () => {
   return (
@@ -48,6 +49,11 @@ const Index = () => {
             </div>
           </div>
 
+          {/* SQL Console - Full Width */}
+          <section>
+            <SqlConsole />
+          </section>
+
           {/* Evidence Timeline - Full Width */}
           <section>
             <EvidenceTimeline />
@@ -64,11 +70,9 @@ const Index = () => {
                 <span>Oildale Grid Exposure System</span>
               </div>
               <div className="flex items-center gap-4">
-                <span>Database: 912,969+ records</span>
+                <span className="text-primary">Status: LIVE DATA</span>
                 <span>|</span>
-                <span>Tables: 261</span>
-                <span>|</span>
-                <span className="text-primary">Status: OPERATIONAL</span>
+                <span>Connected to NeonDB</span>
               </div>
             </div>
           </footer>

@@ -29,7 +29,7 @@ export function ConsentDocumentation() {
       // Fetch from josiah_reflections for documented objections
       const { data: reflectionsData } = await supabase.functions.invoke("neon-query", {
         body: {
-          action: "custom",
+          action: "customQuery",
           query: `
             SELECT 
               id::text,
@@ -53,7 +53,7 @@ export function ConsentDocumentation() {
       // Fetch from forensic_log_catalog
       const { data: logData } = await supabase.functions.invoke("neon-query", {
         body: {
-          action: "custom",
+          action: "customQuery",
           query: `
             SELECT 
               id::text,
@@ -73,7 +73,7 @@ export function ConsentDocumentation() {
       // Get total counts
       const { data: countData } = await supabase.functions.invoke("neon-query", {
         body: {
-          action: "custom",
+          action: "customQuery",
           query: `
             SELECT 
               (SELECT COUNT(*) FROM josiah_reflections) +

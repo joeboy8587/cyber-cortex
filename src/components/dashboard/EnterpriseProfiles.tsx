@@ -36,7 +36,7 @@ export function EnterpriseProfiles() {
       // Fetch top perpetrator aircraft with owner info
       const { data: aircraftData } = await supabase.functions.invoke("neon-query", {
         body: {
-          action: "custom",
+          action: "customQuery",
           query: `
             WITH aircraft_stats AS (
               SELECT 
@@ -78,7 +78,7 @@ export function EnterpriseProfiles() {
       // Get overall stats
       const { data: statsData } = await supabase.functions.invoke("neon-query", {
         body: {
-          action: "custom",
+          action: "customQuery",
           query: `
             SELECT 
               (SELECT COUNT(DISTINCT hex) FROM flagged_aircraft_rows_rows) as total_aircraft,

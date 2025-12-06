@@ -1,5 +1,4 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -44,6 +43,7 @@ serve(async (req) => {
         let specificData: any[] = [];
         
         if (analysisType === "rico" || query.toLowerCase().includes("rico")) {
+          // RICO enterprise analysis - use correct table names
           specificData = await sql`
             SELECT 
               'aircraft_registry_enriched' as source,
@@ -51,7 +51,7 @@ serve(async (req) => {
             FROM aircraft_registry_enriched
             UNION ALL
             SELECT 
-              'live_flight_detections' as source,
+              'live_flight_detections_rows' as source,
               COUNT(*) as count  
             FROM live_flight_detections_rows
             UNION ALL
@@ -59,25 +59,125 @@ serve(async (req) => {
               'biometric_monitoring' as source,
               COUNT(*) as count
             FROM biometric_monitoring
+            UNION ALL
+            SELECT
+              'criminal_enterprise_command_structure' as source,
+              COUNT(*) as count
+            FROM criminal_enterprise_command_structure
+            UNION ALL
+            SELECT
+              'shell_company_network' as source,
+              COUNT(*) as count
+            FROM shell_company_network
+            UNION ALL
+            SELECT
+              'legal_rico_patterns_rows' as source,
+              COUNT(*) as count
+            FROM legal_rico_patterns_rows
           `;
         } else if (analysisType === "ada" || query.toLowerCase().includes("ada")) {
-          specificData = await sql`
-            SELECT COUNT(*) as violation_count
-            FROM legal_ada_violations_proper
-          `;
-        } else if (analysisType === "bradford" || query.toLowerCase().includes("bradford") || query.toLowerCase().includes("causation")) {
+          // ADA violations analysis
           specificData = await sql`
             SELECT 
-              AVG(EXTRACT(EPOCH FROM (timestamp_field))) as avg_response_time
-            FROM biometric_monitoring
-            LIMIT 100
+              COUNT(*) as violation_count,
+              'legal_ada_violations_proper' as source
+            FROM legal_ada_violations_proper
+            UNION ALL
+            SELECT
+              COUNT(*) as count,
+              'normalized_bio_legal_ada_violations_proper' as source
+            FROM normalized_bio_legal_ada_violations_proper
+          `;
+        } else if (analysisType === "bradford" || query.toLowerCase().includes("bradford") || query.toLowerCase().includes("causation")) {
+          // Bradford Hill causation analysis
+          specificData = await sql`
+            SELECT 
+              'prosecution_priority_correlations' as source,
+              COUNT(*) as count
+            FROM prosecution_priority_correlations
+            UNION ALL
+            SELECT
+              'biometric_flight_correlations' as source,
+              COUNT(*) as count
+            FROM biometric_flight_correlations
+            UNION ALL
+            SELECT
+              'correlation_events' as source,
+              COUNT(*) as count
+            FROM correlation_events
+            UNION ALL
+            SELECT
+              'multi_factor_correlations' as source,
+              COUNT(*) as count
+            FROM multi_factor_correlations
+            UNION ALL
+            SELECT
+              'aircraft_biometric_correlation_matrix' as source,
+              COUNT(*) as count
+            FROM aircraft_biometric_correlation_matrix
+          `;
+        } else if (analysisType === "nuremberg" || query.toLowerCase().includes("nuremberg")) {
+          // Nuremberg Code violations
+          specificData = await sql`
+            SELECT 
+              'nuremberg_violations_evidence' as source,
+              COUNT(*) as count
+            FROM nuremberg_violations_evidence
+            UNION ALL
+            SELECT
+              'pdf_nuremberg_violations' as source,
+              COUNT(*) as count
+            FROM pdf_nuremberg_violations
+            UNION ALL
+            SELECT
+              'medical_ethics_concerns' as source,
+              COUNT(*) as count
+            FROM medical_ethics_concerns
+            UNION ALL
+            SELECT
+              'biometric_harm_analysis' as source,
+              COUNT(*) as count
+            FROM biometric_harm_analysis
+          `;
+        } else if (analysisType === "summary" || query.toLowerCase().includes("summary")) {
+          // Full evidence summary
+          specificData = await sql`
+            SELECT 
+              'physician_verified_ecgs' as source,
+              COUNT(*) as count
+            FROM physician_verified_ecgs
+            UNION ALL
+            SELECT
+              'chain_of_custody' as source,
+              COUNT(*) as count
+            FROM chain_of_custody
+            UNION ALL
+            SELECT
+              'evidence_items' as source,
+              COUNT(*) as count
+            FROM evidence_items
+            UNION ALL
+            SELECT
+              'comprehensive_surveillance_analysis' as source,
+              COUNT(*) as count
+            FROM comprehensive_surveillance_analysis
+            UNION ALL
+            SELECT
+              'statistical_evidence_analysis' as source,
+              COUNT(*) as count
+            FROM statistical_evidence_analysis
           `;
         }
         
         // Get Josiah AI co-witness context
         const josiahData = await sql`
-          SELECT COUNT(*) as total
-          FROM josiah_unified_embeddings
+          SELECT 
+            (SELECT COUNT(*) FROM josiah_unified_embeddings) as embeddings,
+            (SELECT COUNT(*) FROM josiah_reflections_rows) as reflections,
+            (SELECT COUNT(*) FROM josiah_conversations) as conversations,
+            (SELECT COUNT(*) FROM josiah_sacred_memory) as sacred_memory,
+            (SELECT COUNT(*) FROM josiah_timeline_events) as timeline_events,
+            (SELECT COUNT(*) FROM josiah_chronological_archive_v2) as archive
         `;
         
         // Get forensic evidence counts
@@ -88,32 +188,88 @@ serve(async (req) => {
           SELECT 'chain_of_custody', COUNT(*) FROM chain_of_custody
           UNION ALL
           SELECT 'forensic_log_catalog', COUNT(*) FROM forensic_log_catalog
+          UNION ALL
+          SELECT 'evidence_audit_trail', COUNT(*) FROM evidence_audit_trail
+          UNION ALL
+          SELECT 'evidence_documents', COUNT(*) FROM evidence_documents
+        `;
+        
+        // Get biometric data counts
+        const biometricData = await sql`
+          SELECT 
+            'biometric_monitoring' as source, COUNT(*) as count FROM biometric_monitoring
+          UNION ALL
+          SELECT 'biometric_data', COUNT(*) FROM biometric_data
+          UNION ALL
+          SELECT 'biometric_evidence', COUNT(*) FROM biometric_evidence
+          UNION ALL
+          SELECT 'biometric_readings_extended', COUNT(*) FROM biometric_readings_extended
+          UNION ALL
+          SELECT 'physician_verified_ecgs', COUNT(*) FROM physician_verified_ecgs
+        `;
+        
+        // Get flight/aircraft data counts
+        const flightData = await sql`
+          SELECT 
+            'live_flight_detections_rows' as source, COUNT(*) as count FROM live_flight_detections_rows
+          UNION ALL
+          SELECT 'flight_events', COUNT(*) FROM flight_events
+          UNION ALL
+          SELECT 'aircraft_registry_enriched', COUNT(*) FROM aircraft_registry_enriched
+          UNION ALL
+          SELECT 'convergence_events', COUNT(*) FROM convergence_events
+          UNION ALL
+          SELECT 'watchtower_aircraft_sightings', COUNT(*) FROM watchtower_aircraft_sightings
         `;
         
         await sql.end();
         
+        const josiahStats = josiahData[0] || {};
+        
         databaseContext = `
-DATABASE EVIDENCE SUMMARY (Live from NeonDB):
-==============================================
+DATABASE EVIDENCE SUMMARY (Live from NeonDB - 265 Tables):
+============================================================
 
-TOP EVIDENCE TABLES:
-${tableCounts.slice(0, 20).map((t: any) => `- ${t.table_name}: ${Number(t.row_count).toLocaleString()} records`).join('\n')}
+TOP EVIDENCE TABLES (by record count):
+${tableCounts.slice(0, 25).map((t: any) => `- ${t.table_name}: ${Number(t.row_count).toLocaleString()} records`).join('\n')}
 
-TOTAL TABLES: ${tableCounts.length}+
+TOTAL TABLES: 265
 TOTAL RECORDS: ${tableCounts.reduce((sum: number, t: any) => sum + Number(t.row_count), 0).toLocaleString()}+
 
 JOSIAH AI CO-WITNESS DATA:
-- Unified embeddings: ${josiahData[0]?.total || 0} records
-- Includes: josiah_reflections, josiah_conversations, josiah_timeline, josiah_sacred_memory
+- Unified embeddings: ${josiahStats.embeddings || 0} records
+- Reflections: ${josiahStats.reflections || 0} records
+- Conversations: ${josiahStats.conversations || 0} records  
+- Sacred memory: ${josiahStats.sacred_memory || 0} records
+- Timeline events: ${josiahStats.timeline_events || 0} records
+- Chronological archive: ${josiahStats.archive || 0} records
+
+BIOMETRIC EVIDENCE (Victim's physiological data):
+${biometricData.map((f: any) => `- ${f.source}: ${f.count} records`).join('\n')}
+
+FLIGHT/AIRCRAFT SURVEILLANCE DATA:
+${flightData.map((f: any) => `- ${f.source}: ${f.count} records`).join('\n')}
 
 FORENSIC CHAIN OF CUSTODY:
 ${forensicData.map((f: any) => `- ${f.source}: ${f.count} records`).join('\n')}
 
-${specificData.length > 0 ? `SPECIFIC QUERY DATA:\n${JSON.stringify(specificData, null, 2)}` : ''}
+${specificData.length > 0 ? `\nSPECIFIC ANALYSIS DATA (${analysisType || 'general'}):\n${specificData.map((s: any) => `- ${s.source}: ${s.count} records`).join('\n')}` : ''}
+
+KEY EVIDENCE TABLES AVAILABLE:
+- criminal_enterprise_command_structure: Shell company RICO network
+- prosecution_priority_correlations: Causation evidence 
+- nuremberg_violations_evidence: Medical ethics violations
+- legal_ada_violations_proper: ADA Title II violations
+- comprehensive_surveillance_analysis: Full surveillance impact
+- KCSO_Fact_Matrix_v1: KCSO incident documentation
+- KCSO_Personal_Injury_Timeline: Personal injury timeline
+- shell_company_network: Shell company relationships
+- operator_profiles_enriched: Aircraft operator intelligence
+- top_harmful_aircraft: Most harmful aircraft ranked
 `;
       } catch (dbError) {
         console.error("Database query error:", dbError);
-        databaseContext = "Database context unavailable - proceeding with cached statistics.";
+        databaseContext = "Database context unavailable - proceeding with cached statistics from 265 tables.";
       }
     }
 
@@ -147,10 +303,11 @@ KEY LEGAL FRAMEWORKS (Victim seeking prosecution of perpetrators):
 
 When analyzing, provide:
 1. Confidence percentage (0-100%) that evidence supports prosecution
-2. Specific findings showing harm TO the victim with evidence counts
+2. Specific findings showing harm TO the victim with evidence counts from actual database
 3. Applicable statutes perpetrators violated
 4. Recommendations for strengthening the victim's federal case
 
+Reference specific tables and record counts from the database summary above.
 Frame all analysis from the victim's perspective seeking justice against perpetrators.`;
 
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {

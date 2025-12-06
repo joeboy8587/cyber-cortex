@@ -38,11 +38,15 @@ serve(async (req) => {
       case 'getTables': {
         result = await sql`
           SELECT 
-            schemaname,
-            tablename,
-            n_live_tup as row_count
-          FROM pg_stat_user_tables
-          ORDER BY n_live_tup DESC
+            n.nspname as schemaname,
+            c.relname as tablename,
+            c.reltuples::bigint as row_count
+          FROM pg_class c
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE c.relkind = 'r' 
+            AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+          ORDER BY c.reltuples DESC
+          LIMIT 500
         `;
         break;
       }
@@ -80,12 +84,18 @@ serve(async (req) => {
       case 'getStats': {
         const tables = await sql`
           SELECT COUNT(*) as table_count
-          FROM pg_stat_user_tables
+          FROM pg_class c
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE c.relkind = 'r' 
+            AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
         `;
         
         const records = await sql`
-          SELECT SUM(n_live_tup) as total_records
-          FROM pg_stat_user_tables
+          SELECT COALESCE(SUM(c.reltuples)::bigint, 0) as total_records
+          FROM pg_class c
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE c.relkind = 'r' 
+            AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
         `;
         
         result = {

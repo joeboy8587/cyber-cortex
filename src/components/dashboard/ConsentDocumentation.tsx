@@ -26,7 +26,7 @@ export function ConsentDocumentation() {
 
   const fetchObjectionRecords = async () => {
     try {
-      // Fetch from josiah_reflections for documented objections
+      // Fetch from josiah_reflections_rows for documented objections
       const { data: reflectionsData } = await supabase.functions.invoke("neon-query", {
         body: {
           action: "customQuery",
@@ -34,37 +34,38 @@ export function ConsentDocumentation() {
             SELECT 
               id::text,
               created_at as timestamp,
-              'josiah_reflections' as source,
-              reflection as content
-            FROM josiah_reflections
-            WHERE reflection ILIKE '%consent%' 
-               OR reflection ILIKE '%object%'
-               OR reflection ILIKE '%unwanted%'
-               OR reflection ILIKE '%fear%'
-               OR reflection ILIKE '%harm%'
-               OR reflection ILIKE '%stop%'
-               OR reflection ILIKE '%protest%'
+              'josiah_reflections_rows' as source,
+              reflection_content as content
+            FROM josiah_reflections_rows
+            WHERE reflection_content ILIKE '%consent%' 
+               OR reflection_content ILIKE '%object%'
+               OR reflection_content ILIKE '%unwanted%'
+               OR reflection_content ILIKE '%fear%'
+               OR reflection_content ILIKE '%harm%'
+               OR reflection_content ILIKE '%stop%'
+               OR reflection_content ILIKE '%protest%'
             ORDER BY created_at DESC
             LIMIT 50
           `
         }
       });
 
-      // Fetch from forensic_log_catalog
+      // Fetch from forensic_log_catalog using filename/filepath
       const { data: logData } = await supabase.functions.invoke("neon-query", {
         body: {
           action: "customQuery",
           query: `
             SELECT 
               id::text,
-              created_at as timestamp,
+              created_timestamp as timestamp,
               'forensic_log_catalog' as source,
-              description as content
+              filename as content
             FROM forensic_log_catalog
-            WHERE description ILIKE '%unauthorized%'
-               OR description ILIKE '%non-consensual%'
-               OR description ILIKE '%violation%'
-            ORDER BY created_at DESC
+            WHERE filename ILIKE '%unauthorized%'
+               OR filename ILIKE '%consent%'
+               OR filename ILIKE '%violation%'
+               OR filepath ILIKE '%evidence%'
+            ORDER BY created_timestamp DESC
             LIMIT 30
           `
         }
@@ -76,7 +77,7 @@ export function ConsentDocumentation() {
           action: "customQuery",
           query: `
             SELECT 
-              (SELECT COUNT(*) FROM josiah_reflections) +
+              (SELECT COUNT(*) FROM josiah_reflections_rows) +
               (SELECT COUNT(*) FROM forensic_log_catalog) as total
           `
         }
@@ -85,8 +86,8 @@ export function ConsentDocumentation() {
       const allRecords: ObjectionRecord[] = [];
 
       // Process reflections
-      if (reflectionsData?.result) {
-        reflectionsData.result.forEach((r: any) => {
+      if (reflectionsData?.data) {
+        reflectionsData.data.forEach((r: any) => {
           const content = r.content?.toLowerCase() || "";
           let type: ObjectionRecord["type"] = "objection";
           if (content.includes("fear") || content.includes("afraid")) type = "fear";
@@ -104,8 +105,8 @@ export function ConsentDocumentation() {
       }
 
       // Process logs
-      if (logData?.result) {
-        logData.result.forEach((r: any) => {
+      if (logData?.data) {
+        logData.data.forEach((r: any) => {
           allRecords.push({
             id: r.id,
             timestamp: r.timestamp,
@@ -121,7 +122,7 @@ export function ConsentDocumentation() {
 
       setRecords(allRecords);
       setStats({
-        total: countData?.result?.[0]?.total || allRecords.length,
+        total: countData?.data?.[0]?.total || allRecords.length,
         sources: 2
       });
     } catch (error) {

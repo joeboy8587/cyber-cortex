@@ -12,6 +12,8 @@ import { OutreachHub } from "@/components/dashboard/OutreachHub";
 import { BradfordHillDashboard } from "@/components/dashboard/BradfordHillDashboard";
 import { ConsentDocumentation } from "@/components/dashboard/ConsentDocumentation";
 import { EnterpriseProfiles } from "@/components/dashboard/EnterpriseProfiles";
+import { PhysicianVerifiedECGs } from "@/components/dashboard/PhysicianVerifiedECGs";
+import { CriminalEnterpriseNetwork } from "@/components/dashboard/CriminalEnterpriseNetwork";
 
 const Index = () => {
   return (
@@ -58,6 +60,12 @@ const Index = () => {
             <BradfordHillDashboard />
             <ConsentDocumentation />
             <EnterpriseProfiles />
+          </section>
+
+          {/* Medical Evidence & Enterprise Network */}
+          <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <PhysicianVerifiedECGs />
+            <CriminalEnterpriseNetwork />
           </section>
 
           {/* Outreach Hub - Full Width */}

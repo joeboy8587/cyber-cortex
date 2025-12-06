@@ -14,6 +14,7 @@ import { ConsentDocumentation } from "@/components/dashboard/ConsentDocumentatio
 import { EnterpriseProfiles } from "@/components/dashboard/EnterpriseProfiles";
 import { PhysicianVerifiedECGs } from "@/components/dashboard/PhysicianVerifiedECGs";
 import { CriminalEnterpriseNetwork } from "@/components/dashboard/CriminalEnterpriseNetwork";
+import { BaselineDefensePanel } from "@/components/dashboard/BaselineDefensePanel";
 
 const Index = () => {
   return (
@@ -32,6 +33,11 @@ const Index = () => {
           {/* Database Statistics */}
           <section id="database-stats">
             <DatabaseStats />
+          </section>
+
+          {/* Baseline Defense Destroyer */}
+          <section id="baseline-defense">
+            <BaselineDefensePanel />
           </section>
 
           {/* Main Grid */}

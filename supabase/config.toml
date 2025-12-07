@@ -21,3 +21,6 @@ verify_jwt = false
 
 [functions.legal-analysis]
 verify_jwt = false
+
+[functions.evidence-fingerprint]
+verify_jwt = false

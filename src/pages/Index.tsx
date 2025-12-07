@@ -17,7 +17,7 @@ const ConsentDocumentation = lazy(() => import("@/components/dashboard/ConsentDo
 const EnterpriseProfiles = lazy(() => import("@/components/dashboard/EnterpriseProfiles").then(m => ({ default: m.EnterpriseProfiles })));
 const PhysicianVerifiedECGs = lazy(() => import("@/components/dashboard/PhysicianVerifiedECGs").then(m => ({ default: m.PhysicianVerifiedECGs })));
 const CriminalEnterpriseNetwork = lazy(() => import("@/components/dashboard/CriminalEnterpriseNetwork").then(m => ({ default: m.CriminalEnterpriseNetwork })));
-const BaselineDefensePanel = lazy(() => import("@/components/dashboard/BaselineDefensePanel").then(m => ({ default: m.BaselineDefensePanel })));
+const BaselineDefensePanel = lazy(() => import("@/components/dashboard/BaselineDefensePanel"));
 const ChainOfCustodyPanel = lazy(() => import("@/components/dashboard/ChainOfCustodyPanel").then(m => ({ default: m.ChainOfCustodyPanel })));
 
 function LoadingFallback() {

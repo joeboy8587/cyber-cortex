@@ -17,7 +17,7 @@ interface VerifiedStats {
   minHeartRate: number;
 }
 
-export function BaselineDefensePanel() {
+export default function BaselineDefensePanel() {
   const [stats, setStats] = useState<VerifiedStats | null>(null);
   const [loading, setLoading] = useState(true);
 

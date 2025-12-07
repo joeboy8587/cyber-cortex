@@ -16,6 +16,7 @@ import { TableExplorer } from "@/components/dashboard/TableExplorer";
 import { BradfordHillDashboard } from "@/components/dashboard/BradfordHillDashboard";
 import BaselineDefensePanel from "@/components/dashboard/BaselineDefensePanel";
 import { ConsentDocumentation } from "@/components/dashboard/ConsentDocumentation";
+import { PatternCoordinationAnalysis } from "@/components/dashboard/PatternCoordinationAnalysis";
 
 const Index = () => {
   return (
@@ -53,6 +54,10 @@ const Index = () => {
           <section id="enterprise-network" className="grid grid-cols-1 xl:grid-cols-2 gap-6">
             <CriminalEnterpriseNetwork />
             <EnterpriseProfiles />
+          </section>
+          
+          <section id="pattern-analysis">
+            <PatternCoordinationAnalysis />
           </section>
           
           <section id="defense-panels" className="grid grid-cols-1 xl:grid-cols-2 gap-6">

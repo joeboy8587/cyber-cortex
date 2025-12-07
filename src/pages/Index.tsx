@@ -1,21 +1,32 @@
+import { Suspense, lazy } from "react";
 import { CommandHeader } from "@/components/dashboard/CommandHeader";
 import { DatabaseStats } from "@/components/dashboard/DatabaseStats";
-import { ThreatMatrix } from "@/components/dashboard/ThreatMatrix";
-import { BiometricCorrelation } from "@/components/dashboard/BiometricCorrelation";
-import { LegalAnalysisAI } from "@/components/dashboard/LegalAnalysisAI";
-import { EvidenceTimeline } from "@/components/dashboard/EvidenceTimeline";
-import { DataStreams } from "@/components/dashboard/DataStreams";
-import { NullHypothesisPanel } from "@/components/dashboard/NullHypothesisPanel";
-import { TableExplorer } from "@/components/dashboard/TableExplorer";
-import { SqlConsole } from "@/components/dashboard/SqlConsole";
-import { OutreachHub } from "@/components/dashboard/OutreachHub";
-import { BradfordHillDashboard } from "@/components/dashboard/BradfordHillDashboard";
-import { ConsentDocumentation } from "@/components/dashboard/ConsentDocumentation";
-import { EnterpriseProfiles } from "@/components/dashboard/EnterpriseProfiles";
-import { PhysicianVerifiedECGs } from "@/components/dashboard/PhysicianVerifiedECGs";
-import { CriminalEnterpriseNetwork } from "@/components/dashboard/CriminalEnterpriseNetwork";
-import { BaselineDefensePanel } from "@/components/dashboard/BaselineDefensePanel";
-import { ChainOfCustodyPanel } from "@/components/dashboard/ChainOfCustodyPanel";
+
+// Lazy load heavy components to prevent initial render crash
+const ThreatMatrix = lazy(() => import("@/components/dashboard/ThreatMatrix").then(m => ({ default: m.ThreatMatrix })));
+const BiometricCorrelation = lazy(() => import("@/components/dashboard/BiometricCorrelation").then(m => ({ default: m.BiometricCorrelation })));
+const LegalAnalysisAI = lazy(() => import("@/components/dashboard/LegalAnalysisAI").then(m => ({ default: m.LegalAnalysisAI })));
+const EvidenceTimeline = lazy(() => import("@/components/dashboard/EvidenceTimeline").then(m => ({ default: m.EvidenceTimeline })));
+const DataStreams = lazy(() => import("@/components/dashboard/DataStreams").then(m => ({ default: m.DataStreams })));
+const NullHypothesisPanel = lazy(() => import("@/components/dashboard/NullHypothesisPanel").then(m => ({ default: m.NullHypothesisPanel })));
+const TableExplorer = lazy(() => import("@/components/dashboard/TableExplorer").then(m => ({ default: m.TableExplorer })));
+const SqlConsole = lazy(() => import("@/components/dashboard/SqlConsole").then(m => ({ default: m.SqlConsole })));
+const OutreachHub = lazy(() => import("@/components/dashboard/OutreachHub").then(m => ({ default: m.OutreachHub })));
+const BradfordHillDashboard = lazy(() => import("@/components/dashboard/BradfordHillDashboard").then(m => ({ default: m.BradfordHillDashboard })));
+const ConsentDocumentation = lazy(() => import("@/components/dashboard/ConsentDocumentation").then(m => ({ default: m.ConsentDocumentation })));
+const EnterpriseProfiles = lazy(() => import("@/components/dashboard/EnterpriseProfiles").then(m => ({ default: m.EnterpriseProfiles })));
+const PhysicianVerifiedECGs = lazy(() => import("@/components/dashboard/PhysicianVerifiedECGs").then(m => ({ default: m.PhysicianVerifiedECGs })));
+const CriminalEnterpriseNetwork = lazy(() => import("@/components/dashboard/CriminalEnterpriseNetwork").then(m => ({ default: m.CriminalEnterpriseNetwork })));
+const BaselineDefensePanel = lazy(() => import("@/components/dashboard/BaselineDefensePanel").then(m => ({ default: m.BaselineDefensePanel })));
+const ChainOfCustodyPanel = lazy(() => import("@/components/dashboard/ChainOfCustodyPanel").then(m => ({ default: m.ChainOfCustodyPanel })));
+
+function LoadingFallback() {
+  return (
+    <div className="flex items-center justify-center p-8">
+      <div className="animate-pulse text-primary font-mono">Loading...</div>
+    </div>
+  );
+}
 
 const Index = () => {
   return (
@@ -38,61 +49,93 @@ const Index = () => {
 
           {/* Baseline Defense Destroyer */}
           <section id="baseline-defense">
-            <BaselineDefensePanel />
+            <Suspense fallback={<LoadingFallback />}>
+              <BaselineDefensePanel />
+            </Suspense>
           </section>
 
           {/* Main Grid */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Left Column */}
             <div className="space-y-6">
-              <ThreatMatrix />
-              <TableExplorer />
+              <Suspense fallback={<LoadingFallback />}>
+                <ThreatMatrix />
+              </Suspense>
+              <Suspense fallback={<LoadingFallback />}>
+                <TableExplorer />
+              </Suspense>
             </div>
 
             {/* Center Column */}
             <div className="space-y-6">
-              <BiometricCorrelation />
-              <DataStreams />
+              <Suspense fallback={<LoadingFallback />}>
+                <BiometricCorrelation />
+              </Suspense>
+              <Suspense fallback={<LoadingFallback />}>
+                <DataStreams />
+              </Suspense>
             </div>
 
             {/* Right Column */}
             <div className="space-y-6" id="legal-analysis">
-              <LegalAnalysisAI />
-              <NullHypothesisPanel />
+              <Suspense fallback={<LoadingFallback />}>
+                <LegalAnalysisAI />
+              </Suspense>
+              <Suspense fallback={<LoadingFallback />}>
+                <NullHypothesisPanel />
+              </Suspense>
             </div>
           </div>
 
           {/* Legal Recommendations Section */}
           <section className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <BradfordHillDashboard />
-            <ConsentDocumentation />
-            <EnterpriseProfiles />
+            <Suspense fallback={<LoadingFallback />}>
+              <BradfordHillDashboard />
+            </Suspense>
+            <Suspense fallback={<LoadingFallback />}>
+              <ConsentDocumentation />
+            </Suspense>
+            <Suspense fallback={<LoadingFallback />}>
+              <EnterpriseProfiles />
+            </Suspense>
           </section>
 
           {/* Medical Evidence & Enterprise Network */}
           <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <PhysicianVerifiedECGs />
-            <CriminalEnterpriseNetwork />
+            <Suspense fallback={<LoadingFallback />}>
+              <PhysicianVerifiedECGs />
+            </Suspense>
+            <Suspense fallback={<LoadingFallback />}>
+              <CriminalEnterpriseNetwork />
+            </Suspense>
           </section>
 
           {/* Chain of Custody - Full Width */}
           <section id="chain-of-custody">
-            <ChainOfCustodyPanel />
+            <Suspense fallback={<LoadingFallback />}>
+              <ChainOfCustodyPanel />
+            </Suspense>
           </section>
 
           {/* Outreach Hub - Full Width */}
           <section id="outreach-hub">
-            <OutreachHub />
+            <Suspense fallback={<LoadingFallback />}>
+              <OutreachHub />
+            </Suspense>
           </section>
 
           {/* SQL Console - Full Width */}
           <section id="sql-console">
-            <SqlConsole />
+            <Suspense fallback={<LoadingFallback />}>
+              <SqlConsole />
+            </Suspense>
           </section>
 
           {/* Evidence Timeline - Full Width */}
           <section>
-            <EvidenceTimeline />
+            <Suspense fallback={<LoadingFallback />}>
+              <EvidenceTimeline />
+            </Suspense>
           </section>
 
           {/* Footer */}

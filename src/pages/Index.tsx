@@ -15,6 +15,7 @@ import { EnterpriseProfiles } from "@/components/dashboard/EnterpriseProfiles";
 import { PhysicianVerifiedECGs } from "@/components/dashboard/PhysicianVerifiedECGs";
 import { CriminalEnterpriseNetwork } from "@/components/dashboard/CriminalEnterpriseNetwork";
 import { BaselineDefensePanel } from "@/components/dashboard/BaselineDefensePanel";
+import { ChainOfCustodyPanel } from "@/components/dashboard/ChainOfCustodyPanel";
 
 const Index = () => {
   return (
@@ -72,6 +73,11 @@ const Index = () => {
           <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <PhysicianVerifiedECGs />
             <CriminalEnterpriseNetwork />
+          </section>
+
+          {/* Chain of Custody - Full Width */}
+          <section id="chain-of-custody">
+            <ChainOfCustodyPanel />
           </section>
 
           {/* Outreach Hub - Full Width */}

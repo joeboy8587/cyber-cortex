@@ -24,7 +24,8 @@ serve(async (req) => {
   let sql: ReturnType<typeof postgres> | null = null;
   
   try {
-    const { action, table, limit = 100, offset = 0, query } = await req.json();
+    const body = await req.json();
+    const { action, table, limit = 100, offset = 0, query, data, where } = body;
     
     sql = postgres(databaseUrl, {
       ssl: 'require',
@@ -118,6 +119,69 @@ serve(async (req) => {
           throw new Error('Only SELECT queries are allowed');
         }
         result = await sql.unsafe(query);
+        break;
+      }
+
+      case 'insertRecord': {
+        // Secure insert action for data corrections - only specific tables allowed
+        const insertTable = table;
+        const allowedTables = [
+          'aircraft_registry_enriched',
+          'operator_profiles_enriched',
+          'operator_profiles',
+          'flagged_aircraft_rows_rows'
+        ];
+        
+        if (!insertTable || !allowedTables.includes(insertTable)) {
+          throw new Error(`Insert not allowed for table: ${insertTable}`);
+        }
+        
+        if (!data || typeof data !== 'object') {
+          throw new Error('Data object is required');
+        }
+
+        const columns = Object.keys(data);
+        const values = Object.values(data) as (string | number | boolean | null)[];
+        const placeholders = columns.map((_, i) => `$${i + 1}`).join(', ');
+        const columnList = columns.map(c => `"${c.replace(/[^a-zA-Z0-9_]/g, '')}"`).join(', ');
+        
+        const insertQuery = `INSERT INTO ${insertTable} (${columnList}) VALUES (${placeholders}) RETURNING *`;
+        console.log('Executing insert:', insertQuery, values);
+        
+        result = await sql.unsafe(insertQuery, values as postgres.ParameterOrJSON<never>[]);
+        break;
+      }
+
+      case 'updateRecord': {
+        // Secure update action for data corrections
+        const updateTable = table;
+        const updateData = data;
+        const allowedUpdateTables = [
+          'aircraft_registry_enriched',
+          'operator_profiles_enriched', 
+          'operator_profiles',
+          'flagged_aircraft_rows_rows',
+          'shell_companies'
+        ];
+        
+        if (!updateTable || !allowedUpdateTables.includes(updateTable)) {
+          throw new Error(`Update not allowed for table: ${updateTable}`);
+        }
+        
+        if (!updateData || typeof updateData !== 'object' || !where) {
+          throw new Error('Data object and where clause are required');
+        }
+
+        const setClauses = Object.keys(updateData).map((col, i) => 
+          `"${col.replace(/[^a-zA-Z0-9_]/g, '')}" = $${i + 1}`
+        ).join(', ');
+        const updateValues = [...Object.values(updateData), where.value] as (string | number | boolean | null)[];
+        const whereClause = `"${where.column.replace(/[^a-zA-Z0-9_]/g, '')}" = $${Object.keys(updateData).length + 1}`;
+        
+        const updateQuery = `UPDATE ${updateTable} SET ${setClauses} WHERE ${whereClause} RETURNING *`;
+        console.log('Executing update:', updateQuery, updateValues);
+        
+        result = await sql.unsafe(updateQuery, updateValues as postgres.ParameterOrJSON<never>[]);
         break;
       }
 

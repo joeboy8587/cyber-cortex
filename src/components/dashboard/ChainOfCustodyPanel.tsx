@@ -52,16 +52,20 @@ export function ChainOfCustodyPanel() {
 
   useEffect(() => {
     loadStatus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadStatus = async () => {
     try {
       const [tableStatus, hashStats] = await Promise.all([
-        getTablesStatus(),
+        getTablesStatus().catch(() => []),
         getHashStats().catch(() => null)
       ]);
       
-      const withoutHash = tableStatus.filter(t => t.has_hash_column === 0).length;
+      // has_hash_column comes as string from DB, convert to number
+      const withoutHash = tableStatus.filter(t => 
+        Number(t.has_hash_column) === 0
+      ).length;
       setTablesWithoutHash(withoutHash);
       
       if (hashStats) {

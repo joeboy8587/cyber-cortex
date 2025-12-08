@@ -17,6 +17,7 @@ import { BradfordHillDashboard } from "@/components/dashboard/BradfordHillDashbo
 import BaselineDefensePanel from "@/components/dashboard/BaselineDefensePanel";
 import { ConsentDocumentation } from "@/components/dashboard/ConsentDocumentation";
 import { PatternCoordinationAnalysis } from "@/components/dashboard/PatternCoordinationAnalysis";
+import DataQualityAudit from "@/components/dashboard/DataQualityAudit";
 
 const Index = () => {
   return (
@@ -58,6 +59,10 @@ const Index = () => {
           
           <section id="pattern-analysis">
             <PatternCoordinationAnalysis />
+          </section>
+          
+          <section id="data-quality">
+            <DataQualityAudit />
           </section>
           
           <section id="defense-panels" className="grid grid-cols-1 xl:grid-cols-2 gap-6">

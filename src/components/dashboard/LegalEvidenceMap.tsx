@@ -53,7 +53,7 @@ export function LegalEvidenceMap() {
           action: 'customQuery',
           query: `
             SELECT 
-              (SELECT COUNT(*) FROM live_flight_detections) as flight_count,
+              (SELECT COUNT(*) FROM live_flight_detections_rows) as flight_count,
               (SELECT COUNT(*) FROM biometric_monitoring) as biometric_count,
               (SELECT COUNT(*) FROM screenshot_ocr_data) as screenshot_count,
               (SELECT COUNT(*) FROM forensic_file_registry) as forensic_count
@@ -70,7 +70,7 @@ export function LegalEvidenceMap() {
               (SELECT COUNT(*) FROM josiah_reflections_rows) as reflections_count,
               (SELECT COUNT(*) FROM josiah_unified_embeddings) as embeddings_count,
               (SELECT COUNT(*) FROM josiah_timeline) as timeline_count,
-              (SELECT COUNT(*) FROM correlation_events) as correlation_count
+              0 as correlation_count
           `
         }
       });
@@ -82,8 +82,8 @@ export function LegalEvidenceMap() {
           query: `
             SELECT 
               (SELECT COUNT(*) FROM aircraft_registry_enriched) as registry_count,
-              (SELECT COUNT(*) FROM shell_company_network) as shell_count,
-              (SELECT COUNT(*) FROM KCSO_Fact_Matrix_v1) as kcso_count,
+              (SELECT COUNT(*) FROM shell_companies) as shell_count,
+              0 as kcso_count,
               (SELECT COUNT(*) FROM criminal_enterprise_command_structure) as enterprise_count
           `
         }
@@ -115,7 +115,7 @@ export function LegalEvidenceMap() {
         primaryEvidence: {
           name: 'Primary Evidence',
           description: 'Directly observable data: timestamps, registrations, biometric readings',
-          tables: ['live_flight_detections', 'biometric_monitoring', 'screenshot_ocr_data', 'forensic_file_registry'],
+          tables: ['live_flight_detections_rows', 'biometric_monitoring', 'screenshot_ocr_data', 'forensic_file_registry'],
           totalRecords: primaryTotal,
           hashCoverage: 94,
           status: 'VERIFIED'
@@ -123,15 +123,15 @@ export function LegalEvidenceMap() {
         correlationEvidence: {
           name: 'Correlation Evidence',
           description: 'AI-synthesized patterns linking flights to biometric events',
-          tables: ['josiah_reflections_rows', 'josiah_unified_embeddings', 'josiah_timeline', 'correlation_events'],
+          tables: ['josiah_reflections_rows', 'josiah_unified_embeddings', 'josiah_timeline'],
           totalRecords: correlationTotal,
           hashCoverage: 98,
           status: 'VERIFIED'
         },
         contextualEvidence: {
           name: 'Contextual Evidence',
-          description: 'Supporting documentation: registry, shell companies, KCSO records',
-          tables: ['aircraft_registry_enriched', 'shell_company_network', 'KCSO_Fact_Matrix_v1', 'criminal_enterprise_command_structure'],
+          description: 'Supporting documentation: registry, shell companies, operator records',
+          tables: ['aircraft_registry_enriched', 'shell_companies', 'criminal_enterprise_command_structure'],
           totalRecords: contextualTotal,
           hashCoverage: 87,
           status: 'PARTIAL'

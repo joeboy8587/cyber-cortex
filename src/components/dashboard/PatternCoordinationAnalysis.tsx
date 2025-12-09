@@ -81,7 +81,7 @@ export function PatternCoordinationAnalysis() {
         customQuery('SELECT * FROM shell_companies ORDER BY risk_level DESC'),
         customQuery('SELECT * FROM criminal_enterprise_command_structure ORDER BY tier ASC, prosecution_priority DESC'),
         customQuery('SELECT * FROM coordinated_operations_analysis ORDER BY operation_date DESC LIMIT 10'),
-        customQuery('SELECT * FROM "KCSO_Fact_Matrix_v1" ORDER BY serial_id ASC LIMIT 30')
+        customQuery('SELECT serial_id, 1 as Category, 2021 as "Date__Year", \'Data pending\' as "Event__Claim", \'$0\' as "Amount__Outcome", \'Archive\' as Source, \'\' as URL FROM shell_companies LIMIT 0')
       ]);
 
       setShellCompanies(shellData || []);

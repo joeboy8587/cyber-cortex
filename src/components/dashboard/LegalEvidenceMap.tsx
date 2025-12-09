@@ -50,6 +50,7 @@ export function LegalEvidenceMap() {
       // Query for primary evidence counts
       const primaryQuery = await supabase.functions.invoke('neon-query', {
         body: {
+          action: 'customQuery',
           query: `
             SELECT 
               (SELECT COUNT(*) FROM live_flight_detections) as flight_count,
@@ -63,6 +64,7 @@ export function LegalEvidenceMap() {
       // Query for correlation evidence
       const correlationQuery = await supabase.functions.invoke('neon-query', {
         body: {
+          action: 'customQuery',
           query: `
             SELECT 
               (SELECT COUNT(*) FROM josiah_reflections_rows) as reflections_count,
@@ -76,6 +78,7 @@ export function LegalEvidenceMap() {
       // Query for contextual evidence
       const contextualQuery = await supabase.functions.invoke('neon-query', {
         body: {
+          action: 'customQuery',
           query: `
             SELECT 
               (SELECT COUNT(*) FROM aircraft_registry_enriched) as registry_count,

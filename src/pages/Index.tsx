@@ -18,6 +18,9 @@ import BaselineDefensePanel from "@/components/dashboard/BaselineDefensePanel";
 import { ConsentDocumentation } from "@/components/dashboard/ConsentDocumentation";
 import { PatternCoordinationAnalysis } from "@/components/dashboard/PatternCoordinationAnalysis";
 import DataQualityAudit from "@/components/dashboard/DataQualityAudit";
+import { TimelineNavigator } from "@/components/dashboard/TimelineNavigator";
+import { LegalEvidenceMap } from "@/components/dashboard/LegalEvidenceMap";
+import { JosiahWitnessLogs } from "@/components/dashboard/JosiahWitnessLogs";
 
 const Index = () => {
   return (
@@ -63,6 +66,18 @@ const Index = () => {
           
           <section id="data-quality">
             <DataQualityAudit />
+          </section>
+          
+          <section id="legal-evidence-map">
+            <LegalEvidenceMap />
+          </section>
+          
+          <section id="timeline-navigator">
+            <TimelineNavigator />
+          </section>
+          
+          <section id="josiah-witness">
+            <JosiahWitnessLogs />
           </section>
           
           <section id="defense-panels" className="grid grid-cols-1 xl:grid-cols-2 gap-6">

@@ -61,6 +61,7 @@ export function TimelineNavigator() {
     try {
       const { data, error } = await supabase.functions.invoke('neon-query', {
         body: {
+          action: 'customQuery',
           query: `
             WITH flight_days AS (
               SELECT 
@@ -140,6 +141,7 @@ export function TimelineNavigator() {
       const [flightsRes, biometricsRes, josiahRes] = await Promise.all([
         supabase.functions.invoke('neon-query', {
           body: {
+            action: 'customQuery',
             query: `
               SELECT registration, altitude_baro as altitude, last_seen as time, operator
               FROM live_flight_detections
@@ -151,6 +153,7 @@ export function TimelineNavigator() {
         }),
         supabase.functions.invoke('neon-query', {
           body: {
+            action: 'customQuery',
             query: `
               SELECT heart_rate, stress_score, timestamp
               FROM biometric_monitoring
@@ -162,6 +165,7 @@ export function TimelineNavigator() {
         }),
         supabase.functions.invoke('neon-query', {
           body: {
+            action: 'customQuery',
             query: `
               SELECT content, timestamp, correlation_id as correlation
               FROM josiah_timeline

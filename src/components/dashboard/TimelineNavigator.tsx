@@ -68,7 +68,7 @@ export function TimelineNavigator() {
                 DATE(last_seen) as event_date,
                 COUNT(*) as flight_count,
                 ARRAY_AGG(DISTINCT registration) FILTER (WHERE registration IS NOT NULL) as aircraft
-              FROM live_flight_detections
+              FROM live_flight_detections_rows
               WHERE last_seen IS NOT NULL
               GROUP BY DATE(last_seen)
             ),
@@ -144,7 +144,7 @@ export function TimelineNavigator() {
             action: 'customQuery',
             query: `
               SELECT registration, altitude_baro as altitude, last_seen as time, operator
-              FROM live_flight_detections
+              FROM live_flight_detections_rows
               WHERE DATE(last_seen) = '${date}'
               ORDER BY last_seen DESC
               LIMIT 20

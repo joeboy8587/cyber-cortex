@@ -77,17 +77,16 @@ export function PatternCoordinationAnalysis() {
   const fetchAllData = async () => {
     setLoading(true);
     try {
-      const [shellData, enterpriseData, opsData, factsData] = await Promise.all([
+      const [shellData, enterpriseData, opsData] = await Promise.all([
         customQuery('SELECT * FROM shell_companies ORDER BY risk_level DESC'),
         customQuery('SELECT * FROM criminal_enterprise_command_structure ORDER BY tier ASC, prosecution_priority DESC'),
-        customQuery('SELECT * FROM coordinated_operations_analysis ORDER BY operation_date DESC LIMIT 10'),
-        customQuery('SELECT serial_id, 1 as Category, 2021 as "Date__Year", \'Data pending\' as "Event__Claim", \'$0\' as "Amount__Outcome", \'Archive\' as Source, \'\' as URL FROM shell_companies LIMIT 0')
+        customQuery('SELECT * FROM coordinated_operations_analysis ORDER BY operation_date DESC LIMIT 10')
       ]);
 
       setShellCompanies(shellData || []);
       setEnterpriseEntities(enterpriseData || []);
       setCoordinatedOps(opsData || []);
-      setKcsoFacts(factsData || []);
+      setKcsoFacts([]);
     } catch (err) {
       console.error('Pattern analysis fetch error:', err);
     } finally {

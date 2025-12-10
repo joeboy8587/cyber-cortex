@@ -65,12 +65,12 @@ export function TimelineNavigator() {
           query: `
             WITH flight_days AS (
               SELECT 
-                DATE(last_seen) as event_date,
+                DATE(detection_timestamp) as event_date,
                 COUNT(*) as flight_count,
                 ARRAY_AGG(DISTINCT registration) FILTER (WHERE registration IS NOT NULL) as aircraft
               FROM live_flight_detections_rows
-              WHERE last_seen IS NOT NULL
-              GROUP BY DATE(last_seen)
+              WHERE detection_timestamp IS NOT NULL
+              GROUP BY DATE(detection_timestamp)
             ),
             biometric_days AS (
               SELECT 
@@ -143,10 +143,10 @@ export function TimelineNavigator() {
           body: {
             action: 'customQuery',
             query: `
-              SELECT registration, altitude_baro as altitude, last_seen as time, operator
+              SELECT registration, altitude, detection_timestamp as time, callsign as operator
               FROM live_flight_detections_rows
-              WHERE DATE(last_seen) = '${date}'
-              ORDER BY last_seen DESC
+              WHERE DATE(detection_timestamp) = '${date}'
+              ORDER BY detection_timestamp DESC
               LIMIT 20
             `
           }

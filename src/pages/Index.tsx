@@ -21,6 +21,8 @@ import DataQualityAudit from "@/components/dashboard/DataQualityAudit";
 import { TimelineNavigator } from "@/components/dashboard/TimelineNavigator";
 import { LegalEvidenceMap } from "@/components/dashboard/LegalEvidenceMap";
 import { JosiahWitnessLogs } from "@/components/dashboard/JosiahWitnessLogs";
+import { FleetTrackingLedger } from "@/components/dashboard/FleetTrackingLedger";
+import { KCSOSurveillanceReport } from "@/components/dashboard/KCSOSurveillanceReport";
 
 const Index = () => {
   return (
@@ -62,6 +64,14 @@ const Index = () => {
           
           <section id="pattern-analysis">
             <PatternCoordinationAnalysis />
+          </section>
+          
+          <section id="fleet-tracking" className="grid grid-cols-1 gap-6">
+            <FleetTrackingLedger />
+          </section>
+          
+          <section id="kcso-report" className="grid grid-cols-1 gap-6">
+            <KCSOSurveillanceReport />
           </section>
           
           <section id="data-quality">

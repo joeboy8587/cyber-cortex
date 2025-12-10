@@ -46,12 +46,12 @@ export const KCSOSurveillanceReport = () => {
           query: `
             SELECT 
               registration,
-              last_seen as timestamp,
-              COALESCE(altitude_baro, altitude_geom, 0) as altitude,
-              operator
+              detection_timestamp as timestamp,
+              COALESCE(altitude, 0) as altitude,
+              callsign as operator
             FROM live_flight_detections_rows
             WHERE ${registrationFilter}
-            ORDER BY last_seen DESC
+            ORDER BY detection_timestamp DESC
             LIMIT 100
           `
         }
@@ -66,11 +66,11 @@ export const KCSOSurveillanceReport = () => {
           query: `
             SELECT 
               COUNT(*) as total_detections,
-              COUNT(DISTINCT DATE(last_seen)) as unique_dates,
-              ROUND(AVG(COALESCE(altitude_baro, altitude_geom, 0))::numeric, 0) as avg_altitude,
-              MIN(COALESCE(altitude_baro, altitude_geom, 9999)) as min_altitude,
-              MIN(last_seen) as first_detection,
-              MAX(last_seen) as last_detection
+              COUNT(DISTINCT DATE(detection_timestamp)) as unique_dates,
+              ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as avg_altitude,
+              MIN(COALESCE(altitude, 9999)) as min_altitude,
+              MIN(detection_timestamp) as first_detection,
+              MAX(detection_timestamp) as last_detection
             FROM live_flight_detections_rows
             WHERE ${registrationFilter}
           `

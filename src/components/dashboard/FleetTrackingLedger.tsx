@@ -34,11 +34,11 @@ export const FleetTrackingLedger = () => {
             SELECT 
               registration,
               COUNT(*) as frequency,
-              ROUND(AVG(COALESCE(altitude_baro, altitude_geom, 0))::numeric, 0) as avg_altitude,
-              MIN(COALESCE(altitude_baro, altitude_geom, 9999)) as min_altitude,
-              MIN(last_seen) as first_seen,
-              MAX(last_seen) as last_seen,
-              MAX(operator) as operator
+              ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as avg_altitude,
+              MIN(COALESCE(altitude, 9999)) as min_altitude,
+              MIN(detection_timestamp) as first_seen,
+              MAX(detection_timestamp) as last_seen,
+              MAX(callsign) as operator
             FROM live_flight_detections_rows
             WHERE registration IS NOT NULL AND registration != ''
             GROUP BY registration

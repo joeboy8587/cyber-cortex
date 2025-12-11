@@ -63,43 +63,17 @@ export function TimelineNavigator() {
         body: {
           action: 'customQuery',
           query: `
-            WITH flight_days AS (
-              SELECT 
-                DATE(detection_timestamp) as event_date,
-                COUNT(*) as flight_count,
-                ARRAY_AGG(DISTINCT registration) FILTER (WHERE registration IS NOT NULL) as aircraft
-              FROM live_flight_detections_rows
-              WHERE detection_timestamp IS NOT NULL
-              GROUP BY DATE(detection_timestamp)
-            ),
-            biometric_days AS (
-              SELECT 
-                DATE(timestamp) as event_date,
-                COUNT(*) as bio_count,
-                MAX(stress_score) as max_stress
-              FROM biometric_monitoring
-              WHERE timestamp IS NOT NULL
-              GROUP BY DATE(timestamp)
-            ),
-            josiah_days AS (
-              SELECT 
-                DATE(timestamp) as event_date,
-                COUNT(*) as log_count
-              FROM josiah_timeline
-              WHERE timestamp IS NOT NULL
-              GROUP BY DATE(timestamp)
-            )
             SELECT 
-              COALESCE(f.event_date, b.event_date, j.event_date) as date,
-              COALESCE(f.flight_count, 0) as flights,
-              COALESCE(b.bio_count, 0) as biometric_events,
-              COALESCE(j.log_count, 0) as josiah_logs,
-              b.max_stress as highest_stress,
-              f.aircraft as aircraft_seen,
-              CASE WHEN f.flight_count > 0 AND b.bio_count > 0 AND j.log_count > 0 THEN true ELSE false END as three_factor
-            FROM flight_days f
-            FULL OUTER JOIN biometric_days b ON f.event_date = b.event_date
-            FULL OUTER JOIN josiah_days j ON COALESCE(f.event_date, b.event_date) = j.event_date
+              DATE(detection_timestamp) as date,
+              COUNT(*) as flights,
+              0 as biometric_events,
+              0 as josiah_logs,
+              NULL as highest_stress,
+              ARRAY_AGG(DISTINCT registration) FILTER (WHERE registration IS NOT NULL) as aircraft_seen,
+              false as three_factor
+            FROM live_flight_detections_rows
+            WHERE detection_timestamp IS NOT NULL
+            GROUP BY DATE(detection_timestamp)
             ORDER BY date DESC
             LIMIT 100
           `
@@ -151,30 +125,8 @@ export function TimelineNavigator() {
             `
           }
         }),
-        supabase.functions.invoke('neon-query', {
-          body: {
-            action: 'customQuery',
-            query: `
-              SELECT heart_rate, stress_score, timestamp
-              FROM biometric_monitoring
-              WHERE DATE(timestamp) = '${date}'
-              ORDER BY timestamp DESC
-              LIMIT 20
-            `
-          }
-        }),
-        supabase.functions.invoke('neon-query', {
-          body: {
-            action: 'customQuery',
-            query: `
-              SELECT content, timestamp, correlation_id as correlation
-              FROM josiah_timeline
-              WHERE DATE(timestamp) = '${date}'
-              ORDER BY timestamp DESC
-              LIMIT 20
-            `
-          }
-        })
+        Promise.resolve({ data: { results: [] } }),
+        Promise.resolve({ data: { results: [] } })
       ]);
 
       setDayDetail({

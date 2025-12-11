@@ -77,52 +77,13 @@ export const KCSOSurveillanceReport = () => {
         }
       });
 
-      // Get biometric correlations from Josiah reflections
-      const { data: correlationData } = await supabase.functions.invoke('neon-query', {
-        body: {
-          action: 'customQuery',
-          query: `
-            SELECT 
-              aircraft_registration,
-              heart_rate,
-              stress_score,
-              reflection_text,
-              time_offset_minutes,
-              event_timestamp
-            FROM josiah_reflections_rows
-            WHERE aircraft_registration LIKE 'N91%KC'
-            ORDER BY event_timestamp DESC
-            LIMIT 50
-          `
-        }
-      });
-
-      // Build correlation map
+      // Correlation map - biometric correlations not directly available in josiah_reflections_rows
       const correlationMap = new Map<string, {
         hr: number;
         stress: number;
         note: string;
         offset: number;
       }>();
-      
-      if (correlationData?.data) {
-        correlationData.data.forEach((row: {
-          aircraft_registration: string;
-          heart_rate: number;
-          stress_score: number;
-          reflection_text: string;
-          time_offset_minutes: number;
-          event_timestamp: string;
-        }) => {
-          const key = `${row.aircraft_registration}_${row.event_timestamp?.substring(0, 10)}`;
-          correlationMap.set(key, {
-            hr: row.heart_rate,
-            stress: row.stress_score,
-            note: row.reflection_text,
-            offset: row.time_offset_minutes
-          });
-        });
-      }
 
       // Enrich flight data with correlations
       const enrichedEvents: KCSOEvent[] = (flightData?.data || []).map((row: {
@@ -151,7 +112,7 @@ export const KCSOSurveillanceReport = () => {
       if (statsData?.data?.[0]) {
         setStats({
           ...statsData.data[0],
-          biometric_correlations: correlationData?.data?.length || 0
+          biometric_correlations: correlationMap.size
         });
       }
     } catch (err) {

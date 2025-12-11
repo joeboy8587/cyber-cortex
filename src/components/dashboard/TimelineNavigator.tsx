@@ -59,39 +59,89 @@ export function TimelineNavigator() {
   const fetchTimelineEvents = async () => {
     setLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke('neon-query', {
-        body: {
-          action: 'customQuery',
-          query: `
-            SELECT 
-              DATE(detection_timestamp) as date,
-              COUNT(*) as flights,
-              0 as biometric_events,
-              0 as josiah_logs,
-              NULL as highest_stress,
-              ARRAY_AGG(DISTINCT registration) FILTER (WHERE registration IS NOT NULL) as aircraft_seen,
-              false as three_factor
-            FROM live_flight_detections_rows
-            WHERE detection_timestamp IS NOT NULL
-            GROUP BY DATE(detection_timestamp)
-            ORDER BY date DESC
-            LIMIT 100
-          `
-        }
-      });
+      // Fetch flights, biometrics, and josiah logs separately then combine
+      const [flightRes, bioRes, josiahRes] = await Promise.all([
+        supabase.functions.invoke('neon-query', {
+          body: {
+            action: 'customQuery',
+            query: `
+              SELECT 
+                DATE(detection_timestamp) as date,
+                COUNT(*) as flights,
+                ARRAY_AGG(DISTINCT registration) FILTER (WHERE registration IS NOT NULL) as aircraft_seen
+              FROM live_flight_detections_rows
+              WHERE detection_timestamp IS NOT NULL
+              GROUP BY DATE(detection_timestamp)
+              ORDER BY date DESC
+              LIMIT 200
+            `
+          }
+        }),
+        supabase.functions.invoke('neon-query', {
+          body: {
+            action: 'customQuery',
+            query: `
+              SELECT 
+                DATE(measurement_timestamp) as date,
+                COUNT(*) as bio_count,
+                MAX(heart_rate) as peak_hr
+              FROM biometric_monitoring
+              WHERE measurement_timestamp IS NOT NULL
+              GROUP BY DATE(measurement_timestamp)
+            `
+          }
+        }),
+        supabase.functions.invoke('neon-query', {
+          body: {
+            action: 'customQuery',
+            query: `
+              SELECT 
+                DATE(created_at) as date,
+                COUNT(*) as josiah_count
+              FROM josiah_reflections_rows
+              WHERE created_at IS NOT NULL
+              GROUP BY DATE(created_at)
+            `
+          }
+        })
+      ]);
 
-      if (error) throw error;
+      // Create maps for biometrics and josiah
+      const bioMap = new Map<string, { count: number; peakHr?: number }>(
+        (bioRes.data?.data || []).map((b: { date: string; bio_count: string; peak_hr?: string }) => [
+          b.date, 
+          { count: parseInt(b.bio_count || '0'), peakHr: b.peak_hr ? parseInt(b.peak_hr) : undefined }
+        ])
+      );
       
-      const parsed = data?.results?.map((r: Record<string, unknown>) => ({
-        date: r.date as string,
-        flights: parseInt(r.flights as string || '0'),
-        biometricEvents: parseInt(r.biometric_events as string || '0'),
-        josiahLogs: parseInt(r.josiah_logs as string || '0'),
-        screenshots: 0,
-        hasThreeFactorConvergence: r.three_factor === true,
-        highestStressScore: r.highest_stress ? parseFloat(r.highest_stress as string) : undefined,
-        aircraftSeen: (r.aircraft_seen as string[] || []).slice(0, 5)
-      })) || [];
+      const josiahMap = new Map<string, number>(
+        (josiahRes.data?.data || []).map((j: { date: string; josiah_count: string }) => [
+          j.date, 
+          parseInt(j.josiah_count || '0')
+        ])
+      );
+
+      // Combine data
+      const flightData = flightRes.data?.data || [];
+      const parsed: DayEvent[] = flightData.map((r: { date: string; flights: string; aircraft_seen: string[] }) => {
+        const bioInfo = bioMap.get(r.date) || { count: 0, peakHr: undefined };
+        const josiahCount = josiahMap.get(r.date) || 0;
+        const flightCount = parseInt(r.flights || '0');
+        
+        // Three-factor: flight + biometric + josiah
+        const hasThreeFactor = flightCount > 0 && bioInfo.count > 0 && josiahCount > 0;
+        
+        return {
+          date: r.date,
+          flights: flightCount,
+          biometricEvents: bioInfo.count,
+          josiahLogs: josiahCount,
+          screenshots: 0,
+          hasThreeFactorConvergence: hasThreeFactor,
+          highestStressScore: bioInfo.peakHr,
+          aircraftSeen: (r.aircraft_seen || []).slice(0, 5)
+        };
+      });
       
       setEvents(parsed);
       
@@ -125,18 +175,49 @@ export function TimelineNavigator() {
             `
           }
         }),
-        Promise.resolve({ data: { results: [] } }),
-        Promise.resolve({ data: { results: [] } })
+        supabase.functions.invoke('neon-query', {
+          body: {
+            action: 'customQuery',
+            query: `
+              SELECT heart_rate, hrv as stress_score, measurement_timestamp as timestamp
+              FROM biometric_monitoring
+              WHERE DATE(measurement_timestamp) = '${date}'
+              ORDER BY measurement_timestamp DESC
+              LIMIT 20
+            `
+          }
+        }),
+        supabase.functions.invoke('neon-query', {
+          body: {
+            action: 'customQuery',
+            query: `
+              SELECT reflection_text as content, created_at as timestamp, aircraft_correlation as correlation
+              FROM josiah_reflections_rows
+              WHERE DATE(created_at) = '${date}'
+              ORDER BY created_at DESC
+              LIMIT 20
+            `
+          }
+        })
       ]);
 
       setDayDetail({
-        flights: flightsRes.data?.results || [],
-        biometrics: biometricsRes.data?.results?.map((b: Record<string, unknown>) => ({
+        flights: (flightsRes.data?.data || []).map((f: Record<string, unknown>) => ({
+          registration: f.registration as string || 'Unknown',
+          altitude: parseInt(f.altitude as string || '0'),
+          time: f.time as string,
+          operator: f.operator as string
+        })),
+        biometrics: (biometricsRes.data?.data || []).map((b: Record<string, unknown>) => ({
           heartRate: parseInt(b.heart_rate as string || '0'),
           stressScore: b.stress_score ? parseFloat(b.stress_score as string) : undefined,
           timestamp: b.timestamp as string
-        })) || [],
-        josiahLogs: josiahRes.data?.results || []
+        })),
+        josiahLogs: (josiahRes.data?.data || []).map((j: Record<string, unknown>) => ({
+          content: j.content as string || '',
+          timestamp: j.timestamp as string,
+          correlation: j.correlation as string
+        }))
       });
       
     } catch (err) {

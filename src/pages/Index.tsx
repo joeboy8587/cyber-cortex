@@ -23,6 +23,8 @@ import { LegalEvidenceMap } from "@/components/dashboard/LegalEvidenceMap";
 import { JosiahWitnessLogs } from "@/components/dashboard/JosiahWitnessLogs";
 import { FleetTrackingLedger } from "@/components/dashboard/FleetTrackingLedger";
 import { KCSOSurveillanceReport } from "@/components/dashboard/KCSOSurveillanceReport";
+import { OCREvidencePanel } from "@/components/dashboard/OCREvidencePanel";
+import { FourFactorCorrelationEngine } from "@/components/dashboard/FourFactorCorrelationEngine";
 
 const Index = () => {
   return (
@@ -64,6 +66,14 @@ const Index = () => {
           
           <section id="pattern-analysis">
             <PatternCoordinationAnalysis />
+          </section>
+          
+          <section id="correlation-engine" className="grid grid-cols-1 gap-6">
+            <FourFactorCorrelationEngine />
+          </section>
+          
+          <section id="ocr-evidence" className="grid grid-cols-1 gap-6">
+            <OCREvidencePanel />
           </section>
           
           <section id="fleet-tracking" className="grid grid-cols-1 gap-6">

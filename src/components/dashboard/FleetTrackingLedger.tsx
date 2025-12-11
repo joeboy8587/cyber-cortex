@@ -50,27 +50,8 @@ export const FleetTrackingLedger = () => {
 
       if (flightError) throw flightError;
 
-      // Get biometric correlation counts per aircraft
-      const { data: correlationData } = await supabase.functions.invoke('neon-query', {
-        body: {
-          action: 'customQuery',
-          query: `
-            SELECT 
-              aircraft_registration as registration,
-              COUNT(*) as correlation_count
-            FROM josiah_reflections_rows
-            WHERE aircraft_registration IS NOT NULL
-            GROUP BY aircraft_registration
-          `
-        }
-      });
-
+      // Correlation map will be empty for now - no direct aircraft_registration column in josiah tables
       const correlationMap = new Map<string, number>();
-      if (correlationData?.data) {
-        correlationData.data.forEach((row: { registration: string; correlation_count: number }) => {
-          correlationMap.set(row.registration, row.correlation_count);
-        });
-      }
 
       // Process and enrich fleet data
       const enrichedFleet: AircraftEntry[] = (flightData?.data || []).map((row: {

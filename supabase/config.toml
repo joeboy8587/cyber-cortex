@@ -1,5 +1,8 @@
 project_id = "pdmgglyqweveqplbgxiu"
 
+[functions.populate-correlations]
+verify_jwt = false
+
 [api]
 enabled = true
 port = 54321

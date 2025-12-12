@@ -1,0 +1,325 @@
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+};
+
+serve(async (req) => {
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  const databaseUrl = Deno.env.get('NEON_DATABASE_URL');
+  
+  if (!databaseUrl) {
+    console.error('NEON_DATABASE_URL is not configured');
+    return new Response(
+      JSON.stringify({ error: 'Database connection not configured' }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  }
+
+  let sql: ReturnType<typeof postgres> | null = null;
+  
+  try {
+    const body = await req.json();
+    const { action, timeWindowMinutes = 5, batchSize = 1000 } = body;
+    
+    sql = postgres(databaseUrl, {
+      ssl: 'require',
+      max: 1,
+      idle_timeout: 30,
+    });
+
+    let result;
+
+    switch (action) {
+      case 'getCorrelationStats': {
+        // Get current correlation table stats
+        const stats = await sql`
+          SELECT 
+            (SELECT COUNT(*) FROM biometric_flight_correlations) as bio_flight_count,
+            (SELECT COUNT(*) FROM correlation_events) as correlation_events_count,
+            (SELECT COUNT(*) FROM multi_factor_correlations) as multi_factor_count,
+            (SELECT COUNT(*) FROM live_flight_detections_rows) as flight_count,
+            (SELECT COUNT(*) FROM biometric_monitoring) as biometric_count,
+            (SELECT COUNT(*) FROM josiah_reflections_rows) as josiah_count
+        `;
+        result = stats[0];
+        break;
+      }
+
+      case 'findFlightBiometricCorrelations': {
+        // Find flights that occurred within timeWindow of biometric events
+        console.log(`Finding flight-biometric correlations with ${timeWindowMinutes} minute window...`);
+        
+        const correlations = await sql`
+          SELECT 
+            f.registration,
+            f.detection_timestamp as flight_time,
+            f.altitude,
+            f.callsign,
+            b.measurement_timestamp as bio_time,
+            b.heart_rate,
+            b.hrv,
+            EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))/60 as time_diff_minutes
+          FROM live_flight_detections_rows f
+          JOIN biometric_monitoring b ON 
+            ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= ${timeWindowMinutes * 60}
+          WHERE f.detection_timestamp IS NOT NULL 
+            AND b.measurement_timestamp IS NOT NULL
+          ORDER BY f.detection_timestamp DESC
+          LIMIT ${batchSize}
+        `;
+        
+        console.log(`Found ${correlations.length} flight-biometric correlations`);
+        result = {
+          count: correlations.length,
+          sample: correlations.slice(0, 10)
+        };
+        break;
+      }
+
+      case 'findFourFactorDays': {
+        // Find days with all four factors present
+        console.log('Finding four-factor convergence days...');
+        
+        const fourFactorDays = await sql`
+          WITH flight_days AS (
+            SELECT DISTINCT DATE(detection_timestamp) as day, COUNT(*) as flight_count
+            FROM live_flight_detections_rows
+            WHERE detection_timestamp IS NOT NULL
+            GROUP BY DATE(detection_timestamp)
+          ),
+          bio_days AS (
+            SELECT DISTINCT DATE(measurement_timestamp) as day, COUNT(*) as bio_count, MAX(heart_rate) as peak_hr
+            FROM biometric_monitoring
+            WHERE measurement_timestamp IS NOT NULL
+            GROUP BY DATE(measurement_timestamp)
+          ),
+          josiah_days AS (
+            SELECT DISTINCT DATE(created_at) as day, COUNT(*) as josiah_count
+            FROM josiah_reflections_rows
+            WHERE created_at IS NOT NULL
+            GROUP BY DATE(created_at)
+          ),
+          ocr_days AS (
+            SELECT DISTINCT DATE(created_at) as day, COUNT(*) as ocr_count
+            FROM ocr_aircraft_holding_patterns
+            WHERE created_at IS NOT NULL
+            GROUP BY DATE(created_at)
+          )
+          SELECT 
+            f.day,
+            f.flight_count,
+            COALESCE(b.bio_count, 0) as bio_count,
+            COALESCE(b.peak_hr, 0) as peak_hr,
+            COALESCE(j.josiah_count, 0) as josiah_count,
+            COALESCE(o.ocr_count, 0) as ocr_count,
+            CASE 
+              WHEN b.day IS NOT NULL AND j.day IS NOT NULL AND o.day IS NOT NULL THEN 4
+              WHEN (b.day IS NOT NULL AND j.day IS NOT NULL) OR (b.day IS NOT NULL AND o.day IS NOT NULL) OR (j.day IS NOT NULL AND o.day IS NOT NULL) THEN 3
+              WHEN b.day IS NOT NULL OR j.day IS NOT NULL OR o.day IS NOT NULL THEN 2
+              ELSE 1
+            END as factor_count
+          FROM flight_days f
+          LEFT JOIN bio_days b ON f.day = b.day
+          LEFT JOIN josiah_days j ON f.day = j.day
+          LEFT JOIN ocr_days o ON f.day = o.day
+          ORDER BY factor_count DESC, f.day DESC
+          LIMIT 200
+        `;
+        
+        const daysArray = fourFactorDays as unknown as Array<{ factor_count: number }>;
+        const stats = {
+          total: daysArray.length,
+          fourFactor: daysArray.filter(d => d.factor_count === 4).length,
+          threeFactor: daysArray.filter(d => d.factor_count === 3).length,
+          twoFactor: daysArray.filter(d => d.factor_count === 2).length
+        };
+        
+        console.log(`Found ${stats.fourFactor} four-factor days, ${stats.threeFactor} three-factor days`);
+        
+        result = {
+          stats,
+          days: fourFactorDays
+        };
+        break;
+      }
+
+      case 'findKCSOBiometricCorrelations': {
+        // Find KCSO aircraft correlated with biometric stress events
+        console.log('Finding KCSO-biometric correlations...');
+        
+        const kcsoCorrelations = await sql`
+          SELECT 
+            f.registration,
+            f.detection_timestamp as flight_time,
+            f.altitude,
+            b.measurement_timestamp as bio_time,
+            b.heart_rate,
+            b.hrv,
+            EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))/60 as time_diff_minutes
+          FROM live_flight_detections_rows f
+          JOIN biometric_monitoring b ON 
+            ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= ${timeWindowMinutes * 60}
+          WHERE f.registration LIKE 'N91%KC'
+            AND f.detection_timestamp IS NOT NULL 
+            AND b.measurement_timestamp IS NOT NULL
+          ORDER BY b.heart_rate DESC
+          LIMIT ${batchSize}
+        `;
+        
+        console.log(`Found ${kcsoCorrelations.length} KCSO-biometric correlations`);
+        
+        result = {
+          count: kcsoCorrelations.length,
+          correlations: kcsoCorrelations
+        };
+        break;
+      }
+
+      case 'calculateBradfordHillScores': {
+        // Calculate Bradford Hill causation scores for aircraft
+        console.log('Calculating Bradford Hill scores...');
+        
+        const scores = await sql`
+          WITH aircraft_stats AS (
+            SELECT 
+              registration,
+              COUNT(*) as detection_count,
+              COUNT(DISTINCT DATE(detection_timestamp)) as unique_days,
+              ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as avg_altitude,
+              MIN(COALESCE(altitude, 9999)) as min_altitude
+            FROM live_flight_detections_rows
+            WHERE registration IS NOT NULL
+            GROUP BY registration
+            HAVING COUNT(*) > 5
+          ),
+          bio_correlation_counts AS (
+            SELECT 
+              f.registration,
+              COUNT(*) as bio_correlations
+            FROM live_flight_detections_rows f
+            JOIN biometric_monitoring b ON 
+              ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= 300
+            WHERE f.detection_timestamp IS NOT NULL 
+              AND b.measurement_timestamp IS NOT NULL
+            GROUP BY f.registration
+          )
+          SELECT 
+            a.registration,
+            a.detection_count,
+            a.unique_days,
+            a.avg_altitude,
+            a.min_altitude,
+            COALESCE(bc.bio_correlations, 0) as bio_correlations,
+            -- Bradford Hill Score calculation
+            ROUND((
+              -- Strength: More detections = stronger association
+              LEAST(a.detection_count / 10.0, 20) +
+              -- Consistency: More unique days = more consistent
+              LEAST(a.unique_days / 5.0, 10) +
+              -- Temporality: Bio correlations show temporal relationship
+              LEAST(COALESCE(bc.bio_correlations, 0) / 5.0, 15) +
+              -- Specificity: Lower altitude = more specific targeting
+              CASE WHEN a.min_altitude < 1000 THEN 10 
+                   WHEN a.min_altitude < 1500 THEN 7
+                   WHEN a.min_altitude < 2000 THEN 4
+                   ELSE 2 END +
+              -- Biological gradient: More correlations = dose response
+              LEAST(COALESCE(bc.bio_correlations, 0) / 10.0, 10)
+            )::numeric, 1) as bradford_hill_score
+          FROM aircraft_stats a
+          LEFT JOIN bio_correlation_counts bc ON a.registration = bc.registration
+          ORDER BY bradford_hill_score DESC
+          LIMIT 50
+        `;
+        
+        console.log(`Calculated Bradford Hill scores for ${scores.length} aircraft`);
+        
+        result = {
+          count: scores.length,
+          scores
+        };
+        break;
+      }
+
+      case 'getComprehensiveSummary': {
+        // Get comprehensive evidence summary
+        console.log('Generating comprehensive evidence summary...');
+        
+        const [tableStats, topAircraft, dateRange, kcsoStats] = await Promise.all([
+          sql`
+            SELECT 
+              (SELECT COUNT(*) FROM live_flight_detections_rows) as flights,
+              (SELECT COUNT(*) FROM biometric_monitoring) as biometrics,
+              (SELECT COUNT(*) FROM josiah_reflections_rows) as josiah_logs,
+              (SELECT COUNT(*) FROM ocr_aircraft_holding_patterns) as ocr_patterns,
+              (SELECT COUNT(*) FROM physician_verified_ecgs) as ecgs,
+              (SELECT COUNT(DISTINCT registration) FROM live_flight_detections_rows) as unique_aircraft
+          `,
+          sql`
+            SELECT registration, COUNT(*) as count
+            FROM live_flight_detections_rows
+            WHERE registration IS NOT NULL
+            GROUP BY registration
+            ORDER BY count DESC
+            LIMIT 10
+          `,
+          sql`
+            SELECT 
+              MIN(detection_timestamp) as earliest_flight,
+              MAX(detection_timestamp) as latest_flight,
+              MIN(measurement_timestamp) as earliest_bio,
+              MAX(measurement_timestamp) as latest_bio
+            FROM live_flight_detections_rows f, biometric_monitoring b
+          `,
+          sql`
+            SELECT 
+              COUNT(*) as total_detections,
+              COUNT(DISTINCT DATE(detection_timestamp)) as unique_days,
+              ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as avg_altitude
+            FROM live_flight_detections_rows
+            WHERE registration LIKE 'N91%KC'
+          `
+        ]);
+        
+        result = {
+          tableStats: tableStats[0],
+          topAircraft,
+          dateRange: dateRange[0],
+          kcsoStats: kcsoStats[0]
+        };
+        break;
+      }
+
+      default:
+        throw new Error(`Unknown action: ${action}`);
+    }
+
+    await sql.end();
+
+    return new Response(
+      JSON.stringify({ data: result }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+
+  } catch (err) {
+    const error = err as Error;
+    console.error('Correlation engine error:', error);
+    if (sql) {
+      try {
+        await sql.end();
+      } catch (e) {
+        console.error('Error closing connection:', e);
+      }
+    }
+    return new Response(
+      JSON.stringify({ error: error.message }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  }
+});

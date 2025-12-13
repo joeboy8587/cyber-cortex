@@ -27,7 +27,7 @@ import { OCREvidencePanel } from "@/components/dashboard/OCREvidencePanel";
 import { FourFactorCorrelationEngine } from "@/components/dashboard/FourFactorCorrelationEngine";
 import { KCSODeepDiveReport } from "@/components/dashboard/KCSODeepDiveReport";
 import { ShellCompanyMatrix } from "@/components/dashboard/ShellCompanyMatrix";
-
+import { MilitaryAircraftPanel } from "@/components/dashboard/MilitaryAircraftPanel";
 const Index = () => {
   return (
     <div className="min-h-screen bg-background">
@@ -108,6 +108,10 @@ const Index = () => {
           
           <section id="josiah-witness">
             <JosiahWitnessLogs />
+          </section>
+          
+          <section id="military-tracking" className="grid grid-cols-1 gap-6">
+            <MilitaryAircraftPanel />
           </section>
           
           <section id="defense-panels" className="grid grid-cols-1 xl:grid-cols-2 gap-6">

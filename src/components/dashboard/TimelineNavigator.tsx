@@ -96,11 +96,10 @@ export function TimelineNavigator() {
             action: 'customQuery',
             query: `
               SELECT 
-                DATE(created_at) as date,
+                DATE(COALESCE(created_at, NOW())) as date,
                 COUNT(*) as josiah_count
               FROM josiah_reflections_rows
-              WHERE created_at IS NOT NULL
-              GROUP BY DATE(created_at)
+              GROUP BY DATE(COALESCE(created_at, NOW()))
             `
           }
         })
@@ -191,9 +190,9 @@ export function TimelineNavigator() {
           body: {
             action: 'customQuery',
             query: `
-              SELECT reflection_text as content, created_at as timestamp, aircraft_correlation as correlation
+              SELECT reflection_content as content, created_at as timestamp, aircraft_correlation as correlation
               FROM josiah_reflections_rows
-              WHERE DATE(created_at) = '${date}'
+              WHERE DATE(COALESCE(created_at, NOW())) = '${date}'
               ORDER BY created_at DESC
               LIMIT 20
             `

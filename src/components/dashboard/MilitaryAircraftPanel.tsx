@@ -68,11 +68,11 @@ export function MilitaryAircraftPanel() {
                 OR registration LIKE 'USAF%'
                 OR registration LIKE 'ARMY%'
                 OR registration LIKE 'CGTR%'
-                OR operator ILIKE '%military%'
-                OR operator ILIKE '%navy%'
-                OR operator ILIKE '%air force%'
-                OR operator ILIKE '%coast guard%'
-                OR operator ILIKE '%army%'
+                OR callsign ILIKE '%military%'
+                OR callsign ILIKE '%navy%'
+                OR callsign ILIKE '%air force%'
+                OR callsign ILIKE '%coast guard%'
+                OR callsign ILIKE '%army%'
               GROUP BY registration
               ORDER BY detection_count DESC
               LIMIT 25
@@ -80,22 +80,22 @@ export function MilitaryAircraftPanel() {
           }
         });
 
-        // Query for government operator flights
+        // Query for government callsign flights
         const { data: govData } = await supabase.functions.invoke("neon-query", {
           body: {
             action: "customQuery",
             query: `
               SELECT 
                 registration,
-                operator,
+                callsign,
                 COUNT(*) as detection_count
               FROM live_flight_detections_rows 
               WHERE 
-                operator ILIKE '%government%'
-                OR operator ILIKE '%federal%'
-                OR operator ILIKE '%state of%'
-                OR operator ILIKE '%department%'
-              GROUP BY registration, operator
+                callsign ILIKE '%government%'
+                OR callsign ILIKE '%federal%'
+                OR callsign ILIKE '%state of%'
+                OR callsign ILIKE '%sheriff%'
+              GROUP BY registration, callsign
               ORDER BY detection_count DESC
               LIMIT 15
             `
@@ -112,9 +112,9 @@ export function MilitaryAircraftPanel() {
                 registration ~ '^[0-9]{2}-[0-9]{5}$'
                 OR registration ~ '^[0-9]{6}$'
                 OR registration LIKE 'RAIDR%'
-                OR operator ILIKE '%military%'
-                OR operator ILIKE '%navy%'
-                OR operator ILIKE '%air force%'
+                OR callsign ILIKE '%military%'
+                OR callsign ILIKE '%navy%'
+                OR callsign ILIKE '%air force%'
             `
           }
         });

@@ -106,10 +106,10 @@ serve(async (req) => {
             GROUP BY DATE(created_at)
           ),
           ocr_days AS (
-            SELECT DISTINCT DATE(created_at) as day, COUNT(*) as ocr_count
+            SELECT DISTINCT DATE(COALESCE(observation_timestamp, imported_at)) as day, COUNT(*) as ocr_count
             FROM ocr_aircraft_holding_patterns
-            WHERE created_at IS NOT NULL
-            GROUP BY DATE(created_at)
+            WHERE observation_timestamp IS NOT NULL OR imported_at IS NOT NULL
+            GROUP BY DATE(COALESCE(observation_timestamp, imported_at))
           )
           SELECT 
             f.day,

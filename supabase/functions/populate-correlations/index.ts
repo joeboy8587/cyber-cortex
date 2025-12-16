@@ -305,6 +305,88 @@ serve(async (req) => {
         break;
       }
 
+      case 'populateCorrelations': {
+        // Actually insert correlations into biometric_flight_correlations_rows_5
+        console.log('Populating biometric_flight_correlations_rows_5...');
+        
+        // First check the schema of the target table
+        const schemaCheck = await sql`
+          SELECT column_name, data_type 
+          FROM information_schema.columns 
+          WHERE table_name = 'biometric_flight_correlations_rows_5'
+          ORDER BY ordinal_position
+        `;
+        console.log('Target table schema:', schemaCheck);
+        
+        if (schemaCheck.length === 0) {
+          throw new Error('Target table biometric_flight_correlations_rows_5 does not exist');
+        }
+        
+        const columns = (schemaCheck as unknown as Array<{ column_name: string }>).map(c => c.column_name);
+        console.log('Available columns:', columns);
+        
+        // Build dynamic insert based on available columns
+        const insertRes = await sql`
+          INSERT INTO biometric_flight_correlations_rows_5 (
+            id,
+            correlation_id,
+            flight_detection_id,
+            biometric_log_id,
+            time_offset_minutes,
+            correlation_strength,
+            hr_spike_detected,
+            hrv_drop_detected,
+            stress_correlation_score,
+            correlation_timestamp,
+            created_at
+          )
+          SELECT 
+            gen_random_uuid()::text as id,
+            CONCAT(f.registration, '_', DATE(f.detection_timestamp)::text) as correlation_id,
+            f.registration as flight_detection_id,
+            b.measurement_timestamp::text as biometric_log_id,
+            ROUND(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))/60, 2) as time_offset_minutes,
+            CASE 
+              WHEN ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= 60 THEN 0.9
+              WHEN ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= 180 THEN 0.7
+              ELSE 0.5
+            END as correlation_strength,
+            (b.heart_rate > 100) as hr_spike_detected,
+            (b.hrv < 30) as hrv_drop_detected,
+            CASE 
+              WHEN b.heart_rate > 120 THEN 90
+              WHEN b.heart_rate > 100 THEN 70
+              WHEN b.heart_rate > 85 THEN 50
+              ELSE 30
+            END as stress_correlation_score,
+            f.detection_timestamp::text as correlation_timestamp,
+            NOW()::text as created_at
+          FROM live_flight_detections_rows f
+          JOIN biometric_monitoring b ON 
+            ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= ${timeWindowMinutes * 60}
+          WHERE f.detection_timestamp IS NOT NULL 
+            AND b.measurement_timestamp IS NOT NULL
+            AND f.registration IS NOT NULL
+          ORDER BY f.detection_timestamp DESC
+          LIMIT ${batchSize}
+          ON CONFLICT DO NOTHING
+        `;
+        
+        console.log('Insert result:', insertRes);
+        
+        // Count how many we now have
+        const countRes = await sql`
+          SELECT COUNT(*) as total FROM biometric_flight_correlations_rows_5
+        `;
+        
+        result = {
+          message: 'Correlations populated',
+          insertedBatch: batchSize,
+          totalInTable: countRes[0]?.total
+        };
+        break;
+      }
+
       default:
         throw new Error(`Unknown action: ${action}`);
     }

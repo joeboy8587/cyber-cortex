@@ -100,10 +100,19 @@ serve(async (req) => {
             GROUP BY DATE(measurement_timestamp)
           ),
           josiah_days AS (
-            SELECT DISTINCT DATE(created_at) as day, COUNT(*) as josiah_count
-            FROM josiah_reflections_rows
-            WHERE created_at IS NOT NULL
-            GROUP BY DATE(created_at)
+            SELECT DISTINCT DATE(jt.ts) as day, COUNT(*) as josiah_count
+            FROM josiah_reflections_rows j
+            CROSS JOIN LATERAL (
+              SELECT COALESCE(
+                j.created_at,
+                j.created_timestamp,
+                j.timestamp,
+                j.reflection_timestamp,
+                j.event_timestamp
+              ) as ts
+            ) jt
+            WHERE jt.ts IS NOT NULL
+            GROUP BY DATE(jt.ts)
           ),
           ocr_days AS (
             SELECT DISTINCT DATE(COALESCE(observation_timestamp, imported_at)) as day, COUNT(*) as ocr_count

@@ -46,6 +46,40 @@ export const OCREvidencePanel = () => {
   const fetchOCRData = useCallback(async () => {
     setLoading(true);
     try {
+      // Helper: pick a safe timestamp column for tables where "created_at" may not exist
+      const pickTimestampColumn = async (tableName: string, candidates: string[]) => {
+        const { data: schemaRes } = await supabase.functions.invoke('neon-query', {
+          body: { action: 'getTableSchema', table: tableName }
+        });
+        const cols: string[] = (schemaRes?.data || []).map((c: any) => String(c.column_name));
+        return candidates.find(c => cols.includes(c)) || null;
+      };
+
+      const holdingTsCol = await pickTimestampColumn('ocr_aircraft_holding_patterns', [
+        'created_at',
+        'observation_timestamp',
+        'imported_at',
+        'timestamp'
+      ]);
+
+      const screenshotTsCol = await pickTimestampColumn('screenshot_ocr_data', [
+        'created_at',
+        'timestamp',
+        'exif_timestamp',
+        'filename_timestamp',
+        'captured_at'
+      ]);
+
+      const radarTsCol = await pickTimestampColumn('radar_screenshot_analysis', [
+        'created_at',
+        'analysis_timestamp',
+        'analysis_date',
+        'timestamp'
+      ]);
+
+      const screenshotOrderClause = screenshotTsCol ? `ORDER BY ${screenshotTsCol} DESC` : '';
+      const radarOrderClause = radarTsCol ? `ORDER BY ${radarTsCol} DESC` : '';
+
       // Fetch holding patterns (loitering evidence)
       const [holdingRes, screenshotRes, radarRes, correlationRes] = await Promise.all([
         supabase.functions.invoke('neon-query', {
@@ -55,8 +89,8 @@ export const OCREvidencePanel = () => {
               SELECT 
                 registration,
                 loop_count,
-                MIN(created_at) as first_seen,
-                MAX(created_at) as last_seen
+                MIN(${holdingTsCol ?? 'NULL'}) as first_seen,
+                MAX(${holdingTsCol ?? 'NULL'}) as last_seen
               FROM ocr_aircraft_holding_patterns
               WHERE registration IS NOT NULL
               GROUP BY registration, loop_count
@@ -70,7 +104,7 @@ export const OCREvidencePanel = () => {
             action: 'customQuery',
             query: `
               SELECT * FROM screenshot_ocr_data
-              ORDER BY created_at DESC
+              ${screenshotOrderClause}
               LIMIT 50
             `
           }
@@ -80,7 +114,7 @@ export const OCREvidencePanel = () => {
             action: 'customQuery',
             query: `
               SELECT * FROM radar_screenshot_analysis
-              ORDER BY created_at DESC
+              ${radarOrderClause}
               LIMIT 50
             `
           }

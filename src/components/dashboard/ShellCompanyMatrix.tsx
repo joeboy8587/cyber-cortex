@@ -41,6 +41,21 @@ export const ShellCompanyMatrix = () => {
   const fetchShellData = useCallback(async () => {
     setLoading(true);
     try {
+      const pickTimestampColumn = async (tableName: string, candidates: string[]) => {
+        const { data: schemaRes } = await supabase.functions.invoke('neon-query', {
+          body: { action: 'getTableSchema', table: tableName }
+        });
+        const cols: string[] = (schemaRes?.data || []).map((c: any) => String(c.column_name));
+        return candidates.find(c => cols.includes(c)) || null;
+      };
+
+      const flaggedTsCol = await pickTimestampColumn('flagged_aircraft_rows_rows', [
+        'created_at',
+        'detection_timestamp',
+        'timestamp',
+        'flagged_at'
+      ]);
+
       // Get aircraft grouped by operator/callsign patterns
       const [operatorRes, flaggedRes] = await Promise.all([
         supabase.functions.invoke('neon-query', {
@@ -68,7 +83,7 @@ export const ShellCompanyMatrix = () => {
             action: 'customQuery',
             query: `
               SELECT * FROM flagged_aircraft_rows_rows
-              ORDER BY created_at DESC
+              ${flaggedTsCol ? `ORDER BY ${flaggedTsCol} DESC` : ''}
               LIMIT 100
             `
           }

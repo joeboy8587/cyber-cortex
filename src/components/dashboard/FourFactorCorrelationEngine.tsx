@@ -85,35 +85,63 @@ export const FourFactorCorrelationEngine = () => {
         }
       });
 
+      // Resolve timestamp columns safely (prevents "created_at" does not exist)
+      const pickTimestampColumn = async (tableName: string, candidates: string[]) => {
+        const { data: schemaRes } = await supabase.functions.invoke('neon-query', {
+          body: { action: 'getTableSchema', table: tableName }
+        });
+        const cols: string[] = (schemaRes?.data || []).map((c: any) => String(c.column_name));
+        return candidates.find(c => cols.includes(c)) || null;
+      };
+
+      const josiahTsCol = await pickTimestampColumn('josiah_reflections_rows', [
+        'created_at',
+        'created_timestamp',
+        'timestamp',
+        'reflection_timestamp',
+        'event_timestamp'
+      ]);
+
+      const radarTsCol = await pickTimestampColumn('radar_screenshot_analysis', [
+        'created_at',
+        'analysis_timestamp',
+        'analysis_date',
+        'timestamp'
+      ]);
+
       // Get daily Josiah reflection counts
-      const { data: josiahData } = await supabase.functions.invoke('neon-query', {
-        body: {
-          action: 'customQuery',
-          query: `
-            SELECT 
-              DATE(created_at) as date,
-              COUNT(*) as josiah_count
-            FROM josiah_reflections_rows
-            WHERE created_at IS NOT NULL
-            GROUP BY DATE(created_at)
-          `
-        }
-      });
+      const { data: josiahData } = josiahTsCol
+        ? await supabase.functions.invoke('neon-query', {
+            body: {
+              action: 'customQuery',
+              query: `
+                SELECT 
+                  DATE(${josiahTsCol}) as date,
+                  COUNT(*) as josiah_count
+                FROM josiah_reflections_rows
+                WHERE ${josiahTsCol} IS NOT NULL
+                GROUP BY DATE(${josiahTsCol})
+              `
+            }
+          })
+        : { data: { data: [] } };
 
       // Get daily OCR counts
-      const { data: ocrData } = await supabase.functions.invoke('neon-query', {
-        body: {
-          action: 'customQuery',
-          query: `
-            SELECT 
-              DATE(created_at) as date,
-              COUNT(*) as ocr_count
-            FROM radar_screenshot_analysis
-            WHERE created_at IS NOT NULL
-            GROUP BY DATE(created_at)
-          `
-        }
-      });
+      const { data: ocrData } = radarTsCol
+        ? await supabase.functions.invoke('neon-query', {
+            body: {
+              action: 'customQuery',
+              query: `
+                SELECT 
+                  DATE(${radarTsCol}) as date,
+                  COUNT(*) as ocr_count
+                FROM radar_screenshot_analysis
+                WHERE ${radarTsCol} IS NOT NULL
+                GROUP BY DATE(${radarTsCol})
+              `
+            }
+          })
+        : { data: { data: [] } };
 
       // Create maps for quick lookup
       const bioMap = new Map<string, { count: number; peakHr?: number }>(

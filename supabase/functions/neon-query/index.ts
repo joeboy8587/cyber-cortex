@@ -24,8 +24,15 @@ serve(async (req) => {
   let sql: ReturnType<typeof postgres> | null = null;
   
   try {
-    const body = await req.json();
-    const { action, table, limit = 100, offset = 0, query, data, where } = body;
+    const body = await req.json().catch(() => ({}));
+    const { action, table, limit = 100, offset = 0, query, data, where } = (body ?? {}) as Record<string, any>;
+
+    if (!action || typeof action !== 'string') {
+      return new Response(
+        JSON.stringify({ error: 'Missing required field: action' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
     
     sql = postgres(databaseUrl, {
       ssl: 'require',

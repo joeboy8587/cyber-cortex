@@ -26,29 +26,47 @@ export function ConsentDocumentation() {
 
   const fetchObjectionRecords = async () => {
     try {
+      const pickTimestampColumn = async (tableName: string, candidates: string[]) => {
+        const { data: schemaRes } = await supabase.functions.invoke('neon-query', {
+          body: { action: 'getTableSchema', table: tableName }
+        });
+        const cols: string[] = (schemaRes?.data || []).map((c: any) => String(c.column_name));
+        return candidates.find(c => cols.includes(c)) || null;
+      };
+
+      const josiahTsCol = await pickTimestampColumn('josiah_reflections_rows', [
+        'created_at',
+        'created_timestamp',
+        'timestamp',
+        'reflection_timestamp',
+        'event_timestamp'
+      ]);
+
       // Fetch from josiah_reflections_rows for documented objections
-      const { data: reflectionsData } = await supabase.functions.invoke("neon-query", {
-        body: {
-          action: "customQuery",
-          query: `
-            SELECT 
-              id::text,
-              created_at as timestamp,
-              'josiah_reflections_rows' as source,
-              reflection_content as content
-            FROM josiah_reflections_rows
-            WHERE reflection_content ILIKE '%consent%' 
-               OR reflection_content ILIKE '%object%'
-               OR reflection_content ILIKE '%unwanted%'
-               OR reflection_content ILIKE '%fear%'
-               OR reflection_content ILIKE '%harm%'
-               OR reflection_content ILIKE '%stop%'
-               OR reflection_content ILIKE '%protest%'
-            ORDER BY created_at DESC
-            LIMIT 50
-          `
-        }
-      });
+      const { data: reflectionsData } = josiahTsCol
+        ? await supabase.functions.invoke("neon-query", {
+            body: {
+              action: "customQuery",
+              query: `
+                SELECT 
+                  id::text,
+                  ${josiahTsCol} as timestamp,
+                  'josiah_reflections_rows' as source,
+                  reflection_content as content
+                FROM josiah_reflections_rows
+                WHERE reflection_content ILIKE '%consent%' 
+                   OR reflection_content ILIKE '%object%'
+                   OR reflection_content ILIKE '%unwanted%'
+                   OR reflection_content ILIKE '%fear%'
+                   OR reflection_content ILIKE '%harm%'
+                   OR reflection_content ILIKE '%stop%'
+                   OR reflection_content ILIKE '%protest%'
+                ORDER BY ${josiahTsCol} DESC
+                LIMIT 50
+              `
+            }
+          })
+        : { data: { data: [] } };
 
       // Fetch from forensic_log_catalog using filename/filepath
       const { data: logData } = await supabase.functions.invoke("neon-query", {

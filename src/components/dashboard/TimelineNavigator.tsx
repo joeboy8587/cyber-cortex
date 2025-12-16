@@ -59,6 +59,13 @@ export function TimelineNavigator() {
   const fetchTimelineEvents = async () => {
     setLoading(true);
     try {
+      const { data: josiahSchema } = await supabase.functions.invoke('neon-query', {
+        body: { action: 'getTableSchema', table: 'josiah_reflections_rows' }
+      });
+      const josiahCols: string[] = (josiahSchema?.data || []).map((c: any) => String(c.column_name));
+      const josiahTsCol = ['created_at', 'created_timestamp', 'timestamp', 'reflection_timestamp', 'event_timestamp']
+        .find(c => josiahCols.includes(c));
+
       // Fetch flights, biometrics, and josiah logs separately then combine
       const [flightRes, bioRes, josiahRes] = await Promise.all([
         supabase.functions.invoke('neon-query', {
@@ -91,18 +98,21 @@ export function TimelineNavigator() {
             `
           }
         }),
-        supabase.functions.invoke('neon-query', {
-          body: {
-            action: 'customQuery',
-            query: `
-              SELECT 
-                DATE(COALESCE(created_at, NOW())) as date,
-                COUNT(*) as josiah_count
-              FROM josiah_reflections_rows
-              GROUP BY DATE(COALESCE(created_at, NOW()))
-            `
-          }
-        })
+        josiahTsCol
+          ? supabase.functions.invoke('neon-query', {
+              body: {
+                action: 'customQuery',
+                query: `
+                  SELECT 
+                    DATE(${josiahTsCol}) as date,
+                    COUNT(*) as josiah_count
+                  FROM josiah_reflections_rows
+                  WHERE ${josiahTsCol} IS NOT NULL
+                  GROUP BY DATE(${josiahTsCol})
+                `
+              }
+            })
+          : Promise.resolve({ data: { data: [] } } as any)
       ]);
 
       // Create maps for biometrics and josiah

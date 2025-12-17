@@ -28,6 +28,7 @@ import { FourFactorCorrelationEngine } from "@/components/dashboard/FourFactorCo
 import { KCSODeepDiveReport } from "@/components/dashboard/KCSODeepDiveReport";
 import { ShellCompanyMatrix } from "@/components/dashboard/ShellCompanyMatrix";
 import { MilitaryAircraftPanel } from "@/components/dashboard/MilitaryAircraftPanel";
+import { DailyEventImporter } from "@/components/dashboard/DailyEventImporter";
 const Index = () => {
   return (
     <div className="min-h-screen bg-background">
@@ -61,9 +62,10 @@ const Index = () => {
             <PhysicianVerifiedECGs />
           </section>
           
-          <section id="enterprise-network" className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <section id="enterprise-network" className="grid grid-cols-1 xl:grid-cols-3 gap-6">
             <CriminalEnterpriseNetwork />
             <EnterpriseProfiles />
+            <DailyEventImporter />
           </section>
           
           <section id="pattern-analysis">

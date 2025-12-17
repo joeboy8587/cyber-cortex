@@ -136,7 +136,13 @@ serve(async (req) => {
           'aircraft_registry_enriched',
           'operator_profiles_enriched',
           'operator_profiles',
-          'flagged_aircraft_rows_rows'
+          'flagged_aircraft_rows_rows',
+          'criminal_enterprise_command_structure',
+          'live_flight_detections_rows',
+          'biometric_monitoring',
+          'ocr_aircraft_holding_patterns',
+          'radar_screenshot_analysis',
+          'daily_event_imports'
         ];
         
         if (!insertTable || !allowedTables.includes(insertTable)) {
@@ -152,10 +158,49 @@ serve(async (req) => {
         const placeholders = columns.map((_, i) => `$${i + 1}`).join(', ');
         const columnList = columns.map(c => `"${c.replace(/[^a-zA-Z0-9_]/g, '')}"`).join(', ');
         
-        const insertQuery = `INSERT INTO ${insertTable} (${columnList}) VALUES (${placeholders}) RETURNING *`;
+        const insertQuery = `INSERT INTO ${insertTable} (${columnList}) VALUES (${placeholders}) ON CONFLICT DO NOTHING RETURNING *`;
         console.log('Executing insert:', insertQuery, values);
         
         result = await sql.unsafe(insertQuery, values as postgres.ParameterOrJSON<never>[]);
+        break;
+      }
+
+      case 'batchInsert': {
+        // Batch insert for importing multiple records at once
+        const batchTable = table;
+        const records = data as Record<string, unknown>[];
+        const allowedBatchTables = [
+          'live_flight_detections_rows',
+          'biometric_monitoring',
+          'criminal_enterprise_command_structure'
+        ];
+        
+        if (!batchTable || !allowedBatchTables.includes(batchTable)) {
+          throw new Error(`Batch insert not allowed for table: ${batchTable}`);
+        }
+        
+        if (!Array.isArray(records) || records.length === 0) {
+          throw new Error('Data array is required');
+        }
+
+        // Use first record to determine columns
+        const columns = Object.keys(records[0]);
+        const columnList = columns.map(c => `"${c.replace(/[^a-zA-Z0-9_]/g, '')}"`).join(', ');
+        
+        let insertedCount = 0;
+        for (const record of records) {
+          const values = columns.map(c => record[c]) as (string | number | boolean | null)[];
+          const placeholders = columns.map((_, i) => `$${i + 1}`).join(', ');
+          const insertQuery = `INSERT INTO ${batchTable} (${columnList}) VALUES (${placeholders}) ON CONFLICT DO NOTHING`;
+          try {
+            await sql.unsafe(insertQuery, values as postgres.ParameterOrJSON<never>[]);
+            insertedCount++;
+          } catch (e) {
+            console.error('Batch insert row error:', e);
+          }
+        }
+        
+        result = { inserted: insertedCount, total: records.length };
         break;
       }
 
@@ -168,7 +213,9 @@ serve(async (req) => {
           'operator_profiles_enriched', 
           'operator_profiles',
           'flagged_aircraft_rows_rows',
-          'shell_companies'
+          'shell_companies',
+          'criminal_enterprise_command_structure',
+          'live_flight_detections_rows'
         ];
         
         if (!updateTable || !allowedUpdateTables.includes(updateTable)) {

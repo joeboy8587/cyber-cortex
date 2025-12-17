@@ -29,6 +29,18 @@ interface CorrelationEvent {
   has_kcso: boolean;
 }
 
+// Many-to-one: multiple aircraft detections correlating to single biometric event
+interface BiometricEventCluster {
+  biometric_timestamp: string;
+  heart_rate: number;
+  hrv?: number;
+  aircraft_count: number;
+  aircraft_registrations: string[];
+  ocr_matches: number;
+  josiah_mentions: number;
+  time_window_minutes: number;
+}
+
 interface CorrelationStats {
   totalDays: number;
   fourFactorDays: number;
@@ -48,6 +60,9 @@ export const FourFactorCorrelationEngine = () => {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | '4-factor' | '3-factor' | 'kcso'>('all');
   const [isPopulating, setIsPopulating] = useState(false);
+  const [eventClusters, setEventClusters] = useState<BiometricEventCluster[]>([]);
+  const [showClusters, setShowClusters] = useState(false);
+  const [clusterLoading, setClusterLoading] = useState(false);
 
   const fetchCorrelations = useCallback(async () => {
     setLoading(true);
@@ -232,6 +247,82 @@ export const FourFactorCorrelationEngine = () => {
     }
   }, []);
 
+  // Fetch many-to-one correlations: multiple aircraft detections per biometric event
+  const fetchEventClusters = useCallback(async () => {
+    setClusterLoading(true);
+    try {
+      // Query biometric events and find all aircraft within ±5 minute windows
+      const { data: clusterData } = await supabase.functions.invoke('neon-query', {
+        body: {
+          action: 'customQuery',
+          query: `
+            WITH biometric_events AS (
+              SELECT 
+                measurement_timestamp,
+                heart_rate,
+                hrv
+              FROM biometric_monitoring
+              WHERE measurement_timestamp IS NOT NULL
+                AND heart_rate > 80
+              ORDER BY measurement_timestamp DESC
+              LIMIT 500
+            ),
+            flight_correlations AS (
+              SELECT 
+                b.measurement_timestamp,
+                b.heart_rate,
+                b.hrv,
+                COUNT(DISTINCT f.registration) as aircraft_count,
+                ARRAY_AGG(DISTINCT f.registration) FILTER (WHERE f.registration IS NOT NULL) as registrations
+              FROM biometric_events b
+              LEFT JOIN live_flight_detections_rows f 
+                ON f.detection_timestamp BETWEEN b.measurement_timestamp - INTERVAL '5 minutes' 
+                                              AND b.measurement_timestamp + INTERVAL '5 minutes'
+              GROUP BY b.measurement_timestamp, b.heart_rate, b.hrv
+              HAVING COUNT(DISTINCT f.registration) > 0
+            )
+            SELECT * FROM flight_correlations
+            ORDER BY aircraft_count DESC, measurement_timestamp DESC
+            LIMIT 200
+          `
+        }
+      });
+
+      const clusters: BiometricEventCluster[] = (clusterData?.data || []).map((row: {
+        measurement_timestamp: string;
+        heart_rate: number;
+        hrv?: number;
+        aircraft_count: string;
+        registrations: string[];
+      }) => ({
+        biometric_timestamp: row.measurement_timestamp,
+        heart_rate: row.heart_rate,
+        hrv: row.hrv,
+        aircraft_count: parseInt(row.aircraft_count || '0'),
+        aircraft_registrations: row.registrations || [],
+        ocr_matches: 0,
+        josiah_mentions: 0,
+        time_window_minutes: 5
+      }));
+
+      setEventClusters(clusters);
+
+      toast({
+        title: 'Many-to-One Analysis Complete',
+        description: `Found ${clusters.length} biometric events with multiple aircraft correlations`,
+      });
+    } catch (err) {
+      console.error('Error fetching event clusters:', err);
+      toast({
+        title: 'Cluster analysis failed',
+        description: err instanceof Error ? err.message : 'Unknown error',
+        variant: 'destructive'
+      });
+    } finally {
+      setClusterLoading(false);
+    }
+  }, [toast]);
+
   useEffect(() => {
     fetchCorrelations();
   }, [fetchCorrelations]);
@@ -315,18 +406,18 @@ export const FourFactorCorrelationEngine = () => {
       </div>
 
       {/* Filter Controls */}
-      <div className="flex gap-2 mb-4">
+      <div className="flex flex-wrap gap-2 mb-4">
         <Button
           variant={filter === 'all' ? 'default' : 'outline'}
           size="sm"
-          onClick={() => setFilter('all')}
+          onClick={() => { setFilter('all'); setShowClusters(false); }}
         >
           All Days
         </Button>
         <Button
           variant={filter === '4-factor' ? 'default' : 'outline'}
           size="sm"
-          onClick={() => setFilter('4-factor')}
+          onClick={() => { setFilter('4-factor'); setShowClusters(false); }}
         >
           <Fingerprint className="h-3 w-3 mr-1" />
           4-Factor Only
@@ -334,7 +425,7 @@ export const FourFactorCorrelationEngine = () => {
         <Button
           variant={filter === '3-factor' ? 'default' : 'outline'}
           size="sm"
-          onClick={() => setFilter('3-factor')}
+          onClick={() => { setFilter('3-factor'); setShowClusters(false); }}
         >
           <CheckCircle2 className="h-3 w-3 mr-1" />
           3+ Factors
@@ -342,12 +433,32 @@ export const FourFactorCorrelationEngine = () => {
         <Button
           variant={filter === 'kcso' ? 'default' : 'outline'}
           size="sm"
-          onClick={() => setFilter('kcso')}
+          onClick={() => { setFilter('kcso'); setShowClusters(false); }}
         >
           <AlertTriangle className="h-3 w-3 mr-1" />
           KCSO Present
         </Button>
+        <Button
+          variant={showClusters ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => {
+            setShowClusters(true);
+            if (eventClusters.length === 0) fetchEventClusters();
+          }}
+        >
+          <Layers className="h-3 w-3 mr-1" />
+          Many→One
+        </Button>
         <div className="flex-1" />
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={fetchEventClusters}
+          disabled={clusterLoading}
+        >
+          <Layers className={`h-3 w-3 mr-1 ${clusterLoading ? 'animate-pulse' : ''}`} />
+          Analyze Clusters
+        </Button>
         <Button
           variant="outline"
           size="sm"
@@ -381,6 +492,86 @@ export const FourFactorCorrelationEngine = () => {
           Refresh
         </Button>
       </div>
+
+      {/* Many-to-One Cluster View */}
+      {showClusters && (
+        <div className="mb-4 p-4 border border-purple-500/30 bg-purple-500/5 rounded-lg">
+          <div className="flex items-center gap-2 mb-3">
+            <Layers className="h-4 w-4 text-purple-400" />
+            <span className="font-medium text-purple-400">
+              Many-to-One Analysis: Multiple Aircraft per Biometric Event
+            </span>
+            <Badge variant="outline" className="ml-auto">
+              {eventClusters.length} clusters
+            </Badge>
+          </div>
+          <ScrollArea className="h-[300px]">
+            {clusterLoading ? (
+              <div className="text-center py-8 text-muted-foreground">Analyzing many-to-one correlations...</div>
+            ) : eventClusters.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                Click "Analyze Clusters" to find biometric events with multiple aircraft
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {eventClusters.map((cluster, idx) => (
+                  <div 
+                    key={idx} 
+                    className={`p-3 rounded-lg border ${
+                      cluster.aircraft_count >= 5 
+                        ? 'border-red-500/30 bg-red-500/5' 
+                        : cluster.aircraft_count >= 3
+                        ? 'border-orange-500/30 bg-orange-500/5'
+                        : 'border-border/30 bg-background/50'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <Heart className="h-4 w-4 text-red-400" />
+                        <span className="text-sm font-mono">
+                          {new Date(cluster.biometric_timestamp).toLocaleString()}
+                        </span>
+                        <Badge className="bg-red-500/20 text-red-400 border-red-500/30">
+                          {cluster.heart_rate} BPM
+                        </Badge>
+                      </div>
+                      <Badge className={
+                        cluster.aircraft_count >= 5 
+                          ? 'bg-red-500/20 text-red-400 border-red-500/30'
+                          : cluster.aircraft_count >= 3
+                          ? 'bg-orange-500/20 text-orange-400 border-orange-500/30'
+                          : 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30'
+                      }>
+                        <Plane className="h-3 w-3 mr-1" />
+                        {cluster.aircraft_count} aircraft
+                      </Badge>
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                      {cluster.aircraft_registrations.slice(0, 8).map(reg => (
+                        <Badge 
+                          key={reg} 
+                          variant="outline" 
+                          className={`text-xs ${reg?.includes('KC') ? 'border-yellow-500/30 text-yellow-400' : ''}`}
+                        >
+                          {reg}
+                        </Badge>
+                      ))}
+                      {cluster.aircraft_registrations.length > 8 && (
+                        <Badge variant="outline" className="text-xs">
+                          +{cluster.aircraft_registrations.length - 8} more
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-1">
+                      ±{cluster.time_window_minutes} minute correlation window
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </ScrollArea>
+        </div>
+      )}
 
       {/* Correlation Events */}
       <ScrollArea className="h-[400px]">

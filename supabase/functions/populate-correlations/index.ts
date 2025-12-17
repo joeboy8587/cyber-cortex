@@ -39,6 +39,12 @@ serve(async (req) => {
       );
     }
 
+    sql = postgres(databaseUrl, {
+      ssl: 'require',
+      max: 1,
+      idle_timeout: 30,
+    });
+
     let result;
 
     switch (action) {

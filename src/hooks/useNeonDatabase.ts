@@ -43,12 +43,18 @@ export function useNeonDatabase() {
   const [error, setError] = useState<string | null>(null);
 
   const queryDatabase = useCallback(async (action: string, params: Record<string, unknown> = {}) => {
+    if (!action || typeof action !== 'string' || action.trim().length === 0) {
+      const err = new Error('Missing required database action');
+      setError(err.message);
+      throw err;
+    }
+
     setIsLoading(true);
     setError(null);
-    
+
     try {
       const { data, error: fnError } = await supabase.functions.invoke('neon-query', {
-        body: { action, ...params }
+        body: { action, ...params },
       });
 
       if (fnError) {

@@ -4,16 +4,16 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { supabase } from '@/integrations/supabase/client';
-import { 
-  Layers, 
-  RefreshCw, 
-  Plane, 
-  Heart, 
-  Brain, 
+import { useToast } from '@/hooks/use-toast';
+import {
+  Layers,
+  RefreshCw,
+  Plane,
+  Heart,
+  Brain,
   Camera,
   AlertTriangle,
   CheckCircle2,
-  TrendingUp,
   Fingerprint
 } from 'lucide-react';
 
@@ -42,10 +42,12 @@ interface CorrelationStats {
 }
 
 export const FourFactorCorrelationEngine = () => {
+  const { toast } = useToast();
   const [correlations, setCorrelations] = useState<CorrelationEvent[]>([]);
   const [stats, setStats] = useState<CorrelationStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | '4-factor' | '3-factor' | 'kcso'>('all');
+  const [isPopulating, setIsPopulating] = useState(false);
 
   const fetchCorrelations = useCallback(async () => {
     setLoading(true);
@@ -314,31 +316,31 @@ export const FourFactorCorrelationEngine = () => {
 
       {/* Filter Controls */}
       <div className="flex gap-2 mb-4">
-        <Button 
-          variant={filter === 'all' ? 'default' : 'outline'} 
+        <Button
+          variant={filter === 'all' ? 'default' : 'outline'}
           size="sm"
           onClick={() => setFilter('all')}
         >
           All Days
         </Button>
-        <Button 
-          variant={filter === '4-factor' ? 'default' : 'outline'} 
+        <Button
+          variant={filter === '4-factor' ? 'default' : 'outline'}
           size="sm"
           onClick={() => setFilter('4-factor')}
         >
           <Fingerprint className="h-3 w-3 mr-1" />
           4-Factor Only
         </Button>
-        <Button 
-          variant={filter === '3-factor' ? 'default' : 'outline'} 
+        <Button
+          variant={filter === '3-factor' ? 'default' : 'outline'}
           size="sm"
           onClick={() => setFilter('3-factor')}
         >
           <CheckCircle2 className="h-3 w-3 mr-1" />
           3+ Factors
         </Button>
-        <Button 
-          variant={filter === 'kcso' ? 'default' : 'outline'} 
+        <Button
+          variant={filter === 'kcso' ? 'default' : 'outline'}
           size="sm"
           onClick={() => setFilter('kcso')}
         >
@@ -346,6 +348,34 @@ export const FourFactorCorrelationEngine = () => {
           KCSO Present
         </Button>
         <div className="flex-1" />
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={async () => {
+            setIsPopulating(true);
+            try {
+              const day = new Date().toISOString().slice(0, 10);
+              const { data, error } = await supabase.functions.invoke('populate-correlations', {
+                body: { action: 'populateCorrelations', timeWindowMinutes: 5, batchSize: 2000, day },
+              });
+              if (error) throw new Error(error.message);
+              if (data?.error) throw new Error(data.error);
+              toast({
+                title: 'Correlation population started',
+                description: `Inserted batch for ${day}. Total now: ${data?.data?.totalInTable ?? 'n/a'}`,
+              });
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : 'Failed to populate correlations';
+              toast({ title: 'Populate failed', description: msg, variant: 'destructive' });
+            } finally {
+              setIsPopulating(false);
+            }
+          }}
+          disabled={isPopulating || loading}
+        >
+          <Fingerprint className={`h-3 w-3 mr-1 ${isPopulating ? 'animate-pulse' : ''}`} />
+          Populate Today
+        </Button>
         <Button variant="outline" size="sm" onClick={fetchCorrelations} disabled={loading}>
           <RefreshCw className={`h-3 w-3 mr-1 ${loading ? 'animate-spin' : ''}`} />
           Refresh

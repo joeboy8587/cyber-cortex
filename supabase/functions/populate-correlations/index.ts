@@ -24,14 +24,20 @@ serve(async (req) => {
   let sql: ReturnType<typeof postgres> | null = null;
   
   try {
-    const body = await req.json();
-    const { action, timeWindowMinutes = 5, batchSize = 1000 } = body;
-    
-    sql = postgres(databaseUrl, {
-      ssl: 'require',
-      max: 1,
-      idle_timeout: 30,
-    });
+    const body = await req.json().catch(() => ({}));
+    const { action, timeWindowMinutes = 5, batchSize = 1000, day } = body as {
+      action?: string;
+      timeWindowMinutes?: number;
+      batchSize?: number;
+      day?: string;
+    };
+
+    if (!action || typeof action !== 'string') {
+      return new Response(
+        JSON.stringify({ error: 'Missing required field: action' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
     let result;
 
@@ -306,83 +312,95 @@ serve(async (req) => {
       }
 
       case 'populateCorrelations': {
-        // Actually insert correlations into biometric_flight_correlations_rows_5
-        console.log('Populating biometric_flight_correlations_rows_5...');
-        
+        // Batched insert into biometric_flight_correlations_rows_5 (or whatever columns exist)
+        console.log('Populating biometric_flight_correlations_rows_5...', { timeWindowMinutes, batchSize, day });
+
         // First check the schema of the target table
         const schemaCheck = await sql`
-          SELECT column_name, data_type 
-          FROM information_schema.columns 
+          SELECT column_name, data_type
+          FROM information_schema.columns
           WHERE table_name = 'biometric_flight_correlations_rows_5'
           ORDER BY ordinal_position
         `;
-        console.log('Target table schema:', schemaCheck);
-        
+
         if (schemaCheck.length === 0) {
           throw new Error('Target table biometric_flight_correlations_rows_5 does not exist');
         }
-        
-        const columns = (schemaCheck as unknown as Array<{ column_name: string }>).map(c => c.column_name);
-        console.log('Available columns:', columns);
-        
-        // Build dynamic insert based on available columns
-        const insertRes = await sql`
-          INSERT INTO biometric_flight_correlations_rows_5 (
-            id,
-            correlation_id,
-            flight_detection_id,
-            biometric_log_id,
-            time_offset_minutes,
-            correlation_strength,
-            hr_spike_detected,
-            hrv_drop_detected,
-            stress_correlation_score,
-            correlation_timestamp,
-            created_at
-          )
-          SELECT 
-            gen_random_uuid()::text as id,
-            CONCAT(f.registration, '_', DATE(f.detection_timestamp)::text) as correlation_id,
-            f.registration as flight_detection_id,
-            b.measurement_timestamp::text as biometric_log_id,
-            ROUND(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))/60, 2) as time_offset_minutes,
-            CASE 
-              WHEN ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= 60 THEN 0.9
-              WHEN ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= 180 THEN 0.7
-              ELSE 0.5
-            END as correlation_strength,
-            (b.heart_rate > 100) as hr_spike_detected,
-            (b.hrv < 30) as hrv_drop_detected,
-            CASE 
-              WHEN b.heart_rate > 120 THEN 90
-              WHEN b.heart_rate > 100 THEN 70
-              WHEN b.heart_rate > 85 THEN 50
-              ELSE 30
-            END as stress_correlation_score,
-            f.detection_timestamp::text as correlation_timestamp,
-            NOW()::text as created_at
+
+        const columns = (schemaCheck as unknown as Array<{ column_name: string }>).map((c) => c.column_name);
+        const hasCol = (c: string) => columns.includes(c);
+
+        const insertCols: string[] = [];
+        const selectExprs: string[] = [];
+
+        const add = (col: string, expr: string) => {
+          if (!hasCol(col)) return;
+          insertCols.push(col);
+          selectExprs.push(expr);
+        };
+
+        add('id', 'gen_random_uuid()');
+        add('correlation_id', `CONCAT(f.registration, '_', DATE(f.detection_timestamp)::text)`);
+        add('flight_detection_id', 'f.registration');
+        add('biometric_log_id', 'b.measurement_timestamp');
+        add('time_offset_minutes', `ROUND(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))/60, 2)`);
+        add(
+          'correlation_strength',
+          `CASE 
+            WHEN ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= 60 THEN 0.9
+            WHEN ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= 180 THEN 0.7
+            ELSE 0.5
+          END`
+        );
+        add('hr_spike_detected', '(b.heart_rate > 100)');
+        add('hrv_drop_detected', '(b.hrv < 30)');
+        add(
+          'stress_correlation_score',
+          `CASE 
+            WHEN b.heart_rate > 120 THEN 90
+            WHEN b.heart_rate > 100 THEN 70
+            WHEN b.heart_rate > 85 THEN 50
+            ELSE 30
+          END`
+        );
+        add('correlation_timestamp', 'f.detection_timestamp');
+        add('created_at', 'NOW()');
+
+        if (insertCols.length === 0) {
+          throw new Error('No compatible columns found on biometric_flight_correlations_rows_5');
+        }
+
+        const dayFilter = day
+          ? ` AND DATE(f.detection_timestamp) = $3::date AND DATE(b.measurement_timestamp) = $3::date `
+          : '';
+
+        // Use SQL string to avoid relying on non-existent columns.
+        const insertSql = `
+          INSERT INTO biometric_flight_correlations_rows_5 (${insertCols.map((c) => `"${c}"`).join(', ')})
+          SELECT ${selectExprs.join(', ')}
           FROM live_flight_detections_rows f
-          JOIN biometric_monitoring b ON 
-            ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= ${timeWindowMinutes * 60}
-          WHERE f.detection_timestamp IS NOT NULL 
+          JOIN biometric_monitoring b
+            ON ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= ($1::int * 60)
+          WHERE f.detection_timestamp IS NOT NULL
             AND b.measurement_timestamp IS NOT NULL
             AND f.registration IS NOT NULL
+            ${dayFilter}
           ORDER BY f.detection_timestamp DESC
-          LIMIT ${batchSize}
+          LIMIT $2::int
           ON CONFLICT DO NOTHING
         `;
-        
-        console.log('Insert result:', insertRes);
-        
-        // Count how many we now have
-        const countRes = await sql`
-          SELECT COUNT(*) as total FROM biometric_flight_correlations_rows_5
-        `;
-        
+
+        const params = day ? [timeWindowMinutes, batchSize, day] : [timeWindowMinutes, batchSize];
+        const insertRes = await sql.unsafe(insertSql, params as any);
+
+        const countRes = await sql`SELECT COUNT(*) as total FROM biometric_flight_correlations_rows_5`;
+
         result = {
           message: 'Correlations populated',
-          insertedBatch: batchSize,
-          totalInTable: countRes[0]?.total
+          insertedBatchRequested: batchSize,
+          totalInTable: countRes[0]?.total,
+          day: day ?? null,
+          note: 'Insert uses dynamic column matching; if IDs are not present in source tables, surrogate keys are used.'
         };
         break;
       }

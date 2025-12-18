@@ -142,7 +142,8 @@ serve(async (req) => {
           'biometric_monitoring',
           'ocr_aircraft_holding_patterns',
           'radar_screenshot_analysis',
-          'daily_event_imports'
+          'daily_event_imports',
+          'josiah_reflections_rows'
         ];
         
         if (!insertTable || !allowedTables.includes(insertTable)) {

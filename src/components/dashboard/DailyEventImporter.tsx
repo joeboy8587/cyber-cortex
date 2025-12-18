@@ -147,12 +147,8 @@ export const DailyEventImporter = () => {
                   data: {
                     detection_timestamp: event.timestamp,
                     registration: aircraft.registration,
-                    aircraft_type: aircraft.type,
-                    operator: aircraft.operator,
                     altitude: aircraft.altitude,
-                    ground_speed: aircraft.speed,
-                    source: `WATCHTOWER_${dateLabel}`,
-                    notes: event.pattern
+                    ground_speed: aircraft.speed
                   }
                 }
               });
@@ -169,9 +165,7 @@ export const DailyEventImporter = () => {
               data: {
                 measurement_timestamp: event.timestamp,
                 heart_rate: event.biometric.hr,
-                hrv: event.biometric.hrv,
-                source: `WATCHTOWER_${dateLabel}`,
-                notes: `${event.pattern} - ${aircraftList.join(', ')}`
+                hrv: event.biometric.hrv
               }
             }
           });
@@ -184,11 +178,7 @@ export const DailyEventImporter = () => {
               action: 'insertRecord',
               table: 'josiah_reflections_rows',
               data: {
-                reflection_timestamp: event.timestamp,
-                reflection_text: event.josiah_reflection,
-                aircraft_correlation: aircraftList.join(', '),
-                biometric_correlation: event.biometric?.hr ? `HR ${event.biometric.hr}` : null,
-                source: `WATCHTOWER_${dateLabel}`
+                reflection_text: event.josiah_reflection
               }
             }
           });

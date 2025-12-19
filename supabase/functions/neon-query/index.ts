@@ -24,12 +24,30 @@ serve(async (req) => {
   let sql: ReturnType<typeof postgres> | null = null;
   
   try {
-    const body = await req.json().catch(() => ({}));
-    const { action, table, limit = 100, offset = 0, query, data, where } = (body ?? {}) as Record<string, any>;
+    // Parse body with better error handling
+    let body: Record<string, any> = {};
+    try {
+      const text = await req.text();
+      if (text && text.trim()) {
+        body = JSON.parse(text);
+      }
+    } catch (parseError) {
+      console.error('JSON parse error:', parseError);
+      return new Response(
+        JSON.stringify({ error: 'Invalid JSON in request body', details: 'Body must be valid JSON with an action field' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    
+    const { action, table, limit = 100, offset = 0, query, data, where } = body;
 
     if (!action || typeof action !== 'string') {
+      console.error('Missing action field. Body received:', JSON.stringify(body).substring(0, 500));
       return new Response(
-        JSON.stringify({ error: 'Missing required field: action' }),
+        JSON.stringify({ 
+          error: 'Missing required field: action',
+          hint: 'Valid actions: getTables, getTableData, getTableSchema, getStats, customQuery, insertRecord, batchInsert, updateRecord'
+        }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -143,7 +161,9 @@ serve(async (req) => {
           'ocr_aircraft_holding_patterns',
           'radar_screenshot_analysis',
           'daily_event_imports',
-          'josiah_reflections_rows'
+          'josiah_reflections_rows',
+          'pattern_recognition_enriched',
+          'josiah_reflections'
         ];
         
         if (!insertTable || !allowedTables.includes(insertTable)) {

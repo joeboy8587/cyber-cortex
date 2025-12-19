@@ -53,6 +53,7 @@ export function JosiahWitnessLogs() {
       // Fetch stats first
       const statsQuery = await supabase.functions.invoke('neon-query', {
         body: {
+          action: 'customQuery',
           query: `
             SELECT 
               (SELECT COUNT(*) FROM josiah_reflections_rows) as total,
@@ -63,19 +64,20 @@ export function JosiahWitnessLogs() {
         }
       });
 
-      if (statsQuery.data?.results?.[0]) {
-        const s = statsQuery.data.results[0];
+      const statsRow = statsQuery.data?.data?.[0];
+      if (statsRow) {
         setStats({
-          totalLogs: parseInt(s.total || '0'),
-          correlatedLogs: parseInt(s.correlated || '0'),
-          verifiedLogs: parseInt(s.total || '0') * 0.98, // Estimated
-          dateRange: { earliest: s.earliest, latest: s.latest }
+          totalLogs: parseInt((statsRow.total as string) || '0'),
+          correlatedLogs: parseInt((statsRow.correlated as string) || '0'),
+          verifiedLogs: Math.floor(parseInt((statsRow.total as string) || '0') * 0.98), // Estimated
+          dateRange: { earliest: statsRow.earliest as string, latest: statsRow.latest as string }
         });
       }
 
       // Fetch recent logs
       const logsQuery = await supabase.functions.invoke('neon-query', {
         body: {
+          action: 'customQuery',
           query: `
             SELECT 
               id,
@@ -95,20 +97,19 @@ export function JosiahWitnessLogs() {
         }
       });
 
-      if (logsQuery.data?.results) {
-        setLogs(logsQuery.data.results.map((r: Record<string, unknown>) => ({
-          id: r.id as string,
-          timestamp: r.timestamp as string,
-          content: r.content as string,
-          eventType: r.eventtype as string || 'reflection',
-          correlationId: r.correlationid as string,
-          confidence: r.confidence ? parseFloat(r.confidence as string) : undefined,
-          aircraftRegistration: r.aircraftregistration as string,
-          heartRate: r.heartrate ? parseInt(r.heartrate as string) : undefined,
-          stressScore: r.stressscore ? parseFloat(r.stressscore as string) : undefined,
-          hashVerified: r.hashverified === true
-        })));
-      }
+      const rows = (logsQuery.data?.data as Record<string, unknown>[] | undefined) ?? [];
+      setLogs(rows.map((r: Record<string, unknown>) => ({
+        id: String(r.id ?? ''),
+        timestamp: String(r.timestamp ?? ''),
+        content: String(r.content ?? ''),
+        eventType: (r.eventtype as string) || 'reflection',
+        correlationId: r.correlationid as string,
+        confidence: r.confidence ? parseFloat(r.confidence as string) : undefined,
+        aircraftRegistration: r.aircraftregistration as string,
+        heartRate: r.heartrate ? parseInt(r.heartrate as string) : undefined,
+        stressScore: r.stressscore ? parseFloat(r.stressscore as string) : undefined,
+        hashVerified: r.hashverified === true
+      })));
 
     } catch (err) {
       console.error('Failed to fetch Josiah logs:', err);

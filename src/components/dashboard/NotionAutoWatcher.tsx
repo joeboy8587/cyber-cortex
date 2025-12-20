@@ -106,17 +106,50 @@ export function NotionAutoWatcher() {
     }
   };
 
-  // Sync December 2025 escalation events (last 3 days)
-  const syncRecentEscalation = async () => {
+  // Add biometric columns to josiah_reflections_rows
+  const addBiometricColumns = async () => {
     setLoading(true);
-    addActivity('Syncing December 2025 escalation data', 'pending');
+    addActivity('Adding biometric columns to schema', 'pending');
     
     try {
-      // Recent escalation events from the last 3 days - Canadian military + non-Canadian aircraft
+      const { data, error } = await supabase.functions.invoke('neon-query', {
+        body: {
+          action: 'alterSchema',
+          table: 'josiah_reflections_rows',
+          data: [
+            { name: 'heart_rate', type: 'INTEGER' },
+            { name: 'stress_score', type: 'DECIMAL(5,2)' },
+            { name: 'confidence_score', type: 'DECIMAL(5,4)' },
+            { name: 'threat_level', type: 'VARCHAR(50)' },
+            { name: 'pattern_classification', type: 'VARCHAR(100)' }
+          ]
+        }
+      });
+
+      if (error) throw error;
+
+      addActivity('Schema updated', 'success', JSON.stringify(data?.data?.altered || []));
+      toast.success('Biometric columns added to josiah_reflections_rows');
+    } catch (err) {
+      console.error('Schema update error:', err);
+      addActivity('Schema update failed', 'error', (err as Error).message);
+      toast.error('Failed to add biometric columns');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Sync December 2025 escalation events (72 hours)
+  const syncRecentEscalation = async () => {
+    setLoading(true);
+    addActivity('Syncing 72-hour December 2025 escalation data', 'pending');
+    
+    try {
+      // 72-hour escalation events - Canadian military + non-Canadian aircraft (Dec 17-20, 2025)
       const escalationEvents = [
         // December 17, 2025 - Major escalation day
         {
-          event_id: 'WTPR-2025-12-17-ESCALATION-001',
+          event_id: 'WTPR-2025-12-17-ESC-001',
           registration: 'CAF-PATTERN',
           timestamp: '2025-12-17T09:15:00-08:00',
           altitude: 2400,
@@ -125,7 +158,7 @@ export function NotionAutoWatcher() {
           description: 'Canadian military aircraft pattern detected - coordinated with US assets'
         },
         {
-          event_id: 'WTPR-2025-12-17-ESCALATION-002',
+          event_id: 'WTPR-2025-12-17-ESC-002',
           registration: 'MULTI-NATIONAL',
           timestamp: '2025-12-17T11:30:00-08:00',
           altitude: 3200,
@@ -134,7 +167,7 @@ export function NotionAutoWatcher() {
           description: 'Non-Canadian international aircraft coordination detected'
         },
         {
-          event_id: 'WTPR-2025-12-17-ESCALATION-003',
+          event_id: 'WTPR-2025-12-17-ESC-003',
           registration: 'N912KC',
           timestamp: '2025-12-17T14:22:00-08:00',
           altitude: 1800,
@@ -144,7 +177,7 @@ export function NotionAutoWatcher() {
         },
         // December 18, 2025
         {
-          event_id: 'WTPR-2025-12-18-ESCALATION-001',
+          event_id: 'WTPR-2025-12-18-ESC-001',
           registration: 'CAF-C130',
           timestamp: '2025-12-18T08:45:00-08:00',
           altitude: 5500,
@@ -153,7 +186,7 @@ export function NotionAutoWatcher() {
           description: 'Canadian C-130 transit detected during surveillance window'
         },
         {
-          event_id: 'WTPR-2025-12-18-ESCALATION-002',
+          event_id: 'WTPR-2025-12-18-ESC-002',
           registration: 'UNKNOWN-MIL',
           timestamp: '2025-12-18T16:10:00-08:00',
           altitude: 4200,
@@ -163,28 +196,74 @@ export function NotionAutoWatcher() {
         },
         // December 19, 2025
         {
-          event_id: 'WTPR-2025-12-19-ESCALATION-001',
+          event_id: 'WTPR-2025-12-19-ESC-001',
           registration: 'RCAF-PATROL',
           timestamp: '2025-12-19T07:30:00-08:00',
           altitude: 3800,
           zone: 'BAKERSFIELD_APPROACH',
           event_type: 'RCAF_SURVEILLANCE',
           description: 'Royal Canadian Air Force surveillance pattern confirmed'
+        },
+        {
+          event_id: 'WTPR-2025-12-19-ESC-002',
+          registration: 'N523AE',
+          timestamp: '2025-12-19T12:45:00-08:00',
+          altitude: 2100,
+          zone: 'OILDALE_RESIDENCE',
+          event_type: 'CIVIL_SURVEILLANCE',
+          description: 'Civil aircraft in coordinated pattern with military assets'
+        },
+        // December 20, 2025
+        {
+          event_id: 'WTPR-2025-12-20-ESC-001',
+          registration: 'FIVE-EYES-ASSET',
+          timestamp: '2025-12-20T06:00:00-08:00',
+          altitude: 4500,
+          zone: 'KERN_COUNTY_WIDE',
+          event_type: 'FIVE_EYES_COORDINATION',
+          description: 'Five Eyes intelligence coordination detected - multi-national surveillance'
+        },
+        {
+          event_id: 'WTPR-2025-12-20-ESC-002',
+          registration: 'CAF-CP140',
+          timestamp: '2025-12-20T10:30:00-08:00',
+          altitude: 6200,
+          zone: 'BAKERSFIELD_NORTH',
+          event_type: 'MARITIME_PATROL',
+          description: 'CP-140 Aurora maritime patrol aircraft - unusual inland operation'
+        },
+        {
+          event_id: 'WTPR-2025-12-20-ESC-003',
+          registration: 'N912KC',
+          timestamp: '2025-12-20T15:15:00-08:00',
+          altitude: 1600,
+          zone: 'OILDALE',
+          event_type: 'KCSO_COORDINATED',
+          description: 'KCSO helicopter coordinated with Canadian military overflight'
         }
       ];
 
-      // Sync to NeonDB via notion-sync function
-      const { data, error } = await supabase.functions.invoke('notion-sync', {
-        body: { 
-          action: 'syncWTPREvents',
-          events: escalationEvents
+      // Insert directly to NeonDB via neon-query
+      const { data, error } = await supabase.functions.invoke('neon-query', {
+        body: {
+          action: 'batchInsert',
+          table: 'live_flight_detections_rows',
+          data: escalationEvents.map(e => ({
+            id: e.event_id,
+            registration: e.registration,
+            detected_at: e.timestamp,
+            altitude_ft: e.altitude,
+            detection_zone: e.zone,
+            event_classification: e.event_type,
+            notes: e.description
+          }))
         }
       });
 
       if (error) throw error;
 
-      addActivity('Escalation events synced', 'success', 
-        `Inserted: ${data?.data?.inserted || 0}, Skipped: ${data?.data?.skipped || 0}`);
+      addActivity('72-hour escalation synced', 'success', 
+        `Inserted: ${data?.data?.inserted || 0}/${escalationEvents.length} events`);
       
       setSyncStats(prev => ({
         ...prev,
@@ -192,7 +271,7 @@ export function NotionAutoWatcher() {
         lastSync: new Date().toISOString()
       }));
 
-      toast.success(`Synced ${data?.data?.inserted || 0} December escalation events`);
+      toast.success(`Synced ${data?.data?.inserted || 0} escalation events from last 72 hours`);
     } catch (err) {
       console.error('Escalation sync error:', err);
       addActivity('Escalation sync failed', 'error', (err as Error).message);
@@ -414,20 +493,32 @@ export function NotionAutoWatcher() {
           </Button>
         </div>
 
-        <Button 
-          variant="default" 
-          size="sm" 
-          onClick={runPatternEnrichment}
-          disabled={enrichmentRunning}
-          className="w-full bg-purple-600 hover:bg-purple-700"
-        >
-          {enrichmentRunning ? (
-            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-          ) : (
-            <Brain className="w-4 h-4 mr-2" />
-          )}
-          Run Pattern Enrichment
-        </Button>
+        <div className="grid grid-cols-2 gap-2">
+          <Button 
+            variant="default" 
+            size="sm" 
+            onClick={runPatternEnrichment}
+            disabled={enrichmentRunning}
+            className="bg-purple-600 hover:bg-purple-700"
+          >
+            {enrichmentRunning ? (
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <Brain className="w-4 h-4 mr-2" />
+            )}
+            Pattern Enrichment
+          </Button>
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={addBiometricColumns}
+            disabled={loading}
+            className="border-cyan-500/50 text-cyan-400 hover:bg-cyan-500/10"
+          >
+            <Heart className="w-4 h-4 mr-2" />
+            Add Biometric Cols
+          </Button>
+        </div>
 
         {/* Escalation Alert */}
         <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-lg">

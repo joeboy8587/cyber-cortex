@@ -260,6 +260,44 @@ serve(async (req) => {
         break;
       }
 
+      case 'alterSchema': {
+        // Secure schema alteration - only specific ADD COLUMN operations allowed
+        const alterTable = table;
+        const columns = data as { name: string; type: string }[];
+        const allowedAlterTables = [
+          'josiah_reflections_rows',
+          'pattern_recognition_enriched',
+          'live_flight_detections_rows',
+          'biometric_monitoring'
+        ];
+        
+        if (!alterTable || !allowedAlterTables.includes(alterTable)) {
+          throw new Error(`Schema alteration not allowed for table: ${alterTable}`);
+        }
+        
+        if (!Array.isArray(columns) || columns.length === 0) {
+          throw new Error('Columns array is required with name and type properties');
+        }
+
+        const results: string[] = [];
+        for (const col of columns) {
+          const safeName = col.name.replace(/[^a-zA-Z0-9_]/g, '');
+          const safeType = col.type.replace(/[^a-zA-Z0-9_(),\s]/g, '');
+          const alterQuery = `ALTER TABLE ${alterTable} ADD COLUMN IF NOT EXISTS ${safeName} ${safeType}`;
+          console.log('Executing alter:', alterQuery);
+          try {
+            await sql.unsafe(alterQuery);
+            results.push(`Added column ${safeName}`);
+          } catch (e) {
+            const err = e as Error;
+            results.push(`Column ${safeName}: ${err.message}`);
+          }
+        }
+        
+        result = { altered: results };
+        break;
+      }
+
       default:
         throw new Error(`Unknown action: ${action}`);
     }

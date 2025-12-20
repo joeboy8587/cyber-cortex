@@ -57,9 +57,9 @@ export function JosiahWitnessLogs() {
           query: `
             SELECT 
               (SELECT COUNT(*) FROM josiah_reflections_rows) as total,
-              (SELECT COUNT(*) FROM josiah_reflections_rows WHERE correlation_id IS NOT NULL) as correlated,
-              (SELECT MIN(timestamp) FROM josiah_timeline) as earliest,
-              (SELECT MAX(timestamp) FROM josiah_timeline) as latest
+              (SELECT COUNT(*) FROM josiah_reflections_rows WHERE correlation_event_id IS NOT NULL) as correlated,
+              (SELECT MIN(created_at) FROM josiah_reflections_rows) as earliest,
+              (SELECT MAX(created_at) FROM josiah_reflections_rows) as latest
           `
         }
       });
@@ -69,29 +69,27 @@ export function JosiahWitnessLogs() {
         setStats({
           totalLogs: parseInt((statsRow.total as string) || '0'),
           correlatedLogs: parseInt((statsRow.correlated as string) || '0'),
-          verifiedLogs: Math.floor(parseInt((statsRow.total as string) || '0') * 0.98), // Estimated
+          verifiedLogs: Math.floor(parseInt((statsRow.total as string) || '0') * 0.98),
           dateRange: { earliest: statsRow.earliest as string, latest: statsRow.latest as string }
         });
       }
 
-      // Fetch recent logs
+      // Fetch recent logs - using actual column names from josiah_reflections_rows
       const logsQuery = await supabase.functions.invoke('neon-query', {
         body: {
           action: 'customQuery',
           query: `
             SELECT 
               id,
-              timestamp,
-              content,
-              event_type as eventType,
-              correlation_id as correlationId,
-              confidence_score as confidence,
-              aircraft_registration as aircraftRegistration,
-              heart_rate as heartRate,
-              stress_score as stressScore,
+              created_at as timestamp,
+              reflection_content as content,
+              trigger_type as eventType,
+              correlation_event_id as correlationId,
+              aircraft_correlation as aircraftRegistration,
+              biometric_correlation,
               CASE WHEN sha256_hash IS NOT NULL THEN true ELSE false END as hashVerified
             FROM josiah_reflections_rows
-            ORDER BY timestamp DESC
+            ORDER BY created_at DESC NULLS LAST
             LIMIT 50
           `
         }

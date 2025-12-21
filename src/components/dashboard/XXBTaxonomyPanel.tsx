@@ -109,6 +109,12 @@ export function XXBTaxonomyPanel() {
         throw new Error(data.error);
       }
       
+      // Handle notInitialized response
+      if (data?.data?.notInitialized) {
+        setTableInitialized(false);
+        return;
+      }
+      
       setTaxonomy(data?.data || []);
       setTableInitialized(true);
     } catch (err) {
@@ -126,6 +132,12 @@ export function XXBTaxonomyPanel() {
       
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
+      
+      // Handle notInitialized response gracefully
+      if (data?.data?.notInitialized) {
+        setStats([]);
+        return;
+      }
       
       setStats(data?.data || []);
     } catch (err) {

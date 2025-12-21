@@ -30,6 +30,7 @@ import { ShellCompanyMatrix } from "@/components/dashboard/ShellCompanyMatrix";
 import { MilitaryAircraftPanel } from "@/components/dashboard/MilitaryAircraftPanel";
 import { DailyEventImporter } from "@/components/dashboard/DailyEventImporter";
 import { NotionAutoWatcher } from "@/components/dashboard/NotionAutoWatcher";
+import { XXBTaxonomyPanel } from "@/components/dashboard/XXBTaxonomyPanel";
 
 const Index = () => {
   return (
@@ -117,6 +118,10 @@ const Index = () => {
           
           <section id="military-tracking" className="grid grid-cols-1 gap-6">
             <MilitaryAircraftPanel />
+          </section>
+          
+          <section id="xxb-taxonomy" className="grid grid-cols-1 gap-6">
+            <XXBTaxonomyPanel />
           </section>
           
           <section id="defense-panels" className="grid grid-cols-1 xl:grid-cols-2 gap-6">

@@ -268,7 +268,8 @@ serve(async (req) => {
           'josiah_reflections_rows',
           'pattern_recognition_enriched',
           'live_flight_detections_rows',
-          'biometric_monitoring'
+          'biometric_monitoring',
+          'id_taxonomy'
         ];
         
         if (!alterTable || !allowedAlterTables.includes(alterTable)) {
@@ -295,6 +296,154 @@ serve(async (req) => {
         }
         
         result = { altered: results };
+        break;
+      }
+
+      case 'createTaxonomyTable': {
+        // Create the id_taxonomy dimension table for XXB classification
+        console.log('Creating id_taxonomy table...');
+        
+        const createQuery = `
+          CREATE TABLE IF NOT EXISTS id_taxonomy (
+            tag TEXT PRIMARY KEY,
+            domain TEXT NOT NULL,
+            description TEXT,
+            detection_pattern TEXT,
+            priority INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT NOW()
+          )
+        `;
+        await sql.unsafe(createQuery);
+        
+        // Insert the 7 XXB taxonomy entries
+        const taxonomyInserts = `
+          INSERT INTO id_taxonomy (tag, domain, description, detection_pattern, priority) VALUES
+            ('xxb_mlat', 'Telemetry', 'Anonymised MLAT hex bucket - synthetic non-ICAO prefix', '^XX[bB]-', 100),
+            ('xxb_iata', 'Airport', 'Legacy Woodford Aerodrome code (Manchester)', 'Woodford|EGCD', 50),
+            ('xxb_suffix', 'Registration', 'Civil registration suffix pattern (e.g., YR-XXB)', '-XXB$', 60),
+            ('xxb_sim', 'Exercise', 'Fictional Brownland country code for EW/sim exercises', 'Brownland|SIMEX', 40),
+            ('xxb_refugee', 'MRTD', 'UN refugee nationality code per ICAO Doc 9303', 'XXB|stateless', 30),
+            ('xxb_dot', 'Industrial', 'DOT plant code - Foreman Bros retread facility', 'DOT.*XXB|retread', 20),
+            ('xxb_var', 'Technical', 'Variable in CFD/design equations', 'XXB.*=|formula', 10)
+          ON CONFLICT (tag) DO UPDATE SET 
+            domain = EXCLUDED.domain,
+            description = EXCLUDED.description,
+            detection_pattern = EXCLUDED.detection_pattern,
+            priority = EXCLUDED.priority
+        `;
+        await sql.unsafe(taxonomyInserts);
+        
+        result = { created: true, message: 'id_taxonomy table created and seeded with 7 XXB tags' };
+        break;
+      }
+
+      case 'getTaxonomy': {
+        // Retrieve all taxonomy entries
+        result = await sql`SELECT * FROM id_taxonomy ORDER BY priority DESC`;
+        break;
+      }
+
+      case 'backfillTaxonomy': {
+        // Backfill taxonomy_tag column to existing tables
+        const targetTable = table;
+        const allowedBackfillTables = [
+          'live_flight_detections_rows',
+          'ocr_aircraft_holding_patterns',
+          'radar_screenshot_analysis',
+          'aircraft_registry_enriched'
+        ];
+        
+        if (!targetTable || !allowedBackfillTables.includes(targetTable)) {
+          throw new Error(`Backfill not allowed for table: ${targetTable}`);
+        }
+
+        // First add the taxonomy_tag column if not exists
+        await sql.unsafe(`ALTER TABLE ${targetTable} ADD COLUMN IF NOT EXISTS taxonomy_tag TEXT`);
+        
+        // Get column info to determine which column to check for XXB patterns
+        const colInfo = await sql`
+          SELECT column_name FROM information_schema.columns 
+          WHERE table_name = ${targetTable}
+          AND (column_name ILIKE '%callsign%' OR column_name ILIKE '%registration%' OR column_name ILIKE '%hex%' OR column_name ILIKE '%icao%')
+        `;
+        
+        const backfillResults: string[] = [];
+        
+        for (const col of colInfo) {
+          const columnName = col.column_name;
+          
+          // Update MLAT patterns (XX[bB]- prefix)
+          const mlatQuery = `
+            UPDATE ${targetTable} 
+            SET taxonomy_tag = 'xxb_mlat' 
+            WHERE taxonomy_tag IS NULL 
+            AND "${columnName}" ~ '^XX[bB]-'
+          `;
+          try {
+            const mlatRes = await sql.unsafe(mlatQuery);
+            backfillResults.push(`MLAT in ${columnName}: ${mlatRes.count || 0} rows`);
+          } catch (e) {
+            console.log(`Skipping MLAT pattern on ${columnName}`);
+          }
+          
+          // Update suffix patterns (-XXB$)
+          const suffixQuery = `
+            UPDATE ${targetTable}
+            SET taxonomy_tag = 'xxb_suffix'
+            WHERE taxonomy_tag IS NULL
+            AND "${columnName}" ~ '-XXB$'
+          `;
+          try {
+            const suffixRes = await sql.unsafe(suffixQuery);
+            backfillResults.push(`Suffix in ${columnName}: ${suffixRes.count || 0} rows`);
+          } catch (e) {
+            console.log(`Skipping suffix pattern on ${columnName}`);
+          }
+        }
+        
+        result = { backfilled: backfillResults, table: targetTable };
+        break;
+      }
+
+      case 'queryByTaxonomy': {
+        // Query records filtered by taxonomy tag with optional altitude/speed filters
+        const { taxonomy_tag, max_alt, min_speed } = body;
+        
+        if (!taxonomy_tag) {
+          throw new Error('taxonomy_tag is required');
+        }
+        
+        let queryStr = `
+          SELECT * FROM live_flight_detections_rows
+          WHERE taxonomy_tag = '${taxonomy_tag.replace(/[^a-zA-Z0-9_]/g, '')}'
+        `;
+        
+        if (max_alt) {
+          queryStr += ` AND altitude < ${parseInt(max_alt)}`;
+        }
+        if (min_speed) {
+          queryStr += ` AND speed > ${parseInt(min_speed)}`;
+        }
+        
+        queryStr += ' ORDER BY detection_timestamp DESC LIMIT 100';
+        
+        result = await sql.unsafe(queryStr);
+        break;
+      }
+
+      case 'taxonomyStats': {
+        // Get statistics grouped by taxonomy tag
+        result = await sql`
+          SELECT 
+            COALESCE(taxonomy_tag, 'unclassified') as tag,
+            COUNT(*) as count,
+            AVG(altitude) as avg_altitude,
+            MIN(detection_timestamp) as first_seen,
+            MAX(detection_timestamp) as last_seen
+          FROM live_flight_detections_rows
+          GROUP BY taxonomy_tag
+          ORDER BY count DESC
+        `;
         break;
       }
 

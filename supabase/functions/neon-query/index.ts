@@ -338,8 +338,17 @@ serve(async (req) => {
       }
 
       case 'getTaxonomy': {
-        // Retrieve all taxonomy entries
-        result = await sql`SELECT * FROM id_taxonomy ORDER BY priority DESC`;
+        // Retrieve all taxonomy entries - gracefully handle missing table
+        try {
+          result = await sql`SELECT * FROM id_taxonomy ORDER BY priority DESC`;
+        } catch (e) {
+          const err = e as Error;
+          if (err.message.includes('does not exist')) {
+            result = { notInitialized: true, message: 'Taxonomy table not created yet. Click "Seed id_taxonomy Table" to initialize.' };
+          } else {
+            throw e;
+          }
+        }
         break;
       }
 
@@ -432,18 +441,37 @@ serve(async (req) => {
       }
 
       case 'taxonomyStats': {
-        // Get statistics grouped by taxonomy tag
-        result = await sql`
-          SELECT 
-            COALESCE(taxonomy_tag, 'unclassified') as tag,
-            COUNT(*) as count,
-            AVG(altitude) as avg_altitude,
-            MIN(detection_timestamp) as first_seen,
-            MAX(detection_timestamp) as last_seen
-          FROM live_flight_detections_rows
-          GROUP BY taxonomy_tag
-          ORDER BY count DESC
-        `;
+        // Get statistics grouped by taxonomy tag - gracefully handle missing column
+        try {
+          // First check if taxonomy_tag column exists
+          const colCheck = await sql`
+            SELECT column_name FROM information_schema.columns 
+            WHERE table_name = 'live_flight_detections_rows' AND column_name = 'taxonomy_tag'
+          `;
+          
+          if (colCheck.length === 0) {
+            result = { notInitialized: true, message: 'taxonomy_tag column not added yet. Run backfill first.' };
+          } else {
+            result = await sql`
+              SELECT 
+                COALESCE(taxonomy_tag, 'unclassified') as tag,
+                COUNT(*) as count,
+                AVG(altitude) as avg_altitude,
+                MIN(detection_timestamp) as first_seen,
+                MAX(detection_timestamp) as last_seen
+              FROM live_flight_detections_rows
+              GROUP BY taxonomy_tag
+              ORDER BY count DESC
+            `;
+          }
+        } catch (e) {
+          const err = e as Error;
+          if (err.message.includes('does not exist')) {
+            result = { notInitialized: true, message: 'Run backfill to add taxonomy_tag column.' };
+          } else {
+            throw e;
+          }
+        }
         break;
       }
 

@@ -315,7 +315,7 @@ serve(async (req) => {
         `;
         await sql.unsafe(createQuery);
         
-        // Insert the 7 XXB taxonomy entries
+        // Insert the 8 XXB taxonomy entries (including xxb_unknown fallback)
         const taxonomyInserts = `
           INSERT INTO id_taxonomy (tag, domain, description, detection_pattern, priority) VALUES
             ('xxb_mlat', 'Telemetry', 'Anonymised MLAT hex bucket - synthetic non-ICAO prefix', '^XX[bB]-', 100),
@@ -324,7 +324,8 @@ serve(async (req) => {
             ('xxb_sim', 'Exercise', 'Fictional Brownland country code for EW/sim exercises', 'Brownland|SIMEX', 40),
             ('xxb_refugee', 'MRTD', 'UN refugee nationality code per ICAO Doc 9303', 'XXB|stateless', 30),
             ('xxb_dot', 'Industrial', 'DOT plant code - Foreman Bros retread facility', 'DOT.*XXB|retread', 20),
-            ('xxb_var', 'Technical', 'Variable in CFD/design equations', 'XXB.*=|formula', 10)
+            ('xxb_var', 'Technical', 'Variable in CFD/design equations', 'XXB.*=|formula', 10),
+            ('xxb_unknown', 'Fallback', 'Unclassified records that did not match any XXB pattern', 'UNMATCHED', 0)
           ON CONFLICT (tag) DO UPDATE SET 
             domain = EXCLUDED.domain,
             description = EXCLUDED.description,
@@ -333,7 +334,7 @@ serve(async (req) => {
         `;
         await sql.unsafe(taxonomyInserts);
         
-        result = { created: true, message: 'id_taxonomy table created and seeded with 7 XXB tags' };
+        result = { created: true, message: 'id_taxonomy table created and seeded with 8 XXB tags (including xxb_unknown fallback)' };
         break;
       }
 
@@ -472,6 +473,28 @@ serve(async (req) => {
             throw e;
           }
         }
+        break;
+      }
+
+      case 'addTaxonomyTag': {
+        // Add a new taxonomy tag (e.g., xxb_unknown fallback)
+        const { tag, domain, description, detection_pattern, priority } = body;
+        if (!tag || !domain) {
+          throw new Error('tag and domain are required');
+        }
+        const insertQuery = `
+          INSERT INTO id_taxonomy (tag, domain, description, detection_pattern, priority)
+          VALUES ($1, $2, $3, $4, $5)
+          ON CONFLICT (tag) DO UPDATE SET
+            domain = EXCLUDED.domain,
+            description = EXCLUDED.description,
+            detection_pattern = EXCLUDED.detection_pattern,
+            priority = EXCLUDED.priority
+          RETURNING *
+        `;
+        result = await sql.unsafe(insertQuery, [
+          tag, domain, description || '', detection_pattern || '', priority || 0
+        ]);
         break;
       }
 

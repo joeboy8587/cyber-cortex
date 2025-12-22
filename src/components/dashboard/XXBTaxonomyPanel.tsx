@@ -57,6 +57,7 @@ const domainIcons: Record<string, React.ReactNode> = {
   MRTD: <Tag className="h-4 w-4" />,
   Industrial: <Database className="h-4 w-4" />,
   Technical: <BarChart3 className="h-4 w-4" />,
+  Fallback: <Filter className="h-4 w-4" />,
 };
 
 // Improved contrast for WCAG AA compliance
@@ -68,6 +69,7 @@ const domainColors: Record<string, string> = {
   MRTD: 'bg-purple-500/20 text-purple-300 border-purple-500/30 font-medium',
   Industrial: 'bg-orange-500/20 text-orange-300 border-orange-500/30 font-medium',
   Technical: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30 font-medium',
+  Fallback: 'bg-gray-500/20 text-gray-300 border-gray-500/30 font-medium',
 };
 
 // Full regex with flags for tooltip display
@@ -166,11 +168,16 @@ export function XXBTaxonomyPanel() {
       setStats(statsData);
       
       // Calculate unclassified percentage for dark-noise audit
-      const unclassified = statsData.find((s: TaxonomyStats) => s.tag === 'unclassified');
+      // The DB returns null taxonomy_tag which gets coalesced to 'unclassified' in the query
+      const unclassified = statsData.find((s: TaxonomyStats) => 
+        s.tag === 'unclassified' || s.tag === null
+      );
       if (unclassified) {
         const total = statsData.reduce((acc: number, s: TaxonomyStats) => acc + Number(s.count), 0);
         const pct = total > 0 ? (Number(unclassified.count) / total) * 100 : 0;
         setUnclassifiedCount(pct);
+      } else {
+        setUnclassifiedCount(0);
       }
     } catch (err) {
       console.error('Load stats error:', err);

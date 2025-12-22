@@ -498,6 +498,52 @@ serve(async (req) => {
         break;
       }
 
+      case 'backfillUnknown': {
+        // Step 3: Tag all NULL taxonomy_tag as 'xxb_unknown'
+        console.log('Backfilling NULL taxonomy_tag with xxb_unknown...');
+        
+        const updateResult = await sql`
+          UPDATE live_flight_detections_rows 
+          SET taxonomy_tag = 'xxb_unknown' 
+          WHERE taxonomy_tag IS NULL
+        `;
+        
+        result = { 
+          backfilled: true, 
+          rowsUpdated: updateResult.count || 0,
+          message: `Tagged ${updateResult.count || 0} unclassified records as xxb_unknown`
+        };
+        break;
+      }
+
+      case 'createClassifyFunction': {
+        // Step 2: Create the classify_xxb SQL function with fallback
+        console.log('Creating classify_xxb function...');
+        
+        const createFnQuery = `
+          CREATE OR REPLACE FUNCTION classify_xxb(callsign text, raw_text text DEFAULT NULL)
+          RETURNS text
+          LANGUAGE sql
+          IMMUTABLE
+          AS $$
+            SELECT CASE
+              WHEN callsign ~ '^XX[bB]-' THEN 'xxb_mlat'
+              WHEN callsign ~ '-XXB$' THEN 'xxb_suffix'
+              WHEN raw_text ~* 'Woodford|EGCD' THEN 'xxb_iata'
+              WHEN raw_text ~* 'Brownland|SIMEX' THEN 'xxb_sim'
+              WHEN raw_text ~* 'stateless|refugee' THEN 'xxb_refugee'
+              WHEN raw_text ~* 'DOT.*XXB|retread' THEN 'xxb_dot'
+              WHEN raw_text ~* 'XXB.*=' THEN 'xxb_var'
+              ELSE 'xxb_unknown'
+            END
+          $$
+        `;
+        await sql.unsafe(createFnQuery);
+        
+        result = { created: true, message: 'classify_xxb function created with xxb_unknown fallback' };
+        break;
+      }
+
       default:
         throw new Error(`Unknown action: ${action}`);
     }

@@ -282,16 +282,70 @@ export function XXBTaxonomyPanel() {
         icon={<Tag className="h-5 w-5" />}
         className="col-span-full"
       >
-        {/* Dark-noise audit warning */}
+        {/* Dark-noise audit warning with quick-fix buttons */}
         {unclassifiedCount !== null && unclassifiedCount > 5 && (
-          <div className="mb-4 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg flex items-center gap-3">
-            <AlertTriangle className="h-5 w-5 text-amber-400 flex-shrink-0" />
-            <div className="text-sm">
-              <span className="text-amber-300 font-medium">Dark-noise alert:</span>{' '}
-              <span className="text-amber-200/80">
-                {unclassifiedCount.toFixed(1)}% of records unclassified. Consider adding an{' '}
-                <code className="bg-amber-500/20 px-1 rounded">xxb_unknown</code> bucket.
-              </span>
+          <div className="mb-4 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg">
+            <div className="flex items-center gap-3 mb-3">
+              <AlertTriangle className="h-5 w-5 text-amber-400 flex-shrink-0" />
+              <div className="text-sm flex-1">
+                <span className="text-amber-300 font-medium">Dark-noise alert:</span>{' '}
+                <span className="text-amber-200/80">
+                  {unclassifiedCount.toFixed(1)}% of records unclassified.
+                </span>
+              </div>
+            </div>
+            <div className="flex gap-2 ml-8">
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="text-xs bg-amber-500/10 border-amber-500/30 hover:bg-amber-500/20"
+                onClick={async () => {
+                  try {
+                    toast.loading('Creating classify_xxb function...');
+                    const { error } = await supabase.functions.invoke('neon-query', {
+                      body: { action: 'createClassifyFunction' }
+                    });
+                    if (error) throw error;
+                    toast.success('classify_xxb function created');
+                  } catch (err) {
+                    toast.error('Failed to create function', {
+                      description: err instanceof Error ? err.message : 'Unknown error'
+                    });
+                  }
+                }}
+              >
+                1. Create Classifier
+              </Button>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="text-xs bg-green-500/10 border-green-500/30 hover:bg-green-500/20"
+                onClick={async () => {
+                  try {
+                    toast.loading('Backfilling NULL → xxb_unknown...');
+                    const { data, error } = await supabase.functions.invoke('neon-query', {
+                      body: { action: 'backfillUnknown' }
+                    });
+                    if (error) throw error;
+                    toast.success(data?.data?.message || 'Backfill complete');
+                    loadStats();
+                  } catch (err) {
+                    toast.error('Backfill failed', {
+                      description: err instanceof Error ? err.message : 'Unknown error'
+                    });
+                  }
+                }}
+              >
+                2. Tag as xxb_unknown
+              </Button>
+              <Button 
+                variant="outline" 
+                size="sm"
+                className="text-xs"
+                onClick={() => loadStats()}
+              >
+                3. Refresh Stats
+              </Button>
             </div>
           </div>
         )}

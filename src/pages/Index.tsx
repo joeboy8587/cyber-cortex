@@ -31,6 +31,9 @@ import { MilitaryAircraftPanel } from "@/components/dashboard/MilitaryAircraftPa
 import { DailyEventImporter } from "@/components/dashboard/DailyEventImporter";
 import { NotionAutoWatcher } from "@/components/dashboard/NotionAutoWatcher";
 import { XXBTaxonomyPanel } from "@/components/dashboard/XXBTaxonomyPanel";
+import { GlobalAISearch } from "@/components/dashboard/GlobalAISearch";
+import { WatchtowerAlertsHub } from "@/components/dashboard/WatchtowerAlertsHub";
+import { MaterializedViewsPanel } from "@/components/dashboard/MaterializedViewsPanel";
 
 const Index = () => {
   return (
@@ -40,6 +43,14 @@ const Index = () => {
         <main className="container py-6 space-y-6">
           <section id="database-stats">
             <DatabaseStats />
+          </section>
+
+          <section id="command-center" className="space-y-6">
+            <GlobalAISearch />
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+              <WatchtowerAlertsHub />
+              <MaterializedViewsPanel />
+            </div>
           </section>
           
           <section id="threat-matrix" className="grid grid-cols-1 xl:grid-cols-2 gap-6">

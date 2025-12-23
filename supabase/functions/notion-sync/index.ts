@@ -67,7 +67,7 @@ serve(async (req) => {
             const existing = await sql`
               SELECT id FROM flight_events 
               WHERE event_id = ${event.event_id} 
-              OR (registration = ${event.registration} AND timestamp = ${event.timestamp})
+              OR (registration = ${event.registration} AND detection_timestamp = ${event.timestamp})
               LIMIT 1
             `;
 
@@ -90,11 +90,19 @@ serve(async (req) => {
             
             const sha256_hash = await computeSHA256(dataString);
 
-            // Insert new event
+            // Insert new event (match actual flight_events schema)
             await sql`
               INSERT INTO flight_events (
-                event_id, registration, timestamp, altitude_ft, 
-                zone, event_type, description, source, sha256_hash, created_at
+                event_id,
+                registration,
+                detection_timestamp,
+                altitude_feet,
+                zone,
+                event_type,
+                notes,
+                detection_method,
+                sha256_hash,
+                created_at
               ) VALUES (
                 ${event.event_id || null},
                 ${event.registration || null},
@@ -132,48 +140,9 @@ serve(async (req) => {
       }
 
       case 'syncJosiahReflections': {
-        // Sync Josiah reflections from Notion to NeonDB
+        // Sync Josiah reflections from Notion to existing josiah_reflections_rows table
         if (!reflections || !Array.isArray(reflections)) {
           throw new Error('Reflections array required');
-        }
-
-        // Check/create josiah_reflections table if needed
-        const tableExists = await sql`
-          SELECT EXISTS (
-            SELECT FROM information_schema.tables 
-            WHERE table_schema = 'public' AND table_name = 'josiah_reflections'
-          ) as exists
-        `;
-
-        if (!tableExists[0].exists) {
-          await sql`
-            CREATE TABLE josiah_reflections (
-              id SERIAL PRIMARY KEY,
-              reflection_id TEXT UNIQUE,
-              title TEXT,
-              content TEXT,
-              reflection_date TIMESTAMPTZ,
-              category TEXT,
-              tags TEXT[],
-              notion_url TEXT,
-              sha256_hash TEXT,
-              synced_at TIMESTAMPTZ DEFAULT NOW(),
-              created_at TIMESTAMPTZ DEFAULT NOW()
-            )
-          `;
-          await sql`CREATE INDEX idx_josiah_reflections_sha256 ON josiah_reflections(sha256_hash)`;
-          await sql`CREATE INDEX idx_josiah_reflections_date ON josiah_reflections(reflection_date)`;
-        }
-
-        // Ensure sha256_hash column exists
-        const hasHashCol = await sql`
-          SELECT COUNT(*) as count FROM information_schema.columns 
-          WHERE table_name = 'josiah_reflections' AND column_name = 'sha256_hash'
-        `;
-        
-        if (parseInt(hasHashCol[0].count) === 0) {
-          await sql`ALTER TABLE josiah_reflections ADD COLUMN sha256_hash TEXT`;
-          await sql`CREATE INDEX idx_josiah_reflections_sha256 ON josiah_reflections(sha256_hash)`;
         }
 
         const inserted: string[] = [];
@@ -182,62 +151,74 @@ serve(async (req) => {
 
         for (const reflection of reflections) {
           try {
+            const reflectionId = String(reflection.reflection_id || '').trim();
+            if (!reflectionId) {
+              throw new Error('reflection_id is required');
+            }
+
             // Compute SHA-256 hash
             const dataString = [
-              reflection.reflection_id || '',
+              reflectionId,
               reflection.title || '',
               reflection.content || '',
               reflection.reflection_date || '',
               reflection.category || '',
               JSON.stringify(reflection.tags || [])
             ].join('|');
-            
+
             const sha256_hash = await computeSHA256(dataString);
 
-            // Upsert reflection
+            // Upsert into josiah_reflections_rows
             const existing = await sql`
-              SELECT id FROM josiah_reflections 
-              WHERE reflection_id = ${reflection.reflection_id}
+              SELECT id FROM josiah_reflections_rows
+              WHERE id = ${reflectionId}
               LIMIT 1
             `;
 
+            const mapped = {
+              id: reflectionId,
+              reflection_content: reflection.content || null,
+              trigger_type: reflection.category || null,
+              created_at: reflection.reflection_date || null,
+              source: 'notion',
+              sha256_hash,
+            };
+
             if (existing.length > 0) {
               await sql`
-                UPDATE josiah_reflections SET
-                  title = ${reflection.title || null},
-                  content = ${reflection.content || null},
-                  reflection_date = ${reflection.reflection_date || null},
-                  category = ${reflection.category || null},
-                  tags = ${reflection.tags || []},
-                  notion_url = ${reflection.notion_url || null},
-                  sha256_hash = ${sha256_hash},
-                  synced_at = NOW()
-                WHERE reflection_id = ${reflection.reflection_id}
+                UPDATE josiah_reflections_rows SET
+                  reflection_content = ${mapped.reflection_content},
+                  trigger_type = ${mapped.trigger_type},
+                  created_at = ${mapped.created_at},
+                  source = ${mapped.source},
+                  sha256_hash = ${mapped.sha256_hash}
+                WHERE id = ${reflectionId}
               `;
-              updated.push(reflection.reflection_id);
+              updated.push(reflectionId);
             } else {
               await sql`
-                INSERT INTO josiah_reflections (
-                  reflection_id, title, content, reflection_date,
-                  category, tags, notion_url, sha256_hash, synced_at
+                INSERT INTO josiah_reflections_rows (
+                  id,
+                  reflection_content,
+                  trigger_type,
+                  created_at,
+                  source,
+                  sha256_hash
                 ) VALUES (
-                  ${reflection.reflection_id},
-                  ${reflection.title || null},
-                  ${reflection.content || null},
-                  ${reflection.reflection_date || null},
-                  ${reflection.category || null},
-                  ${reflection.tags || []},
-                  ${reflection.notion_url || null},
-                  ${sha256_hash},
-                  NOW()
+                  ${mapped.id},
+                  ${mapped.reflection_content},
+                  ${mapped.trigger_type},
+                  ${mapped.created_at},
+                  ${mapped.source},
+                  ${mapped.sha256_hash}
                 )
               `;
-              inserted.push(reflection.reflection_id);
+              inserted.push(reflectionId);
             }
           } catch (e) {
-            errors.push({ 
-              reflection: reflection.reflection_id || reflection.title, 
-              error: (e as Error).message 
+            errors.push({
+              reflection: reflection?.reflection_id || reflection?.title || 'unknown',
+              error: (e as Error).message,
             });
           }
         }
@@ -261,19 +242,19 @@ serve(async (req) => {
         // Get NeonDB flight_events date range
         const flightRange = await sql`
           SELECT 
-            MIN(timestamp) as earliest,
-            MAX(timestamp) as latest,
+            MIN(detection_timestamp) as earliest,
+            MAX(detection_timestamp) as latest,
             COUNT(*) as count
           FROM flight_events
         `;
 
-        // Get NeonDB josiah_reflections stats
+        // Get NeonDB josiah_reflections_rows stats
         const reflectionStats = await sql`
           SELECT 
-            MIN(reflection_date) as earliest,
-            MAX(reflection_date) as latest,
+            MIN(created_at) as earliest,
+            MAX(created_at) as latest,
             COUNT(*) as count
-          FROM josiah_reflections
+          FROM josiah_reflections_rows
         `;
 
         result = {

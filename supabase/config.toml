@@ -48,3 +48,9 @@ verify_jwt = false
 
 [functions.data-quality-audit]
 verify_jwt = false
+
+[functions.ai-search]
+verify_jwt = false
+
+[functions.materialized-views]
+verify_jwt = false

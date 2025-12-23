@@ -63,37 +63,35 @@ serve(async (req) => {
           ORDER BY count DESC
         `).catch(e => console.log("mv_taxonomy_summary:", e.message));
         
-        // Create biometric daily aggregates
+        // Create biometric daily aggregates (match biometric_monitoring schema)
         await sql.unsafe(`
           CREATE MATERIALIZED VIEW IF NOT EXISTS mv_biometric_daily AS
           SELECT 
-            date_trunc('day', recorded_at) as day,
-            metric_name,
+            date_trunc('day', measurement_timestamp) as day,
             COUNT(*) as reading_count,
-            AVG(value::numeric) as avg_value,
-            MIN(value::numeric) as min_value,
-            MAX(value::numeric) as max_value,
-            COUNT(CASE WHEN severity = 'critical' THEN 1 END) as critical_count,
-            COUNT(CASE WHEN severity = 'warning' THEN 1 END) as warning_count
+            AVG(heart_rate) as avg_heart_rate,
+            AVG(stress_level) as avg_stress_level,
+            COUNT(CASE WHEN medical_alert = true THEN 1 END) as medical_alert_count,
+            COUNT(CASE WHEN legal_evidence = true THEN 1 END) as legal_evidence_count
           FROM biometric_monitoring
-          WHERE recorded_at IS NOT NULL
-          GROUP BY date_trunc('day', recorded_at), metric_name
+          WHERE measurement_timestamp IS NOT NULL
+          GROUP BY date_trunc('day', measurement_timestamp)
           ORDER BY day DESC
         `).catch(e => console.log("mv_biometric_daily:", e.message));
         
-        // Create enterprise network summary
+        // Create enterprise network summary (match criminal_enterprise_command_structure schema)
         await sql.unsafe(`
           CREATE MATERIALIZED VIEW IF NOT EXISTS mv_enterprise_network AS
           SELECT 
-            role,
+            COALESCE(role, 'UNSPECIFIED') as role,
             COUNT(*) as member_count,
-            COUNT(DISTINCT organization) as org_count
+            COUNT(DISTINCT entity_name) as entity_count
           FROM criminal_enterprise_command_structure
-          GROUP BY role
+          GROUP BY COALESCE(role, 'UNSPECIFIED')
           ORDER BY member_count DESC
         `).catch(e => console.log("mv_enterprise_network:", e.message));
         
-        // Create evidence chain summary
+        // Create evidence chain summary (match schemas)
         await sql.unsafe(`
           CREATE MATERIALIZED VIEW IF NOT EXISTS mv_evidence_chain AS
           SELECT 
@@ -104,7 +102,7 @@ serve(async (req) => {
           FROM (
             SELECT 'flight' as evidence_type, detection_timestamp as created_at FROM live_flight_detections_rows
             UNION ALL
-            SELECT 'biometric', recorded_at FROM biometric_monitoring
+            SELECT 'biometric', measurement_timestamp FROM biometric_monitoring
             UNION ALL
             SELECT 'ocr', created_at FROM ocr_aircraft_holding_patterns
           ) combined

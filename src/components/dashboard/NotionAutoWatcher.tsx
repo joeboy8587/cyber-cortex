@@ -287,14 +287,19 @@ export function NotionAutoWatcher() {
     addActivity('Running pattern enrichment analysis', 'pending');
     
     try {
-      // Fetch existing reflections from NeonDB
+      // Fetch existing reflections from DB (use josiah_reflections_rows)
       const { data: reflectionData, error: fetchError } = await supabase.functions.invoke('neon-query', {
         body: {
           action: 'customQuery',
           query: `
-            SELECT reflection_id, title, content, reflection_date, category 
-            FROM josiah_reflections 
-            ORDER BY reflection_date DESC 
+            SELECT 
+              id as reflection_id,
+              NULL as title,
+              reflection_content as content,
+              created_at as reflection_date,
+              trigger_type as category
+            FROM josiah_reflections_rows
+            ORDER BY created_at DESC NULLS LAST
             LIMIT 50
           `
         }

@@ -91,23 +91,43 @@ serve(async (req) => {
           ORDER BY member_count DESC
         `).catch(e => console.log("mv_enterprise_network:", e.message));
         
-        // Create evidence chain summary (match schemas)
-        await sql.unsafe(`
-          CREATE MATERIALIZED VIEW IF NOT EXISTS mv_evidence_chain AS
-          SELECT 
-            evidence_type,
-            COUNT(*) as count,
-            MIN(created_at) as earliest,
-            MAX(created_at) as latest
-          FROM (
-            SELECT 'flight' as evidence_type, detection_timestamp as created_at FROM live_flight_detections_rows
-            UNION ALL
-            SELECT 'biometric', measurement_timestamp FROM biometric_monitoring
-            UNION ALL
-            SELECT 'ocr', created_at FROM ocr_aircraft_holding_patterns
-          ) combined
-          GROUP BY evidence_type
-        `).catch(e => console.log("mv_evidence_chain:", e.message));
+        // Create evidence chain summary - check table existence first
+        const ocrExists = await sql`SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'ocr_aircraft_holding_patterns')`.catch(() => [{ exists: false }]);
+        
+        if (ocrExists[0]?.exists) {
+          await sql.unsafe(`
+            CREATE MATERIALIZED VIEW IF NOT EXISTS mv_evidence_chain AS
+            SELECT 
+              evidence_type,
+              COUNT(*) as count,
+              MIN(created_at) as earliest,
+              MAX(created_at) as latest
+            FROM (
+              SELECT 'flight' as evidence_type, detection_timestamp as created_at FROM live_flight_detections_rows
+              UNION ALL
+              SELECT 'biometric', measurement_timestamp FROM biometric_monitoring
+              UNION ALL
+              SELECT 'ocr', created_at FROM ocr_aircraft_holding_patterns
+            ) combined
+            GROUP BY evidence_type
+          `).catch(e => console.log("mv_evidence_chain:", e.message));
+        } else {
+          // Create simpler version without ocr table
+          await sql.unsafe(`
+            CREATE MATERIALIZED VIEW IF NOT EXISTS mv_evidence_chain AS
+            SELECT 
+              evidence_type,
+              COUNT(*) as count,
+              MIN(created_at) as earliest,
+              MAX(created_at) as latest
+            FROM (
+              SELECT 'flight' as evidence_type, detection_timestamp as created_at FROM live_flight_detections_rows
+              UNION ALL
+              SELECT 'biometric', measurement_timestamp FROM biometric_monitoring
+            ) combined
+            GROUP BY evidence_type
+          `).catch(e => console.log("mv_evidence_chain:", e.message));
+        }
 
         // Create indexes for faster queries
         await sql.unsafe(`CREATE INDEX IF NOT EXISTS idx_mv_flight_hour ON mv_flight_stats_hourly (hour DESC)`).catch(() => {});

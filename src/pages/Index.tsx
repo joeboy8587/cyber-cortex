@@ -34,6 +34,7 @@ import { XXBTaxonomyPanel } from "@/components/dashboard/XXBTaxonomyPanel";
 import { GlobalAISearch } from "@/components/dashboard/GlobalAISearch";
 import { WatchtowerAlertsHub } from "@/components/dashboard/WatchtowerAlertsHub";
 import { MaterializedViewsPanel } from "@/components/dashboard/MaterializedViewsPanel";
+import { FalseClaimsActCompiler } from "@/components/dashboard/FalseClaimsActCompiler";
 
 const Index = () => {
   return (
@@ -63,7 +64,8 @@ const Index = () => {
             <DataStreams />
           </section>
           
-          <section id="legal-analysis">
+          <section id="legal-analysis" className="space-y-6">
+            <FalseClaimsActCompiler />
             <LegalAnalysisAI />
           </section>
           

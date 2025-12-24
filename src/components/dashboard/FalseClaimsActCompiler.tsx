@@ -70,8 +70,16 @@ export function FalseClaimsActCompiler() {
       setProgress(25);
       const biometricEvidence = await customQuery(`
         SELECT 
-          id, measurement_type, value, measurement_timestamp, 
-          heart_rate, stress_level, medical_alert, legal_evidence,
+          id, 
+          CASE 
+            WHEN heart_rate IS NOT NULL THEN 'Heart Rate'
+            WHEN hrv IS NOT NULL THEN 'HRV'  
+            WHEN stress_level IS NOT NULL THEN 'Stress Level'
+            ELSE 'Biometric Reading'
+          END as measurement_type,
+          COALESCE(heart_rate, hrv, stress_level) as value,
+          measurement_timestamp, 
+          heart_rate, hrv, stress_level, medical_alert, legal_evidence,
           sha256_hash
         FROM biometric_monitoring
         WHERE legal_evidence = true OR medical_alert = true

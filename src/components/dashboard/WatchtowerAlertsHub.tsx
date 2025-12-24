@@ -60,8 +60,22 @@ export function WatchtowerAlertsHub() {
           LIMIT 20
         `).catch(() => []),
         customQuery(`
-          SELECT id, measurement_type as metric_name, value, measurement_timestamp as recorded_at, 
-            CASE WHEN value::numeric > 100 THEN 'critical' WHEN value::numeric > 80 THEN 'warning' ELSE 'info' END as severity
+          SELECT id, 
+            CASE 
+              WHEN heart_rate IS NOT NULL THEN 'Heart Rate'
+              WHEN hrv IS NOT NULL THEN 'HRV'
+              WHEN stress_level IS NOT NULL THEN 'Stress Level'
+              ELSE 'Biometric'
+            END as metric_name,
+            COALESCE(heart_rate, hrv, stress_level, 0) as value, 
+            measurement_timestamp as recorded_at, 
+            CASE 
+              WHEN heart_rate > 110 THEN 'critical' 
+              WHEN heart_rate > 90 THEN 'warning' 
+              WHEN hrv < 40 THEN 'critical'
+              WHEN hrv < 60 THEN 'warning'
+              ELSE 'info' 
+            END as severity
           FROM biometric_monitoring 
           WHERE measurement_timestamp > NOW() - INTERVAL '24 hours'
           ORDER BY measurement_timestamp DESC

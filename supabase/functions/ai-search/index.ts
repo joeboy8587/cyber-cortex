@@ -72,9 +72,17 @@ serve(async (req) => {
         let bioContext = "";
         if (query.toLowerCase().includes("biometric") || query.toLowerCase().includes("health") || query.toLowerCase().includes("ecg")) {
           const bio = await sql`
-            SELECT measurement_type as metric_name, COUNT(*) as count, AVG(value::numeric) as avg_value
+            SELECT 
+              CASE 
+                WHEN heart_rate IS NOT NULL THEN 'Heart Rate'
+                WHEN hrv IS NOT NULL THEN 'HRV'
+                WHEN stress_level IS NOT NULL THEN 'Stress Level'
+                ELSE 'Other'
+              END as metric_name, 
+              COUNT(*) as count, 
+              AVG(COALESCE(heart_rate, hrv, stress_level)) as avg_value
             FROM biometric_monitoring
-            GROUP BY measurement_type
+            GROUP BY 1
             ORDER BY count DESC
             LIMIT 5
           `.catch(() => []);

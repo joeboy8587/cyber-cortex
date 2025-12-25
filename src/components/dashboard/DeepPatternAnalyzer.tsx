@@ -7,17 +7,12 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Progress } from '@/components/ui/progress';
 import { 
   Network, 
-  Radar, 
   Target, 
   TrendingUp,
   AlertTriangle,
   Users,
   Plane,
-  Activity,
   Clock,
-  MapPin,
-  Zap,
-  BarChart3,
   Layers,
   Search
 } from 'lucide-react';
@@ -29,33 +24,32 @@ export default function DeepPatternAnalyzer() {
   const [activeTab, setActiveTab] = useState('coordination');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
-  // Cross-operator coordination detection
-  const { data: operatorCoordination, refetch: refetchCoordination } = useQuery({
-    queryKey: ['deep-operator-coordination'],
+  // Cross-registration coordination detection (no operator column exists)
+  const { data: registrationCoordination, refetch: refetchCoordination } = useQuery({
+    queryKey: ['deep-registration-coordination'],
     queryFn: async () => {
       const { data } = await supabase.functions.invoke('neon-query', {
         body: {
           action: 'customQuery',
           query: `
             SELECT 
-              operator,
-              COUNT(DISTINCT registration) as unique_aircraft,
+              registration,
               COUNT(*) as total_detections,
-              ROUND(AVG(altitude_ft)::numeric, 0) as avg_altitude,
-              MIN(altitude_ft) as min_altitude,
-              SUM(CASE WHEN altitude_ft < 2000 THEN 1 ELSE 0 END) as low_alt_ops,
-              ROUND((SUM(CASE WHEN altitude_ft < 2000 THEN 1 ELSE 0 END)::numeric / NULLIF(COUNT(*)::numeric, 0) * 100), 1) as low_alt_pct,
-              COUNT(DISTINCT DATE(detection_time)) as active_days
+              ROUND(AVG(altitude)::numeric, 0) as avg_altitude,
+              MIN(altitude) as min_altitude,
+              SUM(CASE WHEN altitude < 2000 THEN 1 ELSE 0 END) as low_alt_ops,
+              ROUND((SUM(CASE WHEN altitude < 2000 THEN 1 ELSE 0 END)::numeric / NULLIF(COUNT(*)::numeric, 0) * 100), 1) as low_alt_pct,
+              COUNT(DISTINCT DATE(detection_timestamp)) as active_days
             FROM live_flight_detections
-            WHERE operator IS NOT NULL AND operator != ''
-            GROUP BY operator
+            WHERE registration IS NOT NULL AND registration != ''
+            GROUP BY registration
             HAVING COUNT(*) > 10
             ORDER BY COUNT(*) DESC
             LIMIT 25
           `
         }
       });
-      return data?.results || [];
+      return data?.data || [];
     }
   });
 
@@ -69,12 +63,12 @@ export default function DeepPatternAnalyzer() {
           query: `
             WITH altitude_bands AS (
               SELECT 
-                DATE(detection_time) as flight_date,
-                CASE WHEN altitude_ft > 20000 THEN 'HIGH' ELSE 'LOW' END as band,
+                DATE(detection_timestamp) as flight_date,
+                CASE WHEN altitude > 20000 THEN 'HIGH' ELSE 'LOW' END as band,
                 COUNT(DISTINCT registration) as aircraft_count,
                 COUNT(*) as detections
               FROM live_flight_detections
-              GROUP BY DATE(detection_time), CASE WHEN altitude_ft > 20000 THEN 'HIGH' ELSE 'LOW' END
+              GROUP BY DATE(detection_timestamp), CASE WHEN altitude > 20000 THEN 'HIGH' ELSE 'LOW' END
             )
             SELECT 
               h.flight_date,
@@ -92,7 +86,7 @@ export default function DeepPatternAnalyzer() {
           `
         }
       });
-      return data?.results || [];
+      return data?.data || [];
     }
   });
 
@@ -107,21 +101,21 @@ export default function DeepPatternAnalyzer() {
             SELECT 
               registration,
               COUNT(*) as appearances,
-              COUNT(DISTINCT DATE(detection_time)) as unique_days,
-              ROUND(COUNT(*)::numeric / NULLIF(COUNT(DISTINCT DATE(detection_time)), 0)::numeric, 1) as detections_per_day,
-              MIN(detection_time)::date as first_seen,
-              MAX(detection_time)::date as last_seen,
-              ROUND(AVG(altitude_ft)::numeric, 0) as avg_altitude
+              COUNT(DISTINCT DATE(detection_timestamp)) as unique_days,
+              ROUND(COUNT(*)::numeric / NULLIF(COUNT(DISTINCT DATE(detection_timestamp)), 0)::numeric, 1) as detections_per_day,
+              MIN(detection_timestamp)::date as first_seen,
+              MAX(detection_timestamp)::date as last_seen,
+              ROUND(AVG(altitude)::numeric, 0) as avg_altitude
             FROM live_flight_detections
             WHERE registration IS NOT NULL
             GROUP BY registration
             HAVING COUNT(*) > 50
-            ORDER BY COUNT(*)::numeric / NULLIF(COUNT(DISTINCT DATE(detection_time)), 0)::numeric DESC NULLS LAST
+            ORDER BY COUNT(*)::numeric / NULLIF(COUNT(DISTINCT DATE(detection_timestamp)), 0)::numeric DESC NULLS LAST
             LIMIT 30
           `
         }
       });
-      return data?.results || [];
+      return data?.data || [];
     }
   });
 
@@ -135,23 +129,22 @@ export default function DeepPatternAnalyzer() {
           query: `
             SELECT 
               registration,
-              operator,
               COUNT(*) as total_detections,
               COUNT(DISTINCT callsign) as callsign_variants,
-              ROUND(AVG(altitude_ft)::numeric, 0) as avg_altitude,
-              MIN(altitude_ft) as min_altitude,
-              ROUND(AVG(speed_kts)::numeric, 0) as avg_speed,
-              SUM(CASE WHEN is_flagged = true THEN 1 ELSE 0 END) as flagged_count
+              ROUND(AVG(altitude)::numeric, 0) as avg_altitude,
+              MIN(altitude) as min_altitude,
+              ROUND(AVG(speed)::numeric, 0) as avg_speed,
+              SUM(CASE WHEN flagged = true THEN 1 ELSE 0 END) as flagged_count
             FROM live_flight_detections
             WHERE registration IS NOT NULL
-            GROUP BY registration, operator
-            HAVING COUNT(DISTINCT callsign) > 2 OR SUM(CASE WHEN is_flagged = true THEN 1 ELSE 0 END) > 10
-            ORDER BY COUNT(DISTINCT callsign) DESC, SUM(CASE WHEN is_flagged = true THEN 1 ELSE 0 END) DESC
+            GROUP BY registration
+            HAVING COUNT(DISTINCT callsign) > 2 OR SUM(CASE WHEN flagged = true THEN 1 ELSE 0 END) > 10
+            ORDER BY COUNT(DISTINCT callsign) DESC, SUM(CASE WHEN flagged = true THEN 1 ELSE 0 END) DESC
             LIMIT 25
           `
         }
       });
-      return data?.results || [];
+      return data?.data || [];
     }
   });
 
@@ -167,9 +160,9 @@ export default function DeepPatternAnalyzer() {
               registration,
               callsign,
               icao_code,
-              altitude_ft,
-              speed_kts,
-              detection_time,
+              altitude,
+              speed,
+              detection_timestamp,
               CASE 
                 WHEN callsign LIKE 'CFC%' OR callsign LIKE 'CAF%' THEN 'CONFIRMED MILITARY'
                 WHEN icao_code LIKE 'c8%' OR icao_code LIKE 'c9%' THEN 'MILITARY BLOCK'
@@ -182,18 +175,18 @@ export default function DeepPatternAnalyzer() {
                OR callsign LIKE 'CAF%'
                OR icao_code LIKE 'c8%'
                OR icao_code LIKE 'c9%'
-            ORDER BY detection_time DESC
+            ORDER BY detection_timestamp DESC
             LIMIT 50
           `
         }
       });
-      return data?.results || [];
+      return data?.data || [];
     }
   });
 
-  // KCSO coordination with shell companies
-  const { data: kcsoShellCoordination } = useQuery({
-    queryKey: ['deep-kcso-shell'],
+  // KCSO coordination detection
+  const { data: kcsoCoordination } = useQuery({
+    queryKey: ['deep-kcso-coordination'],
     queryFn: async () => {
       const { data } = await supabase.functions.invoke('neon-query', {
         body: {
@@ -201,28 +194,25 @@ export default function DeepPatternAnalyzer() {
           query: `
             SELECT 
               registration,
-              operator,
+              callsign,
               COUNT(*) as total_detections,
-              COUNT(DISTINCT DATE(detection_time)) as active_days,
-              ROUND(AVG(altitude_ft)::numeric, 0) as avg_altitude,
-              MIN(altitude_ft) as min_altitude,
-              SUM(CASE WHEN altitude_ft < 1500 THEN 1 ELSE 0 END) as surveillance_altitude_count
+              COUNT(DISTINCT DATE(detection_timestamp)) as active_days,
+              ROUND(AVG(altitude)::numeric, 0) as avg_altitude,
+              MIN(altitude) as min_altitude,
+              SUM(CASE WHEN altitude < 1500 THEN 1 ELSE 0 END) as surveillance_altitude_count
             FROM live_flight_detections
             WHERE registration LIKE 'N91%' 
-               OR operator ILIKE '%kcso%'
-               OR operator ILIKE '%sheriff%'
-               OR operator ILIKE '%kern%'
-               OR operator ILIKE '%alf%'
-               OR operator ILIKE '%aero equities%'
-               OR operator ILIKE '%llc%'
-            GROUP BY registration, operator
+               OR callsign ILIKE '%kcso%'
+               OR callsign ILIKE '%sheriff%'
+               OR callsign ILIKE '%kern%'
+            GROUP BY registration, callsign
             HAVING COUNT(*) > 5
-            ORDER BY SUM(CASE WHEN altitude_ft < 1500 THEN 1 ELSE 0 END) DESC
+            ORDER BY SUM(CASE WHEN altitude < 1500 THEN 1 ELSE 0 END) DESC
             LIMIT 25
           `
         }
       });
-      return data?.results || [];
+      return data?.data || [];
     }
   });
 
@@ -242,8 +232,7 @@ export default function DeepPatternAnalyzer() {
     if (!ops) return 0;
     const lowAltPct = parseFloat(ops.low_alt_pct) || 0;
     const activeDays = parseInt(ops.active_days) || 0;
-    const uniqueAircraft = parseInt(ops.unique_aircraft) || 0;
-    return Math.min(100, (lowAltPct * 0.5) + (activeDays * 2) + (uniqueAircraft * 5));
+    return Math.min(100, (lowAltPct * 0.5) + (activeDays * 2));
   };
 
   return (
@@ -257,7 +246,7 @@ export default function DeepPatternAnalyzer() {
               <div>
                 <h2 className="text-lg font-bold">Deep Pattern Coordination Analyzer</h2>
                 <p className="text-sm text-muted-foreground">
-                  Cross-reference aircraft registries, operators, and behavioral patterns
+                  Cross-reference aircraft registries and behavioral patterns
                 </p>
               </div>
             </div>
@@ -273,7 +262,7 @@ export default function DeepPatternAnalyzer() {
         <TabsList className="grid grid-cols-6 w-full">
           <TabsTrigger value="coordination" className="flex items-center gap-1 text-xs">
             <Users className="h-3 w-3" />
-            Operators
+            Aircraft
           </TabsTrigger>
           <TabsTrigger value="highlow" className="flex items-center gap-1 text-xs">
             <Layers className="h-3 w-3" />
@@ -293,40 +282,40 @@ export default function DeepPatternAnalyzer() {
           </TabsTrigger>
           <TabsTrigger value="kcso" className="flex items-center gap-1 text-xs">
             <Target className="h-3 w-3" />
-            KCSO-Shell
+            KCSO
           </TabsTrigger>
         </TabsList>
 
-        {/* Operator Coordination Tab */}
+        {/* Aircraft Coordination Tab */}
         <TabsContent value="coordination" className="space-y-4">
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm flex items-center gap-2">
                 <Users className="h-4 w-4 text-primary" />
-                Operator Coordination Network ({operatorCoordination?.length || 0} operators)
+                Aircraft Coordination Network ({registrationCoordination?.length || 0} aircraft)
               </CardTitle>
             </CardHeader>
             <CardContent>
               <ScrollArea className="h-[400px]">
                 <div className="space-y-2">
-                  {operatorCoordination?.map((op: any, idx: number) => {
+                  {registrationCoordination?.map((op: any, idx: number) => {
                     const score = getCoordinationScore(op);
                     return (
                       <div key={idx} className="p-3 border rounded-lg bg-card">
                         <div className="flex items-center justify-between mb-2">
-                          <span className="font-medium text-sm truncate max-w-[200px]">{op.operator}</span>
+                          <Badge variant="outline">{op.registration}</Badge>
                           <Badge variant={score > 50 ? 'destructive' : score > 25 ? 'secondary' : 'outline'}>
                             Score: {score.toFixed(0)}
                           </Badge>
                         </div>
                         <div className="grid grid-cols-4 gap-2 text-xs mb-2">
                           <div>
-                            <span className="text-muted-foreground">Aircraft:</span>
-                            <span className="ml-1 font-bold">{op.unique_aircraft}</span>
-                          </div>
-                          <div>
                             <span className="text-muted-foreground">Detections:</span>
                             <span className="ml-1 font-bold">{op.total_detections}</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Avg Alt:</span>
+                            <span className="ml-1 font-bold">{op.avg_altitude} ft</span>
                           </div>
                           <div>
                             <span className="text-muted-foreground">Low-Alt:</span>
@@ -428,7 +417,7 @@ export default function DeepPatternAnalyzer() {
                         </div>
                         <div>
                           <span className="text-muted-foreground">Per Day:</span>
-                          <span className="ml-1 font-bold text-primary">{cluster.detections_per_day}</span>
+                          <span className="ml-1 font-bold">{cluster.detections_per_day}</span>
                         </div>
                         <div>
                           <span className="text-muted-foreground">Avg Alt:</span>
@@ -443,35 +432,28 @@ export default function DeepPatternAnalyzer() {
           </Card>
         </TabsContent>
 
-        {/* Registry Anomalies Tab */}
+        {/* Anomalies Tab */}
         <TabsContent value="anomalies" className="space-y-4">
           <Card className="border-destructive/30">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm flex items-center gap-2">
                 <AlertTriangle className="h-4 w-4 text-destructive" />
-                Registry Anomalies - Callsign Variants & Flagged Aircraft
+                Registry Anomalies - Multiple Callsigns / High Flags
               </CardTitle>
             </CardHeader>
             <CardContent>
               <ScrollArea className="h-[400px]">
                 <div className="space-y-2">
                   {registryAnomalies?.map((anomaly: any, idx: number) => (
-                    <div key={idx} className="p-3 border border-destructive/30 rounded-lg bg-destructive/5">
+                    <div key={idx} className="p-3 border border-destructive/30 rounded-lg bg-card">
                       <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2">
-                          <Badge variant="destructive">{anomaly.registration}</Badge>
-                          {anomaly.callsign_variants > 2 && (
-                            <Badge variant="secondary">
-                              {anomaly.callsign_variants} callsigns
-                            </Badge>
-                          )}
+                        <Badge variant="destructive">{anomaly.registration}</Badge>
+                        <div className="flex gap-2">
+                          <Badge variant="secondary">{anomaly.callsign_variants} callsigns</Badge>
+                          <Badge variant={parseInt(anomaly.flagged_count) > 20 ? 'destructive' : 'outline'}>
+                            {anomaly.flagged_count} flagged
+                          </Badge>
                         </div>
-                        <Badge variant={anomaly.flagged_count > 20 ? 'destructive' : 'outline'}>
-                          {anomaly.flagged_count} flagged
-                        </Badge>
-                      </div>
-                      <div className="text-xs text-muted-foreground mb-2">
-                        Operator: {anomaly.operator || 'Unknown'}
                       </div>
                       <div className="grid grid-cols-4 gap-2 text-xs">
                         <div>
@@ -501,47 +483,39 @@ export default function DeepPatternAnalyzer() {
 
         {/* Canadian Military Tab */}
         <TabsContent value="canadian" className="space-y-4">
-          <Card className="border-primary/30">
+          <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm flex items-center gap-2">
                 <Plane className="h-4 w-4 text-primary" />
-                Canadian Military Aircraft Coordination
+                Canadian Military Aircraft Detections
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="mb-4 p-3 bg-primary/10 rounded-lg border border-primary/30">
-                <p className="text-sm">
-                  <strong>266 detections</strong> of Canadian military aircraft over Central Valley. 
-                  Multinational coordination with US military installations (China Lake, Edwards AFB, Vandenberg).
-                </p>
-              </div>
-              <ScrollArea className="h-[350px]">
+              <ScrollArea className="h-[400px]">
                 <div className="space-y-2">
                   {canadianMilitary?.map((aircraft: any, idx: number) => (
                     <div key={idx} className="p-3 border rounded-lg bg-card">
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center gap-2">
-                          <Badge variant={aircraft.classification === 'CONFIRMED MILITARY' ? 'destructive' : 'outline'}>
+                          <Badge variant={aircraft.classification === 'CONFIRMED MILITARY' ? 'destructive' : 'secondary'}>
                             {aircraft.registration || aircraft.callsign}
                           </Badge>
-                          <span className="text-xs">{aircraft.classification}</span>
+                          <span className="text-xs text-muted-foreground">{aircraft.icao_code}</span>
                         </div>
-                        <span className="text-xs text-muted-foreground">
-                          {new Date(aircraft.detection_time).toLocaleDateString()}
-                        </span>
+                        <Badge variant="outline">{aircraft.classification}</Badge>
                       </div>
                       <div className="grid grid-cols-3 gap-2 text-xs">
                         <div>
-                          <span className="text-muted-foreground">ICAO:</span>
-                          <span className="ml-1 font-mono">{aircraft.icao_code}</span>
-                        </div>
-                        <div>
-                          <span className="text-muted-foreground">Altitude:</span>
-                          <span className="ml-1 font-bold">{aircraft.altitude_ft} ft</span>
+                          <span className="text-muted-foreground">Alt:</span>
+                          <span className="ml-1 font-bold">{aircraft.altitude} ft</span>
                         </div>
                         <div>
                           <span className="text-muted-foreground">Speed:</span>
-                          <span className="ml-1 font-bold">{aircraft.speed_kts} kts</span>
+                          <span className="ml-1 font-bold">{aircraft.speed} kts</span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">Time:</span>
+                          <span className="ml-1 font-bold">{aircraft.detection_timestamp?.split('T')[0]}</span>
                         </div>
                       </div>
                     </div>
@@ -552,51 +526,47 @@ export default function DeepPatternAnalyzer() {
           </Card>
         </TabsContent>
 
-        {/* KCSO-Shell Tab */}
+        {/* KCSO Tab */}
         <TabsContent value="kcso" className="space-y-4">
-          <Card className="border-destructive/30">
+          <Card className="border-warning/30">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm flex items-center gap-2">
-                <Target className="h-4 w-4 text-destructive" />
-                KCSO-Shell Company Coordination Network
+                <Target className="h-4 w-4 text-warning" />
+                KCSO Coordination Detection
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="mb-4 p-3 bg-destructive/10 rounded-lg border border-destructive/30">
-                <p className="text-sm">
-                  <strong>RICO Pattern:</strong> KCSO assets coordinating with shell company aircraft. 
-                  Shared operators, surveillance altitudes, and temporal clustering indicate coordinated operation.
-                </p>
-              </div>
-              <ScrollArea className="h-[350px]">
+              <ScrollArea className="h-[400px]">
                 <div className="space-y-2">
-                  {kcsoShellCoordination?.map((entity: any, idx: number) => (
-                    <div key={idx} className="p-3 border border-destructive/30 rounded-lg bg-destructive/5">
+                  {kcsoCoordination?.map((coord: any, idx: number) => (
+                    <div key={idx} className="p-3 border border-warning/30 rounded-lg bg-card">
                       <div className="flex items-center justify-between mb-2">
-                        <Badge variant="destructive">{entity.registration}</Badge>
-                        <Badge variant={entity.surveillance_altitude_count > 50 ? 'destructive' : 'secondary'}>
-                          {entity.surveillance_altitude_count} low-alt ops
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline">{coord.registration}</Badge>
+                          {coord.callsign && (
+                            <span className="text-xs text-muted-foreground">{coord.callsign}</span>
+                          )}
+                        </div>
+                        <Badge variant={parseInt(coord.surveillance_altitude_count) > 50 ? 'destructive' : 'secondary'}>
+                          {coord.surveillance_altitude_count} low-alt ops
                         </Badge>
-                      </div>
-                      <div className="text-xs text-muted-foreground mb-2">
-                        Operator: {entity.operator || 'Unknown'}
                       </div>
                       <div className="grid grid-cols-4 gap-2 text-xs">
                         <div>
-                          <span className="text-muted-foreground">Total:</span>
-                          <span className="ml-1 font-bold">{entity.total_detections}</span>
+                          <span className="text-muted-foreground">Detections:</span>
+                          <span className="ml-1 font-bold">{coord.total_detections}</span>
                         </div>
                         <div>
                           <span className="text-muted-foreground">Days:</span>
-                          <span className="ml-1 font-bold">{entity.active_days}</span>
+                          <span className="ml-1 font-bold">{coord.active_days}</span>
                         </div>
                         <div>
                           <span className="text-muted-foreground">Avg Alt:</span>
-                          <span className="ml-1 font-bold">{entity.avg_altitude} ft</span>
+                          <span className="ml-1 font-bold">{coord.avg_altitude} ft</span>
                         </div>
                         <div>
                           <span className="text-muted-foreground">Min Alt:</span>
-                          <span className="ml-1 font-bold text-destructive">{entity.min_altitude} ft</span>
+                          <span className="ml-1 font-bold text-destructive">{coord.min_altitude} ft</span>
                         </div>
                       </div>
                     </div>

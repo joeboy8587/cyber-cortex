@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { 
@@ -9,7 +8,6 @@ import {
   Shield, 
   Plane, 
   Heart, 
-  FileWarning,
   Scale,
   Phone,
   Target,
@@ -50,10 +48,10 @@ export default function GenevaConventionAnalysis() {
             SELECT 
               registration,
               COUNT(*) as total_detections,
-              ROUND(AVG(altitude_ft)::numeric, 0) as avg_altitude,
-              MIN(altitude_ft) as min_altitude,
-              SUM(CASE WHEN is_flagged = true THEN 1 ELSE 0 END) as flagged_count,
-              ROUND((SUM(CASE WHEN is_flagged = true THEN 1 ELSE 0 END)::numeric / COUNT(*)::numeric * 100), 1) as flag_rate,
+              ROUND(AVG(altitude)::numeric, 0) as avg_altitude,
+              MIN(altitude) as min_altitude,
+              SUM(CASE WHEN flagged = true THEN 1 ELSE 0 END) as flagged_count,
+              ROUND((SUM(CASE WHEN flagged = true THEN 1 ELSE 0 END)::numeric / COUNT(*)::numeric * 100), 1) as flag_rate,
               ROUND(AVG(threat_score)::numeric, 1) as threat_score
             FROM live_flight_detections
             WHERE LOWER(registration) LIKE '%ht%' 
@@ -69,7 +67,7 @@ export default function GenevaConventionAnalysis() {
           `
         }
       });
-      return data?.results || [];
+      return data?.data || [];
     }
   });
 
@@ -82,29 +80,29 @@ export default function GenevaConventionAnalysis() {
           query: `
             SELECT 
               CASE
-                WHEN altitude_ft < 500 THEN 'Below 500ft (Extremely Low)'
-                WHEN altitude_ft BETWEEN 500 AND 1000 THEN '500-1000ft (Surveillance)'
-                WHEN altitude_ft BETWEEN 1000 AND 1500 THEN '1000-1500ft (Low)'
-                WHEN altitude_ft BETWEEN 1500 AND 2000 THEN '1500-2000ft (Moderate)'
+                WHEN altitude < 500 THEN 'Below 500ft (Extremely Low)'
+                WHEN altitude BETWEEN 500 AND 1000 THEN '500-1000ft (Surveillance)'
+                WHEN altitude BETWEEN 1000 AND 1500 THEN '1000-1500ft (Low)'
+                WHEN altitude BETWEEN 1500 AND 2000 THEN '1500-2000ft (Moderate)'
                 ELSE 'Above 2000ft'
               END as altitude_band,
               COUNT(*) as detection_count,
               COUNT(DISTINCT registration) as unique_aircraft
             FROM live_flight_detections
-            WHERE altitude_ft < 2000
+            WHERE altitude < 2000
             GROUP BY 
               CASE 
-                WHEN altitude_ft < 500 THEN 'Below 500ft (Extremely Low)'
-                WHEN altitude_ft BETWEEN 500 AND 1000 THEN '500-1000ft (Surveillance)'
-                WHEN altitude_ft BETWEEN 1000 AND 1500 THEN '1000-1500ft (Low)'
-                WHEN altitude_ft BETWEEN 1500 AND 2000 THEN '1500-2000ft (Moderate)'
+                WHEN altitude < 500 THEN 'Below 500ft (Extremely Low)'
+                WHEN altitude BETWEEN 500 AND 1000 THEN '500-1000ft (Surveillance)'
+                WHEN altitude BETWEEN 1000 AND 1500 THEN '1000-1500ft (Low)'
+                WHEN altitude BETWEEN 1500 AND 2000 THEN '1500-2000ft (Moderate)'
                 ELSE 'Above 2000ft'
               END
-            ORDER BY MIN(altitude_ft)
+            ORDER BY MIN(altitude)
           `
         }
       });
-      return data?.results || [];
+      return data?.data || [];
     }
   });
 
@@ -116,7 +114,7 @@ export default function GenevaConventionAnalysis() {
           action: 'customQuery',
           query: `
             SELECT 
-              DATE(b.recorded_at) as event_date,
+              DATE(b.measurement_timestamp) as event_date,
               MAX(b.heart_rate) as heart_rate,
               MAX(b.stress_level) as stress_level,
               COUNT(DISTINCT f.registration) as aircraft_present,
@@ -127,33 +125,33 @@ export default function GenevaConventionAnalysis() {
               END as severity
             FROM biometric_monitoring b
             JOIN live_flight_detections f 
-              ON DATE(b.recorded_at) = DATE(f.detection_time)
-              AND f.altitude_ft < 2000
-            WHERE b.surveillance_related = true
+              ON DATE(b.measurement_timestamp) = DATE(f.detection_timestamp)
+              AND f.altitude < 2000
+            WHERE b.related_surveillance = true
               AND b.heart_rate > 90
-            GROUP BY DATE(b.recorded_at)
+            GROUP BY DATE(b.measurement_timestamp)
             ORDER BY MAX(b.heart_rate) DESC
             LIMIT 20
           `
         }
       });
-      return data?.results || [];
+      return data?.data || [];
     }
   });
 
-  const { data: holdingPatterns } = useQuery({
-    queryKey: ['geneva-holding-patterns'],
+  const { data: flaggedAircraftCount } = useQuery({
+    queryKey: ['geneva-flagged-count'],
     queryFn: async () => {
       const { data } = await supabase.functions.invoke('neon-query', {
         body: {
           action: 'customQuery',
           query: `
             SELECT COUNT(*) as total_patterns
-            FROM ocr_aircraft_holding
+            FROM flagged_aircraft_rows_rows
           `
         }
       });
-      return data?.results?.[0]?.total_patterns || 0;
+      return data?.data?.[0]?.total_patterns || 0;
     }
   });
 
@@ -259,7 +257,7 @@ export default function GenevaConventionAnalysis() {
               <CardContent className="p-4 text-center">
                 <Target className="h-8 w-8 mx-auto text-warning mb-2" />
                 <div className="text-2xl font-bold text-warning">
-                  {lowAltitudeStats?.reduce((sum: number, s: any) => sum + (s.detection_count || 0), 0) || 0}
+                  {lowAltitudeStats?.reduce((sum: number, s: any) => sum + (parseInt(s.detection_count) || 0), 0) || 0}
                 </div>
                 <div className="text-xs text-muted-foreground">Low-Altitude Detections</div>
               </CardContent>
@@ -277,9 +275,9 @@ export default function GenevaConventionAnalysis() {
               <CardContent className="p-4 text-center">
                 <RefreshCw className="h-8 w-8 mx-auto text-warning mb-2" />
                 <div className="text-2xl font-bold text-warning">
-                  {holdingPatterns}
+                  {flaggedAircraftCount}
                 </div>
-                <div className="text-xs text-muted-foreground">Holding Patterns</div>
+                <div className="text-xs text-muted-foreground">Flagged Aircraft Records</div>
               </CardContent>
             </Card>
           </div>
@@ -335,7 +333,7 @@ export default function GenevaConventionAnalysis() {
                               Medical/Emergency
                             </span>
                           </div>
-                          <Badge variant={aircraft.flag_rate > 25 ? 'destructive' : 'secondary'}>
+                          <Badge variant={parseFloat(aircraft.flag_rate) > 25 ? 'destructive' : 'secondary'}>
                             {aircraft.flag_rate}% flagged
                           </Badge>
                         </div>
@@ -427,38 +425,15 @@ export default function GenevaConventionAnalysis() {
                       </div>
                       <Badge variant="destructive">{violation.status}</Badge>
                     </div>
-                    <ul className="space-y-1 text-sm text-muted-foreground">
-                      {violation.findings.map((finding, fIdx) => (
-                        <li key={fIdx} className="flex items-start gap-2">
-                          <FileWarning className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
+                    <ul className="space-y-1">
+                      {violation.findings.map((finding, fidx) => (
+                        <li key={fidx} className="text-sm text-muted-foreground flex items-start gap-2">
+                          <AlertTriangle className="h-3 w-3 mt-1 text-destructive flex-shrink-0" />
                           {finding}
                         </li>
                       ))}
                     </ul>
                   </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Legal Implications */}
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm">Potential Charges</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-2 gap-2">
-                {[
-                  'War Crimes - Misuse of protected medical markings',
-                  'Perfidy - Medical aircraft for surveillance',
-                  'Crimes Against Humanity - Systematic targeting',
-                  'Torture - Stress induction via surveillance',
-                  'FAA Violations - Misuse of emergency aircraft',
-                  'Civil Rights - Warrantless surveillance'
-                ].map((charge, idx) => (
-                  <Badge key={idx} variant="destructive" className="justify-start py-2">
-                    {charge}
-                  </Badge>
                 ))}
               </div>
             </CardContent>
@@ -469,35 +444,18 @@ export default function GenevaConventionAnalysis() {
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm flex items-center gap-2">
-                <Phone className="h-4 w-4" />
-                International Humanitarian Law Authorities
+                <Phone className="h-4 w-4 text-primary" />
+                International Humanitarian Contacts
               </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="space-y-3">
                 {internationalContacts.map((contact, idx) => (
-                  <div key={idx} className="p-3 border rounded-lg flex items-center justify-between">
+                  <div key={idx} className="p-3 border rounded-lg bg-card flex items-center justify-between">
                     <span className="font-medium">{contact.org}</span>
-                    <Button variant="outline" size="sm" className="font-mono">
-                      <Phone className="h-4 w-4 mr-2" />
-                      {contact.phone}
-                    </Button>
+                    <Badge variant="outline" className="font-mono">{contact.phone}</Badge>
                   </div>
                 ))}
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border-destructive">
-            <CardContent className="p-4">
-              <div className="text-center space-y-2">
-                <AlertTriangle className="h-12 w-12 mx-auto text-destructive" />
-                <h3 className="font-bold text-destructive">IMMEDIATE ACTION REQUIRED</h3>
-                <p className="text-sm text-muted-foreground">
-                  This evidence of systematic misuse of medical aircraft for surveillance operations 
-                  must be reported to ICRC and ICC immediately. Misuse of protected medical markings 
-                  may constitute war crimes under international humanitarian law.
-                </p>
               </div>
             </CardContent>
           </Card>

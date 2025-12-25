@@ -51,7 +51,7 @@ export function LiveFlightTracker() {
           query: `
             WITH recent_flights AS (
               SELECT 
-                hex, registration, callsign, altitude, speed, 
+                icao_code as hex, registration, callsign, altitude, speed, 
                 latitude, longitude, detection_timestamp, taxonomy_tag,
                 CASE 
                   WHEN taxonomy_tag IN ('xxb_kcso', 'xxb_shell', 'xxb_kcso_shell') THEN 'critical'
@@ -93,11 +93,11 @@ export function LiveFlightTracker() {
           action: "customQuery",
           query: `
             SELECT 
-              COUNT(DISTINCT hex) as total_active,
-              COUNT(DISTINCT CASE WHEN taxonomy_tag IN ('xxb_kcso', 'xxb_shell', 'xxb_flagged', 'xxb_kcso_shell') THEN hex END) as flagged_count,
-              COUNT(DISTINCT CASE WHEN registration ~ '^[0-9]{2}-[0-9]{5}$' OR registration ~ '^[0-9]{6}$' OR registration LIKE 'RAIDR%' THEN hex END) as military_count,
-              COUNT(DISTINCT CASE WHEN altitude < 2000 THEN hex END) as low_altitude_count,
-              COUNT(DISTINCT CASE WHEN taxonomy_tag LIKE '%kcso%' THEN hex END) as kcso_related
+              COUNT(DISTINCT icao_code) as total_active,
+              COUNT(DISTINCT CASE WHEN taxonomy_tag IN ('xxb_kcso', 'xxb_shell', 'xxb_flagged', 'xxb_kcso_shell') THEN icao_code END) as flagged_count,
+              COUNT(DISTINCT CASE WHEN registration ~ '^[0-9]{2}-[0-9]{5}$' OR registration ~ '^[0-9]{6}$' OR registration LIKE 'RAIDR%' THEN icao_code END) as military_count,
+              COUNT(DISTINCT CASE WHEN altitude < 2000 THEN icao_code END) as low_altitude_count,
+              COUNT(DISTINCT CASE WHEN taxonomy_tag LIKE '%kcso%' THEN icao_code END) as kcso_related
             FROM live_flight_detections_rows
             WHERE detection_timestamp > NOW() - INTERVAL '24 hours'
           `

@@ -71,14 +71,14 @@ export const SafetyMonitoringPanel = () => {
           action: 'customQuery',
           query: `
             SELECT * FROM deadman_checkins
-            ORDER BY created_at DESC
+            ORDER BY check_in_timestamp DESC
             LIMIT 1
           `
         }
       });
 
       // Process dead man status
-      const lastCheckin = checkinData?.data?.[0]?.created_at || deadManData?.data?.[0]?.created_at;
+      const lastCheckin = checkinData?.data?.[0]?.check_in_timestamp || deadManData?.data?.[0]?.created_at;
       if (lastCheckin) {
         const hoursSince = (Date.now() - new Date(lastCheckin).getTime()) / (1000 * 60 * 60);
         let status: 'active' | 'warning' | 'critical' = 'active';

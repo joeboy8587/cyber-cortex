@@ -43,6 +43,7 @@ import { AlaskaAirlinesDashboard } from "@/components/dashboard/AlaskaAirlinesDa
 import { SafetyMonitoringPanel } from "@/components/dashboard/SafetyMonitoringPanel";
 import { HighLowOperationsPanel } from "@/components/dashboard/HighLowOperationsPanel";
 import { InfrastructureCorrelation } from "@/components/dashboard/InfrastructureCorrelation";
+import GenevaConventionAnalysis from "@/components/dashboard/GenevaConventionAnalysis";
 
 const Index = () => {
   return (
@@ -74,6 +75,7 @@ const Index = () => {
           </section>
           
           <section id="legal-analysis" className="space-y-6">
+            <GenevaConventionAnalysis />
             <TROEvidenceCompiler />
             <FalseClaimsActCompiler />
             <LegalAnalysisAI />

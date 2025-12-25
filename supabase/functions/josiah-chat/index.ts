@@ -171,7 +171,6 @@ serve(async (req) => {
     // Get four factor correlations
     const fourFactorData = await sql`
       SELECT * FROM four_factor_correlations
-      ORDER BY created_at DESC
       LIMIT 30
     `.catch(() => []);
     
@@ -204,7 +203,6 @@ serve(async (req) => {
     // Get ADA violations
     const adaViolations = await sql`
       SELECT * FROM ada_harm_incidents
-      ORDER BY created_at DESC
       LIMIT 20
     `.catch(() => []);
     

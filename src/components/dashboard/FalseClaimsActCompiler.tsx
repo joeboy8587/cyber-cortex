@@ -112,10 +112,10 @@ export function FalseClaimsActCompiler() {
       setProgress(70);
       const ocrEvidence = await customQuery(`
         SELECT 
-          id, extracted_text, source_image, confidence_score, 
-          created_at, sha256_hash
+          id, registration, source_image, observation_timestamp, 
+          imported_at, sha256_hash
         FROM ocr_aircraft_holding_patterns
-        ORDER BY created_at DESC
+        ORDER BY imported_at DESC
         LIMIT 200
       `).catch(() => []);
 

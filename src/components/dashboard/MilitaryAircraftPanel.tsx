@@ -20,22 +20,30 @@ interface MilitaryStats {
   topMilitaryAircraft: MilitaryEvent[];
 }
 
-// Known military/government registrations from user's evidence
+// Known military/government registrations from ADSB data
 const knownMilitaryRegistrations = [
-  { reg: "95-00093", agency: "USAF", type: "Military Transport" },
-  { reg: "169319", agency: "US Navy", type: "Naval Aviation" },
-  { reg: "18-20980", agency: "US Army", type: "Army Aviation" },
-  { reg: "169533", agency: "US Navy", type: "Naval Aviation" },
-  { reg: "RAIDR18", agency: "US Navy", type: "KC-130J Super Hercules" },
+  { reg: "95-00093", agency: "USAF", type: "C-12 Huron", callsigns: ["LOST47", "LOST42", "LOST56"] },
+  { reg: "95-00095", agency: "USAF", type: "C-12 Huron", callsigns: ["LOST56"] },
+  { reg: "169319", agency: "US Navy", type: "C-40A Clipper", callsigns: ["STMPD19"] },
+  { reg: "169533", agency: "US Navy", type: "KC-130J", callsigns: ["RAIDR43", "RAIDR09"] },
+  { reg: "18-20980", agency: "US Army", type: "UC-35", callsigns: ["KNIFE26"] },
+  { reg: "17-20929", agency: "US Army", type: "UC-35", callsigns: ["KNIFE76"] },
+  { reg: "166500", agency: "US Navy", type: "E-6B Mercury", callsigns: ["GRZLY50"] },
+  { reg: "12-72271", agency: "USAF", type: "MC-12W", callsigns: ["SHADO10"] },
+  { reg: "05-27045", agency: "USAF", type: "HH-60G", callsigns: ["JOLLY96"] },
+  { reg: "06-27076", agency: "USAF", type: "HH-60G", callsigns: ["JOLLY95"] },
+  { reg: "165829", agency: "US Navy", type: "C-2A Greyhound", callsigns: ["CNV4827"] },
+  { reg: "168980", agency: "US Navy", type: "C-2A Greyhound", callsigns: ["CNV4611"] },
+  { reg: "168599", agency: "US Navy", type: "C-40A", callsigns: ["LBRTY53", "LBRTY51"] },
 ];
 
 // Known agencies involved
 const knownAgencies = [
-  { name: "USAF", description: "United States Air Force", events: 0 },
-  { name: "Point Mugu Naval Base", description: "Naval Air Weapons Station", events: 0 },
-  { name: "DOD Contractors", description: "Defense Department Contractors", events: 0 },
-  { name: "US Navy", description: "United States Navy", events: 0 },
-  { name: "US Coast Guard", description: "USCG Maritime Aviation", events: 0 },
+  { name: "USAF", description: "United States Air Force - C-12, MC-12W, HH-60G detections" },
+  { name: "US Navy", description: "Naval Aviation - KC-130J, C-40A, E-6B Mercury, C-2A" },
+  { name: "US Army", description: "Army Aviation - UC-35 Executive Transport" },
+  { name: "Point Mugu Naval Base", description: "Naval Air Weapons Station - Local ops" },
+  { name: "DOD Contractors", description: "Defense Department Contractor Aircraft" },
 ];
 
 export function MilitaryAircraftPanel() {
@@ -123,13 +131,13 @@ export function MilitaryAircraftPanel() {
         const totalEvents = parseInt(totalCount?.data?.[0]?.count || "0");
 
         // Assign agencies to registrations
-        const topMilitaryAircraft: MilitaryEvent[] = militaryEvents.slice(0, 10).map((event: { registration: string; detection_count: string; avg_altitude: string }) => {
-          const known = knownMilitaryRegistrations.find(k => event.registration.includes(k.reg));
+        const topMilitaryAircraft: MilitaryEvent[] = militaryEvents.slice(0, 15).map((event: { registration: string; callsign: string; detection_count: string; avg_altitude: string }) => {
+          const known = knownMilitaryRegistrations.find(k => event.registration === k.reg);
           return {
             registration: event.registration,
             detectionCount: parseInt(event.detection_count || "0"),
-            agency: known?.agency || "Unknown Military/Gov",
-            aircraftType: known?.type || "Unidentified",
+            agency: known?.agency || "Military/Gov",
+            aircraftType: known?.type || event.callsign || "Unidentified",
             avgAltitude: Math.round(parseFloat(event.avg_altitude || "0"))
           };
         });

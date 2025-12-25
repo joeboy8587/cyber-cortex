@@ -45,6 +45,7 @@ export default function GenevaConventionAnalysis() {
     queryFn: async () => {
       const { data } = await supabase.functions.invoke('neon-query', {
         body: {
+          action: 'customQuery',
           query: `
             SELECT 
               registration,
@@ -77,9 +78,10 @@ export default function GenevaConventionAnalysis() {
     queryFn: async () => {
       const { data } = await supabase.functions.invoke('neon-query', {
         body: {
+          action: 'customQuery',
           query: `
             SELECT 
-              CASE 
+              CASE
                 WHEN altitude_ft < 500 THEN 'Below 500ft (Extremely Low)'
                 WHEN altitude_ft BETWEEN 500 AND 1000 THEN '500-1000ft (Surveillance)'
                 WHEN altitude_ft BETWEEN 1000 AND 1500 THEN '1000-1500ft (Low)'
@@ -111,6 +113,7 @@ export default function GenevaConventionAnalysis() {
     queryFn: async () => {
       const { data } = await supabase.functions.invoke('neon-query', {
         body: {
+          action: 'customQuery',
           query: `
             SELECT 
               DATE(b.recorded_at) as event_date,
@@ -143,6 +146,7 @@ export default function GenevaConventionAnalysis() {
     queryFn: async () => {
       const { data } = await supabase.functions.invoke('neon-query', {
         body: {
+          action: 'customQuery',
           query: `
             SELECT COUNT(*) as total_patterns
             FROM ocr_aircraft_holding

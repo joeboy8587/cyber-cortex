@@ -212,35 +212,35 @@ export function LegalAnalysisAI() {
           {liveStats ? (
             <div className="grid grid-cols-4 md:grid-cols-8 gap-2 text-xs">
               <div className="text-center p-2 bg-background/50 rounded">
-                <div className="text-primary font-mono font-bold">{liveStats.totalDetections.toLocaleString()}</div>
+                <div className="text-primary font-mono font-bold">{(liveStats.totalDetections ?? 0).toLocaleString()}</div>
                 <div className="text-muted-foreground">Detections</div>
               </div>
               <div className="text-center p-2 bg-background/50 rounded">
-                <div className="text-secondary font-mono font-bold">{liveStats.uniqueAircraft.toLocaleString()}</div>
+                <div className="text-secondary font-mono font-bold">{(liveStats.uniqueAircraft ?? 0).toLocaleString()}</div>
                 <div className="text-muted-foreground">Aircraft</div>
               </div>
               <div className="text-center p-2 bg-background/50 rounded border border-destructive/30">
-                <div className="text-destructive font-mono font-bold">{liveStats.kcsoShellCount.toLocaleString()}</div>
+                <div className="text-destructive font-mono font-bold">{(liveStats.kcsoShellCount ?? 0).toLocaleString()}</div>
                 <div className="text-muted-foreground">KCSO/Shell</div>
               </div>
               <div className="text-center p-2 bg-background/50 rounded border border-warning/30">
-                <div className="text-warning font-mono font-bold">{liveStats.militaryCount.toLocaleString()}</div>
+                <div className="text-warning font-mono font-bold">{(liveStats.militaryCount ?? 0).toLocaleString()}</div>
                 <div className="text-muted-foreground">Military</div>
               </div>
               <div className="text-center p-2 bg-background/50 rounded border border-secondary/30">
-                <div className="text-secondary font-mono font-bold">{liveStats.foreignMilitaryCount.toLocaleString()}</div>
+                <div className="text-secondary font-mono font-bold">{(liveStats.foreignMilitaryCount ?? 0).toLocaleString()}</div>
                 <div className="text-muted-foreground">Foreign Mil</div>
               </div>
               <div className="text-center p-2 bg-background/50 rounded">
-                <div className="text-accent font-mono font-bold">{liveStats.medicalCount.toLocaleString()}</div>
+                <div className="text-accent font-mono font-bold">{(liveStats.medicalCount ?? 0).toLocaleString()}</div>
                 <div className="text-muted-foreground">Medical</div>
               </div>
               <div className="text-center p-2 bg-background/50 rounded border border-primary/30">
-                <div className="text-primary font-mono font-bold">{liveStats.enterpriseEntities}</div>
+                <div className="text-primary font-mono font-bold">{liveStats.enterpriseEntities ?? 0}</div>
                 <div className="text-muted-foreground">Enterprise</div>
               </div>
               <div className="text-center p-2 bg-background/50 rounded">
-                <div className="text-foreground font-mono font-bold">{liveStats.avgAltitude.toLocaleString()} ft</div>
+                <div className="text-foreground font-mono font-bold">{(liveStats.avgAltitude ?? 0).toLocaleString()} ft</div>
                 <div className="text-muted-foreground">Avg Alt</div>
               </div>
             </div>

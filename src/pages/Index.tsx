@@ -46,6 +46,8 @@ import { HighLowOperationsPanel } from "@/components/dashboard/HighLowOperations
 import { InfrastructureCorrelation } from "@/components/dashboard/InfrastructureCorrelation";
 import GenevaConventionAnalysis from "@/components/dashboard/GenevaConventionAnalysis";
 import DeepPatternAnalyzer from "@/components/dashboard/DeepPatternAnalyzer";
+import { LiveFlightTracker } from "@/components/dashboard/LiveFlightTracker";
+import { DeepCorrelationEngine } from "@/components/dashboard/DeepCorrelationEngine";
 
 const Index = () => {
   return (
@@ -107,7 +109,8 @@ const Index = () => {
             <PatternCoordinationAnalysis />
           </section>
           
-          <section id="correlation-engine" className="grid grid-cols-1 gap-6">
+          <section id="correlation-engine" className="space-y-6">
+            <DeepCorrelationEngine />
             <FourFactorCorrelationEngine />
           </section>
           
@@ -115,7 +118,8 @@ const Index = () => {
             <OCREvidencePanel />
           </section>
           
-          <section id="fleet-tracking" className="grid grid-cols-1 gap-6">
+          <section id="fleet-tracking" className="space-y-6">
+            <LiveFlightTracker />
             <FleetTrackingLedger />
           </section>
           

@@ -35,6 +35,7 @@ export default function DeepPatternAnalyzer() {
     queryFn: async () => {
       const { data } = await supabase.functions.invoke('neon-query', {
         body: {
+          action: 'customQuery',
           query: `
             SELECT 
               operator,
@@ -64,6 +65,7 @@ export default function DeepPatternAnalyzer() {
     queryFn: async () => {
       const { data } = await supabase.functions.invoke('neon-query', {
         body: {
+          action: 'customQuery',
           query: `
             WITH altitude_bands AS (
               SELECT 
@@ -100,6 +102,7 @@ export default function DeepPatternAnalyzer() {
     queryFn: async () => {
       const { data } = await supabase.functions.invoke('neon-query', {
         body: {
+          action: 'customQuery',
           query: `
             SELECT 
               registration,
@@ -128,6 +131,7 @@ export default function DeepPatternAnalyzer() {
     queryFn: async () => {
       const { data } = await supabase.functions.invoke('neon-query', {
         body: {
+          action: 'customQuery',
           query: `
             SELECT 
               registration,
@@ -157,6 +161,7 @@ export default function DeepPatternAnalyzer() {
     queryFn: async () => {
       const { data } = await supabase.functions.invoke('neon-query', {
         body: {
+          action: 'customQuery',
           query: `
             SELECT 
               registration,
@@ -192,6 +197,7 @@ export default function DeepPatternAnalyzer() {
     queryFn: async () => {
       const { data } = await supabase.functions.invoke('neon-query', {
         body: {
+          action: 'customQuery',
           query: `
             SELECT 
               registration,

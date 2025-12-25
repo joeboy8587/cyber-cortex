@@ -7,8 +7,128 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Priority aircraft watchlist with threat levels
+const WATCHLIST: Record<string, { tier: number; threat: string; entity: string }> = {
+  'N912KC': { tier: 1, threat: 'CRITICAL', entity: 'KCSO' },
+  'N913KC': { tier: 1, threat: 'CRITICAL', entity: 'KCSO' },
+  'N743AM': { tier: 1, threat: 'CRITICAL', entity: 'KCSO/Air Methods' },
+  'N790FA': { tier: 2, threat: 'HIGH', entity: 'ALF IX LLC' },
+  'N788FA': { tier: 2, threat: 'HIGH', entity: 'ALF IX LLC' },
+  'N791FA': { tier: 2, threat: 'HIGH', entity: 'ALF IX LLC' },
+  'N74FF': { tier: 2, threat: 'HIGH', entity: 'FF22 LLC' },
+  'N2464D': { tier: 2, threat: 'HIGH', entity: 'AERO EQUITIES LLC' },
+  'N139HP': { tier: 1, threat: 'CRITICAL', entity: 'CA Highway Patrol' },
+  'N156HP': { tier: 1, threat: 'CRITICAL', entity: 'CA Highway Patrol' },
+  'N202HP': { tier: 1, threat: 'CRITICAL', entity: 'CA Highway Patrol' },
+  'N31RX': { tier: 2, threat: 'HIGH', entity: 'REACH Medical' },
+  'N229AM': { tier: 2, threat: 'HIGH', entity: 'Air Methods' },
+  'N8274E': { tier: 2, threat: 'EXTREME', entity: 'Christiansen Aviation' },
+  'N198TH': { tier: 2, threat: 'HIGH', entity: 'Private Coordinator' },
+};
+
+// Shell company registration patterns
+const SHELL_PATTERNS = [
+  { pattern: /^N7[89]\dFA$/i, entity: 'ALF IX LLC', tier: 2 },
+  { pattern: /^N\d+FF$/i, entity: 'FF22 LLC', tier: 2 },
+  { pattern: /^N\d+KC$/i, entity: 'KCSO', tier: 1 },
+  { pattern: /^N\d+HP$/i, entity: 'CA Highway Patrol', tier: 1 },
+  { pattern: /^N\d+AM$/i, entity: 'Air Methods', tier: 2 },
+  { pattern: /^N\d+RX$/i, entity: 'REACH Medical', tier: 2 },
+];
+
+function classifyAircraft(registration: string, callsign: string, altitude: number): {
+  taxonomyTag: string;
+  threatScore: number;
+  tierLevel: number;
+  flagged: boolean;
+  flaggedReasons: string[];
+  entity: string;
+} {
+  const reg = registration?.toUpperCase() || '';
+  const call = callsign?.toUpperCase() || '';
+  const flaggedReasons: string[] = [];
+  
+  // Check watchlist first
+  if (WATCHLIST[reg]) {
+    const match = WATCHLIST[reg];
+    flaggedReasons.push(`WATCHLIST: ${match.entity}`);
+    if (altitude < 1500) flaggedReasons.push(`LOW_ALT: ${altitude}ft`);
+    
+    return {
+      taxonomyTag: match.tier === 1 ? 'xxb_tier1_priority' : 'xxb_tier2_shell',
+      threatScore: match.tier === 1 ? 95 : 75,
+      tierLevel: match.tier,
+      flagged: true,
+      flaggedReasons,
+      entity: match.entity
+    };
+  }
+  
+  // Check shell company patterns
+  for (const sp of SHELL_PATTERNS) {
+    if (sp.pattern.test(reg)) {
+      flaggedReasons.push(`SHELL_PATTERN: ${sp.entity}`);
+      if (altitude < 1500) flaggedReasons.push(`LOW_ALT: ${altitude}ft`);
+      
+      return {
+        taxonomyTag: sp.tier === 1 ? 'xxb_tier1_priority' : 'xxb_tier2_shell',
+        threatScore: sp.tier === 1 ? 80 : 60,
+        tierLevel: sp.tier,
+        flagged: true,
+        flaggedReasons,
+        entity: sp.entity
+      };
+    }
+  }
+  
+  // Military patterns (XX-XXXXX format)
+  if (/^\d{2}-\d{5}$/.test(reg)) {
+    return {
+      taxonomyTag: 'xxb_military',
+      threatScore: 50,
+      tierLevel: 3,
+      flagged: true,
+      flaggedReasons: ['MILITARY_ASSET'],
+      entity: 'US Military'
+    };
+  }
+  
+  // Medical air patterns
+  if (/AM|RX|MERCY|LIFE|MED/i.test(reg) || /AM|RX|MERCY|LIFE|MED/i.test(call)) {
+    return {
+      taxonomyTag: 'xxb_medical_air',
+      threatScore: 40,
+      tierLevel: 3,
+      flagged: false,
+      flaggedReasons: [],
+      entity: 'Medical Air'
+    };
+  }
+  
+  // Low altitude suspicious
+  if (altitude > 0 && altitude < 1000) {
+    return {
+      taxonomyTag: 'xxb_low_alt_suspicious',
+      threatScore: 30,
+      tierLevel: 4,
+      flagged: false,
+      flaggedReasons: [`LOW_ALT: ${altitude}ft`],
+      entity: 'Unknown'
+    };
+  }
+  
+  // Default: live tracking
+  return {
+    taxonomyTag: 'xxb_live',
+    threatScore: 0,
+    tierLevel: 5,
+    flagged: false,
+    flaggedReasons: [],
+    entity: 'Commercial/General'
+  };
+}
+
 serve(async (req) => {
-  // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
@@ -26,13 +146,12 @@ serve(async (req) => {
     }
 
     const body = await req.json();
-    const { action = 'fetchFlights', bounds } = body;
+    const { action = 'fetchFlights', bounds, focusArea } = body;
     
     console.log(`Aviation Edge action: ${action}`);
 
     if (action === 'fetchFlights') {
       // Fetch live flights from Aviation Edge API
-      // Using the flights tracker endpoint for real-time flight data
       const url = `https://aviation-edge.com/v2/public/flights?key=${apiKey}&limit=250`;
       
       console.log('Fetching flights from Aviation Edge...');
@@ -54,7 +173,6 @@ serve(async (req) => {
 
       const flights = await response.json();
       
-      // Check if API returned an error object
       if (flights.error) {
         console.error('Aviation Edge returned error:', flights.error);
         return new Response(
@@ -65,56 +183,68 @@ serve(async (req) => {
 
       console.log(`Received ${Array.isArray(flights) ? flights.length : 0} flights from Aviation Edge`);
 
-      // Transform to our format
-      const transformedFlights = (Array.isArray(flights) ? flights : []).map((f: any) => ({
-        hex: f.aircraft?.icaoCode || f.aircraft?.iataCode || '',
-        registration: f.aircraft?.regNumber || '',
-        callsign: f.flight?.iataNumber || f.flight?.icaoNumber || '',
-        altitude: f.geography?.altitude || 0,
-        speed: f.speed?.horizontal || 0,
-        latitude: f.geography?.latitude || 0,
-        longitude: f.geography?.longitude || 0,
-        heading: f.geography?.direction || 0,
-        vertical_rate: f.speed?.vspeed || 0,
-        squawk: '',
-        departure: f.departure?.iataCode || '',
-        arrival: f.arrival?.iataCode || '',
-        airline: f.airline?.iataCode || '',
-        status: f.status || 'en-route',
-        detected_at: new Date().toISOString()
-      }));
+      // Transform and classify flights
+      const now = new Date().toISOString();
+      const transformedFlights = (Array.isArray(flights) ? flights : []).map((f: any) => {
+        const registration = f.aircraft?.regNumber || '';
+        const callsign = f.flight?.iataNumber || f.flight?.icaoNumber || '';
+        const altitude = f.geography?.altitude || 0;
+        
+        const classification = classifyAircraft(registration, callsign, altitude);
+        
+        return {
+          hex: f.aircraft?.icaoCode || f.aircraft?.iataCode || '',
+          registration,
+          callsign,
+          altitude,
+          speed: f.speed?.horizontal || 0,
+          latitude: f.geography?.latitude || null,
+          longitude: f.geography?.longitude || null,
+          heading: f.geography?.direction || 0,
+          vertical_rate: f.speed?.vspeed || 0,
+          squawk: '',
+          departure: f.departure?.iataCode || '',
+          arrival: f.arrival?.iataCode || '',
+          airline: f.airline?.iataCode || '',
+          status: f.status || 'en-route',
+          detected_at: now,
+          ...classification
+        };
+      });
 
-      // If we have database connection, store the flights
+      // Statistics
+      const stats = {
+        total: transformedFlights.length,
+        flagged: transformedFlights.filter(f => f.flagged).length,
+        tier1: transformedFlights.filter(f => f.tierLevel === 1).length,
+        tier2: transformedFlights.filter(f => f.tierLevel === 2).length,
+        military: transformedFlights.filter(f => f.taxonomyTag === 'xxb_military').length,
+        medical: transformedFlights.filter(f => f.taxonomyTag === 'xxb_medical_air').length,
+        lowAlt: transformedFlights.filter(f => f.altitude > 0 && f.altitude < 1500).length
+      };
+
+      console.log(`Flight stats: ${JSON.stringify(stats)}`);
+
+      // Store in database
       if (neonUrl && transformedFlights.length > 0) {
         try {
-          const sql = postgres(neonUrl, { ssl: 'require' });
+          const sql = postgres(neonUrl, { ssl: 'require', max: 1 });
           
-          // Insert flights into database
           let inserted = 0;
-          for (const flight of transformedFlights.slice(0, 100)) {
+          let flaggedInserted = 0;
+          
+          for (const flight of transformedFlights) {
             if (!flight.hex && !flight.registration) continue;
             
             try {
-              // Generate a unique ID for this flight detection
               const flightId = crypto.randomUUID();
-              
-              // Determine taxonomy tag based on registration patterns
-              let taxonomyTag = 'xxb_live';
-              const reg = flight.registration || '';
-              if (/^\d{2}-\d{5}$/.test(reg)) {
-                taxonomyTag = 'xxb_military';
-              } else if (reg.includes('KC') && reg.startsWith('N')) {
-                taxonomyTag = 'xxb_kcso_shell';
-              } else if (reg.includes('HP') && reg.startsWith('N')) {
-                taxonomyTag = 'xxb_highway_patrol';
-              } else if (reg.includes('AM') || reg.includes('RX')) {
-                taxonomyTag = 'xxb_medical_air';
-              }
               
               await sql`
                 INSERT INTO live_flight_detections_rows (
                   id, icao_code, registration, callsign, altitude, speed,
-                  latitude, longitude, detection_timestamp, taxonomy_tag
+                  latitude, longitude, heading, vertical_rate,
+                  detection_timestamp, created_at, taxonomy_tag,
+                  threat_score, tier_level, flagged, flagged_reasons
                 ) VALUES (
                   ${flightId},
                   ${flight.hex || 'UNKNOWN'},
@@ -124,33 +254,42 @@ serve(async (req) => {
                   ${flight.speed},
                   ${flight.latitude},
                   ${flight.longitude},
+                  ${flight.heading},
+                  ${flight.vertical_rate},
                   NOW(),
-                  ${taxonomyTag}
+                  NOW(),
+                  ${flight.taxonomyTag},
+                  ${flight.threatScore},
+                  ${flight.tierLevel},
+                  ${flight.flagged},
+                  ${flight.flaggedReasons.join('; ')}
                 )
                 ON CONFLICT DO NOTHING
               `;
               inserted++;
+              if (flight.flagged) flaggedInserted++;
             } catch (insertErr) {
               console.log('Insert error for flight:', flight.registration, insertErr);
             }
           }
           
           await sql.end();
-          console.log(`Inserted ${inserted} flights into database`);
+          console.log(`Inserted ${inserted} flights (${flaggedInserted} flagged) into database`);
           
           return new Response(
             JSON.stringify({ 
               success: true,
               flights: transformedFlights,
-              count: transformedFlights.length,
-              inserted: inserted,
-              source: 'aviation-edge'
+              stats,
+              inserted,
+              flaggedInserted,
+              source: 'aviation-edge',
+              timestamp: now
             }),
             { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
           );
         } catch (dbError) {
           console.error('Database error:', dbError);
-          // Still return flights even if DB insert fails
         }
       }
 
@@ -158,19 +297,23 @@ serve(async (req) => {
         JSON.stringify({ 
           success: true,
           flights: transformedFlights,
+          stats,
           count: transformedFlights.length,
-          source: 'aviation-edge'
+          source: 'aviation-edge',
+          timestamp: now
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // Get nearby flights by bounds
+    // Get nearby flights by bounds (for Kern County focus)
     if (action === 'fetchNearby' && bounds) {
       const { north, south, east, west } = bounds;
-      const url = `https://aviation-edge.com/v2/public/flights?key=${apiKey}&lat=${(north+south)/2}&lng=${(east+west)/2}&distance=100`;
+      const centerLat = (north + south) / 2;
+      const centerLng = (east + west) / 2;
+      const url = `https://aviation-edge.com/v2/public/flights?key=${apiKey}&lat=${centerLat}&lng=${centerLng}&distance=100`;
       
-      console.log('Fetching nearby flights...');
+      console.log(`Fetching nearby flights around ${centerLat}, ${centerLng}...`);
       
       const response = await fetch(url);
       const flights = await response.json();
@@ -182,11 +325,72 @@ serve(async (req) => {
         );
       }
 
+      // Classify nearby flights
+      const classified = (Array.isArray(flights) ? flights : []).map((f: any) => {
+        const registration = f.aircraft?.regNumber || '';
+        const callsign = f.flight?.iataNumber || '';
+        const altitude = f.geography?.altitude || 0;
+        const classification = classifyAircraft(registration, callsign, altitude);
+        
+        return {
+          registration,
+          callsign,
+          altitude,
+          latitude: f.geography?.latitude,
+          longitude: f.geography?.longitude,
+          ...classification
+        };
+      });
+
       return new Response(
         JSON.stringify({ 
           success: true,
-          flights: Array.isArray(flights) ? flights : [],
-          count: Array.isArray(flights) ? flights.length : 0
+          flights: classified,
+          count: classified.length,
+          flagged: classified.filter(f => f.flagged).length
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Focused area tracking (Bakersfield/Kern County)
+    if (action === 'fetchKernCounty') {
+      // Kern County approximate bounds
+      const kernBounds = { north: 35.8, south: 34.8, east: -117.5, west: -119.5 };
+      const centerLat = 35.373;  // Bakersfield
+      const centerLng = -119.019;
+      
+      const url = `https://aviation-edge.com/v2/public/flights?key=${apiKey}&lat=${centerLat}&lng=${centerLng}&distance=75`;
+      
+      console.log('Fetching Kern County area flights...');
+      
+      const response = await fetch(url);
+      const flights = await response.json();
+      
+      if (flights.error) {
+        return new Response(
+          JSON.stringify({ error: flights.error }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const classified = (Array.isArray(flights) ? flights : []).map((f: any) => {
+        const registration = f.aircraft?.regNumber || '';
+        const callsign = f.flight?.iataNumber || '';
+        const altitude = f.geography?.altitude || 0;
+        return {
+          ...f,
+          ...classifyAircraft(registration, callsign, altitude)
+        };
+      });
+
+      return new Response(
+        JSON.stringify({ 
+          success: true,
+          flights: classified,
+          count: classified.length,
+          flagged: classified.filter(f => f.flagged).length,
+          bounds: kernBounds
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
@@ -208,8 +412,19 @@ serve(async (req) => {
       );
     }
 
+    // Get watchlist status
+    if (action === 'getWatchlist') {
+      return new Response(
+        JSON.stringify({ 
+          watchlist: WATCHLIST,
+          patterns: SHELL_PATTERNS.map(p => ({ pattern: p.pattern.toString(), entity: p.entity, tier: p.tier }))
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     return new Response(
-      JSON.stringify({ error: 'Unknown action' }),
+      JSON.stringify({ error: 'Unknown action', validActions: ['fetchFlights', 'fetchNearby', 'fetchKernCounty', 'testConnection', 'getWatchlist'] }),
       { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 

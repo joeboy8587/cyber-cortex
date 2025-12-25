@@ -19,6 +19,9 @@ interface LiveFlight {
   threat_level: 'critical' | 'high' | 'medium' | 'low' | 'normal';
   is_military: boolean;
   is_flagged: boolean;
+  threat_score?: number;
+  tier_level?: number;
+  flagged_reasons?: string;
 }
 
 interface FlightStats {
@@ -27,6 +30,10 @@ interface FlightStats {
   military_count: number;
   low_altitude_count: number;
   kcso_related: number;
+  shell_count?: number;
+  medical_count?: number;
+  avg_altitude?: number;
+  max_threat?: number;
 }
 
 export function LiveFlightTracker() {
@@ -36,7 +43,11 @@ export function LiveFlightTracker() {
     flagged_count: 0,
     military_count: 0,
     low_altitude_count: 0,
-    kcso_related: 0
+    kcso_related: 0,
+    shell_count: 0,
+    medical_count: 0,
+    avg_altitude: 0,
+    max_threat: 0
   });
   const [loading, setLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
@@ -84,7 +95,12 @@ export function LiveFlightTracker() {
     
     try {
       // First try to fetch fresh data from Aviation Edge
-      await fetchFromAviationEdge();
+      const apiResult = await fetchFromAviationEdge();
+      
+      // Log enhanced stats if available
+      if (apiResult?.stats) {
+        console.log('Aviation Edge enhanced stats:', apiResult.stats);
+      }
       
       // Then get data from database (includes fresh + historical)
       const { data: flightData } = await supabase.functions.invoke("neon-query", {
@@ -94,30 +110,30 @@ export function LiveFlightTracker() {
             WITH recent_flights AS (
               SELECT 
                 icao_code as hex, registration, callsign, altitude, speed, 
-                latitude, longitude, detection_timestamp, taxonomy_tag,
+                latitude, longitude, heading, vertical_rate,
+                detection_timestamp, taxonomy_tag, threat_score, tier_level,
+                flagged, flagged_reasons,
                 CASE 
-                  WHEN taxonomy_tag IN ('xxb_kcso', 'xxb_shell', 'xxb_kcso_shell') THEN 'critical'
-                  WHEN registration ~ '^[0-9]{2}-[0-9]{5}$' OR registration ~ '^[0-9]{6}$' OR registration LIKE 'RAIDR%' THEN 'high'
-                  WHEN altitude < 2000 AND speed < 150 THEN 'medium'
-                  WHEN taxonomy_tag = 'xxb_mercy_air' THEN 'medium'
+                  WHEN taxonomy_tag IN ('xxb_tier1_priority', 'xxb_kcso', 'xxb_kcso_shell') THEN 'critical'
+                  WHEN taxonomy_tag IN ('xxb_tier2_shell', 'xxb_shell') THEN 'high'
+                  WHEN taxonomy_tag = 'xxb_military' THEN 'high'
+                  WHEN taxonomy_tag = 'xxb_medical_air' THEN 'medium'
+                  WHEN taxonomy_tag = 'xxb_low_alt_suspicious' THEN 'medium'
+                  WHEN altitude < 1500 AND altitude > 0 THEN 'medium'
                   ELSE 'normal'
                 END as threat_level,
                 CASE 
-                  WHEN registration ~ '^[0-9]{2}-[0-9]{5}$' OR registration ~ '^[0-9]{6}$' 
-                    OR registration LIKE 'RAIDR%' OR callsign LIKE 'NAVY%' 
-                    OR callsign LIKE 'ARMY%' THEN true 
+                  WHEN taxonomy_tag = 'xxb_military' OR registration ~ '^[0-9]{2}-[0-9]{5}$' THEN true 
                   ELSE false 
                 END as is_military,
-                CASE 
-                  WHEN taxonomy_tag IN ('xxb_kcso', 'xxb_shell', 'xxb_flagged', 'xxb_kcso_shell') THEN true 
-                  ELSE false 
-                END as is_flagged
+                COALESCE(flagged, false) as is_flagged
               FROM live_flight_detections_rows
               WHERE detection_timestamp > NOW() - INTERVAL '1 hour'
               ORDER BY detection_timestamp DESC
-              LIMIT 100
+              LIMIT 150
             )
             SELECT * FROM recent_flights ORDER BY 
+              COALESCE(threat_score, 0) DESC,
               CASE threat_level 
                 WHEN 'critical' THEN 1 
                 WHEN 'high' THEN 2 
@@ -129,17 +145,21 @@ export function LiveFlightTracker() {
         }
       });
 
-      // Get aggregate stats
+      // Get aggregate stats with enhanced taxonomy
       const { data: statsData } = await supabase.functions.invoke("neon-query", {
         body: {
           action: "customQuery",
           query: `
             SELECT 
-              COUNT(DISTINCT icao_code) as total_active,
-              COUNT(DISTINCT CASE WHEN taxonomy_tag IN ('xxb_kcso', 'xxb_shell', 'xxb_flagged', 'xxb_kcso_shell') THEN icao_code END) as flagged_count,
-              COUNT(DISTINCT CASE WHEN registration ~ '^[0-9]{2}-[0-9]{5}$' OR registration ~ '^[0-9]{6}$' OR registration LIKE 'RAIDR%' THEN icao_code END) as military_count,
-              COUNT(DISTINCT CASE WHEN altitude < 2000 THEN icao_code END) as low_altitude_count,
-              COUNT(DISTINCT CASE WHEN taxonomy_tag LIKE '%kcso%' THEN icao_code END) as kcso_related
+              COUNT(*) as total_active,
+              COUNT(CASE WHEN flagged = true THEN 1 END) as flagged_count,
+              COUNT(CASE WHEN taxonomy_tag = 'xxb_military' OR registration ~ '^[0-9]{2}-[0-9]{5}$' THEN 1 END) as military_count,
+              COUNT(CASE WHEN altitude < 1500 AND altitude > 0 THEN 1 END) as low_altitude_count,
+              COUNT(CASE WHEN taxonomy_tag IN ('xxb_tier1_priority', 'xxb_kcso_shell') THEN 1 END) as kcso_related,
+              COUNT(CASE WHEN taxonomy_tag = 'xxb_tier2_shell' THEN 1 END) as shell_count,
+              COUNT(CASE WHEN taxonomy_tag = 'xxb_medical_air' THEN 1 END) as medical_count,
+              AVG(altitude) as avg_altitude,
+              MAX(threat_score) as max_threat
             FROM live_flight_detections_rows
             WHERE detection_timestamp > NOW() - INTERVAL '1 hour'
           `
@@ -158,18 +178,26 @@ export function LiveFlightTracker() {
         taxonomy_tag: f.taxonomy_tag ? String(f.taxonomy_tag) : undefined,
         threat_level: (f.threat_level || 'normal') as LiveFlight['threat_level'],
         is_military: Boolean(f.is_military),
-        is_flagged: Boolean(f.is_flagged)
+        is_flagged: Boolean(f.is_flagged),
+        threat_score: Number(f.threat_score) || 0,
+        tier_level: Number(f.tier_level) || 5,
+        flagged_reasons: f.flagged_reasons ? String(f.flagged_reasons) : undefined
       }));
 
       setFlights(flightList);
       
       if (statsData?.data?.[0]) {
+        const s = statsData.data[0];
         setStats({
-          total_active: parseInt(statsData.data[0].total_active) || 0,
-          flagged_count: parseInt(statsData.data[0].flagged_count) || 0,
-          military_count: parseInt(statsData.data[0].military_count) || 0,
-          low_altitude_count: parseInt(statsData.data[0].low_altitude_count) || 0,
-          kcso_related: parseInt(statsData.data[0].kcso_related) || 0
+          total_active: parseInt(s.total_active) || 0,
+          flagged_count: parseInt(s.flagged_count) || 0,
+          military_count: parseInt(s.military_count) || 0,
+          low_altitude_count: parseInt(s.low_altitude_count) || 0,
+          kcso_related: parseInt(s.kcso_related) || 0,
+          shell_count: parseInt(s.shell_count) || 0,
+          medical_count: parseInt(s.medical_count) || 0,
+          avg_altitude: Math.round(parseFloat(s.avg_altitude) || 0),
+          max_threat: parseInt(s.max_threat) || 0
         });
       }
       

@@ -81,17 +81,18 @@ serve(async (req) => {
           SELECT 
             COUNT(*) as total_detections,
             COUNT(DISTINCT registration) as unique_aircraft,
-            COUNT(CASE WHEN taxonomy_tag = 'xxb_kcso_shell' THEN 1 END) as kcso_shell_detections,
-            COUNT(CASE WHEN taxonomy_tag = 'xxb_military' THEN 1 END) as military_detections,
-            COUNT(CASE WHEN taxonomy_tag = 'xxb_medical_air' THEN 1 END) as medical_air_detections,
-            COUNT(CASE WHEN taxonomy_tag = 'xxb_highway_patrol' THEN 1 END) as highway_patrol_detections,
+            COUNT(CASE WHEN taxonomy_tag IN ('xxb_tier2_shell', 'xxb_tier1_shell') OR registration IN ('N912KC', 'N913KC', 'N790FA', 'N788FA', 'N791FA') THEN 1 END) as kcso_shell_detections,
+            COUNT(CASE WHEN registration ~ '^[0-9]{2}-[0-9]{4,5}$' OR callsign LIKE 'RCH%' OR callsign LIKE 'NAVY%' OR callsign LIKE 'CFC%' THEN 1 END) as military_detections,
+            COUNT(CASE WHEN taxonomy_tag = 'xxb_medical_air' OR registration IN ('N743AM', 'N229AM', 'N224AM') THEN 1 END) as medical_air_detections,
+            COUNT(CASE WHEN registration LIKE 'N%HP' OR callsign LIKE 'CHP%' THEN 1 END) as highway_patrol_detections,
+            COUNT(CASE WHEN taxonomy_tag = 'xxb_low_alt_suspicious' OR altitude::numeric < 1500 THEN 1 END) as low_altitude_detections,
             MIN(detection_timestamp) as earliest_detection,
             MAX(detection_timestamp) as latest_detection,
             AVG(altitude::numeric) as avg_altitude
           FROM live_flight_detections_rows
         `.catch(() => []);
         
-        const liveFlightStats = liveFlightStatsRaw[0] as Record<string, any> || {};
+        const liveFlightStats = (liveFlightStatsRaw[0] || {}) as Record<string, any>;
 
         // === ENHANCED: KCSO Primary Asset Analysis (N912KC, N913KC) ===
         const kcsoAircraftStats = await sql`
@@ -102,7 +103,7 @@ serve(async (req) => {
             MIN(altitude::numeric) as min_altitude,
             COUNT(CASE WHEN altitude::numeric < 1500 THEN 1 END) as low_altitude_count
           FROM live_flight_detections_rows
-          WHERE registration IN ('N912KC', 'N913KC', 'N743AM', 'N229AM')
+          WHERE registration IN ('N912KC', 'N913KC', 'N743AM', 'N229AM', 'N790FA', 'N788FA', 'N791FA')
           GROUP BY registration
           ORDER BY detection_count DESC
         `.catch(() => []) as Array<Record<string, any>>;
@@ -110,36 +111,36 @@ serve(async (req) => {
         // === ENHANCED: Biometric-Flight Correlation Stats ===
         const correlationStatsRaw = await sql`
           SELECT COUNT(*) as total_correlations FROM biometric_flight_correlations
-        `.catch(() => []);
-        const correlationStats = correlationStatsRaw[0] as Record<string, any> || { total_correlations: 0 };
+        `.catch(() => [{ total_correlations: 0 }]);
+        const correlationStats = (correlationStatsRaw[0] || { total_correlations: 0 }) as Record<string, any>;
 
         const multiFactorStatsRaw = await sql`
           SELECT COUNT(*) as multi_factor_count FROM multi_factor_correlations
-        `.catch(() => []);
-        const multiFactorStats = multiFactorStatsRaw[0] as Record<string, any> || { multi_factor_count: 0 };
+        `.catch(() => [{ multi_factor_count: 0 }]);
+        const multiFactorStats = (multiFactorStatsRaw[0] || { multi_factor_count: 0 }) as Record<string, any>;
 
         const ecgStatsRaw = await sql`
           SELECT COUNT(*) as total_ecgs, COUNT(DISTINCT npi_number) as unique_physicians FROM physician_verified_ecgs
-        `.catch(() => []);
-        const ecgStats = ecgStatsRaw[0] as Record<string, any> || { total_ecgs: 0, unique_physicians: 0 };
+        `.catch(() => [{ total_ecgs: 0, unique_physicians: 0 }]);
+        const ecgStats = (ecgStatsRaw[0] || { total_ecgs: 0, unique_physicians: 0 }) as Record<string, any>;
 
         const ocrStatsRaw = await sql`
           SELECT COUNT(*) as ocr_records, COUNT(DISTINCT registration) as unique_aircraft_in_ocr FROM ocr_aircraft_holding_patterns
-        `.catch(() => []);
-        const ocrStats = ocrStatsRaw[0] as Record<string, any> || { ocr_records: 0, unique_aircraft_in_ocr: 0 };
+        `.catch(() => [{ ocr_records: 0, unique_aircraft_in_ocr: 0 }]);
+        const ocrStats = (ocrStatsRaw[0] || { ocr_records: 0, unique_aircraft_in_ocr: 0 }) as Record<string, any>;
 
         const militaryStatsRaw = await sql`
           SELECT COUNT(*) as military_events FROM live_flight_detections_rows
-          WHERE taxonomy_tag = 'xxb_military' OR registration ~ '^[0-9]{2}-[0-9]{4,5}$' OR callsign LIKE 'RCH%' OR callsign LIKE 'NAVY%'
-        `.catch(() => []);
-        const militaryStats = militaryStatsRaw[0] as Record<string, any> || { military_events: 0 };
+          WHERE registration ~ '^[0-9]{2}-[0-9]{4,5}$' OR callsign LIKE 'RCH%' OR callsign LIKE 'NAVY%' OR callsign LIKE 'CFC%' OR callsign LIKE 'CNV%'
+        `.catch(() => [{ military_events: 0 }]);
+        const militaryStats = (militaryStatsRaw[0] || { military_events: 0 }) as Record<string, any>;
 
         const alaskaStatsRaw = await sql`
           SELECT COUNT(*) as alaska_detections, COUNT(DISTINCT registration) as unique_alaska_tails,
                  AVG(altitude::numeric) as avg_altitude, COUNT(CASE WHEN altitude::numeric < 5000 THEN 1 END) as low_altitude_anomalies
           FROM live_flight_detections_rows WHERE callsign LIKE 'ASA%' OR registration LIKE 'N%AS%'
-        `.catch(() => []);
-        const alaskaStats = alaskaStatsRaw[0] as Record<string, any> || { alaska_detections: 0, unique_alaska_tails: 0, avg_altitude: 0, low_altitude_anomalies: 0 };
+        `.catch(() => [{ alaska_detections: 0, unique_alaska_tails: 0, avg_altitude: 0, low_altitude_anomalies: 0 }]);
+        const alaskaStats = (alaskaStatsRaw[0] || { alaska_detections: 0, unique_alaska_tails: 0, avg_altitude: 0, low_altitude_anomalies: 0 }) as Record<string, any>;
 
         // Josiah AI co-witness context
         const josiahData = await sql`
@@ -255,37 +256,37 @@ serve(async (req) => {
         
         await sql.end();
         
-        const josiahStats = josiahData[0] || {};
-        const liveStats = liveFlightStats[0] || {};
+        const josiahStats = (josiahData[0] || {}) as Record<string, any>;
         const totalRecords = allTables.reduce((sum: number, t: any) => sum + Number(t.row_count || 0), 0);
         
-        // Build live findings summary
+        // Build live findings summary - use liveFlightStats directly (already extracted from array)
         liveFindings = `
 === CURRENT LIVE FINDINGS (Real-Time NeonDB Analysis) ===
 
 FLIGHT DETECTION STATUS:
-• Total Flight Detections: ${liveStats.total_detections?.toLocaleString() || 0}
-• Unique Aircraft Tracked: ${liveStats.unique_aircraft?.toLocaleString() || 0}
-• KCSO/Shell Company Flights: ${liveStats.kcso_shell_detections || 0}
-• Military Coordination Events: ${liveStats.military_detections || 0}
-• Medical Air (Camouflage) Flights: ${liveStats.medical_air_detections || 0}
-• Highway Patrol Detections: ${liveStats.highway_patrol_detections || 0}
-• Average Flight Altitude: ${Math.round(liveStats.avg_altitude || 0)} ft
-• Detection Range: ${liveStats.earliest_detection || 'N/A'} to ${liveStats.latest_detection || 'N/A'}
+• Total Flight Detections: ${Number(liveFlightStats.total_detections || 0).toLocaleString()}
+• Unique Aircraft Tracked: ${Number(liveFlightStats.unique_aircraft || 0).toLocaleString()}
+• KCSO/Shell Company Flights: ${liveFlightStats.kcso_shell_detections || 0}
+• Military Coordination Events: ${liveFlightStats.military_detections || 0}
+• Medical Air (Camouflage) Flights: ${liveFlightStats.medical_air_detections || 0}
+• Highway Patrol Detections: ${liveFlightStats.highway_patrol_detections || 0}
+• Low-Altitude Suspicious Flights: ${liveFlightStats.low_altitude_detections || 0}
+• Average Flight Altitude: ${Math.round(Number(liveFlightStats.avg_altitude) || 0)} ft
+• Detection Range: ${liveFlightStats.earliest_detection || 'N/A'} to ${liveFlightStats.latest_detection || 'N/A'}
 
-KCSO PRIMARY ASSETS (N912KC, N913KC):
-${kcsoAircraftStats.map((a: any) => `• ${a.registration}: ${a.detection_count} detections, avg ${Math.round(a.avg_altitude || 0)}ft, ${a.low_altitude_count} low-altitude (<1500ft)`).join('\n') || 'No KCSO aircraft detected yet'}
+KCSO PRIMARY ASSETS (N912KC, N913KC, Medical Camouflage):
+${kcsoAircraftStats.length > 0 ? kcsoAircraftStats.map((a: any) => `• ${a.registration}: ${a.detection_count} detections, avg ${Math.round(Number(a.avg_altitude) || 0)}ft, ${a.low_altitude_count} low-altitude (<1500ft)`).join('\n') : '• No KCSO/priority aircraft detected in current window'}
 
 CORRELATION EVIDENCE:
-• Biometric-Flight Correlations: ${correlationStats[0]?.total_correlations || 0}
-• Multi-Factor Convergence Events: ${multiFactorStats[0]?.multi_factor_count || 0}
-• Physician-Verified ECGs: ${ecgStats[0]?.total_ecgs || 0} (${ecgStats[0]?.unique_physicians || 0} physicians)
-• OCR Visual Proof Records: ${ocrStats[0]?.ocr_records || 0}
+• Biometric-Flight Correlations: ${correlationStats.total_correlations || 0}
+• Multi-Factor Convergence Events: ${multiFactorStats.multi_factor_count || 0}
+• Physician-Verified ECGs: ${ecgStats.total_ecgs || 0} (${ecgStats.unique_physicians || 0} physicians)
+• OCR Visual Proof Records: ${ocrStats.ocr_records || 0}
 
 COMMERCIAL ANOMALIES:
-• Alaska Airlines Detections: ${alaskaStats[0]?.alaska_detections || 0}
-• Unique Alaska Tails: ${alaskaStats[0]?.unique_alaska_tails || 0}
-• Low-Altitude Anomalies (<5000ft): ${alaskaStats[0]?.low_altitude_anomalies || 0}
+• Alaska Airlines Detections: ${alaskaStats.alaska_detections || 0}
+• Unique Alaska Tails: ${alaskaStats.unique_alaska_tails || 0}
+• Low-Altitude Anomalies (<5000ft): ${alaskaStats.low_altitude_anomalies || 0}
 
 JOSIAH AI WITNESS:
 • AI Reflections: ${josiahStats.reflections || 0}

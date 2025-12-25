@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
+import { crypto } from "https://deno.land/std@0.168.0/crypto/mod.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -94,11 +95,28 @@ serve(async (req) => {
             if (!flight.hex && !flight.registration) continue;
             
             try {
+              // Generate a unique ID for this flight detection
+              const flightId = crypto.randomUUID();
+              
+              // Determine taxonomy tag based on registration patterns
+              let taxonomyTag = 'xxb_live';
+              const reg = flight.registration || '';
+              if (/^\d{2}-\d{5}$/.test(reg)) {
+                taxonomyTag = 'xxb_military';
+              } else if (reg.includes('KC') && reg.startsWith('N')) {
+                taxonomyTag = 'xxb_kcso_shell';
+              } else if (reg.includes('HP') && reg.startsWith('N')) {
+                taxonomyTag = 'xxb_highway_patrol';
+              } else if (reg.includes('AM') || reg.includes('RX')) {
+                taxonomyTag = 'xxb_medical_air';
+              }
+              
               await sql`
                 INSERT INTO live_flight_detections_rows (
-                  icao_code, registration, callsign, altitude, speed,
+                  id, icao_code, registration, callsign, altitude, speed,
                   latitude, longitude, detection_timestamp, taxonomy_tag
                 ) VALUES (
+                  ${flightId},
                   ${flight.hex || 'UNKNOWN'},
                   ${flight.registration || 'N/A'},
                   ${flight.callsign || ''},
@@ -107,11 +125,7 @@ serve(async (req) => {
                   ${flight.latitude},
                   ${flight.longitude},
                   NOW(),
-                  CASE 
-                    WHEN ${flight.registration} ~ '^[0-9]{2}-[0-9]{5}$' THEN 'xxb_military'
-                    WHEN ${flight.registration} LIKE 'N%KC%' THEN 'xxb_kcso_shell'
-                    ELSE 'xxb_live'
-                  END
+                  ${taxonomyTag}
                 )
                 ON CONFLICT DO NOTHING
               `;

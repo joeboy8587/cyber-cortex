@@ -668,6 +668,87 @@ serve(async (req) => {
         break;
       }
 
+      case 'getLegalAnalysisStats': {
+        // Comprehensive stats for Legal Analysis AI panel - queries multiple tables
+        console.log('Getting comprehensive legal analysis stats...');
+        
+        // Get flight detection totals
+        const flightStats = await sql`
+          SELECT 
+            COUNT(*) as total_detections,
+            COUNT(DISTINCT COALESCE(registration, callsign)) as unique_aircraft,
+            ROUND(AVG(altitude)::numeric, 0) as avg_altitude
+          FROM live_flight_detections_rows
+        `;
+        
+        // Count KCSO/Shell aircraft by registration patterns
+        const kcsoShellStats = await sql`
+          SELECT COUNT(*) as count FROM live_flight_detections_rows
+          WHERE registration IN ('N912KC', 'N913KC', 'N788FA', 'N790FA', 'N791FA', 'N997SE', 'N2464D')
+             OR callsign ILIKE '%KCSO%'
+             OR callsign ILIKE '%KCSOC%'
+             OR registration ~ '^N7[89][0-9]FA$'
+        `;
+        
+        // Count military aircraft by patterns  
+        const militaryStats = await sql`
+          SELECT COUNT(*) as count FROM live_flight_detections_rows
+          WHERE callsign ~ '^(RCH|REACH|NAVY|EVAC|SPAR|SAM|VV|PAT|BLOC|JAKE|TOPCAT|RRR|CFC|RCAF|CDN)[0-9]'
+             OR callsign ILIKE '%FORCE%'
+             OR callsign ILIKE 'CANFORCE%'
+             OR callsign ~ '^[A-Z]{3}[0-9]{2,4}$'
+             OR registration ~ '^(16|17|18|19|60|61|62|63|64|65|66|67|68|69|70)[0-9]{4}$'
+        `;
+        
+        // Count medical aircraft by patterns
+        const medicalStats = await sql`
+          SELECT COUNT(*) as count FROM live_flight_detections_rows
+          WHERE callsign ILIKE '%MEDEVAC%'
+             OR callsign ILIKE '%LIFEGUARD%' 
+             OR callsign ILIKE '%MERCY%'
+             OR callsign ILIKE '%AIRMED%'
+             OR callsign ILIKE '%LIFESTAR%'
+             OR registration IN ('N743AM', 'N229AM', 'N7AM', 'N911AM')
+        `;
+        
+        // Get enterprise structure count
+        let enterpriseCount = 0;
+        try {
+          const enterpriseStats = await sql`
+            SELECT COUNT(*) as count FROM criminal_enterprise_command_structure
+          `;
+          enterpriseCount = parseInt(enterpriseStats[0]?.count) || 0;
+        } catch (e) {
+          console.log('Enterprise table not found');
+        }
+        
+        // Get foreign/Canadian military count
+        let foreignMilitaryCount = 0;
+        try {
+          const foreignStats = await sql`
+            SELECT COUNT(*) as count FROM live_flight_detections_rows
+            WHERE callsign ~ '^(CFC|RCAF|CDN|CANFORCE)'
+               OR callsign ILIKE '%CANADA%'
+               OR registration ~ '^C-[A-Z]{4}$'
+          `;
+          foreignMilitaryCount = parseInt(foreignStats[0]?.count) || 0;
+        } catch (e) {
+          console.log('Foreign military query failed');
+        }
+        
+        result = {
+          totalDetections: parseInt(flightStats[0]?.total_detections) || 0,
+          uniqueAircraft: parseInt(flightStats[0]?.unique_aircraft) || 0,
+          avgAltitude: parseInt(flightStats[0]?.avg_altitude) || 0,
+          kcsoShellCount: parseInt(kcsoShellStats[0]?.count) || 0,
+          militaryCount: parseInt(militaryStats[0]?.count) || 0,
+          medicalCount: parseInt(medicalStats[0]?.count) || 0,
+          enterpriseEntities: enterpriseCount,
+          foreignMilitaryCount: foreignMilitaryCount
+        };
+        break;
+      }
+
       default:
     }
 

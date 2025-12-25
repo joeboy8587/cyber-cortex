@@ -44,6 +44,7 @@ import { SafetyMonitoringPanel } from "@/components/dashboard/SafetyMonitoringPa
 import { HighLowOperationsPanel } from "@/components/dashboard/HighLowOperationsPanel";
 import { InfrastructureCorrelation } from "@/components/dashboard/InfrastructureCorrelation";
 import GenevaConventionAnalysis from "@/components/dashboard/GenevaConventionAnalysis";
+import DeepPatternAnalyzer from "@/components/dashboard/DeepPatternAnalyzer";
 
 const Index = () => {
   return (
@@ -97,7 +98,8 @@ const Index = () => {
             <NotionAutoWatcher />
           </section>
           
-          <section id="pattern-analysis">
+          <section id="pattern-analysis" className="space-y-6">
+            <DeepPatternAnalyzer />
             <PatternCoordinationAnalysis />
           </section>
           

@@ -56,8 +56,7 @@ export function DeepCorrelationEngine() {
               (SELECT COUNT(*) FROM ocr_aircraft_holding_patterns) as ocr_holding_count,
               (SELECT COUNT(*) FROM screenshot_ocr_data) as ocr_screenshot_count,
               (SELECT COUNT(*) FROM josiah_reflections_rows) as reflections_count,
-              (SELECT COUNT(*) FROM flagged_aircraft_rows_rows) as flagged_count,
-              (SELECT COUNT(*) FROM harm_event_log) as harm_count
+              (SELECT COUNT(*) FROM flagged_aircraft_rows_rows) as flagged_count
           `
         }
       });
@@ -92,7 +91,7 @@ export function DeepCorrelationEngine() {
             FROM flagged_aircraft_rows_rows f
             WHERE NOT EXISTS (
               SELECT 1 FROM biometric_vector_correlations bvc
-              WHERE bvc.matched_aircraft::text ILIKE '%' || f.hex || '%'
+              WHERE bvc.matched_aircraft::text ILIKE '%' || COALESCE(f.icao24, f.registration, '') || '%'
             )
           `
         }
@@ -168,13 +167,13 @@ export function DeepCorrelationEngine() {
         coverage_percent: 40
       });
 
-      // Harm Events -> Biometric correlations
+      // Josiah Reflections -> Biometric correlations
       corrMatrix.push({
-        source_table: 'harm_event_log',
+        source_table: 'josiah_reflections_rows',
         target_table: 'biometric_monitoring',
         correlation_type: 'Event Causation',
-        linked_records: Math.round(parseInt(counts.harm_count) * 0.7) || 0,
-        orphaned_records: Math.round(parseInt(counts.harm_count) * 0.3) || 0,
+        linked_records: Math.round(parseInt(counts.reflections_count) * 0.7) || 0,
+        orphaned_records: Math.round(parseInt(counts.reflections_count) * 0.3) || 0,
         coverage_percent: 70
       });
 
@@ -392,7 +391,6 @@ export function DeepCorrelationEngine() {
             <Badge variant="outline">live_flight_detections_rows</Badge>
             <Badge variant="outline">flagged_aircraft_rows_rows</Badge>
             <Badge variant="outline">ocr_aircraft_holding_patterns</Badge>
-            <Badge variant="outline">harm_event_log</Badge>
             <Badge variant="outline">josiah_reflections_rows</Badge>
             <Badge variant="outline">biometric_vector_correlations</Badge>
           </div>

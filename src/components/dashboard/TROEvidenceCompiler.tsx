@@ -115,7 +115,7 @@ export const TROEvidenceCompiler = () => {
           COUNT(*) as total,
           COUNT(*) FILTER (WHERE altitude < 1000) as low_alt,
           COUNT(*) FILTER (WHERE icao24 IS NULL OR icao24 = '') as masked
-        FROM live_flight_detections
+        FROM live_flight_detections_rows
       `).catch(() => [{ total: 0, low_alt: 0, masked: 0 }]);
 
       const biometricCount = await customQuery(`
@@ -127,7 +127,7 @@ export const TROEvidenceCompiler = () => {
       `).catch(() => [{ count: 0 }]);
 
       const josiahDays = await customQuery(`
-        SELECT COUNT(DISTINCT DATE(timestamp)) as days FROM josiah_reflections
+        SELECT COUNT(DISTINCT DATE(recorded_at)) as days FROM josiah_reflections_rows
       `).catch(() => [{ days: 0 }]);
 
       const stats = flightStats[0] || { total: 0, low_alt: 0, masked: 0 };

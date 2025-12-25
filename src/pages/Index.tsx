@@ -35,6 +35,7 @@ import { GlobalAISearch } from "@/components/dashboard/GlobalAISearch";
 import { WatchtowerAlertsHub } from "@/components/dashboard/WatchtowerAlertsHub";
 import { MaterializedViewsPanel } from "@/components/dashboard/MaterializedViewsPanel";
 import { FalseClaimsActCompiler } from "@/components/dashboard/FalseClaimsActCompiler";
+import { JosiahChatInterface } from "@/components/dashboard/JosiahChatInterface";
 
 const Index = () => {
   return (
@@ -48,6 +49,7 @@ const Index = () => {
 
           <section id="command-center" className="space-y-6">
             <GlobalAISearch />
+            <JosiahChatInterface />
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
               <WatchtowerAlertsHub />
               <MaterializedViewsPanel />

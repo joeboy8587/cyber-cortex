@@ -46,6 +46,7 @@ import { HighLowOperationsPanel } from "@/components/dashboard/HighLowOperations
 import { InfrastructureCorrelation } from "@/components/dashboard/InfrastructureCorrelation";
 import GenevaConventionAnalysis from "@/components/dashboard/GenevaConventionAnalysis";
 import DeepPatternAnalyzer from "@/components/dashboard/DeepPatternAnalyzer";
+import { LegalBriefDashboard } from "@/components/dashboard/LegalBriefDashboard";
 import { LiveFlightTracker } from "@/components/dashboard/LiveFlightTracker";
 import { DeepCorrelationEngine } from "@/components/dashboard/DeepCorrelationEngine";
 import { OperatorEnrichmentPanel } from "@/components/dashboard/OperatorEnrichmentPanel";
@@ -86,6 +87,7 @@ const Index = () => {
           </section>
           
           <section id="legal-analysis" className="space-y-6">
+            <LegalBriefDashboard />
             <GenevaConventionAnalysis />
             <TROEvidenceCompiler />
             <FalseClaimsActCompiler />

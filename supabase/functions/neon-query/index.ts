@@ -544,8 +544,131 @@ serve(async (req) => {
         break;
       }
 
+      case 'operatorEnrichment': {
+        // Operator profile enrichment - analyze registrations from flight detections
+        console.log('Running operator enrichment analysis...');
+        
+        const registrations = await sql`
+          SELECT 
+            registration,
+            callsign,
+            icao_code,
+            COUNT(*) as appearance_count,
+            COUNT(*) FILTER (WHERE flagged = true) as flagged_count,
+            AVG(CAST(threat_score AS FLOAT)) as avg_threat_score,
+            AVG(altitude) as avg_altitude,
+            MIN(detection_timestamp) as first_seen,
+            MAX(detection_timestamp) as last_seen,
+            ROUND(COUNT(*) FILTER (WHERE flagged = true)::numeric / NULLIF(COUNT(*)::numeric, 0) * 100, 2) as flag_rate_pct,
+            taxonomy_tag
+          FROM live_flight_detections_rows
+          WHERE registration IS NOT NULL AND registration != ''
+          GROUP BY registration, callsign, icao_code, taxonomy_tag
+          HAVING COUNT(*) >= 2
+          ORDER BY flagged_count DESC, appearance_count DESC
+          LIMIT 100
+        `;
+        
+        result = registrations;
+        break;
+      }
+
+      case 'xxbFlightAnalysis': {
+        // Deep XXB analysis - correlate taxonomy tags with flagging patterns
+        console.log('Running XXB flight detection analysis...');
+        
+        const analysis = await sql`
+          SELECT 
+            COALESCE(taxonomy_tag, 'unclassified') as taxonomy_tag,
+            COUNT(*) as total_records,
+            COUNT(*) FILTER (WHERE flagged = true) as flagged_count,
+            ROUND(AVG(CAST(threat_score AS FLOAT))::numeric, 2) as avg_threat_score,
+            ROUND(AVG(altitude)::numeric, 0) as avg_altitude,
+            ROUND(AVG(speed)::numeric, 1) as avg_speed,
+            COUNT(DISTINCT registration) as unique_aircraft,
+            ROUND(COUNT(*) FILTER (WHERE flagged = true)::numeric / NULLIF(COUNT(*)::numeric, 0) * 100, 2) as flag_rate_pct,
+            COUNT(*) FILTER (WHERE icao_code ~ '^~') as mlat_synthetic_count,
+            COUNT(*) FILTER (WHERE altitude < 500) as low_altitude_count,
+            COUNT(*) FILTER (WHERE CAST(threat_score AS FLOAT) >= 45) as critical_threat_count
+          FROM live_flight_detections_rows
+          GROUP BY taxonomy_tag
+          ORDER BY flagged_count DESC, total_records DESC
+        `;
+        
+        result = analysis;
+        break;
+      }
+
+      case 'getTopFlaggedAircraft': {
+        // Get the most frequently flagged aircraft with details
+        console.log('Getting top flagged aircraft...');
+        
+        const topFlagged = await sql`
+          SELECT 
+            registration,
+            callsign,
+            icao_code,
+            taxonomy_tag,
+            COUNT(*) as total_appearances,
+            COUNT(*) FILTER (WHERE flagged = true) as flagged_count,
+            ROUND(AVG(CAST(threat_score AS FLOAT))::numeric, 2) as avg_threat,
+            ROUND(AVG(altitude)::numeric, 0) as avg_altitude,
+            ROUND(AVG(speed)::numeric, 1) as avg_speed,
+            MIN(detection_timestamp) as first_seen,
+            MAX(detection_timestamp) as last_seen,
+            ROUND(COUNT(*) FILTER (WHERE flagged = true)::numeric / NULLIF(COUNT(*)::numeric, 0) * 100, 2) as flag_rate_pct,
+            CASE 
+              WHEN AVG(altitude) < 500 THEN 'CRITICAL_LOW_ALT'
+              WHEN AVG(CAST(threat_score AS FLOAT)) >= 45 THEN 'HIGH_THREAT'
+              WHEN COUNT(*) FILTER (WHERE flagged = true)::numeric / NULLIF(COUNT(*)::numeric, 0) > 0.3 THEN 'PERSISTENT_FLAGGING'
+              ELSE 'STANDARD'
+            END as threat_pattern
+          FROM live_flight_detections_rows
+          WHERE registration IS NOT NULL AND registration != ''
+          GROUP BY registration, callsign, icao_code, taxonomy_tag
+          HAVING COUNT(*) FILTER (WHERE flagged = true) > 0
+          ORDER BY flagged_count DESC, avg_threat DESC
+          LIMIT 50
+        `;
+        
+        result = topFlagged;
+        break;
+      }
+
+      case 'getAnomalousHexCodes': {
+        // Find corrupted/anomalous ICAO hex codes
+        console.log('Analyzing anomalous hex codes...');
+        
+        const anomalies = await sql`
+          SELECT 
+            icao_code,
+            registration,
+            callsign,
+            COUNT(*) as occurrence_count,
+            AVG(CAST(threat_score AS FLOAT)) as avg_threat,
+            CASE
+              WHEN icao_code ~ '^~' THEN 'MLAT_SYNTHETIC'
+              WHEN LENGTH(icao_code) < 6 THEN 'TRUNCATED'
+              WHEN icao_code ~ '[^a-fA-F0-9~-]' THEN 'CORRUPTED'
+              WHEN icao_code IS NULL OR icao_code = '' THEN 'MISSING'
+              ELSE 'VALID'
+            END as hex_status
+          FROM live_flight_detections_rows
+          WHERE icao_code ~ '^~' 
+             OR LENGTH(COALESCE(icao_code, '')) < 6 
+             OR icao_code ~ '[^a-fA-F0-9~-]'
+             OR icao_code IS NULL 
+             OR icao_code = ''
+          GROUP BY icao_code, registration, callsign
+          ORDER BY occurrence_count DESC
+          LIMIT 50
+        `;
+        
+        result = anomalies;
+        break;
+      }
+
       default:
-        throw new Error(`Unknown action: ${action}`);
     }
 
     await sql.end();

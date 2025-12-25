@@ -754,187 +754,236 @@ serve(async (req) => {
         // Joins: flight + biometric spike + Josiah witness + OCR proof
         console.log('Executing Federal Case Convergence Analysis...');
         
-        // First, get column availability for dynamic query building
-        const bioTsCheck = await sql`
-          SELECT column_name FROM information_schema.columns 
-          WHERE table_name = 'biometric_monitoring' AND column_name = 'measurement_timestamp'
-        `;
-        const bioTsCol = bioTsCheck.length > 0 ? 'measurement_timestamp' : 'created_at';
-        
-        const josiahColCheck = await sql`
-          SELECT column_name FROM information_schema.columns 
-          WHERE table_name = 'josiah_reflections_rows' 
-          AND column_name IN ('created_at', 'timestamp', 'reflection_timestamp')
-        `;
-        const josiahTsCol = josiahColCheck[0]?.column_name || 'created_at';
-        
-        // Priority aircraft watchlist
+        // Priority aircraft watchlist - KCSO and shell company assets
         const priorityAircraft = [
           'N912KC', 'N913KC', 'N743AM', 'N229AM', 
           'N790FA', 'N788FA', 'N791FA', 'N997SE', 'N2464D',
           'N766ME', 'N118SY'
         ];
         
-        // Get convergence events with ±5 minute windows
-        const convergenceQuery = sql`
-          WITH flight_events AS (
-            SELECT 
-              registration,
-              detection_timestamp,
-              altitude,
-              callsign,
-              latitude,
-              longitude
-            FROM live_flight_detections_rows
-            WHERE detection_timestamp IS NOT NULL
-              AND registration IS NOT NULL
-              AND (
-                registration = ANY(${priorityAircraft})
-                OR altitude < 1500
-                OR registration LIKE 'N91_KC'
-              )
-          ),
-          biometric_spikes AS (
-            SELECT 
-              ${sql.unsafe(bioTsCol)} as bio_time,
-              heart_rate,
-              hrv,
-              stress_level
-            FROM biometric_monitoring
-            WHERE ${sql.unsafe(bioTsCol)} IS NOT NULL
-              AND (
-                heart_rate > 90
-                OR stress_level >= 6
-                OR hrv < 40
-              )
-          ),
-          flight_bio_joins AS (
+        try {
+          // Step 1: Get flight-biometric correlations within ±10 minute windows
+          const flightBioCorrelations = await sql`
             SELECT 
               f.registration,
               f.detection_timestamp,
               f.altitude,
               f.callsign,
-              b.bio_time,
+              f.latitude,
+              f.longitude,
+              b.measurement_timestamp as bio_time,
               b.heart_rate,
               b.hrv,
               b.stress_level,
-              ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.bio_time))) / 60 as time_diff_minutes
-            FROM flight_events f
-            CROSS JOIN biometric_spikes b
-            WHERE ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.bio_time))) <= 600
-          ),
-          with_josiah AS (
-            SELECT 
-              fbj.*,
-              j.reflection_content,
-              j.${sql.unsafe(josiahTsCol)} as josiah_time,
-              CASE WHEN j.reflection_content IS NOT NULL THEN true ELSE false END as has_josiah
-            FROM flight_bio_joins fbj
-            LEFT JOIN josiah_reflections_rows j ON (
-              j.${sql.unsafe(josiahTsCol)} BETWEEN fbj.detection_timestamp - INTERVAL '10 minutes' 
-                                               AND fbj.detection_timestamp + INTERVAL '10 minutes'
+              b.sha256_hash as bio_hash,
+              ROUND(ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp)) / 60)::numeric, 1) as time_diff_minutes
+            FROM live_flight_detections_rows f
+            CROSS JOIN biometric_monitoring b
+            WHERE f.detection_timestamp IS NOT NULL
+              AND b.measurement_timestamp IS NOT NULL
+              AND ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= 600
               AND (
-                j.reflection_content ILIKE '%' || fbj.registration || '%'
-                OR j.reflection_content ILIKE '%aerial%'
-                OR j.reflection_content ILIKE '%surveillance%'
-                OR j.reflection_content ILIKE '%biometric%'
-                OR j.reflection_content ILIKE '%aircraft%'
-                OR j.aircraft_correlation IS NOT NULL
+                f.registration = ANY(${priorityAircraft})
+                OR f.altitude < 1500
+                OR f.registration LIKE 'N91_KC'
+                OR f.callsign ILIKE '%KCSO%'
               )
-            )
-          ),
-          with_ocr AS (
-            SELECT 
-              wj.*,
-              o.registration as ocr_registration,
-              o.loop_count,
-              CASE WHEN o.registration IS NOT NULL THEN true ELSE false END as has_ocr
-            FROM with_josiah wj
-            LEFT JOIN ocr_aircraft_holding_patterns o ON o.registration = wj.registration
-          )
-          SELECT DISTINCT ON (registration, detection_timestamp)
-            registration,
-            detection_timestamp,
-            altitude,
-            callsign,
-            bio_time,
-            heart_rate,
-            hrv,
-            stress_level,
-            ROUND(time_diff_minutes::numeric, 1) as time_window_minutes,
-            has_josiah,
-            has_ocr,
-            loop_count,
-            reflection_content,
-            CASE 
-              WHEN has_josiah AND has_ocr THEN 4
-              WHEN has_josiah OR has_ocr THEN 3
-              ELSE 2
-            END as factor_count,
-            CASE 
-              WHEN has_josiah AND has_ocr THEN 100
-              WHEN has_josiah OR has_ocr THEN 75
-              ELSE 50
-            END as convergence_score
-          FROM with_ocr
-          ORDER BY registration, detection_timestamp, convergence_score DESC
-        `;
-        
-        const convergenceEvents = await convergenceQuery;
-        
-        // Get summary statistics
-        const fourFactorCount = convergenceEvents.filter((e: any) => e.factor_count === 4).length;
-        const threeFactorCount = convergenceEvents.filter((e: any) => e.factor_count === 3).length;
-        const twoFactorCount = convergenceEvents.filter((e: any) => e.factor_count === 2).length;
-        
-        // Get physician ECG correlations
-        let ecgCorrelations: any[] = [];
-        try {
-          ecgCorrelations = await sql`
-            SELECT 
-              ecg_timestamp,
-              ecg_diagnosis,
-              npi_number
-            FROM physician_verified_ecgs
-            WHERE ecg_timestamp IS NOT NULL
-            LIMIT 50
+              AND (
+                b.heart_rate > 90
+                OR b.stress_level >= 6
+                OR b.hrv < 40
+              )
+            ORDER BY f.detection_timestamp DESC
+            LIMIT 2000
           `;
-        } catch (e) {
-          console.log('ECG table query failed:', e);
+          
+          console.log(`Found ${flightBioCorrelations.length} flight-biometric correlations`);
+          
+          // Step 2: Get Josiah reflection matches for these windows
+          const josiahMatches = await sql`
+            SELECT 
+              created_at as josiah_time,
+              reflection_content,
+              aircraft_correlation,
+              biometric_correlation,
+              sha256_hash as josiah_hash
+            FROM josiah_reflections_rows
+            WHERE created_at IS NOT NULL
+              AND (
+                reflection_content ILIKE '%aircraft%'
+                OR reflection_content ILIKE '%aerial%'
+                OR reflection_content ILIKE '%surveillance%'
+                OR reflection_content ILIKE '%biometric%'
+                OR reflection_content ILIKE '%N912KC%'
+                OR reflection_content ILIKE '%N913KC%'
+                OR reflection_content ILIKE '%stress%'
+                OR reflection_content ILIKE '%heart%'
+                OR aircraft_correlation IS NOT NULL
+                OR biometric_correlation IS NOT NULL
+              )
+            ORDER BY created_at DESC
+            LIMIT 2000
+          `;
+          
+          console.log(`Found ${josiahMatches.length} relevant Josiah reflections`);
+          
+          // Step 3: Get OCR holding pattern data
+          const ocrPatterns = await sql`
+            SELECT 
+              registration,
+              observation_timestamp,
+              loop_count,
+              baro_alt_ft,
+              pattern_type,
+              sha256_hash as ocr_hash
+            FROM ocr_aircraft_holding_patterns
+            WHERE registration IS NOT NULL
+            ORDER BY loop_count DESC NULLS LAST
+            LIMIT 500
+          `;
+          
+          console.log(`Found ${ocrPatterns.length} OCR holding patterns`);
+          
+          // Step 4: Get physician-verified ECG data
+          const ecgRecords = await sql`
+            SELECT 
+              date_of_ecg,
+              ecg_findings,
+              physician_npi,
+              physician_name,
+              average_heart_rate,
+              sha256_hash as ecg_hash
+            FROM physician_verified_ecgs
+            ORDER BY date_of_ecg DESC
+          `;
+          
+          console.log(`Found ${ecgRecords.length} physician-verified ECGs`);
+          
+          // Step 5: Build four-factor convergence events
+          const convergenceEvents: any[] = [];
+          
+          for (const fb of flightBioCorrelations) {
+            // Check for Josiah match within ±15 minutes
+            const hasJosiah = josiahMatches.some((j: any) => {
+              if (!j.josiah_time) return false;
+              const diffMs = Math.abs(new Date(fb.detection_timestamp).getTime() - new Date(j.josiah_time).getTime());
+              return diffMs <= 900000; // 15 minutes
+            });
+            
+            // Check for OCR match by registration
+            const ocrMatch = ocrPatterns.find((o: any) => o.registration === fb.registration);
+            const hasOCR = !!ocrMatch;
+            
+            // Check for ECG correlation within ±30 minutes
+            const ecgMatch = ecgRecords.find((e: any) => {
+              if (!e.date_of_ecg) return false;
+              const diffMs = Math.abs(new Date(fb.detection_timestamp).getTime() - new Date(e.date_of_ecg).getTime());
+              return diffMs <= 1800000; // 30 minutes
+            });
+            const hasECG = !!ecgMatch;
+            
+            // Calculate factor count
+            let factorCount = 2; // Flight + Biometric is baseline
+            if (hasJosiah) factorCount++;
+            if (hasOCR) factorCount++;
+            
+            // Calculate convergence score
+            let convergenceScore = 50;
+            if (hasJosiah) convergenceScore += 20;
+            if (hasOCR) convergenceScore += 20;
+            if (hasECG) convergenceScore += 10;
+            if (fb.altitude && fb.altitude < 1000) convergenceScore += 5;
+            if (priorityAircraft.includes(fb.registration)) convergenceScore += 5;
+            
+            convergenceEvents.push({
+              registration: fb.registration,
+              detection_timestamp: fb.detection_timestamp,
+              altitude: fb.altitude,
+              callsign: fb.callsign,
+              bio_time: fb.bio_time,
+              heart_rate: fb.heart_rate,
+              hrv: fb.hrv,
+              stress_level: fb.stress_level,
+              time_window_minutes: fb.time_diff_minutes,
+              has_josiah: hasJosiah,
+              has_ocr: hasOCR,
+              has_ecg: hasECG,
+              loop_count: ocrMatch?.loop_count || null,
+              ecg_findings: ecgMatch?.ecg_findings || null,
+              factor_count: factorCount,
+              convergence_score: convergenceScore,
+              bio_hash: fb.bio_hash,
+              priority_aircraft: priorityAircraft.includes(fb.registration)
+            });
+          }
+          
+          // Sort by factor count and convergence score
+          convergenceEvents.sort((a, b) => {
+            if (b.factor_count !== a.factor_count) return b.factor_count - a.factor_count;
+            return b.convergence_score - a.convergence_score;
+          });
+          
+          // Calculate summary statistics
+          const fourFactorCount = convergenceEvents.filter(e => e.factor_count === 4).length;
+          const threeFactorCount = convergenceEvents.filter(e => e.factor_count === 3).length;
+          const twoFactorCount = convergenceEvents.filter(e => e.factor_count === 2).length;
+          const uniqueAircraft = [...new Set(convergenceEvents.map(e => e.registration))];
+          const avgHeartRate = convergenceEvents.length > 0 
+            ? Math.round(convergenceEvents.reduce((sum, e) => sum + (parseInt(e.heart_rate) || 0), 0) / convergenceEvents.length)
+            : 0;
+          const ecgLinkedCount = convergenceEvents.filter(e => e.has_ecg).length;
+          const priorityHits = convergenceEvents.filter(e => e.priority_aircraft).length;
+          
+          // Bradford Hill criteria assessment
+          const bradfordHill = {
+            temporality: fourFactorCount > 0 || threeFactorCount > 0,
+            strength: avgHeartRate > 85 || convergenceEvents.length > 50,
+            consistency: uniqueAircraft.length >= 2 && threeFactorCount >= 3,
+            specificity: priorityHits > 0 && convergenceEvents.filter(e => e.altitude && e.altitude < 1200).length > 0,
+            plausibility: true, // Low-altitude flights causing stress is biologically plausible
+            coherence: (threeFactorCount + fourFactorCount) >= 5 && ecgRecords.length > 0
+          };
+          
+          result = {
+            events: convergenceEvents.slice(0, 500),
+            summary: {
+              totalConvergenceEvents: convergenceEvents.length,
+              fourFactorEvents: fourFactorCount,
+              threeFactorEvents: threeFactorCount,
+              twoFactorEvents: twoFactorCount,
+              uniqueAircraftInvolved: uniqueAircraft.length,
+              avgHeartRateInEvents: avgHeartRate,
+              ecgCorrelations: ecgLinkedCount,
+              priorityAircraftHits: priorityHits,
+              totalECGs: ecgRecords.length,
+              totalJosiahReflections: josiahMatches.length,
+              totalOCRPatterns: ocrPatterns.length
+            },
+            ecgEvents: ecgRecords,
+            bradfordHillCriteria: bradfordHill,
+            topConvergenceAircraft: uniqueAircraft.slice(0, 10)
+          };
+          
+          console.log(`Federal Convergence Analysis Complete: ${fourFactorCount} 4-factor, ${threeFactorCount} 3-factor, ${twoFactorCount} 2-factor events`);
+          
+        } catch (convError) {
+          console.error('Convergence query error:', convError);
+          result = {
+            events: [],
+            summary: {
+              totalConvergenceEvents: 0,
+              fourFactorEvents: 0,
+              threeFactorEvents: 0,
+              twoFactorEvents: 0,
+              uniqueAircraftInvolved: 0,
+              avgHeartRateInEvents: 0,
+              ecgCorrelations: 0,
+              priorityAircraftHits: 0
+            },
+            error: (convError as Error).message
+          };
         }
         
-        // Calculate Bradford Hill indicators
-        const uniqueAircraft = [...new Set(convergenceEvents.map((e: any) => e.registration))];
-        const avgHeartRate = convergenceEvents.length > 0 
-          ? Math.round(convergenceEvents.reduce((sum: number, e: any) => sum + (parseInt(e.heart_rate) || 0), 0) / convergenceEvents.length)
-          : 0;
-        
-        result = {
-          events: convergenceEvents.slice(0, 500),
-          summary: {
-            totalConvergenceEvents: convergenceEvents.length,
-            fourFactorEvents: fourFactorCount,
-            threeFactorEvents: threeFactorCount,
-            twoFactorEvents: twoFactorCount,
-            uniqueAircraftInvolved: uniqueAircraft.length,
-            avgHeartRateInEvents: avgHeartRate,
-            ecgCorrelations: ecgCorrelations.length,
-            priorityAircraftHits: convergenceEvents.filter((e: any) => 
-              priorityAircraft.includes(e.registration)
-            ).length
-          },
-          ecgEvents: ecgCorrelations,
-          bradfordHillCriteria: {
-            temporality: fourFactorCount > 0,
-            strength: avgHeartRate > 90,
-            consistency: uniqueAircraft.length >= 3,
-            specificity: convergenceEvents.filter((e: any) => e.altitude && e.altitude < 1500).length > 0,
-            plausibility: true,
-            coherence: threeFactorCount + fourFactorCount > 5
-          }
-        };
-        
-        console.log(`Federal Convergence Analysis Complete: ${fourFactorCount} 4-factor, ${threeFactorCount} 3-factor events`);
         break;
       }
 

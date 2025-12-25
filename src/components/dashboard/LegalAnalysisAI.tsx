@@ -42,6 +42,18 @@ interface ConvergenceSummary {
   avgHeartRateInEvents: number;
   ecgCorrelations: number;
   priorityAircraftHits: number;
+  totalECGs?: number;
+  totalJosiahReflections?: number;
+  totalOCRPatterns?: number;
+}
+
+interface BradfordHillCriteria {
+  temporality: boolean;
+  strength: boolean;
+  consistency: boolean;
+  specificity: boolean;
+  plausibility: boolean;
+  coherence: boolean;
 }
 
 export function LegalAnalysisAI() {
@@ -52,6 +64,7 @@ export function LegalAnalysisAI() {
   const [confidence, setConfidence] = useState<number | null>(null);
   const [liveStats, setLiveStats] = useState<LiveStats | null>(null);
   const [convergenceStats, setConvergenceStats] = useState<ConvergenceSummary | null>(null);
+  const [bradfordHill, setBradfordHill] = useState<BradfordHillCriteria | null>(null);
   const [isLoadingStats, setIsLoadingStats] = useState(false);
   const [isLoadingConvergence, setIsLoadingConvergence] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -118,6 +131,9 @@ export function LegalAnalysisAI() {
         const data = await response.json();
         if (data.data?.summary) {
           setConvergenceStats(data.data.summary);
+        }
+        if (data.data?.bradfordHillCriteria) {
+          setBradfordHill(data.data.bradfordHillCriteria);
         }
       }
     } catch (error) {
@@ -298,7 +314,7 @@ export function LegalAnalysisAI() {
           <div className="flex items-center justify-between mb-2">
             <h4 className="text-xs font-display text-green-400 flex items-center gap-2">
               <Target className="w-3 h-3" />
-              FEDERAL CASE CONVERGENCE
+              FEDERAL CASE CONVERGENCE (Bradford Hill Criteria)
             </h4>
             <button 
               onClick={fetchConvergenceStats}
@@ -311,40 +327,67 @@ export function LegalAnalysisAI() {
           </div>
           
           {convergenceStats ? (
-            <div className="grid grid-cols-4 md:grid-cols-8 gap-2 text-xs">
-              <div className="text-center p-2 bg-green-900/30 rounded border border-green-500/50">
-                <div className="text-green-400 font-mono font-bold text-lg">{(convergenceStats.fourFactorEvents ?? 0).toLocaleString()}</div>
-                <div className="text-green-300/70">4-Factor</div>
+            <>
+              <div className="grid grid-cols-4 md:grid-cols-8 gap-2 text-xs mb-3">
+                <div className="text-center p-2 bg-green-900/30 rounded border border-green-500/50">
+                  <div className="text-green-400 font-mono font-bold text-lg">{(convergenceStats.fourFactorEvents ?? 0).toLocaleString()}</div>
+                  <div className="text-green-300/70">4-Factor</div>
+                </div>
+                <div className="text-center p-2 bg-cyan-900/30 rounded border border-cyan-500/30">
+                  <div className="text-cyan-400 font-mono font-bold">{(convergenceStats.threeFactorEvents ?? 0).toLocaleString()}</div>
+                  <div className="text-cyan-300/70">3-Factor</div>
+                </div>
+                <div className="text-center p-2 bg-yellow-900/20 rounded border border-yellow-500/20">
+                  <div className="text-yellow-400 font-mono font-bold">{(convergenceStats.twoFactorEvents ?? 0).toLocaleString()}</div>
+                  <div className="text-yellow-300/70">2-Factor</div>
+                </div>
+                <div className="text-center p-2 bg-background/50 rounded">
+                  <div className="text-foreground font-mono font-bold">{(convergenceStats.totalConvergenceEvents ?? 0).toLocaleString()}</div>
+                  <div className="text-muted-foreground">Total</div>
+                </div>
+                <div className="text-center p-2 bg-background/50 rounded">
+                  <div className="text-secondary font-mono font-bold">{(convergenceStats.uniqueAircraftInvolved ?? 0).toLocaleString()}</div>
+                  <div className="text-muted-foreground">Aircraft</div>
+                </div>
+                <div className="text-center p-2 bg-red-900/20 rounded border border-red-500/20">
+                  <div className="text-red-400 font-mono font-bold">{(convergenceStats.avgHeartRateInEvents ?? 0)} bpm</div>
+                  <div className="text-red-300/70">Avg HR</div>
+                </div>
+                <div className="text-center p-2 bg-purple-900/20 rounded border border-purple-500/20">
+                  <div className="text-purple-400 font-mono font-bold">{(convergenceStats.totalECGs ?? convergenceStats.ecgCorrelations ?? 0).toLocaleString()}</div>
+                  <div className="text-purple-300/70">ECGs</div>
+                </div>
+                <div className="text-center p-2 bg-destructive/20 rounded border border-destructive/30">
+                  <div className="text-destructive font-mono font-bold">{(convergenceStats.priorityAircraftHits ?? 0).toLocaleString()}</div>
+                  <div className="text-destructive/70">Priority</div>
+                </div>
               </div>
-              <div className="text-center p-2 bg-cyan-900/30 rounded border border-cyan-500/30">
-                <div className="text-cyan-400 font-mono font-bold">{(convergenceStats.threeFactorEvents ?? 0).toLocaleString()}</div>
-                <div className="text-cyan-300/70">3-Factor</div>
-              </div>
-              <div className="text-center p-2 bg-yellow-900/20 rounded border border-yellow-500/20">
-                <div className="text-yellow-400 font-mono font-bold">{(convergenceStats.twoFactorEvents ?? 0).toLocaleString()}</div>
-                <div className="text-yellow-300/70">2-Factor</div>
-              </div>
-              <div className="text-center p-2 bg-background/50 rounded">
-                <div className="text-foreground font-mono font-bold">{(convergenceStats.totalConvergenceEvents ?? 0).toLocaleString()}</div>
-                <div className="text-muted-foreground">Total</div>
-              </div>
-              <div className="text-center p-2 bg-background/50 rounded">
-                <div className="text-secondary font-mono font-bold">{(convergenceStats.uniqueAircraftInvolved ?? 0).toLocaleString()}</div>
-                <div className="text-muted-foreground">Aircraft</div>
-              </div>
-              <div className="text-center p-2 bg-red-900/20 rounded border border-red-500/20">
-                <div className="text-red-400 font-mono font-bold">{(convergenceStats.avgHeartRateInEvents ?? 0)} bpm</div>
-                <div className="text-red-300/70">Avg HR</div>
-              </div>
-              <div className="text-center p-2 bg-purple-900/20 rounded border border-purple-500/20">
-                <div className="text-purple-400 font-mono font-bold">{(convergenceStats.ecgCorrelations ?? 0).toLocaleString()}</div>
-                <div className="text-purple-300/70">ECG Links</div>
-              </div>
-              <div className="text-center p-2 bg-destructive/20 rounded border border-destructive/30">
-                <div className="text-destructive font-mono font-bold">{(convergenceStats.priorityAircraftHits ?? 0).toLocaleString()}</div>
-                <div className="text-destructive/70">Priority Hits</div>
-              </div>
-            </div>
+              
+              {/* Bradford Hill Criteria Indicators */}
+              {bradfordHill && (
+                <div className="flex flex-wrap gap-2 text-xs">
+                  <span className="text-muted-foreground">Bradford Hill:</span>
+                  <span className={cn("px-2 py-0.5 rounded", bradfordHill.temporality ? "bg-green-500/20 text-green-400" : "bg-red-500/20 text-red-400")}>
+                    {bradfordHill.temporality ? "✓" : "✗"} Temporality
+                  </span>
+                  <span className={cn("px-2 py-0.5 rounded", bradfordHill.strength ? "bg-green-500/20 text-green-400" : "bg-red-500/20 text-red-400")}>
+                    {bradfordHill.strength ? "✓" : "✗"} Strength
+                  </span>
+                  <span className={cn("px-2 py-0.5 rounded", bradfordHill.consistency ? "bg-green-500/20 text-green-400" : "bg-red-500/20 text-red-400")}>
+                    {bradfordHill.consistency ? "✓" : "✗"} Consistency
+                  </span>
+                  <span className={cn("px-2 py-0.5 rounded", bradfordHill.specificity ? "bg-green-500/20 text-green-400" : "bg-red-500/20 text-red-400")}>
+                    {bradfordHill.specificity ? "✓" : "✗"} Specificity
+                  </span>
+                  <span className={cn("px-2 py-0.5 rounded", bradfordHill.plausibility ? "bg-green-500/20 text-green-400" : "bg-red-500/20 text-red-400")}>
+                    {bradfordHill.plausibility ? "✓" : "✗"} Plausibility
+                  </span>
+                  <span className={cn("px-2 py-0.5 rounded", bradfordHill.coherence ? "bg-green-500/20 text-green-400" : "bg-red-500/20 text-red-400")}>
+                    {bradfordHill.coherence ? "✓" : "✗"} Coherence
+                  </span>
+                </div>
+              )}
+            </>
           ) : (
             <div className="text-xs text-muted-foreground text-center py-2">
               {isLoadingConvergence ? "Running four-factor convergence analysis..." : "Click Analyze to run federal case convergence query"}

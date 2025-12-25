@@ -91,7 +91,7 @@ export function DeepCorrelationEngine() {
             FROM flagged_aircraft_rows_rows f
             WHERE NOT EXISTS (
               SELECT 1 FROM biometric_vector_correlations bvc
-              WHERE bvc.matched_aircraft::text ILIKE '%' || COALESCE(f.icao24, f.registration, '') || '%'
+              WHERE bvc.matched_aircraft::text ILIKE '%' || COALESCE(f.hex, f.flight, '') || '%'
             )
           `
         }

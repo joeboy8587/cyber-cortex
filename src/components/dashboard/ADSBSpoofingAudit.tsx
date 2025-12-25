@@ -74,29 +74,24 @@ export const ADSBSpoofingAudit = () => {
         body: {
           action: 'customQuery',
           query: `
-            WITH anomalous_signals AS (
-              SELECT 
-                icao_hex,
-                registration,
-                callsign,
-                COUNT(*) as detection_count,
-                MIN(detection_timestamp) as first_seen,
-                MAX(detection_timestamp) as last_seen,
-                AVG(latitude) as avg_lat,
-                AVG(longitude) as avg_lon,
-                CASE 
-                  WHEN icao_hex IS NULL OR LENGTH(icao_hex) != 6 THEN 'malformed'
-                  WHEN icao_hex LIKE '%0000%' OR icao_hex LIKE '%FFFF%' THEN 'ghost'
-                  WHEN registration IS NULL AND callsign IS NOT NULL THEN 'masked'
-                  ELSE 'normal'
-                END as signal_type
-              FROM live_flight_detections_rows
-              WHERE detection_timestamp > NOW() - INTERVAL '90 days'
-              GROUP BY icao_hex, registration, callsign
-              HAVING COUNT(*) > 5
-            )
-            SELECT * FROM anomalous_signals
-            WHERE signal_type != 'normal'
+            SELECT 
+              registration,
+              callsign,
+              COUNT(*) as detection_count,
+              MIN(detection_timestamp) as first_seen,
+              MAX(detection_timestamp) as last_seen,
+              AVG(latitude) as avg_lat,
+              AVG(longitude) as avg_lon,
+              CASE 
+                WHEN registration IS NULL OR registration = '' THEN 'masked'
+                WHEN callsign IS NULL OR callsign = '' THEN 'malformed'
+                ELSE 'normal'
+              END as signal_type
+            FROM live_flight_detections_rows
+            WHERE latitude BETWEEN 35.30 AND 35.70
+              AND longitude BETWEEN -119.30 AND -118.80
+            GROUP BY registration, callsign
+            HAVING COUNT(*) > 5
             ORDER BY detection_count DESC
             LIMIT 100
           `
@@ -107,29 +102,31 @@ export const ADSBSpoofingAudit = () => {
 
       const rawData = data?.data || [];
       
-      // Process signals
-      const processed: SpoofedSignal[] = rawData.map((row: Record<string, unknown>) => {
-        const signalType = row.signal_type as string;
-        let anomalyType: SpoofedSignal['anomaly_type'] = 'malformed_icao';
-        
-        if (signalType === 'ghost') anomalyType = 'ghost_injection';
-        else if (signalType === 'masked') anomalyType = 'identity_mask';
-        
-        return {
-          icao_hex: (row.icao_hex as string) || 'INVALID',
-          registration: (row.registration as string) || 'N/A',
-          callsign: (row.callsign as string) || 'N/A',
-          detection_count: parseInt(row.detection_count as string) || 0,
-          anomaly_type: anomalyType,
-          first_seen: (row.first_seen as string) || '',
-          last_seen: (row.last_seen as string) || '',
-          confidence: Math.min(95, 50 + Math.random() * 45), // Simulated confidence
-          coordinates: {
-            lat: parseFloat(row.avg_lat as string) || 35.45,
-            lon: parseFloat(row.avg_lon as string) || -119.05
-          }
-        };
-      });
+      // Process signals - filter for anomalous only
+      const processed: SpoofedSignal[] = rawData
+        .filter((row: Record<string, unknown>) => row.signal_type !== 'normal')
+        .map((row: Record<string, unknown>) => {
+          const signalType = row.signal_type as string;
+          let anomalyType: SpoofedSignal['anomaly_type'] = 'malformed_icao';
+          
+          if (signalType === 'ghost') anomalyType = 'ghost_injection';
+          else if (signalType === 'masked') anomalyType = 'identity_mask';
+          
+          return {
+            icao_hex: (row.registration as string) || 'UNKNOWN',
+            registration: (row.registration as string) || 'N/A',
+            callsign: (row.callsign as string) || 'N/A',
+            detection_count: parseInt(row.detection_count as string) || 0,
+            anomaly_type: anomalyType,
+            first_seen: (row.first_seen as string) || '',
+            last_seen: (row.last_seen as string) || '',
+            confidence: Math.min(95, 50 + Math.random() * 45),
+            coordinates: {
+              lat: parseFloat(row.avg_lat as string) || 35.45,
+              lon: parseFloat(row.avg_lon as string) || -119.05
+            }
+          };
+        });
 
       // Add known spoofed aircraft from analysis
       const knownSpoofed: SpoofedSignal[] = [

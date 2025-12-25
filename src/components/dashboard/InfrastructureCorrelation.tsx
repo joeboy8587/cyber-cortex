@@ -39,13 +39,13 @@ export const InfrastructureCorrelation = () => {
   const fetchInfraData = useCallback(async () => {
     setLoading(true);
     try {
-      // Query shell companies table
+      // Query shell companies table - use limit since created_at may not exist
       const { data, error } = await supabase.functions.invoke('neon-query', {
         body: {
           action: 'customQuery',
           query: `
             SELECT * FROM shell_companies
-            ORDER BY created_at DESC
+            LIMIT 50
           `
         }
       });

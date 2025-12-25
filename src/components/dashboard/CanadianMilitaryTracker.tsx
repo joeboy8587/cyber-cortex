@@ -84,7 +84,6 @@ export const CanadianMilitaryTracker = () => {
             SELECT 
               registration,
               callsign,
-              icao_hex,
               aircraft_type,
               COALESCE(owner, operator, 'Unknown') as operator,
               COUNT(*) as detections,
@@ -98,12 +97,11 @@ export const CanadianMilitaryTracker = () => {
                 registration LIKE 'CF%' OR
                 callsign LIKE 'CF%' OR
                 callsign LIKE 'AC%' OR
-                callsign LIKE 'WJA%' OR
-                (icao_hex IS NOT NULL AND icao_hex >= 'C00000' AND icao_hex <= 'C3FFFF')
+                callsign LIKE 'WJA%'
               )
               AND latitude BETWEEN 35.30 AND 35.70
               AND longitude BETWEEN -119.30 AND -118.80
-            GROUP BY registration, callsign, icao_hex, aircraft_type, COALESCE(owner, operator, 'Unknown')
+            GROUP BY registration, callsign, aircraft_type, COALESCE(owner, operator, 'Unknown')
             ORDER BY detections DESC
             LIMIT 100
           `
@@ -118,7 +116,7 @@ export const CanadianMilitaryTracker = () => {
       const processed: CanadianAircraft[] = rawData.map((row: Record<string, unknown>) => ({
         registration: (row.registration as string) || 'N/A',
         callsign: (row.callsign as string) || 'N/A',
-        icao_hex: (row.icao_hex as string) || '',
+        icao_hex: '',
         aircraft_type: (row.aircraft_type as string) || 'Unknown',
         operator: (row.operator as string) || 'Unknown',
         detections: parseInt(row.detections as string) || 0,

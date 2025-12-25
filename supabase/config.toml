@@ -57,3 +57,6 @@ verify_jwt = false
 
 [functions.josiah-chat]
 verify_jwt = false
+
+[functions.aviation-edge-fetch]
+verify_jwt = false

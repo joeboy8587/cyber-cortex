@@ -1,10 +1,10 @@
 import { useEffect, useState, useCallback } from "react";
 import { CyberPanel } from "@/components/ui/cyber-panel";
-import { Plane, RefreshCw, AlertTriangle, Shield, Radio, Eye } from "lucide-react";
+import { Plane, RefreshCw, AlertTriangle, Shield, Radio, Eye, Wifi, WifiOff } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
 import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
 
 interface LiveFlight {
   hex: string;
@@ -41,10 +41,52 @@ export function LiveFlightTracker() {
   const [loading, setLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const [apiConnected, setApiConnected] = useState<boolean | null>(null);
+
+  // Fetch live flights from Aviation Edge API
+  const fetchFromAviationEdge = useCallback(async () => {
+    try {
+      console.log('Fetching from Aviation Edge API...');
+      const { data, error } = await supabase.functions.invoke("aviation-edge-fetch", {
+        body: { action: "fetchFlights" }
+      });
+
+      if (error) {
+        console.error('Aviation Edge fetch error:', error);
+        setApiConnected(false);
+        return null;
+      }
+
+      if (data?.error) {
+        console.error('Aviation Edge API error:', data.error);
+        setApiConnected(false);
+        toast.error(`API Error: ${data.error}`);
+        return null;
+      }
+
+      setApiConnected(true);
+      console.log(`Aviation Edge returned ${data?.count || 0} flights, inserted ${data?.inserted || 0}`);
+      
+      if (data?.inserted > 0) {
+        toast.success(`Imported ${data.inserted} live flights from Aviation Edge`);
+      }
+      
+      return data?.flights || [];
+    } catch (err) {
+      console.error('Aviation Edge exception:', err);
+      setApiConnected(false);
+      return null;
+    }
+  }, []);
 
   const fetchLiveFlights = useCallback(async () => {
+    setLoading(true);
+    
     try {
-      // Get recent flights from last 24 hours with classification
+      // First try to fetch fresh data from Aviation Edge
+      await fetchFromAviationEdge();
+      
+      // Then get data from database (includes fresh + historical)
       const { data: flightData } = await supabase.functions.invoke("neon-query", {
         body: {
           action: "customQuery",
@@ -71,7 +113,7 @@ export function LiveFlightTracker() {
                   ELSE false 
                 END as is_flagged
               FROM live_flight_detections_rows
-              WHERE detection_timestamp > NOW() - INTERVAL '24 hours'
+              WHERE detection_timestamp > NOW() - INTERVAL '1 hour'
               ORDER BY detection_timestamp DESC
               LIMIT 100
             )
@@ -99,7 +141,7 @@ export function LiveFlightTracker() {
               COUNT(DISTINCT CASE WHEN altitude < 2000 THEN icao_code END) as low_altitude_count,
               COUNT(DISTINCT CASE WHEN taxonomy_tag LIKE '%kcso%' THEN icao_code END) as kcso_related
             FROM live_flight_detections_rows
-            WHERE detection_timestamp > NOW() - INTERVAL '24 hours'
+            WHERE detection_timestamp > NOW() - INTERVAL '1 hour'
           `
         }
       });
@@ -137,13 +179,13 @@ export function LiveFlightTracker() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [fetchFromAviationEdge]);
 
   useEffect(() => {
     fetchLiveFlights();
     
-    // Auto-refresh every 30 seconds if enabled
-    const interval = autoRefresh ? setInterval(fetchLiveFlights, 30000) : null;
+    // Auto-refresh every 60 seconds if enabled
+    const interval = autoRefresh ? setInterval(fetchLiveFlights, 60000) : null;
     
     return () => {
       if (interval) clearInterval(interval);
@@ -184,6 +226,12 @@ export function LiveFlightTracker() {
               <RefreshCw className={`w-4 h-4 mr-1 ${loading ? 'animate-spin' : ''}`} />
               Refresh
             </Button>
+            {apiConnected !== null && (
+              <Badge variant={apiConnected ? "default" : "destructive"} className="gap-1">
+                {apiConnected ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
+                {apiConnected ? 'API Connected' : 'API Offline'}
+              </Badge>
+            )}
           </div>
           <span className="text-xs text-muted-foreground">
             Last update: {lastUpdate.toLocaleTimeString()}

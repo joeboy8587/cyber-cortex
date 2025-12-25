@@ -35,6 +35,7 @@ import { GlobalAISearch } from "@/components/dashboard/GlobalAISearch";
 import { WatchtowerAlertsHub } from "@/components/dashboard/WatchtowerAlertsHub";
 import { MaterializedViewsPanel } from "@/components/dashboard/MaterializedViewsPanel";
 import { FalseClaimsActCompiler } from "@/components/dashboard/FalseClaimsActCompiler";
+import { TROEvidenceCompiler } from "@/components/dashboard/TROEvidenceCompiler";
 import { JosiahChatInterface } from "@/components/dashboard/JosiahChatInterface";
 import { CanadianMilitaryTracker } from "@/components/dashboard/CanadianMilitaryTracker";
 import { ADSBSpoofingAudit } from "@/components/dashboard/ADSBSpoofingAudit";
@@ -73,6 +74,7 @@ const Index = () => {
           </section>
           
           <section id="legal-analysis" className="space-y-6">
+            <TROEvidenceCompiler />
             <FalseClaimsActCompiler />
             <LegalAnalysisAI />
           </section>

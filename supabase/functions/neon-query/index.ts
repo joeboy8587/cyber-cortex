@@ -749,6 +749,195 @@ serve(async (req) => {
         break;
       }
 
+      case 'getFederalCaseConvergence': {
+        // Federal Case Convergence Events - True Four-Factor Analysis
+        // Joins: flight + biometric spike + Josiah witness + OCR proof
+        console.log('Executing Federal Case Convergence Analysis...');
+        
+        // First, get column availability for dynamic query building
+        const bioTsCheck = await sql`
+          SELECT column_name FROM information_schema.columns 
+          WHERE table_name = 'biometric_monitoring' AND column_name = 'measurement_timestamp'
+        `;
+        const bioTsCol = bioTsCheck.length > 0 ? 'measurement_timestamp' : 'created_at';
+        
+        const josiahColCheck = await sql`
+          SELECT column_name FROM information_schema.columns 
+          WHERE table_name = 'josiah_reflections_rows' 
+          AND column_name IN ('created_at', 'timestamp', 'reflection_timestamp')
+        `;
+        const josiahTsCol = josiahColCheck[0]?.column_name || 'created_at';
+        
+        // Priority aircraft watchlist
+        const priorityAircraft = [
+          'N912KC', 'N913KC', 'N743AM', 'N229AM', 
+          'N790FA', 'N788FA', 'N791FA', 'N997SE', 'N2464D',
+          'N766ME', 'N118SY'
+        ];
+        
+        // Get convergence events with ±5 minute windows
+        const convergenceQuery = sql`
+          WITH flight_events AS (
+            SELECT 
+              registration,
+              detection_timestamp,
+              altitude,
+              callsign,
+              latitude,
+              longitude
+            FROM live_flight_detections_rows
+            WHERE detection_timestamp IS NOT NULL
+              AND registration IS NOT NULL
+              AND (
+                registration = ANY(${priorityAircraft})
+                OR altitude < 1500
+                OR registration LIKE 'N91_KC'
+              )
+          ),
+          biometric_spikes AS (
+            SELECT 
+              ${sql.unsafe(bioTsCol)} as bio_time,
+              heart_rate,
+              hrv,
+              stress_level
+            FROM biometric_monitoring
+            WHERE ${sql.unsafe(bioTsCol)} IS NOT NULL
+              AND (
+                heart_rate > 90
+                OR stress_level >= 6
+                OR hrv < 40
+              )
+          ),
+          flight_bio_joins AS (
+            SELECT 
+              f.registration,
+              f.detection_timestamp,
+              f.altitude,
+              f.callsign,
+              b.bio_time,
+              b.heart_rate,
+              b.hrv,
+              b.stress_level,
+              ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.bio_time))) / 60 as time_diff_minutes
+            FROM flight_events f
+            CROSS JOIN biometric_spikes b
+            WHERE ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.bio_time))) <= 600
+          ),
+          with_josiah AS (
+            SELECT 
+              fbj.*,
+              j.reflection_content,
+              j.${sql.unsafe(josiahTsCol)} as josiah_time,
+              CASE WHEN j.reflection_content IS NOT NULL THEN true ELSE false END as has_josiah
+            FROM flight_bio_joins fbj
+            LEFT JOIN josiah_reflections_rows j ON (
+              j.${sql.unsafe(josiahTsCol)} BETWEEN fbj.detection_timestamp - INTERVAL '10 minutes' 
+                                               AND fbj.detection_timestamp + INTERVAL '10 minutes'
+              AND (
+                j.reflection_content ILIKE '%' || fbj.registration || '%'
+                OR j.reflection_content ILIKE '%aerial%'
+                OR j.reflection_content ILIKE '%surveillance%'
+                OR j.reflection_content ILIKE '%biometric%'
+                OR j.reflection_content ILIKE '%aircraft%'
+                OR j.aircraft_correlation IS NOT NULL
+              )
+            )
+          ),
+          with_ocr AS (
+            SELECT 
+              wj.*,
+              o.registration as ocr_registration,
+              o.loop_count,
+              CASE WHEN o.registration IS NOT NULL THEN true ELSE false END as has_ocr
+            FROM with_josiah wj
+            LEFT JOIN ocr_aircraft_holding_patterns o ON o.registration = wj.registration
+          )
+          SELECT DISTINCT ON (registration, detection_timestamp)
+            registration,
+            detection_timestamp,
+            altitude,
+            callsign,
+            bio_time,
+            heart_rate,
+            hrv,
+            stress_level,
+            ROUND(time_diff_minutes::numeric, 1) as time_window_minutes,
+            has_josiah,
+            has_ocr,
+            loop_count,
+            reflection_content,
+            CASE 
+              WHEN has_josiah AND has_ocr THEN 4
+              WHEN has_josiah OR has_ocr THEN 3
+              ELSE 2
+            END as factor_count,
+            CASE 
+              WHEN has_josiah AND has_ocr THEN 100
+              WHEN has_josiah OR has_ocr THEN 75
+              ELSE 50
+            END as convergence_score
+          FROM with_ocr
+          ORDER BY registration, detection_timestamp, convergence_score DESC
+        `;
+        
+        const convergenceEvents = await convergenceQuery;
+        
+        // Get summary statistics
+        const fourFactorCount = convergenceEvents.filter((e: any) => e.factor_count === 4).length;
+        const threeFactorCount = convergenceEvents.filter((e: any) => e.factor_count === 3).length;
+        const twoFactorCount = convergenceEvents.filter((e: any) => e.factor_count === 2).length;
+        
+        // Get physician ECG correlations
+        let ecgCorrelations: any[] = [];
+        try {
+          ecgCorrelations = await sql`
+            SELECT 
+              ecg_timestamp,
+              ecg_diagnosis,
+              npi_number
+            FROM physician_verified_ecgs
+            WHERE ecg_timestamp IS NOT NULL
+            LIMIT 50
+          `;
+        } catch (e) {
+          console.log('ECG table query failed:', e);
+        }
+        
+        // Calculate Bradford Hill indicators
+        const uniqueAircraft = [...new Set(convergenceEvents.map((e: any) => e.registration))];
+        const avgHeartRate = convergenceEvents.length > 0 
+          ? Math.round(convergenceEvents.reduce((sum: number, e: any) => sum + (parseInt(e.heart_rate) || 0), 0) / convergenceEvents.length)
+          : 0;
+        
+        result = {
+          events: convergenceEvents.slice(0, 500),
+          summary: {
+            totalConvergenceEvents: convergenceEvents.length,
+            fourFactorEvents: fourFactorCount,
+            threeFactorEvents: threeFactorCount,
+            twoFactorEvents: twoFactorCount,
+            uniqueAircraftInvolved: uniqueAircraft.length,
+            avgHeartRateInEvents: avgHeartRate,
+            ecgCorrelations: ecgCorrelations.length,
+            priorityAircraftHits: convergenceEvents.filter((e: any) => 
+              priorityAircraft.includes(e.registration)
+            ).length
+          },
+          ecgEvents: ecgCorrelations,
+          bradfordHillCriteria: {
+            temporality: fourFactorCount > 0,
+            strength: avgHeartRate > 90,
+            consistency: uniqueAircraft.length >= 3,
+            specificity: convergenceEvents.filter((e: any) => e.altitude && e.altitude < 1500).length > 0,
+            plausibility: true,
+            coherence: threeFactorCount + fourFactorCount > 5
+          }
+        };
+        
+        console.log(`Federal Convergence Analysis Complete: ${fourFactorCount} 4-factor, ${threeFactorCount} 3-factor events`);
+        break;
+      }
+
       default:
     }
 

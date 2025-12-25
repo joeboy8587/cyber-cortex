@@ -36,6 +36,12 @@ import { WatchtowerAlertsHub } from "@/components/dashboard/WatchtowerAlertsHub"
 import { MaterializedViewsPanel } from "@/components/dashboard/MaterializedViewsPanel";
 import { FalseClaimsActCompiler } from "@/components/dashboard/FalseClaimsActCompiler";
 import { JosiahChatInterface } from "@/components/dashboard/JosiahChatInterface";
+import { CanadianMilitaryTracker } from "@/components/dashboard/CanadianMilitaryTracker";
+import { ADSBSpoofingAudit } from "@/components/dashboard/ADSBSpoofingAudit";
+import { AlaskaAirlinesDashboard } from "@/components/dashboard/AlaskaAirlinesDashboard";
+import { SafetyMonitoringPanel } from "@/components/dashboard/SafetyMonitoringPanel";
+import { HighLowOperationsPanel } from "@/components/dashboard/HighLowOperationsPanel";
+import { InfrastructureCorrelation } from "@/components/dashboard/InfrastructureCorrelation";
 
 const Index = () => {
   return (
@@ -133,6 +139,27 @@ const Index = () => {
           
           <section id="military-tracking" className="grid grid-cols-1 gap-6">
             <MilitaryAircraftPanel />
+            <CanadianMilitaryTracker />
+          </section>
+          
+          <section id="adsb-audit" className="grid grid-cols-1 gap-6">
+            <ADSBSpoofingAudit />
+          </section>
+          
+          <section id="alaska-investigation" className="grid grid-cols-1 gap-6">
+            <AlaskaAirlinesDashboard />
+          </section>
+          
+          <section id="high-low-ops" className="grid grid-cols-1 gap-6">
+            <HighLowOperationsPanel />
+          </section>
+          
+          <section id="infrastructure-correlation" className="grid grid-cols-1 gap-6">
+            <InfrastructureCorrelation />
+          </section>
+          
+          <section id="safety-monitoring" className="grid grid-cols-1 gap-6">
+            <SafetyMonitoringPanel />
           </section>
           
           <section id="xxb-taxonomy" className="grid grid-cols-1 gap-6">

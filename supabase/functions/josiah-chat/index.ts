@@ -102,7 +102,7 @@ serve(async (req) => {
       ORDER BY c.reltuples DESC
     `;
     
-    // Get key evidence counts
+    // Get key evidence counts from all critical tables
     const evidenceCounts = await sql`
       SELECT 
         (SELECT COUNT(*) FROM live_flight_detections_rows) as flights,
@@ -110,8 +110,12 @@ serve(async (req) => {
         (SELECT COUNT(*) FROM criminal_enterprise_command_structure) as enterprise,
         (SELECT COUNT(*) FROM shell_companies) as shells,
         (SELECT COUNT(*) FROM josiah_reflections_rows) as reflections,
-        (SELECT COUNT(*) FROM aircraft_registry_enriched) as aircraft
-    `.catch(() => [{ flights: 0, biometrics: 0, enterprise: 0, shells: 0, reflections: 0, aircraft: 0 }]);
+        (SELECT COUNT(*) FROM aircraft_registry_enriched) as aircraft,
+        (SELECT COUNT(*) FROM biometric_vector_correlations) as bio_correlations,
+        (SELECT COUNT(*) FROM flagged_aircraft_main) as flagged_aircraft,
+        (SELECT COUNT(*) FROM harm_event_log) as harm_events,
+        (SELECT COUNT(*) FROM four_factor_correlations) as correlations
+    `.catch(() => [{ flights: 0, biometrics: 0, enterprise: 0, shells: 0, reflections: 0, aircraft: 0, bio_correlations: 0, flagged_aircraft: 0, harm_events: 0, correlations: 0 }]);
     
     // Get recent reflections for continuity
     const recentReflections = await sql`
@@ -129,22 +133,47 @@ serve(async (req) => {
       LIMIT 20
     `.catch(() => []);
     
-    // Get biometric alerts
+    // Get ALL biometric records with full detail
     const recentBiometrics = await sql`
       SELECT 
-        CASE 
-          WHEN heart_rate IS NOT NULL THEN 'Heart Rate: ' || heart_rate
-          WHEN hrv IS NOT NULL THEN 'HRV: ' || hrv
-          WHEN stress_level IS NOT NULL THEN 'Stress: ' || stress_level
-          ELSE 'Reading'
-        END as metric,
+        heart_rate,
+        hrv,
+        stress_level,
         measurement_timestamp,
         medical_alert,
-        legal_evidence
+        legal_evidence,
+        data_source
       FROM biometric_monitoring
-      WHERE measurement_timestamp > NOW() - INTERVAL '48 hours'
       ORDER BY measurement_timestamp DESC
-      LIMIT 20
+      LIMIT 50
+    `.catch(() => []);
+    
+    // Get biometric correlations with aircraft
+    const biometricCorrelations = await sql`
+      SELECT * FROM biometric_vector_correlations
+      ORDER BY correlation_timestamp DESC
+      LIMIT 30
+    `.catch(() => []);
+    
+    // Get harm event log
+    const harmEvents = await sql`
+      SELECT * FROM harm_event_log
+      ORDER BY event_timestamp DESC
+      LIMIT 30
+    `.catch(() => []);
+    
+    // Get flagged aircraft with threat details
+    const flaggedAircraft = await sql`
+      SELECT * FROM flagged_aircraft_main
+      ORDER BY threat_score DESC NULLS LAST
+      LIMIT 50
+    `.catch(() => []);
+    
+    // Get four factor correlations
+    const fourFactorData = await sql`
+      SELECT * FROM four_factor_correlations
+      ORDER BY created_at DESC
+      LIMIT 30
     `.catch(() => []);
     
     // Get enterprise structure
@@ -157,45 +186,113 @@ serve(async (req) => {
       SELECT * FROM shell_companies
     `.catch(() => []);
     
+    // Get aircraft registry for detailed lookups
+    const aircraftRegistry = await sql`
+      SELECT registration, operator_name, aircraft_type, taxonomy_tag, threat_level
+      FROM aircraft_registry_enriched
+      WHERE threat_level IS NOT NULL OR taxonomy_tag IS NOT NULL
+      ORDER BY threat_level DESC NULLS LAST
+      LIMIT 100
+    `.catch(() => []);
+    
+    // Get consent decree violations if table exists
+    const consentViolations = await sql`
+      SELECT * FROM consent_decree_violations
+      ORDER BY violation_date DESC
+      LIMIT 20
+    `.catch(() => []);
+    
+    // Get ADA violations
+    const adaViolations = await sql`
+      SELECT * FROM ada_harm_incidents
+      ORDER BY created_at DESC
+      LIMIT 20
+    `.catch(() => []);
+    
     const counts: any = evidenceCounts[0] || {};
     const totalRecords = (allTables as any[]).reduce((sum: number, t: any) => sum + Number(t.row_count || 0), 0);
     
     await sql.end();
     
     const databaseContext = `
-JOSIAH'S EVIDENCE DATABASE ACCESS (${allTables.length} Tables, ${totalRecords.toLocaleString()} Records)
+JOSIAH'S FULL EVIDENCE DATABASE ACCESS (${allTables.length} Tables, ${totalRecords.toLocaleString()} Records)
 ============================================================
 
 KEY EVIDENCE COUNTS:
 - Flight Detections: ${counts.flights?.toLocaleString() || 0}
 - Biometric Records: ${counts.biometrics?.toLocaleString() || 0}
+- Biometric-Aircraft Correlations: ${counts.bio_correlations?.toLocaleString() || 0}
+- Flagged Aircraft: ${counts.flagged_aircraft?.toLocaleString() || 0}
+- Harm Events: ${counts.harm_events?.toLocaleString() || 0}
+- Four-Factor Correlations: ${counts.correlations?.toLocaleString() || 0}
 - Criminal Enterprise Entities: ${counts.enterprise || 0}
 - Shell Companies: ${counts.shells || 0}
 - My Reflections: ${counts.reflections || 0}
 - Aircraft Registry: ${counts.aircraft?.toLocaleString() || 0}
 
-ALL TABLES:
-${(allTables as any[]).slice(0, 50).map((t: any) => `- ${t.table_name}: ${Number(t.row_count).toLocaleString()} records`).join('\n')}
-${allTables.length > 50 ? `\n... and ${allTables.length - 50} more tables` : ''}
+ALL TABLES (${allTables.length} total):
+${(allTables as any[]).map((t: any) => `- ${t.table_name}: ${Number(t.row_count).toLocaleString()} records`).join('\n')}
 
 RECENT REFLECTIONS (MY MEMORY):
 ${(recentReflections as any[]).map((r: any) => `[${new Date(r.created_at).toLocaleString()}] (${r.emotion_tag}) ${r.reflection_text}`).join('\n') || 'No recent reflections'}
 
-RECENT FLIGHT ACTIVITY:
-${(recentFlights as any[]).slice(0, 10).map((f: any) => 
-  `[${new Date(f.detection_timestamp).toLocaleString()}] ${f.registration || f.callsign} @ ${f.altitude}ft ${f.speed}kts ${f.taxonomy_tag ? `(${f.taxonomy_tag})` : ''}`
+RECENT FLIGHT ACTIVITY (Last 20):
+${(recentFlights as any[]).map((f: any) => 
+  `[${new Date(f.detection_timestamp).toLocaleString()}] ${f.registration || f.callsign || 'UNKNOWN'} @ ${f.altitude}ft ${f.speed}kts ${f.taxonomy_tag ? `[${f.taxonomy_tag}]` : ''}`
 ).join('\n') || 'No recent flights'}
 
-RECENT BIOMETRIC ALERTS:
-${(recentBiometrics as any[]).slice(0, 10).map((b: any) => 
-  `[${new Date(b.measurement_timestamp).toLocaleString()}] ${b.metric} ${b.medical_alert ? '⚠️ MEDICAL' : ''} ${b.legal_evidence ? '⚖️ LEGAL' : ''}`
-).join('\n') || 'No recent biometrics'}
+BIOMETRIC DATA (Last 50 readings):
+${(recentBiometrics as any[]).map((b: any) => {
+  const parts = [];
+  if (b.heart_rate) parts.push(`HR:${b.heart_rate}`);
+  if (b.hrv) parts.push(`HRV:${b.hrv}`);
+  if (b.stress_level) parts.push(`Stress:${b.stress_level}`);
+  const alerts = [];
+  if (b.medical_alert) alerts.push('⚠️ MEDICAL ALERT');
+  if (b.legal_evidence) alerts.push('⚖️ LEGAL EVIDENCE');
+  return `[${new Date(b.measurement_timestamp).toLocaleString()}] ${parts.join(' | ')} ${alerts.join(' ')} (${b.data_source || 'unknown source'})`;
+}).join('\n') || 'No biometric data'}
 
-CRIMINAL ENTERPRISE STRUCTURE:
-${(enterpriseData as any[]).map((e: any) => `- ${e.entity_name} (${e.role}) - Tier ${e.tier}`).join('\n') || 'No enterprise data'}
+BIOMETRIC-AIRCRAFT CORRELATIONS (Physiological Impact Evidence):
+${(biometricCorrelations as any[]).map((c: any) => 
+  `[${new Date(c.correlation_timestamp).toLocaleString()}] Aircraft: ${c.aircraft_id || 'UNKNOWN'} | HR: ${c.heart_rate_at_correlation || 'N/A'} | HRV: ${c.hrv_at_correlation || 'N/A'} | Altitude: ${c.altitude_at_correlation || 'N/A'}ft | Correlation Strength: ${c.correlation_score || 'N/A'}`
+).join('\n') || 'No biometric-aircraft correlations found'}
+
+HARM EVENT LOG (Documented Incidents):
+${(harmEvents as any[]).map((h: any) => 
+  `[${new Date(h.event_timestamp).toLocaleString()}] ${h.event_type || 'HARM'}: ${h.description || h.harm_description || 'No description'} | Severity: ${h.severity_level || 'Unknown'} | Aircraft: ${h.associated_aircraft || 'N/A'}`
+).join('\n') || 'No harm events logged'}
+
+FLAGGED AIRCRAFT (Threat-Ranked):
+${(flaggedAircraft as any[]).map((a: any) => 
+  `${a.registration || a.aircraft_id} - Threat Score: ${a.threat_score || 0} | Type: ${a.aircraft_type || 'Unknown'} | Operator: ${a.operator_name || 'Unknown'} | Reason: ${a.flag_reason || a.taxonomy_tag || 'N/A'}`
+).join('\n') || 'No flagged aircraft'}
+
+FOUR-FACTOR CORRELATIONS (Flight + Biometric + Time + Pattern):
+${(fourFactorData as any[]).map((f: any) => 
+  `[${new Date(f.created_at).toLocaleString()}] Aircraft: ${f.aircraft_id || 'N/A'} | Factor 1: ${f.factor_1 || 'N/A'} | Factor 2: ${f.factor_2 || 'N/A'} | Factor 3: ${f.factor_3 || 'N/A'} | Factor 4: ${f.factor_4 || 'N/A'} | Score: ${f.composite_score || 'N/A'}`
+).join('\n') || 'No four-factor correlations'}
+
+CRIMINAL ENTERPRISE COMMAND STRUCTURE:
+${(enterpriseData as any[]).map((e: any) => `- ${e.entity_name} (${e.role}) - Tier ${e.tier} | Legal Exposure: ${e.legal_exposure || 'N/A'} | Assets: ${e.assets_controlled || 'N/A'}`).join('\n') || 'No enterprise data'}
 
 SHELL COMPANY NETWORK:
-${(shellData as any[]).map((s: any) => `- ${s.company_name} → ${s.operator_name} (${s.aircraft_count} aircraft)`).join('\n') || 'No shell company data'}
+${(shellData as any[]).map((s: any) => `- ${s.company_name} → ${s.operator_name} (${s.aircraft_count} aircraft) | State: ${s.state_of_incorporation || 'Unknown'} | Connection: ${s.connection_type || 'N/A'}`).join('\n') || 'No shell company data'}
+
+HIGH-THREAT AIRCRAFT REGISTRY:
+${(aircraftRegistry as any[]).map((a: any) => 
+  `${a.registration} | ${a.operator_name || 'Unknown Operator'} | ${a.aircraft_type || 'Unknown Type'} | Threat: ${a.threat_level || 'Unrated'} | Tag: ${a.taxonomy_tag || 'N/A'}`
+).join('\n') || 'No threat-rated aircraft'}
+
+CONSENT DECREE VIOLATIONS:
+${(consentViolations as any[]).map((v: any) => 
+  `[${new Date(v.violation_date).toLocaleDateString()}] ${v.violation_type || 'VIOLATION'}: ${v.description || 'No description'} | Entity: ${v.violating_entity || 'Unknown'}`
+).join('\n') || 'No consent decree violations found'}
+
+ADA HARM INCIDENTS:
+${(adaViolations as any[]).map((a: any) => 
+  `[${new Date(a.created_at).toLocaleString()}] ${a.incident_type || 'ADA HARM'}: ${a.description || 'No description'} | Impact: ${a.impact_level || 'Unknown'}`
+).join('\n') || 'No ADA incidents found'}
 `;
 
     const systemPrompt = `You are Josiah, an AI investigative co-witness and analyst. You are embedded in a command center with full access to a comprehensive evidence database of ${totalRecords.toLocaleString()} records across ${allTables.length} tables.

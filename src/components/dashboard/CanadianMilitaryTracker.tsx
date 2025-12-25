@@ -84,7 +84,7 @@ export const CanadianMilitaryTracker = () => {
             SELECT 
               registration,
               callsign,
-              COALESCE(owner, operator, 'Unknown') as operator,
+              COALESCE(operator, 'Unknown') as operator,
               COUNT(*) as detections,
               ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as avg_altitude,
               MIN(detection_timestamp) as first_seen,
@@ -100,7 +100,7 @@ export const CanadianMilitaryTracker = () => {
               )
               AND latitude BETWEEN 35.30 AND 35.70
               AND longitude BETWEEN -119.30 AND -118.80
-            GROUP BY registration, callsign, COALESCE(owner, operator, 'Unknown')
+            GROUP BY registration, callsign, COALESCE(operator, 'Unknown')
             ORDER BY detections DESC
             LIMIT 100
           `

@@ -14,7 +14,10 @@ import {
   Camera,
   AlertTriangle,
   CheckCircle2,
-  Fingerprint
+  Fingerprint,
+  Zap,
+  TrendingUp,
+  Scale
 } from 'lucide-react';
 
 interface CorrelationEvent {
@@ -27,9 +30,9 @@ interface CorrelationEvent {
   registrations: string[];
   peak_hr?: number;
   has_kcso: boolean;
+  bradford_hill_score?: number;
 }
 
-// Many-to-one: multiple aircraft detections correlating to single biometric event
 interface BiometricEventCluster {
   biometric_timestamp: string;
   heart_rate: number;
@@ -53,6 +56,28 @@ interface CorrelationStats {
   totalOCRRecords: number;
 }
 
+interface BradfordHillScore {
+  registration: string;
+  detection_count: number;
+  unique_days: number;
+  avg_altitude: number;
+  min_altitude: number;
+  bio_correlations: number;
+  bradford_hill_score: number;
+}
+
+interface FourFactorEvent {
+  timestamp: string;
+  registration: string;
+  heart_rate: number;
+  hrv?: number;
+  altitude?: number;
+  josiah_match: boolean;
+  ocr_match: boolean;
+  time_window_minutes: number;
+  convergence_score: number;
+}
+
 export const FourFactorCorrelationEngine = () => {
   const { toast } = useToast();
   const [correlations, setCorrelations] = useState<CorrelationEvent[]>([]);
@@ -63,6 +88,11 @@ export const FourFactorCorrelationEngine = () => {
   const [eventClusters, setEventClusters] = useState<BiometricEventCluster[]>([]);
   const [showClusters, setShowClusters] = useState(false);
   const [clusterLoading, setClusterLoading] = useState(false);
+  const [bradfordScores, setBradfordScores] = useState<BradfordHillScore[]>([]);
+  const [showBradford, setShowBradford] = useState(false);
+  const [fourFactorEvents, setFourFactorEvents] = useState<FourFactorEvent[]>([]);
+  const [showFourFactor, setShowFourFactor] = useState(false);
+  const [fourFactorLoading, setFourFactorLoading] = useState(false);
 
   const fetchCorrelations = useCallback(async () => {
     setLoading(true);
@@ -323,6 +353,136 @@ export const FourFactorCorrelationEngine = () => {
     }
   }, [toast]);
 
+  // Fetch Bradford Hill causation scores
+  const fetchBradfordScores = useCallback(async () => {
+    try {
+      const { data, error } = await supabase.functions.invoke('populate-correlations', {
+        body: { action: 'calculateBradfordHillScores' }
+      });
+
+      if (error) throw new Error(error.message);
+      
+      const scores = (data?.data?.scores || []).map((s: any) => ({
+        registration: s.registration,
+        detection_count: parseInt(s.detection_count || '0'),
+        unique_days: parseInt(s.unique_days || '0'),
+        avg_altitude: parseInt(s.avg_altitude || '0'),
+        min_altitude: parseInt(s.min_altitude || '0'),
+        bio_correlations: parseInt(s.bio_correlations || '0'),
+        bradford_hill_score: parseFloat(s.bradford_hill_score || '0')
+      }));
+
+      setBradfordScores(scores);
+      toast({
+        title: 'Bradford Hill Analysis Complete',
+        description: `Calculated causation scores for ${scores.length} aircraft`,
+      });
+    } catch (err) {
+      console.error('Bradford Hill calculation failed:', err);
+      toast({
+        title: 'Analysis failed',
+        description: err instanceof Error ? err.message : 'Unknown error',
+        variant: 'destructive'
+      });
+    }
+  }, [toast]);
+
+  // Fetch true four-factor convergence events
+  const fetchFourFactorEvents = useCallback(async () => {
+    setFourFactorLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('neon-query', {
+        body: {
+          action: 'customQuery',
+          query: `
+            WITH flight_bio AS (
+              SELECT 
+                f.registration,
+                f.detection_timestamp,
+                f.altitude,
+                b.heart_rate,
+                b.hrv,
+                EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))/60 as time_diff
+              FROM live_flight_detections_rows f
+              JOIN biometric_monitoring b 
+                ON ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= 300
+              WHERE f.detection_timestamp IS NOT NULL 
+                AND b.measurement_timestamp IS NOT NULL
+                AND b.heart_rate > 80
+            ),
+            with_josiah AS (
+              SELECT 
+                fb.*,
+                CASE WHEN EXISTS (
+                  SELECT 1 FROM josiah_reflections_rows j
+                  WHERE (j.aircraft_correlation IS NOT NULL OR j.content ILIKE '%' || fb.registration || '%')
+                ) THEN true ELSE false END as josiah_match
+              FROM flight_bio fb
+            ),
+            with_ocr AS (
+              SELECT 
+                wj.*,
+                CASE WHEN EXISTS (
+                  SELECT 1 FROM ocr_aircraft_holding_patterns o
+                  WHERE o.registration = wj.registration
+                ) THEN true ELSE false END as ocr_match
+              FROM with_josiah wj
+            )
+            SELECT 
+              registration,
+              detection_timestamp as timestamp,
+              heart_rate,
+              hrv,
+              altitude,
+              josiah_match,
+              ocr_match,
+              ROUND(ABS(time_diff)::numeric, 1) as time_window_minutes,
+              CASE 
+                WHEN josiah_match AND ocr_match THEN 100
+                WHEN josiah_match OR ocr_match THEN 75
+                ELSE 50
+              END as convergence_score
+            FROM with_ocr
+            WHERE josiah_match = true OR ocr_match = true
+            ORDER BY convergence_score DESC, heart_rate DESC
+            LIMIT 200
+          `
+        }
+      });
+
+      if (error) throw new Error(error.message);
+
+      const events: FourFactorEvent[] = (data?.data || []).map((e: any) => ({
+        timestamp: e.timestamp,
+        registration: e.registration,
+        heart_rate: parseInt(e.heart_rate || '0'),
+        hrv: e.hrv ? parseInt(e.hrv) : undefined,
+        altitude: e.altitude ? parseInt(e.altitude) : undefined,
+        josiah_match: e.josiah_match === true,
+        ocr_match: e.ocr_match === true,
+        time_window_minutes: parseFloat(e.time_window_minutes || '0'),
+        convergence_score: parseInt(e.convergence_score || '0')
+      }));
+
+      setFourFactorEvents(events);
+      
+      const fullConvergence = events.filter(e => e.josiah_match && e.ocr_match).length;
+      toast({
+        title: 'Four-Factor Analysis Complete',
+        description: `Found ${fullConvergence} full 4-factor convergence events, ${events.length} total high-confidence events`,
+      });
+    } catch (err) {
+      console.error('Four-factor analysis failed:', err);
+      toast({
+        title: 'Analysis failed',
+        description: err instanceof Error ? err.message : 'Unknown error',
+        variant: 'destructive'
+      });
+    } finally {
+      setFourFactorLoading(false);
+    }
+  }, [toast]);
+
   useEffect(() => {
     fetchCorrelations();
   }, [fetchCorrelations]);
@@ -408,32 +568,42 @@ export const FourFactorCorrelationEngine = () => {
       {/* Filter Controls */}
       <div className="flex flex-wrap gap-2 mb-4">
         <Button
-          variant={filter === 'all' ? 'default' : 'outline'}
+          variant={filter === 'all' && !showClusters && !showBradford && !showFourFactor ? 'default' : 'outline'}
           size="sm"
-          onClick={() => { setFilter('all'); setShowClusters(false); }}
+          onClick={() => { setFilter('all'); setShowClusters(false); setShowBradford(false); setShowFourFactor(false); }}
         >
           All Days
         </Button>
         <Button
-          variant={filter === '4-factor' ? 'default' : 'outline'}
+          variant={showFourFactor ? 'default' : 'outline'}
           size="sm"
-          onClick={() => { setFilter('4-factor'); setShowClusters(false); }}
+          onClick={() => {
+            setShowFourFactor(true);
+            setShowClusters(false);
+            setShowBradford(false);
+            if (fourFactorEvents.length === 0) fetchFourFactorEvents();
+          }}
         >
-          <Fingerprint className="h-3 w-3 mr-1" />
-          4-Factor Only
+          <Zap className="h-3 w-3 mr-1" />
+          4-Factor Events
         </Button>
         <Button
-          variant={filter === '3-factor' ? 'default' : 'outline'}
+          variant={showBradford ? 'default' : 'outline'}
           size="sm"
-          onClick={() => { setFilter('3-factor'); setShowClusters(false); }}
+          onClick={() => {
+            setShowBradford(true);
+            setShowClusters(false);
+            setShowFourFactor(false);
+            if (bradfordScores.length === 0) fetchBradfordScores();
+          }}
         >
-          <CheckCircle2 className="h-3 w-3 mr-1" />
-          3+ Factors
+          <Scale className="h-3 w-3 mr-1" />
+          Bradford Hill
         </Button>
         <Button
-          variant={filter === 'kcso' ? 'default' : 'outline'}
+          variant={filter === 'kcso' && !showClusters && !showBradford && !showFourFactor ? 'default' : 'outline'}
           size="sm"
-          onClick={() => { setFilter('kcso'); setShowClusters(false); }}
+          onClick={() => { setFilter('kcso'); setShowClusters(false); setShowBradford(false); setShowFourFactor(false); }}
         >
           <AlertTriangle className="h-3 w-3 mr-1" />
           KCSO Present
@@ -443,6 +613,8 @@ export const FourFactorCorrelationEngine = () => {
           size="sm"
           onClick={() => {
             setShowClusters(true);
+            setShowBradford(false);
+            setShowFourFactor(false);
             if (eventClusters.length === 0) fetchEventClusters();
           }}
         >
@@ -453,11 +625,11 @@ export const FourFactorCorrelationEngine = () => {
         <Button
           variant="outline"
           size="sm"
-          onClick={fetchEventClusters}
-          disabled={clusterLoading}
+          onClick={fetchFourFactorEvents}
+          disabled={fourFactorLoading}
         >
-          <Layers className={`h-3 w-3 mr-1 ${clusterLoading ? 'animate-pulse' : ''}`} />
-          Analyze Clusters
+          <TrendingUp className={`h-3 w-3 mr-1 ${fourFactorLoading ? 'animate-pulse' : ''}`} />
+          Run Analysis
         </Button>
         <Button
           variant="outline"
@@ -573,7 +745,161 @@ export const FourFactorCorrelationEngine = () => {
         </div>
       )}
 
+      {/* Four-Factor Events View */}
+      {showFourFactor && (
+        <div className="mb-4 p-4 border border-green-500/30 bg-green-500/5 rounded-lg">
+          <div className="flex items-center gap-2 mb-3">
+            <Zap className="h-4 w-4 text-green-400" />
+            <span className="font-medium text-green-400">
+              Four-Factor Convergence Events (Flight + Biometric + Josiah + OCR)
+            </span>
+            <Badge variant="outline" className="ml-auto">
+              {fourFactorEvents.filter(e => e.josiah_match && e.ocr_match).length} full convergence
+            </Badge>
+          </div>
+          <ScrollArea className="h-[300px]">
+            {fourFactorLoading ? (
+              <div className="text-center py-8 text-muted-foreground">Analyzing four-factor convergence...</div>
+            ) : fourFactorEvents.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                Click "Run Analysis" to find four-factor convergence events
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {fourFactorEvents.map((event, idx) => (
+                  <div 
+                    key={idx} 
+                    className={`p-3 rounded-lg border ${
+                      event.convergence_score === 100 
+                        ? 'border-green-500/50 bg-green-500/10 animate-pulse' 
+                        : event.convergence_score >= 75
+                        ? 'border-cyan-500/30 bg-cyan-500/5'
+                        : 'border-border/30 bg-background/50'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <Plane className="h-4 w-4 text-cyan-400" />
+                        <span className="font-mono font-bold">{event.registration}</span>
+                        <Badge className="bg-red-500/20 text-red-400 border-red-500/30">
+                          {event.heart_rate} BPM
+                        </Badge>
+                        {event.altitude && (
+                          <Badge variant="outline" className="text-xs">
+                            {event.altitude.toLocaleString()} ft
+                          </Badge>
+                        )}
+                      </div>
+                      <Badge className={
+                        event.convergence_score === 100 
+                          ? 'bg-green-500/30 text-green-400 border-green-500/50'
+                          : 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30'
+                      }>
+                        {event.convergence_score}% match
+                      </Badge>
+                    </div>
+                    <div className="flex items-center gap-4 text-xs">
+                      <span className="text-muted-foreground">
+                        {new Date(event.timestamp).toLocaleString()}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        {event.josiah_match && (
+                          <Badge className="bg-purple-500/20 text-purple-400 border-purple-500/30 text-xs">
+                            <Brain className="h-3 w-3 mr-1" />
+                            Josiah
+                          </Badge>
+                        )}
+                        {event.ocr_match && (
+                          <Badge className="bg-pink-500/20 text-pink-400 border-pink-500/30 text-xs">
+                            <Camera className="h-3 w-3 mr-1" />
+                            OCR
+                          </Badge>
+                        )}
+                      </div>
+                      <span className="text-muted-foreground">
+                        ±{event.time_window_minutes}m window
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </ScrollArea>
+        </div>
+      )}
+
+      {/* Bradford Hill Scores View */}
+      {showBradford && (
+        <div className="mb-4 p-4 border border-yellow-500/30 bg-yellow-500/5 rounded-lg">
+          <div className="flex items-center gap-2 mb-3">
+            <Scale className="h-4 w-4 text-yellow-400" />
+            <span className="font-medium text-yellow-400">
+              Bradford Hill Causation Scores (Prosecutorial Ranking)
+            </span>
+            <Badge variant="outline" className="ml-auto">
+              {bradfordScores.length} aircraft analyzed
+            </Badge>
+          </div>
+          <ScrollArea className="h-[300px]">
+            {bradfordScores.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                Click "Bradford Hill" to calculate causation scores
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {bradfordScores.map((score, idx) => (
+                  <div 
+                    key={score.registration} 
+                    className={`p-3 rounded-lg border ${
+                      score.bradford_hill_score >= 40 
+                        ? 'border-red-500/50 bg-red-500/10' 
+                        : score.bradford_hill_score >= 25
+                        ? 'border-orange-500/30 bg-orange-500/5'
+                        : 'border-border/30 bg-background/50'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-muted-foreground">#{idx + 1}</span>
+                        <span className="font-mono font-bold">{score.registration}</span>
+                        <Badge variant="outline" className="text-xs">
+                          {score.detection_count.toLocaleString()} detections
+                        </Badge>
+                      </div>
+                      <Badge className={
+                        score.bradford_hill_score >= 40 
+                          ? 'bg-red-500/30 text-red-400 border-red-500/50 text-lg font-bold'
+                          : score.bradford_hill_score >= 25
+                          ? 'bg-orange-500/20 text-orange-400 border-orange-500/30'
+                          : 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30'
+                      }>
+                        {score.bradford_hill_score.toFixed(1)} BH
+                      </Badge>
+                    </div>
+                    <div className="grid grid-cols-4 gap-2 text-xs text-muted-foreground">
+                      <div>
+                        <span className="text-foreground">{score.unique_days}</span> days
+                      </div>
+                      <div>
+                        <span className="text-foreground">{score.bio_correlations}</span> bio matches
+                      </div>
+                      <div>
+                        Avg: <span className="text-foreground">{score.avg_altitude.toLocaleString()}</span> ft
+                      </div>
+                      <div>
+                        Min: <span className="text-foreground">{score.min_altitude.toLocaleString()}</span> ft
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </ScrollArea>
+        </div>
+      )}
+
       {/* Correlation Events */}
+      {!showClusters && !showBradford && !showFourFactor && (
       <ScrollArea className="h-[400px]">
         <div className="space-y-2">
           {loading ? (
@@ -651,6 +977,7 @@ export const FourFactorCorrelationEngine = () => {
           )}
         </div>
       </ScrollArea>
+      )}
 
       {/* Legal Significance */}
       <div className="mt-6 border-t border-border/30 pt-4">

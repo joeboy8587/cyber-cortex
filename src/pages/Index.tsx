@@ -50,6 +50,7 @@ import { LiveFlightTracker } from "@/components/dashboard/LiveFlightTracker";
 import { DeepCorrelationEngine } from "@/components/dashboard/DeepCorrelationEngine";
 import { OperatorEnrichmentPanel } from "@/components/dashboard/OperatorEnrichmentPanel";
 import { DirectAircraftCorrelation } from "@/components/dashboard/DirectAircraftCorrelation";
+import { AircraftAlertSystem } from "@/components/dashboard/AircraftAlertSystem";
 
 const Index = () => {
   return (
@@ -115,8 +116,13 @@ const Index = () => {
           </section>
           
           <section id="correlation-engine" className="space-y-6">
+            <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+              <div className="xl:col-span-2">
+                <FourFactorCorrelationEngine />
+              </div>
+              <AircraftAlertSystem />
+            </div>
             <DeepCorrelationEngine />
-            <FourFactorCorrelationEngine />
           </section>
           
           <section id="ocr-evidence" className="grid grid-cols-1 gap-6">

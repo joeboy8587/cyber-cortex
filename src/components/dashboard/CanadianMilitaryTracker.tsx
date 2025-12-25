@@ -84,7 +84,6 @@ export const CanadianMilitaryTracker = () => {
             SELECT 
               registration,
               callsign,
-              aircraft_type,
               COALESCE(owner, operator, 'Unknown') as operator,
               COUNT(*) as detections,
               ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as avg_altitude,
@@ -101,7 +100,7 @@ export const CanadianMilitaryTracker = () => {
               )
               AND latitude BETWEEN 35.30 AND 35.70
               AND longitude BETWEEN -119.30 AND -118.80
-            GROUP BY registration, callsign, aircraft_type, COALESCE(owner, operator, 'Unknown')
+            GROUP BY registration, callsign, COALESCE(owner, operator, 'Unknown')
             ORDER BY detections DESC
             LIMIT 100
           `
@@ -117,7 +116,7 @@ export const CanadianMilitaryTracker = () => {
         registration: (row.registration as string) || 'N/A',
         callsign: (row.callsign as string) || 'N/A',
         icao_hex: '',
-        aircraft_type: (row.aircraft_type as string) || 'Unknown',
+        aircraft_type: 'Unknown',
         operator: (row.operator as string) || 'Unknown',
         detections: parseInt(row.detections as string) || 0,
         avg_altitude: parseFloat(row.avg_altitude as string) || 0,

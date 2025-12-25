@@ -123,10 +123,9 @@ export function FalseClaimsActCompiler() {
       setProgress(85);
       const registryEvidence = await customQuery(`
         SELECT 
-          id, registration, owner_name, operator_name, aircraft_type,
-          created_at, sha256_hash
+          id, registration, owner_name, operator_name, sha256_hash
         FROM aircraft_registry_enriched
-        ORDER BY created_at DESC
+        ORDER BY id DESC
         LIMIT 300
       `).catch(() => []);
 
@@ -224,8 +223,8 @@ export function FalseClaimsActCompiler() {
           samples: Array.isArray(registryEvidence) ? registryEvidence.slice(0, 5).map((r: any) => ({
             id: r.id,
             table: "aircraft_registry_enriched",
-            summary: `${r.registration} - ${r.owner_name || 'Unknown Owner'} (${r.aircraft_type})`,
-            timestamp: r.created_at,
+            summary: `${r.registration} - ${r.owner_name || 'Unknown Owner'} (Type: Unknown)` ,
+            timestamp: '',
             sha256: r.sha256_hash,
             relevance: 'medium'
           })) : []

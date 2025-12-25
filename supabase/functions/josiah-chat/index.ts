@@ -186,9 +186,9 @@ serve(async (req) => {
       SELECT * FROM shell_companies
     `.catch(() => []);
     
-    // Get aircraft registry for detailed lookups
+    // Get aircraft registry for detailed lookups (column set varies by dataset)
     const aircraftRegistry = await sql`
-      SELECT registration, operator_name, aircraft_type, taxonomy_tag, threat_level
+      SELECT registration, operator_name, taxonomy_tag, threat_level
       FROM aircraft_registry_enriched
       WHERE threat_level IS NOT NULL OR taxonomy_tag IS NOT NULL
       ORDER BY threat_level DESC NULLS LAST
@@ -281,7 +281,7 @@ ${(shellData as any[]).map((s: any) => `- ${s.company_name} → ${s.operator_nam
 
 HIGH-THREAT AIRCRAFT REGISTRY:
 ${(aircraftRegistry as any[]).map((a: any) => 
-  `${a.registration} | ${a.operator_name || 'Unknown Operator'} | ${a.aircraft_type || 'Unknown Type'} | Threat: ${a.threat_level || 'Unrated'} | Tag: ${a.taxonomy_tag || 'N/A'}`
+  `${a.registration} | ${a.operator_name || 'Unknown Operator'} | Threat: ${a.threat_level || 'Unrated'} | Tag: ${a.taxonomy_tag || 'N/A'}`
 ).join('\n') || 'No threat-rated aircraft'}
 
 CONSENT DECREE VIOLATIONS:

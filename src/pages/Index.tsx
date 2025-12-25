@@ -2,7 +2,7 @@ import { CommandHeader } from "@/components/dashboard/CommandHeader";
 import { DatabaseStats } from "@/components/dashboard/DatabaseStats";
 import { ThreatMatrix } from "@/components/dashboard/ThreatMatrix";
 import { BiometricCorrelation } from "@/components/dashboard/BiometricCorrelation";
-import { ChainOfCustodyPanel } from "@/components/dashboard/ChainOfCustodyPanel";
+
 import { DataHardeningHub } from "@/components/dashboard/DataHardeningHub";
 import { CriminalEnterpriseNetwork } from "@/components/dashboard/CriminalEnterpriseNetwork";
 import { DataStreams } from "@/components/dashboard/DataStreams";
@@ -98,7 +98,6 @@ const Index = () => {
           <section id="chain-of-custody" className="space-y-6">
             <DataHardeningHub />
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-              <ChainOfCustodyPanel />
               <PhysicianVerifiedECGs />
             </div>
           </section>

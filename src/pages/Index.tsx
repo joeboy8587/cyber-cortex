@@ -49,6 +49,7 @@ import DeepPatternAnalyzer from "@/components/dashboard/DeepPatternAnalyzer";
 import { LiveFlightTracker } from "@/components/dashboard/LiveFlightTracker";
 import { DeepCorrelationEngine } from "@/components/dashboard/DeepCorrelationEngine";
 import { OperatorEnrichmentPanel } from "@/components/dashboard/OperatorEnrichmentPanel";
+import { DirectAircraftCorrelation } from "@/components/dashboard/DirectAircraftCorrelation";
 
 const Index = () => {
   return (
@@ -72,6 +73,10 @@ const Index = () => {
           <section id="threat-matrix" className="grid grid-cols-1 xl:grid-cols-2 gap-6">
             <ThreatMatrix />
             <BiometricCorrelation />
+          </section>
+
+          <section id="direct-correlations">
+            <DirectAircraftCorrelation />
           </section>
           
           <section id="evidence" className="grid grid-cols-1 xl:grid-cols-2 gap-6">

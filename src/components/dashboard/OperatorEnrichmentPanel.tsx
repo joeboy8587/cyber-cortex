@@ -321,10 +321,10 @@ export function OperatorEnrichmentPanel() {
                       <TableCell>
                         <div className="flex items-center gap-2">
                           <Progress 
-                            value={op.flag_rate_pct || 0} 
+                            value={parseFloat(String(op.flag_rate_pct)) || 0} 
                             className="w-16 h-2"
                           />
-                          <span className="text-xs">{(op.flag_rate_pct || 0).toFixed(1)}%</span>
+                          <span className="text-xs">{(parseFloat(String(op.flag_rate_pct)) || 0).toFixed(1)}%</span>
                         </div>
                       </TableCell>
                       <TableCell>
@@ -385,10 +385,10 @@ export function OperatorEnrichmentPanel() {
                       <TableCell>
                         <div className="flex items-center gap-2">
                           <Progress 
-                            value={analysis.flag_rate_pct || 0} 
+                            value={parseFloat(String(analysis.flag_rate_pct)) || 0} 
                             className="w-16 h-2"
                           />
-                          <span className="text-xs">{(analysis.flag_rate_pct || 0).toFixed(1)}%</span>
+                          <span className="text-xs">{(parseFloat(String(analysis.flag_rate_pct)) || 0).toFixed(1)}%</span>
                         </div>
                       </TableCell>
                       <TableCell>
@@ -467,10 +467,10 @@ export function OperatorEnrichmentPanel() {
                       <TableCell>
                         <div className="flex items-center gap-2">
                           <Progress 
-                            value={ac.flag_rate_pct || 0} 
+                            value={parseFloat(String(ac.flag_rate_pct)) || 0} 
                             className="w-16 h-2"
                           />
-                          <span className="text-xs">{(ac.flag_rate_pct || 0).toFixed(1)}%</span>
+                          <span className="text-xs">{(parseFloat(String(ac.flag_rate_pct)) || 0).toFixed(1)}%</span>
                         </div>
                       </TableCell>
                       <TableCell>

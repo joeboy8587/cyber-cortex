@@ -29,6 +29,8 @@ interface LiveStats {
   militaryCount: number;
   medicalCount: number;
   avgAltitude: number;
+  enterpriseEntities: number;
+  foreignMilitaryCount: number;
 }
 
 export function LegalAnalysisAI() {
@@ -57,32 +59,22 @@ export function LegalAnalysisAI() {
             "Content-Type": "application/json",
             Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
           },
-          body: JSON.stringify({ 
-            action: "customQuery",
-            query: `
-              SELECT 
-                COUNT(*) as total_detections,
-                COUNT(DISTINCT registration) as unique_aircraft,
-                COUNT(CASE WHEN taxonomy_tag = 'xxb_kcso_shell' THEN 1 END) as kcso_shell,
-                COUNT(CASE WHEN taxonomy_tag = 'xxb_military' THEN 1 END) as military,
-                COUNT(CASE WHEN taxonomy_tag = 'xxb_medical_air' THEN 1 END) as medical,
-                COALESCE(AVG(altitude::numeric), 0) as avg_altitude
-              FROM live_flight_detections_rows
-            `
-          }),
+          body: JSON.stringify({ action: "getLegalAnalysisStats" }),
         }
       );
       
       if (response.ok) {
         const data = await response.json();
-        if (data.data && data.data[0]) {
+        if (data.data) {
           setLiveStats({
-            totalDetections: parseInt(data.data[0].total_detections) || 0,
-            uniqueAircraft: parseInt(data.data[0].unique_aircraft) || 0,
-            kcsoShellCount: parseInt(data.data[0].kcso_shell) || 0,
-            militaryCount: parseInt(data.data[0].military) || 0,
-            medicalCount: parseInt(data.data[0].medical) || 0,
-            avgAltitude: Math.round(parseFloat(data.data[0].avg_altitude) || 0),
+            totalDetections: data.data.totalDetections || 0,
+            uniqueAircraft: data.data.uniqueAircraft || 0,
+            kcsoShellCount: data.data.kcsoShellCount || 0,
+            militaryCount: data.data.militaryCount || 0,
+            medicalCount: data.data.medicalCount || 0,
+            avgAltitude: data.data.avgAltitude || 0,
+            enterpriseEntities: data.data.enterpriseEntities || 0,
+            foreignMilitaryCount: data.data.foreignMilitaryCount || 0,
           });
         }
       }
@@ -218,29 +210,37 @@ export function LegalAnalysisAI() {
           </div>
           
           {liveStats ? (
-            <div className="grid grid-cols-3 md:grid-cols-6 gap-2 text-xs">
+            <div className="grid grid-cols-4 md:grid-cols-8 gap-2 text-xs">
               <div className="text-center p-2 bg-background/50 rounded">
                 <div className="text-primary font-mono font-bold">{liveStats.totalDetections.toLocaleString()}</div>
                 <div className="text-muted-foreground">Detections</div>
               </div>
               <div className="text-center p-2 bg-background/50 rounded">
-                <div className="text-secondary font-mono font-bold">{liveStats.uniqueAircraft}</div>
+                <div className="text-secondary font-mono font-bold">{liveStats.uniqueAircraft.toLocaleString()}</div>
                 <div className="text-muted-foreground">Aircraft</div>
               </div>
-              <div className="text-center p-2 bg-background/50 rounded">
-                <div className="text-destructive font-mono font-bold">{liveStats.kcsoShellCount}</div>
+              <div className="text-center p-2 bg-background/50 rounded border border-destructive/30">
+                <div className="text-destructive font-mono font-bold">{liveStats.kcsoShellCount.toLocaleString()}</div>
                 <div className="text-muted-foreground">KCSO/Shell</div>
               </div>
-              <div className="text-center p-2 bg-background/50 rounded">
-                <div className="text-warning font-mono font-bold">{liveStats.militaryCount}</div>
+              <div className="text-center p-2 bg-background/50 rounded border border-warning/30">
+                <div className="text-warning font-mono font-bold">{liveStats.militaryCount.toLocaleString()}</div>
                 <div className="text-muted-foreground">Military</div>
               </div>
-              <div className="text-center p-2 bg-background/50 rounded">
-                <div className="text-accent font-mono font-bold">{liveStats.medicalCount}</div>
-                <div className="text-muted-foreground">Medical</div>
+              <div className="text-center p-2 bg-background/50 rounded border border-secondary/30">
+                <div className="text-secondary font-mono font-bold">{liveStats.foreignMilitaryCount.toLocaleString()}</div>
+                <div className="text-muted-foreground">Foreign Mil</div>
               </div>
               <div className="text-center p-2 bg-background/50 rounded">
-                <div className="text-foreground font-mono font-bold">{liveStats.avgAltitude} ft</div>
+                <div className="text-accent font-mono font-bold">{liveStats.medicalCount.toLocaleString()}</div>
+                <div className="text-muted-foreground">Medical</div>
+              </div>
+              <div className="text-center p-2 bg-background/50 rounded border border-primary/30">
+                <div className="text-primary font-mono font-bold">{liveStats.enterpriseEntities}</div>
+                <div className="text-muted-foreground">Enterprise</div>
+              </div>
+              <div className="text-center p-2 bg-background/50 rounded">
+                <div className="text-foreground font-mono font-bold">{liveStats.avgAltitude.toLocaleString()} ft</div>
                 <div className="text-muted-foreground">Avg Alt</div>
               </div>
             </div>

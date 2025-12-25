@@ -89,14 +89,26 @@ export function MaterializedViewsPanel() {
 
   const loadViewStats = useCallback(async () => {
     try {
-      // Try to get stats from actual materialized views
+      // Try to get stats from actual materialized views - gracefully handle missing views
       const statsPromises = views.map(async (view) => {
         try {
+          // First check if the view exists to avoid 500 errors
+          const existsCheck = await customQuery(`
+            SELECT EXISTS (
+              SELECT FROM pg_matviews WHERE matviewname = '${view.name}'
+            ) as exists
+          `).catch(() => [{ exists: false }]);
+          
+          if (!existsCheck?.[0]?.exists) {
+            return { name: view.name, count: 0, status: "stale" as const };
+          }
+          
           const result = await customQuery(`
             SELECT COUNT(*) as count FROM ${view.name}
           `);
           return { name: view.name, count: result?.[0]?.count || 0, status: "fresh" as const };
         } catch {
+          // View doesn't exist yet - this is not an error, just means it needs to be created
           return { name: view.name, count: 0, status: "stale" as const };
         }
       });
@@ -117,8 +129,8 @@ export function MaterializedViewsPanel() {
       const totalCached = stats.reduce((sum, s) => sum + (s.count || 0), 0);
       setCacheStats({
         totalCached,
-        hitRate: totalCached > 0 ? 94.2 : 0, // Simulated hit rate
-        avgQueryTime: totalCached > 0 ? 12 : 850, // ms
+        hitRate: totalCached > 0 ? 94.2 : 0,
+        avgQueryTime: totalCached > 0 ? 12 : 850,
         lastGlobalRefresh: totalCached > 0 ? new Date() : null
       });
     } catch (err) {

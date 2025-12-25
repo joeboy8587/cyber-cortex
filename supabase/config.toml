@@ -54,3 +54,6 @@ verify_jwt = false
 
 [functions.materialized-views]
 verify_jwt = false
+
+[functions.josiah-chat]
+verify_jwt = false

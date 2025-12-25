@@ -48,6 +48,7 @@ import GenevaConventionAnalysis from "@/components/dashboard/GenevaConventionAna
 import DeepPatternAnalyzer from "@/components/dashboard/DeepPatternAnalyzer";
 import { LiveFlightTracker } from "@/components/dashboard/LiveFlightTracker";
 import { DeepCorrelationEngine } from "@/components/dashboard/DeepCorrelationEngine";
+import { OperatorEnrichmentPanel } from "@/components/dashboard/OperatorEnrichmentPanel";
 
 const Index = () => {
   return (
@@ -176,7 +177,8 @@ const Index = () => {
             <SafetyMonitoringPanel />
           </section>
           
-          <section id="xxb-taxonomy" className="grid grid-cols-1 gap-6">
+          <section id="xxb-taxonomy" className="space-y-6">
+            <OperatorEnrichmentPanel />
             <XXBTaxonomyPanel />
           </section>
           

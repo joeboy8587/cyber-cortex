@@ -81,7 +81,7 @@ export default function DeepPatternAnalyzer() {
             JOIN altitude_bands l ON h.flight_date = l.flight_date
             WHERE h.band = 'HIGH' AND l.band = 'LOW'
               AND h.aircraft_count > 2 AND l.aircraft_count > 2
-            ORDER BY l.low_high_ratio DESC NULLS LAST
+            ORDER BY (l.detections::numeric / NULLIF(h.detections, 0)::numeric) DESC NULLS LAST
             LIMIT 20
           `
         }

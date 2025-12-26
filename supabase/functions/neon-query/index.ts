@@ -55,7 +55,9 @@ serve(async (req) => {
     sql = postgres(databaseUrl, {
       ssl: 'require',
       max: 1,
-      idle_timeout: 20,
+      idle_timeout: 10,
+      connect_timeout: 15,
+      fetch_types: false,
     });
 
     let result;
@@ -1674,7 +1676,9 @@ serve(async (req) => {
       default:
     }
 
-    await sql.end();
+    if (sql) {
+      await sql.end({ timeout: 5 });
+    }
 
     return new Response(
       JSON.stringify({ data: result }),
@@ -1684,16 +1688,17 @@ serve(async (req) => {
   } catch (err) {
     const error = err as Error;
     console.error('Database error:', error);
-    if (sql) {
-      try {
-        await sql.end();
-      } catch (e) {
-        console.error('Error closing connection:', e);
-      }
-    }
     return new Response(
       JSON.stringify({ error: error.message }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
+  } finally {
+    if (sql) {
+      try {
+        await sql.end({ timeout: 3 });
+      } catch (e) {
+        // Connection already closed or timed out - ignore
+      }
+    }
   }
 });

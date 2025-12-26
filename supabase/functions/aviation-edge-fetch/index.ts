@@ -156,29 +156,103 @@ serve(async (req) => {
       
       console.log('Fetching flights from Aviation Edge...');
       
-      const response = await fetch(url);
+      let flights: any[] = [];
+      let apiSuccess = false;
+      let apiError = null;
       
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Aviation Edge API error:', response.status, errorText);
-        return new Response(
-          JSON.stringify({ 
-            error: 'Aviation Edge API error', 
-            status: response.status,
-            details: errorText 
-          }),
-          { status: response.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+      try {
+        const response = await fetch(url, { 
+          headers: { 'Accept': 'application/json' },
+          signal: AbortSignal.timeout(15000)
+        });
+        
+        if (response.ok) {
+          const contentType = response.headers.get('content-type');
+          if (contentType && contentType.includes('application/json')) {
+            const data = await response.json();
+            if (Array.isArray(data)) {
+              flights = data;
+              apiSuccess = true;
+            } else if (data.error) {
+              apiError = data.error;
+            }
+          } else {
+            apiError = 'API returned non-JSON response (likely invalid API key or quota exceeded)';
+          }
+        } else {
+          apiError = `API returned status ${response.status}`;
+        }
+      } catch (fetchErr) {
+        apiError = fetchErr instanceof Error ? fetchErr.message : 'Fetch failed';
+        console.error('Aviation Edge fetch error:', apiError);
       }
-
-      const flights = await response.json();
       
-      if (flights.error) {
-        console.error('Aviation Edge returned error:', flights.error);
-        return new Response(
-          JSON.stringify({ error: flights.error }),
-          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+      // If API failed, try to get recent cached data from database
+      if (!apiSuccess && neonUrl) {
+        console.log('API unavailable, fetching cached flights from database...');
+        try {
+          const sql = postgres(neonUrl, { ssl: 'require', max: 1, idle_timeout: 10, connect_timeout: 15 });
+          const cachedFlights = await sql`
+            SELECT DISTINCT ON (registration)
+              icao_code as hex, registration, callsign, altitude, speed,
+              latitude, longitude, heading, vertical_rate,
+              detection_timestamp as detected_at, taxonomy_tag,
+              threat_score, tier_level, flagged, flagged_reasons
+            FROM live_flight_detections_rows
+            WHERE detection_timestamp > NOW() - INTERVAL '1 hour'
+            ORDER BY registration, detection_timestamp DESC
+            LIMIT 250
+          `;
+          await sql.end();
+          
+          if (cachedFlights.length > 0) {
+            const transformedCached = cachedFlights.map((f: any) => ({
+              hex: f.hex || 'XXA',
+              registration: f.registration || 'XXB',
+              callsign: f.callsign || 'XXD',
+              altitude: f.altitude || 0,
+              speed: f.speed || 0,
+              latitude: f.latitude,
+              longitude: f.longitude,
+              heading: f.heading || 0,
+              vertical_rate: f.vertical_rate || 0,
+              squawk: '',
+              departure: '',
+              arrival: '',
+              airline: '',
+              status: 'unknown',
+              detected_at: f.detected_at,
+              taxonomyTag: f.taxonomy_tag || 'xxb_live',
+              threatScore: parseInt(f.threat_score) || 0,
+              tierLevel: parseInt(f.tier_level) || 5,
+              flagged: f.flagged || false,
+              flaggedReasons: f.flagged_reasons ? f.flagged_reasons.split('; ') : [],
+              entity: 'Cached'
+            }));
+            
+            return new Response(
+              JSON.stringify({
+                success: true,
+                flights: transformedCached,
+                stats: {
+                  total: transformedCached.length,
+                  flagged: transformedCached.filter((f: any) => f.flagged).length,
+                  tier1: transformedCached.filter((f: any) => f.tierLevel === 1).length,
+                  tier2: transformedCached.filter((f: any) => f.tierLevel === 2).length,
+                  military: transformedCached.filter((f: any) => f.taxonomyTag === 'xxb_military').length,
+                  medical: transformedCached.filter((f: any) => f.taxonomyTag === 'xxb_medical_air').length,
+                  lowAlt: transformedCached.filter((f: any) => f.altitude > 0 && f.altitude < 1500).length
+                },
+                source: 'cached',
+                apiError,
+                timestamp: new Date().toISOString()
+              }),
+              { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+          }
+        } catch (cacheErr) {
+          console.error('Cache fetch error:', cacheErr);
+        }
       }
 
       console.log(`Received ${Array.isArray(flights) ? flights.length : 0} flights from Aviation Edge`);

@@ -1382,7 +1382,10 @@ serve(async (req) => {
         console.log(`Found ${medicalFlightStats.length} medical aircraft with flight data`);
         
         // Step 4: Get biometric correlation data for medical aircraft
-        const medicalBioCorrelations = await sql`
+        // Query MULTIPLE biometric sources with normalized timestamps
+        
+        // 4a: biometric_monitoring table
+        const bioMonitoringCorr = await sql`
           SELECT 
             f.registration,
             COUNT(*) as correlated_events,
@@ -1398,15 +1401,116 @@ serve(async (req) => {
           GROUP BY f.registration
         `;
         
-        // Build bio correlation map
-        const bioCorrelationMap: Record<string, { events: number; avgHR: number; avgStress: number }> = {};
+        // 4b: integrated_biometric_data table (OCR-extracted with normalized timestamps)
+        const integratedBioCorr = await sql`
+          SELECT 
+            f.registration,
+            COUNT(*) as correlated_events,
+            AVG(ibd.heart_rate::numeric) as avg_heart_rate_during,
+            AVG(ibd.stress_level::numeric) as avg_stress_during
+          FROM live_flight_detections_rows f
+          JOIN integrated_biometric_data ibd ON 
+            ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - ibd.timestamp))) <= 600
+          WHERE f.detection_timestamp IS NOT NULL
+            AND ibd.timestamp IS NOT NULL
+            AND f.registration = ANY(${medicalTails})
+            AND (ibd.heart_rate::numeric > 85 OR ibd.stress_level::numeric >= 5 OR ibd.recovery::numeric <= 30)
+          GROUP BY f.registration
+        `;
+        
+        // 4c: biometrics_rows table (has direct aircraft_id linkage!)
+        const biometricsRowsCorr = await sql`
+          SELECT 
+            f.registration,
+            COUNT(*) as correlated_events,
+            AVG(br.hr) as avg_heart_rate_during,
+            AVG(br.stress_score) as avg_stress_during
+          FROM live_flight_detections_rows f
+          JOIN biometrics_rows br ON 
+            (br.aircraft_id = f.registration OR
+             ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - br.timestamp))) <= 600)
+          WHERE f.detection_timestamp IS NOT NULL
+            AND br.timestamp IS NOT NULL
+            AND f.registration = ANY(${medicalTails})
+            AND (br.hr > 85 OR br.stress_score >= 5)
+          GROUP BY f.registration
+        `;
+        
+        // 4d: biometric_readings_extended table
+        const bioReadingsExtCorr = await sql`
+          SELECT 
+            f.registration,
+            COUNT(*) as correlated_events,
+            AVG(bre.heart_rate) as avg_heart_rate_during,
+            AVG(bre.stress_level) as avg_stress_during
+          FROM live_flight_detections_rows f
+          JOIN biometric_readings_extended bre ON 
+            ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - bre.reading_timestamp))) <= 600
+          WHERE f.detection_timestamp IS NOT NULL
+            AND bre.reading_timestamp IS NOT NULL
+            AND f.registration = ANY(${medicalTails})
+            AND (bre.heart_rate > 85 OR bre.stress_level >= 5)
+          GROUP BY f.registration
+        `;
+        
+        // 4d: biometric_data_rows table (TEXT timestamp - needs parsing)
+        const bioDataRowsCorr = await sql`
+          SELECT 
+            f.registration,
+            COUNT(*) as correlated_events,
+            AVG(bdr.heart_rate) as avg_heart_rate_during,
+            AVG(bdr.stress_score) as avg_stress_during
+          FROM live_flight_detections_rows f
+          JOIN biometric_data_rows bdr ON 
+            ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - bdr.created_at::timestamptz))) <= 600
+          WHERE f.detection_timestamp IS NOT NULL
+            AND bdr.created_at IS NOT NULL
+            AND bdr.created_at ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+            AND f.registration = ANY(${medicalTails})
+            AND (bdr.heart_rate > 85 OR bdr.stress_score >= 5)
+          GROUP BY f.registration
+        `;
+        
+        console.log(`Bio correlations found: monitoring=${bioMonitoringCorr.length}, integrated=${integratedBioCorr.length}, biometrics_rows=${biometricsRowsCorr.length}, readings_ext=${bioReadingsExtCorr.length}, data_rows=${bioDataRowsCorr.length}`);
+        
+        // Merge all biometric sources
+        const medicalBioCorrelations = [
+          ...bioMonitoringCorr,
+          ...integratedBioCorr,
+          ...biometricsRowsCorr,
+          ...bioReadingsExtCorr,
+          ...bioDataRowsCorr
+        ];
+        
+        // Build bio correlation map - AGGREGATE across all sources
+        const bioCorrelationMap: Record<string, { events: number; avgHR: number; avgStress: number; sources: string[] }> = {};
         for (const bc of medicalBioCorrelations) {
-          bioCorrelationMap[bc.registration] = {
-            events: parseInt(bc.correlated_events) || 0,
-            avgHR: parseFloat(bc.avg_heart_rate_during) || 0,
-            avgStress: parseFloat(bc.avg_stress_during) || 0
-          };
+          const reg = bc.registration;
+          const events = parseInt(bc.correlated_events) || 0;
+          const avgHR = parseFloat(bc.avg_heart_rate_during) || 0;
+          const avgStress = parseFloat(bc.avg_stress_during) || 0;
+          
+          if (bioCorrelationMap[reg]) {
+            // Aggregate: sum events, weighted average for HR/stress
+            const existing = bioCorrelationMap[reg];
+            const totalEvents = existing.events + events;
+            bioCorrelationMap[reg] = {
+              events: totalEvents,
+              avgHR: totalEvents > 0 ? ((existing.avgHR * existing.events) + (avgHR * events)) / totalEvents : 0,
+              avgStress: totalEvents > 0 ? ((existing.avgStress * existing.events) + (avgStress * events)) / totalEvents : 0,
+              sources: [...existing.sources, 'additional']
+            };
+          } else {
+            bioCorrelationMap[reg] = {
+              events,
+              avgHR,
+              avgStress,
+              sources: ['primary']
+            };
+          }
         }
+        
+        console.log(`Aggregated bio correlations:`, Object.entries(bioCorrelationMap).map(([k, v]) => `${k}: ${v.events} events`).join(', '));
         
         // Step 5: Calculate alignment scores and insert
         let recordsCreated = 0;

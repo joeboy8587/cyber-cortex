@@ -53,6 +53,7 @@ import { DeepCorrelationEngine } from "@/components/dashboard/DeepCorrelationEng
 import { OperatorEnrichmentPanel } from "@/components/dashboard/OperatorEnrichmentPanel";
 import { DirectAircraftCorrelation } from "@/components/dashboard/DirectAircraftCorrelation";
 import { AircraftAlertSystem } from "@/components/dashboard/AircraftAlertSystem";
+import { LegalNarrativeGenerator } from "@/components/dashboard/LegalNarrativeGenerator";
 
 const Index = () => {
   return (
@@ -88,6 +89,7 @@ const Index = () => {
           </section>
           
           <section id="legal-analysis" className="space-y-6">
+            <LegalNarrativeGenerator />
             <LegalBriefDashboard />
             <GenevaConventionAnalysis />
             <TROEvidenceCompiler />

@@ -60,3 +60,6 @@ verify_jwt = false
 
 [functions.aviation-edge-fetch]
 verify_jwt = false
+
+[functions.legal-narrative]
+verify_jwt = false

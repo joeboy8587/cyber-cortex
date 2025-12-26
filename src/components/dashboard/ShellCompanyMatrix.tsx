@@ -145,8 +145,9 @@ export const ShellCompanyMatrix = () => {
 
       // Enrich shell companies with detection counts
       const enrichedShells = shellPatterns.map(shell => {
+        const aircraftList = Array.isArray(shell.aircraft) ? shell.aircraft : [];
         const matchingAircraft = operatorData.filter((o: { registration: string }) => 
-          shell.aircraft.some(a => o.registration?.includes(a.substring(0, 4)))
+          aircraftList.some(a => o.registration?.includes(a.substring(0, 4)))
         );
         
         const detections = matchingAircraft.reduce((sum: number, o: { detections: string }) => 

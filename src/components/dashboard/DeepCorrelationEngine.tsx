@@ -448,7 +448,7 @@ export function DeepCorrelationEngine() {
         )}
 
         {/* Orphaned Data Alert */}
-        {orphaned.some(o => o.orphan_percent > 20) && (
+        {Array.isArray(orphaned) && orphaned.some(o => o.orphan_percent > 20) && (
           <div className="p-4 bg-destructive/10 border border-destructive/30 rounded-lg">
             <div className="flex items-center gap-2 mb-2">
               <Unlink className="w-5 h-5 text-destructive" />

@@ -74,13 +74,13 @@ serve(async (req) => {
             SELECT measurement_timestamp as ts, heart_rate, hrv, 'biometric_monitoring' as source
             FROM biometric_monitoring WHERE measurement_timestamp IS NOT NULL
             UNION ALL
-            -- integrated_biometric_data (use timestamp or recorded_at only)
-            SELECT COALESCE(timestamp, recorded_at) as ts, 
+            -- integrated_biometric_data (use timestamp only - recorded_at may not exist)
+            SELECT timestamp as ts, 
                    COALESCE(heart_rate, hr, bpm)::numeric as heart_rate,
                    COALESCE(hrv, heart_rate_variability)::numeric as hrv,
                    'integrated_biometric_data' as source
             FROM integrated_biometric_data 
-            WHERE COALESCE(timestamp, recorded_at) IS NOT NULL
+            WHERE timestamp IS NOT NULL
             UNION ALL
             -- biometrics_rows (use timestamp or measurement_time only)
             SELECT COALESCE(timestamp, measurement_time) as ts,
@@ -98,13 +98,13 @@ serve(async (req) => {
             FROM biometric_readings_extended
             WHERE COALESCE(reading_timestamp, timestamp) IS NOT NULL
             UNION ALL
-            -- biometric_data_rows (use timestamp or recorded_at only)
-            SELECT COALESCE(timestamp, recorded_at) as ts,
+            -- biometric_data_rows (use timestamp only - recorded_at may not exist)
+            SELECT timestamp as ts,
                    COALESCE(heart_rate, hr, bpm)::numeric as heart_rate,
                    COALESCE(hrv, heart_rate_variability)::numeric as hrv,
                    'biometric_data_rows' as source
             FROM biometric_data_rows
-            WHERE COALESCE(timestamp, recorded_at) IS NOT NULL
+            WHERE timestamp IS NOT NULL
           )
           SELECT 
             f.registration,
@@ -256,9 +256,9 @@ serve(async (req) => {
           WITH unified_biometrics AS (
             SELECT measurement_timestamp as ts, heart_rate, hrv FROM biometric_monitoring WHERE measurement_timestamp IS NOT NULL
             UNION ALL
-            SELECT COALESCE(timestamp, recorded_at) as ts, 
+            SELECT timestamp as ts, 
                    COALESCE(heart_rate, hr, bpm)::numeric, COALESCE(hrv, heart_rate_variability)::numeric
-            FROM integrated_biometric_data WHERE COALESCE(timestamp, recorded_at) IS NOT NULL
+            FROM integrated_biometric_data WHERE timestamp IS NOT NULL
             UNION ALL
             SELECT COALESCE(timestamp, measurement_time) as ts,
                    COALESCE(heart_rate, hr, pulse)::numeric, COALESCE(hrv, variability)::numeric
@@ -268,9 +268,9 @@ serve(async (req) => {
                    COALESCE(heart_rate, hr)::numeric, COALESCE(hrv, heart_rate_variability)::numeric
             FROM biometric_readings_extended WHERE COALESCE(reading_timestamp, timestamp) IS NOT NULL
             UNION ALL
-            SELECT COALESCE(timestamp, recorded_at) as ts,
+            SELECT timestamp as ts,
                    COALESCE(heart_rate, hr, bpm)::numeric, COALESCE(hrv, heart_rate_variability)::numeric
-            FROM biometric_data_rows WHERE COALESCE(timestamp, recorded_at) IS NOT NULL
+            FROM biometric_data_rows WHERE timestamp IS NOT NULL
           ),
           aircraft_stats AS (
             SELECT 

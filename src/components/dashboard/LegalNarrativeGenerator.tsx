@@ -214,7 +214,7 @@ export const LegalNarrativeGenerator: React.FC = () => {
       const { data: shellData } = await supabase.functions.invoke('neon-query', {
         body: {
           action: 'customQuery',
-          query: `SELECT company_name, registration, evidence_summary, risk_level 
+          query: `SELECT company_name, aircraft_list, red_flags, risk_level 
                   FROM shell_companies LIMIT 10`
         }
       });
@@ -257,7 +257,7 @@ DATABASE EVIDENCE SUMMARY (2.2 Million Records):
 - Physician-Verified ECGs: ${stats.ecg_count || 'N/A'} (Sinus Tachycardia documented)
 
 SHELL COMPANY EVIDENCE:
-${shellCompanies.map((s: any) => `- ${s.company_name}: Aircraft ${s.registration}, Risk Level: ${s.risk_level}`).join('\n')}
+${shellCompanies.map((s: any) => `- ${s.company_name}: Aircraft ${s.aircraft_list || 'N/A'}, Risk Level: ${s.risk_level}`).join('\n')}
 
 KCSO PRIMARY AIRCRAFT:
 ${kcsoAircraft.map((k: any) => `- ${k.registration}: ${k.detections} detections, avg altitude ${Math.round(k.avg_altitude || 0)} ft`).join('\n')}

@@ -29,6 +29,9 @@ const buildUnifiedBiometricsUnion = (tableCols: Record<string, ColSet>) => {
 
   const selects: string[] = [];
 
+  // Normalize timestamps so every SELECT in the UNION returns the same type (timestamptz)
+  const tsExpr = (col: string) => `NULLIF((${col})::text, '')::timestamptz`;
+
   for (const table of tables) {
     const cols = tableCols[table];
     const ts = pickFirstExisting(cols, tsCandidates);
@@ -41,13 +44,13 @@ const buildUnifiedBiometricsUnion = (tableCols: Record<string, ColSet>) => {
     const hrvExpr = hrv ? `${hrv}::numeric` : 'NULL::numeric';
 
     selects.push(
-      `SELECT ${ts} as ts, ${hr}::numeric as heart_rate, ${hrvExpr} as hrv, '${table}' as source FROM ${table} WHERE ${ts} IS NOT NULL`
+      `SELECT ${tsExpr(ts)} as ts, ${hr}::numeric as heart_rate, ${hrvExpr} as hrv, '${table}' as source FROM ${table} WHERE ${ts} IS NOT NULL AND NULLIF((${ts})::text, '') IS NOT NULL`
     );
   }
 
   // If nothing matches, fall back to biometric_monitoring canonical schema (will error loudly if even that is absent)
   if (selects.length === 0) {
-    return `SELECT measurement_timestamp as ts, heart_rate::numeric as heart_rate, hrv::numeric as hrv, 'biometric_monitoring' as source FROM biometric_monitoring WHERE measurement_timestamp IS NOT NULL`;
+    return `SELECT ${tsExpr('measurement_timestamp')} as ts, heart_rate::numeric as heart_rate, hrv::numeric as hrv, 'biometric_monitoring' as source FROM biometric_monitoring WHERE measurement_timestamp IS NOT NULL`;
   }
 
   return selects.join('\nUNION ALL\n');

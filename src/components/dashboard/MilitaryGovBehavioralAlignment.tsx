@@ -69,7 +69,7 @@ export function MilitaryGovBehavioralAlignment() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loading, setLoading] = useState(false);
   const [computing, setComputing] = useState(false);
-  const [initialized, setInitialized] = useState(true);
+  const [initialized, setInitialized] = useState(false);
 
   const fetchAlignments = useCallback(async () => {
     setLoading(true);

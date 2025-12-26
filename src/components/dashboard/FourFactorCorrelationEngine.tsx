@@ -415,7 +415,7 @@ export const FourFactorCorrelationEngine = () => {
                 fb.*,
                 CASE WHEN EXISTS (
                   SELECT 1 FROM josiah_reflections_rows j
-                  WHERE (j.aircraft_correlation IS NOT NULL OR j.content ILIKE '%' || fb.registration || '%')
+                  WHERE (j.aircraft_correlation IS NOT NULL OR j.reflection_content ILIKE '%' || fb.registration || '%')
                 ) THEN true ELSE false END as josiah_match
               FROM flight_bio fb
             ),

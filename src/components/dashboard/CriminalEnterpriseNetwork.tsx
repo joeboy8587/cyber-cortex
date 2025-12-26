@@ -4,6 +4,24 @@ import { supabase } from "@/integrations/supabase/client";
 import { Network, Building2, Plane, AlertTriangle, ChevronRight, Shield, Scale } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 
+// Helper to safely parse PostgreSQL arrays that may come as strings
+const safeParseArray = (value: unknown): string[] => {
+  if (!value) return [];
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'string') {
+    if (value.startsWith('{') && value.endsWith('}')) {
+      return value.slice(1, -1).split(',').filter(Boolean);
+    }
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+};
+
 interface EnterpriseEntity {
   id: string;
   entity_name: string;
@@ -219,12 +237,12 @@ export function CriminalEnterpriseNetwork() {
                 )}
 
                 <div className="flex flex-wrap gap-1 mb-2">
-                  {entity.legal_exposure.map((exposure) => (
+                  {safeParseArray(entity.legal_exposure).map((exposure, i) => (
                     <Badge 
-                      key={exposure} 
+                      key={i} 
                       className="text-[9px] bg-destructive/10 text-destructive border border-destructive/30"
                     >
-                      {exposure.replace(/_/g, " ")}
+                      {String(exposure).replace(/_/g, " ")}
                     </Badge>
                   ))}
                 </div>

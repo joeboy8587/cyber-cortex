@@ -23,6 +23,23 @@ import {
 import { useNeonDatabase } from '@/hooks/useNeonDatabase';
 import { toast } from 'sonner';
 
+// Helper to safely parse PostgreSQL arrays that may come as strings
+const safeParseArray = (value: unknown): string[] => {
+  if (!value) return [];
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'string') {
+    if (value.startsWith('{') && value.endsWith('}')) {
+      return value.slice(1, -1).split(',').filter(Boolean);
+    }
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+};
 interface ShellCompanyEvidence {
   company_name: string;
   aircraft_list: string;
@@ -328,9 +345,9 @@ export const TROEvidenceCompiler = () => {
                     <span className="text-muted-foreground">Tier {asset.tier}</span>
                   </div>
                   <div className="flex flex-wrap gap-1 mt-2">
-                    {asset.legal_exposure?.map((exposure, i) => (
+                    {safeParseArray(asset.legal_exposure).map((exposure, i) => (
                       <Badge key={i} variant="outline" className="text-xs bg-red-500/10 text-red-400">
-                        {exposure.replace(/_/g, ' ')}
+                        {String(exposure).replace(/_/g, ' ')}
                       </Badge>
                     ))}
                   </div>

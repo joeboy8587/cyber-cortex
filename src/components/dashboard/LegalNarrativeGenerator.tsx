@@ -165,7 +165,7 @@ export const LegalNarrativeGenerator: React.FC = () => {
       const { data: shellData } = await supabase.functions.invoke('neon-query', {
         body: {
           action: 'customQuery',
-          query: `SELECT company_name, aircraft_registration, evidence_summary, risk_level 
+          query: `SELECT company_name, registration, evidence_summary, risk_level 
                   FROM shell_companies LIMIT 10`
         }
       });
@@ -174,11 +174,11 @@ export const LegalNarrativeGenerator: React.FC = () => {
       const { data: kcsoData } = await supabase.functions.invoke('neon-query', {
         body: {
           action: 'customQuery',
-          query: `SELECT aircraft_id, COUNT(*) as detections, 
-                  AVG(altitude_ft) as avg_altitude
+          query: `SELECT registration, COUNT(*) as detections, 
+                  AVG(altitude) as avg_altitude
                   FROM live_flight_detections_rows 
-                  WHERE aircraft_id IN ('N912KC', 'N913KC')
-                  GROUP BY aircraft_id`
+                  WHERE registration IN ('N912KC', 'N913KC')
+                  GROUP BY registration`
         }
       });
 
@@ -186,11 +186,11 @@ export const LegalNarrativeGenerator: React.FC = () => {
       const { data: medicalData } = await supabase.functions.invoke('neon-query', {
         body: {
           action: 'customQuery',
-          query: `SELECT aircraft_id, COUNT(*) as detections
+          query: `SELECT registration, COUNT(*) as detections
                   FROM live_flight_detections_rows 
-                  WHERE aircraft_id IN ('N743AM', 'N229AM', 'N766ME')
-                  OR operator ILIKE '%air methods%' OR operator ILIKE '%mercy%'
-                  GROUP BY aircraft_id`
+                  WHERE registration IN ('N743AM', 'N229AM', 'N766ME')
+                  OR callsign ILIKE '%air methods%' OR callsign ILIKE '%mercy%'
+                  GROUP BY registration`
         }
       });
 
@@ -208,13 +208,13 @@ DATABASE EVIDENCE SUMMARY (2.2 Million Records):
 - Physician-Verified ECGs: ${stats.ecg_count || 'N/A'} (Sinus Tachycardia documented)
 
 SHELL COMPANY EVIDENCE:
-${shellCompanies.map((s: any) => `- ${s.company_name}: Aircraft ${s.aircraft_registration}, Risk Level: ${s.risk_level}`).join('\n')}
+${shellCompanies.map((s: any) => `- ${s.company_name}: Aircraft ${s.registration}, Risk Level: ${s.risk_level}`).join('\n')}
 
 KCSO PRIMARY AIRCRAFT:
-${kcsoAircraft.map((k: any) => `- ${k.aircraft_id}: ${k.detections} detections, avg altitude ${Math.round(k.avg_altitude || 0)} ft`).join('\n')}
+${kcsoAircraft.map((k: any) => `- ${k.registration}: ${k.detections} detections, avg altitude ${Math.round(k.avg_altitude || 0)} ft`).join('\n')}
 
 MEDICAL AVIATION ASSETS (Potential False Claims):
-${medicalAircraft.map((m: any) => `- ${m.aircraft_id}: ${m.detections} detections`).join('\n')}
+${medicalAircraft.map((m: any) => `- ${m.registration}: ${m.detections} detections`).join('\n')}
 `;
 
       const systemPrompt = `You are a legal narrative generator for a federal False Claims Act and RICO case. 

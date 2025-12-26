@@ -49,6 +49,25 @@ interface DayDetail {
   }>;
 }
 
+// Helper to safely parse PostgreSQL arrays that may come as strings like "{item1,item2}"
+const safeParseArray = (value: unknown): string[] => {
+  if (!value) return [];
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'string') {
+    // Handle PostgreSQL array format: {item1,item2,item3}
+    if (value.startsWith('{') && value.endsWith('}')) {
+      return value.slice(1, -1).split(',').filter(Boolean);
+    }
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+};
+
 export function TimelineNavigator() {
   const [loading, setLoading] = useState(false);
   const [events, setEvents] = useState<DayEvent[]>([]);
@@ -148,7 +167,7 @@ export function TimelineNavigator() {
           screenshots: 0,
           hasThreeFactorConvergence: hasThreeFactor,
           highestStressScore: bioInfo.peakHr,
-          aircraftSeen: (r.aircraft_seen || []).slice(0, 5)
+          aircraftSeen: safeParseArray(r.aircraft_seen).slice(0, 5)
         };
       });
       
@@ -356,7 +375,7 @@ export function TimelineNavigator() {
                     </div>
                   </div>
                   
-                  {event.aircraftSeen.length > 0 && (
+                  {Array.isArray(event.aircraftSeen) && event.aircraftSeen.length > 0 && (
                     <div className="mt-2 flex flex-wrap gap-1">
                       {event.aircraftSeen.slice(0, 3).map(a => (
                         <Badge key={a} variant="outline" className="text-xs">{a}</Badge>

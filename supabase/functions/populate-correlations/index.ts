@@ -6,6 +6,53 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+type ColSet = Set<string>;
+
+const toColSet = (rows: Array<{ column_name: string }>): ColSet => new Set(rows.map((r) => r.column_name));
+
+const pickFirstExisting = (cols: ColSet, candidates: string[]) =>
+  candidates.find((c) => cols.has(c));
+
+const buildUnifiedBiometricsUnion = (tableCols: Record<string, ColSet>) => {
+  const tables = Object.keys(tableCols);
+
+  const tsCandidates = [
+    'measurement_timestamp',
+    'timestamp',
+    'reading_timestamp',
+    'recorded_at',
+    'created_at',
+    'created_timestamp',
+  ];
+  const hrCandidates = ['heart_rate', 'hr', 'bpm', 'pulse'];
+  const hrvCandidates = ['hrv', 'heart_rate_variability', 'variability'];
+
+  const selects: string[] = [];
+
+  for (const table of tables) {
+    const cols = tableCols[table];
+    const ts = pickFirstExisting(cols, tsCandidates);
+    const hr = pickFirstExisting(cols, hrCandidates);
+    const hrv = pickFirstExisting(cols, hrvCandidates);
+
+    // Need at least a timestamp + heart rate to be useful
+    if (!ts || !hr) continue;
+
+    const hrvExpr = hrv ? `${hrv}::numeric` : 'NULL::numeric';
+
+    selects.push(
+      `SELECT ${ts} as ts, ${hr}::numeric as heart_rate, ${hrvExpr} as hrv, '${table}' as source FROM ${table} WHERE ${ts} IS NOT NULL`
+    );
+  }
+
+  // If nothing matches, fall back to biometric_monitoring canonical schema (will error loudly if even that is absent)
+  if (selects.length === 0) {
+    return `SELECT measurement_timestamp as ts, heart_rate::numeric as heart_rate, hrv::numeric as hrv, 'biometric_monitoring' as source FROM biometric_monitoring WHERE measurement_timestamp IS NOT NULL`;
+  }
+
+  return selects.join('\nUNION ALL\n');
+};
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -63,32 +110,41 @@ serve(async (req) => {
         break;
       }
 
+
       case 'findFlightBiometricCorrelations': {
-        // Find flights that occurred within timeWindow of biometric events - QUERY ALL BIOMETRIC TABLES
-        console.log(`Finding flight-biometric correlations with ${timeWindowMinutes} minute window across ALL biometric tables...`);
-        
-        // Query all 5 biometric tables and union results - using only columns that exist
-        const correlations = await sql`
+        // Find flights that occurred within timeWindow of biometric events
+        console.log(
+          `Finding flight-biometric correlations with ${timeWindowMinutes} minute window across available biometric tables...`
+        );
+
+        // Discover schemas so we never reference non-existent columns
+        const biometricTables = [
+          'biometric_monitoring',
+          'integrated_biometric_data',
+          'biometrics_rows',
+          'biometric_readings_extended',
+          'biometric_data_rows',
+        ];
+
+        const colRows = await sql`
+          SELECT table_name, column_name
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = ANY(${biometricTables}::text[])
+        `;
+
+        const tableCols: Record<string, ColSet> = {};
+        for (const t of biometricTables) tableCols[t] = new Set();
+        for (const r of colRows as unknown as Array<{ table_name: string; column_name: string }>) {
+          if (!tableCols[r.table_name]) tableCols[r.table_name] = new Set();
+          tableCols[r.table_name].add(r.column_name);
+        }
+
+        const unionSql = buildUnifiedBiometricsUnion(tableCols);
+
+        const querySql = `
           WITH unified_biometrics AS (
-            -- biometric_monitoring (primary - has measurement_timestamp)
-            SELECT measurement_timestamp as ts, heart_rate, hrv, 'biometric_monitoring' as source
-            FROM biometric_monitoring WHERE measurement_timestamp IS NOT NULL
-            UNION ALL
-            -- integrated_biometric_data
-            SELECT timestamp as ts, heart_rate::numeric, hrv::numeric, 'integrated_biometric_data' as source
-            FROM integrated_biometric_data WHERE timestamp IS NOT NULL
-            UNION ALL
-            -- biometrics_rows
-            SELECT timestamp as ts, heart_rate::numeric, hrv::numeric, 'biometrics_rows' as source
-            FROM biometrics_rows WHERE timestamp IS NOT NULL
-            UNION ALL
-            -- biometric_readings_extended
-            SELECT COALESCE(reading_timestamp, timestamp) as ts, heart_rate::numeric, hrv::numeric, 'biometric_readings_extended' as source
-            FROM biometric_readings_extended WHERE COALESCE(reading_timestamp, timestamp) IS NOT NULL
-            UNION ALL
-            -- biometric_data_rows
-            SELECT timestamp as ts, heart_rate::numeric, hrv::numeric, 'biometric_data_rows' as source
-            FROM biometric_data_rows WHERE timestamp IS NOT NULL
+            ${unionSql}
           )
           SELECT 
             f.registration,
@@ -102,27 +158,29 @@ serve(async (req) => {
             EXTRACT(EPOCH FROM (f.detection_timestamp - b.ts))/60 as time_diff_minutes
           FROM live_flight_detections_rows f
           JOIN unified_biometrics b ON 
-            ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.ts))) <= ${timeWindowMinutes * 60}
+            ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.ts))) <= ($1::int * 60)
           WHERE f.detection_timestamp IS NOT NULL 
             AND f.registration IS NOT NULL
           ORDER BY f.detection_timestamp DESC
-          LIMIT ${batchSize}
+          LIMIT $2::int
         `;
-        
-        // Get source breakdown
+
+        const correlations = await sql.unsafe(querySql, [timeWindowMinutes, batchSize]);
+
         const sourceBreakdown: Record<string, number> = {};
         for (const c of correlations as any[]) {
           sourceBreakdown[c.biometric_source] = (sourceBreakdown[c.biometric_source] || 0) + 1;
         }
-        
-        console.log(`Found ${correlations.length} flight-biometric correlations across all tables`);
+
+        console.log(`Found ${correlations.length} flight-biometric correlations`);
         result = {
           count: correlations.length,
           sourceBreakdown,
-          sample: correlations.slice(0, 10)
+          sample: (correlations as any[]).slice(0, 10),
         };
         break;
       }
+
 
       case 'findFourFactorDays': {
         // Find days with all four factors present
@@ -232,25 +290,38 @@ serve(async (req) => {
         break;
       }
 
+
       case 'calculateBradfordHillScores': {
-        // Calculate Bradford Hill causation scores for aircraft - QUERYING ALL BIOMETRIC TABLES
-        console.log('Calculating Bradford Hill scores with comprehensive biometric data...');
-        
-        const scores = await sql`
+        // Calculate Bradford Hill causation scores for aircraft
+        console.log('Calculating Bradford Hill scores with available biometric schemas...');
+
+        const biometricTables = [
+          'biometric_monitoring',
+          'integrated_biometric_data',
+          'biometrics_rows',
+          'biometric_readings_extended',
+          'biometric_data_rows',
+        ];
+
+        const colRows = await sql`
+          SELECT table_name, column_name
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = ANY(${biometricTables}::text[])
+        `;
+
+        const tableCols: Record<string, ColSet> = {};
+        for (const t of biometricTables) tableCols[t] = new Set();
+        for (const r of colRows as unknown as Array<{ table_name: string; column_name: string }>) {
+          if (!tableCols[r.table_name]) tableCols[r.table_name] = new Set();
+          tableCols[r.table_name].add(r.column_name);
+        }
+
+        const unionSql = buildUnifiedBiometricsUnion(tableCols);
+
+        const scoresSql = `
           WITH unified_biometrics AS (
-            SELECT measurement_timestamp as ts, heart_rate, hrv FROM biometric_monitoring WHERE measurement_timestamp IS NOT NULL
-            UNION ALL
-            SELECT timestamp as ts, heart_rate::numeric, hrv::numeric
-            FROM integrated_biometric_data WHERE timestamp IS NOT NULL
-            UNION ALL
-            SELECT timestamp as ts, heart_rate::numeric, hrv::numeric
-            FROM biometrics_rows WHERE timestamp IS NOT NULL
-            UNION ALL
-            SELECT COALESCE(reading_timestamp, timestamp) as ts, heart_rate::numeric, hrv::numeric
-            FROM biometric_readings_extended WHERE COALESCE(reading_timestamp, timestamp) IS NOT NULL
-            UNION ALL
-            SELECT timestamp as ts, heart_rate::numeric, hrv::numeric
-            FROM biometric_data_rows WHERE timestamp IS NOT NULL
+            ${unionSql}
           ),
           aircraft_stats AS (
             SELECT 
@@ -287,22 +358,15 @@ serve(async (req) => {
             COALESCE(bc.peak_hr, 0) as peak_heart_rate,
             COALESCE(bc.min_hrv, 0) as min_hrv,
             COALESCE(bc.stress_events, 0) as stress_events,
-            -- Enhanced Bradford Hill Score calculation
             ROUND((
-              -- Strength: More detections = stronger association (max 20)
               LEAST(a.detection_count / 10.0, 20) +
-              -- Consistency: More unique days = more consistent (max 10)
               LEAST(a.unique_days / 5.0, 10) +
-              -- Temporality: Bio correlations show temporal relationship (max 15)
               LEAST(COALESCE(bc.bio_correlations, 0) / 5.0, 15) +
-              -- Stress Events: HR >100 during flight (max 15)
               LEAST(COALESCE(bc.stress_events, 0) / 3.0, 15) +
-              -- Specificity: Lower altitude = more specific targeting (max 10)
               CASE WHEN a.min_altitude < 1000 THEN 10 
                    WHEN a.min_altitude < 1500 THEN 7
                    WHEN a.min_altitude < 2000 THEN 4
                    ELSE 2 END +
-              -- Biological gradient: More correlations = dose response (max 10)
               LEAST(COALESCE(bc.bio_correlations, 0) / 10.0, 10)
             )::numeric, 1) as bradford_hill_score
           FROM aircraft_stats a
@@ -310,15 +374,17 @@ serve(async (req) => {
           ORDER BY bradford_hill_score DESC
           LIMIT 100
         `;
-        
-        console.log(`Calculated Bradford Hill scores for ${scores.length} aircraft with enhanced biometric data`);
-        
+
+        const scores = await sql.unsafe(scoresSql, []);
+
+        console.log(`Calculated Bradford Hill scores for ${scores.length} aircraft`);
         result = {
           count: scores.length,
-          scores
+          scores,
         };
         break;
       }
+
 
       case 'getComprehensiveSummary': {
         // Get comprehensive evidence summary

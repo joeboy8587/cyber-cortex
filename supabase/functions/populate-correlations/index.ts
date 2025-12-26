@@ -64,31 +64,77 @@ serve(async (req) => {
       }
 
       case 'findFlightBiometricCorrelations': {
-        // Find flights that occurred within timeWindow of biometric events
-        console.log(`Finding flight-biometric correlations with ${timeWindowMinutes} minute window...`);
+        // Find flights that occurred within timeWindow of biometric events - QUERY ALL BIOMETRIC TABLES
+        console.log(`Finding flight-biometric correlations with ${timeWindowMinutes} minute window across ALL biometric tables...`);
         
+        // Query all 5 biometric tables and union results
         const correlations = await sql`
+          WITH unified_biometrics AS (
+            -- biometric_monitoring (primary)
+            SELECT measurement_timestamp as ts, heart_rate, hrv, 'biometric_monitoring' as source
+            FROM biometric_monitoring WHERE measurement_timestamp IS NOT NULL
+            UNION ALL
+            -- integrated_biometric_data
+            SELECT COALESCE(timestamp, created_at, recorded_at) as ts, 
+                   COALESCE(heart_rate, hr, bpm)::numeric as heart_rate,
+                   COALESCE(hrv, heart_rate_variability)::numeric as hrv,
+                   'integrated_biometric_data' as source
+            FROM integrated_biometric_data 
+            WHERE COALESCE(timestamp, created_at, recorded_at) IS NOT NULL
+            UNION ALL
+            -- biometrics_rows
+            SELECT COALESCE(timestamp, measurement_time, created_at) as ts,
+                   COALESCE(heart_rate, hr, pulse)::numeric as heart_rate,
+                   COALESCE(hrv, variability)::numeric as hrv,
+                   'biometrics_rows' as source
+            FROM biometrics_rows
+            WHERE COALESCE(timestamp, measurement_time, created_at) IS NOT NULL
+            UNION ALL
+            -- biometric_readings_extended
+            SELECT COALESCE(reading_timestamp, timestamp, created_at) as ts,
+                   COALESCE(heart_rate, hr)::numeric as heart_rate,
+                   COALESCE(hrv, heart_rate_variability)::numeric as hrv,
+                   'biometric_readings_extended' as source
+            FROM biometric_readings_extended
+            WHERE COALESCE(reading_timestamp, timestamp, created_at) IS NOT NULL
+            UNION ALL
+            -- biometric_data_rows
+            SELECT COALESCE(timestamp, recorded_at, created_at) as ts,
+                   COALESCE(heart_rate, hr, bpm)::numeric as heart_rate,
+                   COALESCE(hrv, heart_rate_variability)::numeric as hrv,
+                   'biometric_data_rows' as source
+            FROM biometric_data_rows
+            WHERE COALESCE(timestamp, recorded_at, created_at) IS NOT NULL
+          )
           SELECT 
             f.registration,
             f.detection_timestamp as flight_time,
             f.altitude,
             f.callsign,
-            b.measurement_timestamp as bio_time,
+            b.ts as bio_time,
             b.heart_rate,
             b.hrv,
-            EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))/60 as time_diff_minutes
+            b.source as biometric_source,
+            EXTRACT(EPOCH FROM (f.detection_timestamp - b.ts))/60 as time_diff_minutes
           FROM live_flight_detections_rows f
-          JOIN biometric_monitoring b ON 
-            ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= ${timeWindowMinutes * 60}
+          JOIN unified_biometrics b ON 
+            ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.ts))) <= ${timeWindowMinutes * 60}
           WHERE f.detection_timestamp IS NOT NULL 
-            AND b.measurement_timestamp IS NOT NULL
+            AND f.registration IS NOT NULL
           ORDER BY f.detection_timestamp DESC
           LIMIT ${batchSize}
         `;
         
-        console.log(`Found ${correlations.length} flight-biometric correlations`);
+        // Get source breakdown
+        const sourceBreakdown: Record<string, number> = {};
+        for (const c of correlations as any[]) {
+          sourceBreakdown[c.biometric_source] = (sourceBreakdown[c.biometric_source] || 0) + 1;
+        }
+        
+        console.log(`Found ${correlations.length} flight-biometric correlations across all tables`);
         result = {
           count: correlations.length,
+          sourceBreakdown,
           sample: correlations.slice(0, 10)
         };
         break;
@@ -203,11 +249,30 @@ serve(async (req) => {
       }
 
       case 'calculateBradfordHillScores': {
-        // Calculate Bradford Hill causation scores for aircraft
-        console.log('Calculating Bradford Hill scores...');
+        // Calculate Bradford Hill causation scores for aircraft - QUERYING ALL BIOMETRIC TABLES
+        console.log('Calculating Bradford Hill scores with comprehensive biometric data...');
         
         const scores = await sql`
-          WITH aircraft_stats AS (
+          WITH unified_biometrics AS (
+            SELECT measurement_timestamp as ts, heart_rate, hrv FROM biometric_monitoring WHERE measurement_timestamp IS NOT NULL
+            UNION ALL
+            SELECT COALESCE(timestamp, created_at, recorded_at) as ts, 
+                   COALESCE(heart_rate, hr, bpm)::numeric, COALESCE(hrv, heart_rate_variability)::numeric
+            FROM integrated_biometric_data WHERE COALESCE(timestamp, created_at, recorded_at) IS NOT NULL
+            UNION ALL
+            SELECT COALESCE(timestamp, measurement_time, created_at) as ts,
+                   COALESCE(heart_rate, hr, pulse)::numeric, COALESCE(hrv, variability)::numeric
+            FROM biometrics_rows WHERE COALESCE(timestamp, measurement_time, created_at) IS NOT NULL
+            UNION ALL
+            SELECT COALESCE(reading_timestamp, timestamp, created_at) as ts,
+                   COALESCE(heart_rate, hr)::numeric, COALESCE(hrv, heart_rate_variability)::numeric
+            FROM biometric_readings_extended WHERE COALESCE(reading_timestamp, timestamp, created_at) IS NOT NULL
+            UNION ALL
+            SELECT COALESCE(timestamp, recorded_at, created_at) as ts,
+                   COALESCE(heart_rate, hr, bpm)::numeric, COALESCE(hrv, heart_rate_variability)::numeric
+            FROM biometric_data_rows WHERE COALESCE(timestamp, recorded_at, created_at) IS NOT NULL
+          ),
+          aircraft_stats AS (
             SELECT 
               registration,
               COUNT(*) as detection_count,
@@ -222,12 +287,14 @@ serve(async (req) => {
           bio_correlation_counts AS (
             SELECT 
               f.registration,
-              COUNT(*) as bio_correlations
+              COUNT(*) as bio_correlations,
+              MAX(b.heart_rate) as peak_hr,
+              MIN(b.hrv) as min_hrv,
+              COUNT(CASE WHEN b.heart_rate > 100 THEN 1 END) as stress_events
             FROM live_flight_detections_rows f
-            JOIN biometric_monitoring b ON 
-              ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= 300
-            WHERE f.detection_timestamp IS NOT NULL 
-              AND b.measurement_timestamp IS NOT NULL
+            JOIN unified_biometrics b ON 
+              ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.ts))) <= 300
+            WHERE f.detection_timestamp IS NOT NULL
             GROUP BY f.registration
           )
           SELECT 
@@ -237,29 +304,34 @@ serve(async (req) => {
             a.avg_altitude,
             a.min_altitude,
             COALESCE(bc.bio_correlations, 0) as bio_correlations,
-            -- Bradford Hill Score calculation
+            COALESCE(bc.peak_hr, 0) as peak_heart_rate,
+            COALESCE(bc.min_hrv, 0) as min_hrv,
+            COALESCE(bc.stress_events, 0) as stress_events,
+            -- Enhanced Bradford Hill Score calculation
             ROUND((
-              -- Strength: More detections = stronger association
+              -- Strength: More detections = stronger association (max 20)
               LEAST(a.detection_count / 10.0, 20) +
-              -- Consistency: More unique days = more consistent
+              -- Consistency: More unique days = more consistent (max 10)
               LEAST(a.unique_days / 5.0, 10) +
-              -- Temporality: Bio correlations show temporal relationship
+              -- Temporality: Bio correlations show temporal relationship (max 15)
               LEAST(COALESCE(bc.bio_correlations, 0) / 5.0, 15) +
-              -- Specificity: Lower altitude = more specific targeting
+              -- Stress Events: HR >100 during flight (max 15)
+              LEAST(COALESCE(bc.stress_events, 0) / 3.0, 15) +
+              -- Specificity: Lower altitude = more specific targeting (max 10)
               CASE WHEN a.min_altitude < 1000 THEN 10 
                    WHEN a.min_altitude < 1500 THEN 7
                    WHEN a.min_altitude < 2000 THEN 4
                    ELSE 2 END +
-              -- Biological gradient: More correlations = dose response
+              -- Biological gradient: More correlations = dose response (max 10)
               LEAST(COALESCE(bc.bio_correlations, 0) / 10.0, 10)
             )::numeric, 1) as bradford_hill_score
           FROM aircraft_stats a
           LEFT JOIN bio_correlation_counts bc ON a.registration = bc.registration
           ORDER BY bradford_hill_score DESC
-          LIMIT 50
+          LIMIT 100
         `;
         
-        console.log(`Calculated Bradford Hill scores for ${scores.length} aircraft`);
+        console.log(`Calculated Bradford Hill scores for ${scores.length} aircraft with enhanced biometric data`);
         
         result = {
           count: scores.length,

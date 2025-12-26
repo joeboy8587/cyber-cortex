@@ -55,6 +55,7 @@ import { DirectAircraftCorrelation } from "@/components/dashboard/DirectAircraft
 import { AircraftAlertSystem } from "@/components/dashboard/AircraftAlertSystem";
 import { LegalNarrativeGenerator } from "@/components/dashboard/LegalNarrativeGenerator";
 import { LegalIntakeStrategy } from "@/components/dashboard/LegalIntakeStrategy";
+import { MultimodalEnrichmentPanel } from "@/components/dashboard/MultimodalEnrichmentPanel";
 
 const Index = () => {
   return (
@@ -215,6 +216,10 @@ const Index = () => {
             <ConsentDocumentation />
           </section>
           
+          <section id="multimodal-enrichment">
+            <MultimodalEnrichmentPanel />
+          </section>
+
           <section id="database-tools" className="grid grid-cols-1 xl:grid-cols-2 gap-6">
             <TableExplorer />
             <SqlConsole />

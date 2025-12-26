@@ -1,9 +1,10 @@
 import { useEffect, useState, useCallback } from "react";
 import { CyberPanel } from "@/components/ui/cyber-panel";
-import { Link2, RefreshCw, AlertTriangle, Database, GitBranch, Unlink } from "lucide-react";
+import { Link2, RefreshCw, AlertTriangle, Database, GitBranch, Unlink, Activity, Plane } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { supabase } from "@/integrations/supabase/client";
 
 interface TableCorrelation {
@@ -33,10 +34,22 @@ interface CorrelationStats {
   orphaned_flights: number;
 }
 
+interface AircraftBioLink {
+  registration: string;
+  bio_correlations: number;
+  peak_heart_rate: number;
+  min_hrv: number;
+  stress_events: number;
+  bradford_hill_score: number;
+  detection_count: number;
+  avg_altitude: number;
+}
+
 export function DeepCorrelationEngine() {
   const [correlations, setCorrelations] = useState<TableCorrelation[]>([]);
   const [orphaned, setOrphaned] = useState<OrphanedData[]>([]);
   const [stats, setStats] = useState<CorrelationStats | null>(null);
+  const [aircraftBioLinks, setAircraftBioLinks] = useState<AircraftBioLink[]>([]);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -51,6 +64,10 @@ export function DeepCorrelationEngine() {
           query: `
             SELECT 
               (SELECT COUNT(*) FROM biometric_monitoring) as biometric_count,
+              (SELECT COUNT(*) FROM integrated_biometric_data) as integrated_bio_count,
+              (SELECT COUNT(*) FROM biometrics_rows) as biometrics_rows_count,
+              (SELECT COUNT(*) FROM biometric_readings_extended) as bio_extended_count,
+              (SELECT COUNT(*) FROM biometric_data_rows) as bio_data_count,
               (SELECT COUNT(*) FROM live_flight_detections_rows) as flight_count,
               (SELECT COUNT(*) FROM biometric_vector_correlations) as correlation_count,
               (SELECT COUNT(*) FROM ocr_aircraft_holding_patterns) as ocr_holding_count,
@@ -61,8 +78,21 @@ export function DeepCorrelationEngine() {
         }
       });
 
+      // Get Bradford Hill scores with aircraft-biometric links
+      const { data: bradfordData } = await supabase.functions.invoke("populate-correlations", {
+        body: { action: "calculateBradfordHillScores" }
+      });
+
+      if (bradfordData?.scores) {
+        setAircraftBioLinks(bradfordData.scores.slice(0, 20));
+      }
+
+      // Get actual flight-biometric correlation count
+      const { data: flightBioData } = await supabase.functions.invoke("populate-correlations", {
+        body: { action: "findFlightBiometricCorrelations", timeWindowMinutes: 5, batchSize: 5000 }
+      });
+
       // Estimate orphaned biometrics using a faster sampling approach
-      // instead of expensive correlated subquery
       const { data: orphanedBio } = await supabase.functions.invoke("neon-query", {
         body: {
           action: "customQuery",
@@ -91,7 +121,7 @@ export function DeepCorrelationEngine() {
         }
       });
 
-      // Check orphaned flights (high threat but not correlated)
+      // Check orphaned flights
       const { data: orphanedFlights } = await supabase.functions.invoke("neon-query", {
         body: {
           action: "customQuery",
@@ -106,35 +136,25 @@ export function DeepCorrelationEngine() {
         }
       });
 
-      // Get existing correlation breakdown
-      const { data: correlationBreakdown } = await supabase.functions.invoke("neon-query", {
-        body: {
-          action: "customQuery",
-          query: `
-            SELECT 
-              biometric_source_table,
-              severity,
-              COUNT(*) as count,
-              AVG(severity_score) as avg_severity,
-              SUM(aircraft_count) as total_aircraft_linked
-            FROM biometric_vector_correlations
-            GROUP BY biometric_source_table, severity
-            ORDER BY count DESC
-          `
-        }
-      });
-
       // Calculate stats
       const counts = countsData?.data?.[0] || {};
       const bioOrphan = orphanedBio?.data?.[0] || { orphaned: 0, total: 0 };
       const flightOrphan = orphanedFlights?.data?.[0] || { orphaned_flagged: 0 };
 
+      // Total biometrics across all tables
+      const totalBio = 
+        (parseInt(counts.biometric_count) || 0) +
+        (parseInt(counts.integrated_bio_count) || 0) +
+        (parseInt(counts.biometrics_rows_count) || 0) +
+        (parseInt(counts.bio_extended_count) || 0) +
+        (parseInt(counts.bio_data_count) || 0);
+
       setStats({
-        total_biometric_records: parseInt(counts.biometric_count) || 0,
+        total_biometric_records: totalBio,
         total_flight_records: parseInt(counts.flight_count) || 0,
         total_ocr_records: (parseInt(counts.ocr_holding_count) || 0) + (parseInt(counts.ocr_screenshot_count) || 0),
-        existing_correlations: parseInt(counts.correlation_count) || 0,
-        potential_correlations: Math.min(parseInt(counts.biometric_count) || 0, 10000),
+        existing_correlations: flightBioData?.count || parseInt(counts.correlation_count) || 0,
+        potential_correlations: Math.min(totalBio, 10000),
         orphaned_biometrics: parseInt(bioOrphan.orphaned) || 0,
         orphaned_flights: parseInt(flightOrphan.orphaned_flagged) || 0
       });
@@ -368,6 +388,65 @@ export function DeepCorrelationEngine() {
           )}
         </div>
 
+        {/* Aircraft-Biometric Links Section */}
+        {aircraftBioLinks.length > 0 && (
+          <div className="space-y-3">
+            <h4 className="font-display text-sm text-muted-foreground uppercase tracking-wider flex items-center gap-2">
+              <Activity className="w-4 h-4 text-destructive" />
+              Aircraft → Biometric Links (Bradford Hill Ranked)
+            </h4>
+            <ScrollArea className="h-64">
+              <div className="space-y-2 pr-2">
+                {aircraftBioLinks.map((link, idx) => (
+                  <div 
+                    key={idx} 
+                    className={`p-3 rounded-lg border ${
+                      link.bradford_hill_score > 50 
+                        ? 'bg-destructive/10 border-destructive/40' 
+                        : link.bradford_hill_score > 30 
+                        ? 'bg-warning/10 border-warning/40' 
+                        : 'bg-card/50 border-border'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <Plane className="w-4 h-4 text-primary" />
+                        <span className="font-mono font-bold">{link.registration}</span>
+                        <Badge 
+                          variant={link.bradford_hill_score > 50 ? "destructive" : link.bradford_hill_score > 30 ? "secondary" : "outline"}
+                        >
+                          BH: {link.bradford_hill_score}
+                        </Badge>
+                      </div>
+                      <Badge variant="outline" className="text-xs">
+                        {link.detection_count.toLocaleString()} detections
+                      </Badge>
+                    </div>
+                    <div className="grid grid-cols-4 gap-2 text-xs">
+                      <div className="text-center p-1 bg-background/50 rounded">
+                        <div className="font-mono font-bold text-destructive">{link.bio_correlations}</div>
+                        <div className="text-muted-foreground">Bio Links</div>
+                      </div>
+                      <div className="text-center p-1 bg-background/50 rounded">
+                        <div className="font-mono font-bold text-warning">{link.stress_events}</div>
+                        <div className="text-muted-foreground">Stress Events</div>
+                      </div>
+                      <div className="text-center p-1 bg-background/50 rounded">
+                        <div className="font-mono font-bold">{Math.round(link.peak_heart_rate)}</div>
+                        <div className="text-muted-foreground">Peak HR</div>
+                      </div>
+                      <div className="text-center p-1 bg-background/50 rounded">
+                        <div className="font-mono font-bold">{Math.round(link.avg_altitude)}ft</div>
+                        <div className="text-muted-foreground">Avg Alt</div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </ScrollArea>
+          </div>
+        )}
+
         {/* Orphaned Data Alert */}
         {orphaned.some(o => o.orphan_percent > 20) && (
           <div className="p-4 bg-destructive/10 border border-destructive/30 rounded-lg">
@@ -397,6 +476,10 @@ export function DeepCorrelationEngine() {
           </h4>
           <div className="flex flex-wrap gap-2">
             <Badge variant="outline">biometric_monitoring</Badge>
+            <Badge variant="outline">integrated_biometric_data</Badge>
+            <Badge variant="outline">biometrics_rows</Badge>
+            <Badge variant="outline">biometric_readings_extended</Badge>
+            <Badge variant="outline">biometric_data_rows</Badge>
             <Badge variant="outline">live_flight_detections_rows</Badge>
             <Badge variant="outline">flagged_aircraft_rows_rows</Badge>
             <Badge variant="outline">ocr_aircraft_holding_patterns</Badge>

@@ -29,6 +29,7 @@ import { FourFactorCorrelationEngine } from "@/components/dashboard/FourFactorCo
 import { KCSODeepDiveReport } from "@/components/dashboard/KCSODeepDiveReport";
 import { ShellCompanyMatrix } from "@/components/dashboard/ShellCompanyMatrix";
 import { ShellBehavioralAlignment } from "@/components/dashboard/ShellBehavioralAlignment";
+import { MedicalBehavioralAlignment } from "@/components/dashboard/MedicalBehavioralAlignment";
 import { MilitaryAircraftPanel } from "@/components/dashboard/MilitaryAircraftPanel";
 import { DailyEventImporter } from "@/components/dashboard/DailyEventImporter";
 import { NotionAutoWatcher } from "@/components/dashboard/NotionAutoWatcher";
@@ -157,6 +158,7 @@ const Index = () => {
           <section id="shell-company-matrix" className="space-y-6">
             <ShellCompanyMatrix />
             <ShellBehavioralAlignment />
+            <MedicalBehavioralAlignment />
           </section>
           
           <section id="data-quality">

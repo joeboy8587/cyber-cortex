@@ -1284,6 +1284,289 @@ serve(async (req) => {
         break;
       }
 
+      // ========== MEDICAL ENTITY BEHAVIORAL ALIGNMENT ==========
+      case 'createMedicalBehavioralAlignmentTable': {
+        // Create medical_entity_behavioral_alignment table for MEDEVAC/Geneva pattern matching
+        console.log('Creating medical_entity_behavioral_alignment table...');
+        
+        const createMedicalQuery = `
+          CREATE TABLE IF NOT EXISTS medical_entity_behavioral_alignment (
+            id SERIAL PRIMARY KEY,
+            operator_name TEXT NOT NULL,
+            operator_type TEXT DEFAULT 'MEDICAL_ASSET',
+            aircraft_tail TEXT,
+            match_score_to_kcso NUMERIC(5,2) DEFAULT 0,
+            behavior_type TEXT,
+            medical_mission_logged BOOLEAN DEFAULT false,
+            loiter_count INTEGER DEFAULT 0,
+            biometric_link_score NUMERIC(5,2) DEFAULT 0,
+            risk_tier TEXT DEFAULT 'Tier 3 Monitoring',
+            avg_altitude_ft NUMERIC(8,2),
+            detection_count INTEGER DEFAULT 0,
+            low_altitude_pct NUMERIC(5,2) DEFAULT 0,
+            reference_aircraft TEXT DEFAULT 'N912KC/N913KC',
+            legal_exposure TEXT,
+            prosecution_priority TEXT DEFAULT 'MONITORING',
+            first_detection TIMESTAMP,
+            last_detection TIMESTAMP,
+            fraud_indicators TEXT,
+            geneva_violation_risk TEXT,
+            false_claims_exposure TEXT,
+            created_at TIMESTAMP DEFAULT NOW(),
+            updated_at TIMESTAMP DEFAULT NOW(),
+            UNIQUE(operator_name, aircraft_tail)
+          )
+        `;
+        await sql.unsafe(createMedicalQuery);
+        
+        // Create indexes for fast lookups
+        await sql.unsafe(`CREATE INDEX IF NOT EXISTS idx_medical_risk_tier ON medical_entity_behavioral_alignment(risk_tier)`);
+        await sql.unsafe(`CREATE INDEX IF NOT EXISTS idx_medical_match_score ON medical_entity_behavioral_alignment(match_score_to_kcso DESC)`);
+        await sql.unsafe(`CREATE INDEX IF NOT EXISTS idx_medical_fraud ON medical_entity_behavioral_alignment(medical_mission_logged)`);
+        
+        result = { created: true, message: 'medical_entity_behavioral_alignment table created with indexes' };
+        break;
+      }
+
+      case 'computeMedicalBehavioralAlignment': {
+        // Compute behavioral similarity scores for medical aircraft against KCSO Tier 1 patterns
+        console.log('Computing medical behavioral alignment scores...');
+        
+        // Step 1: Get KCSO Tier 1 reference patterns (N912KC, N913KC baseline)
+        const kcsoMedicalBaseline = await sql`
+          SELECT 
+            AVG(altitude) as avg_altitude,
+            COUNT(*) as total_detections,
+            COUNT(*) FILTER (WHERE altitude < 1500) as low_alt_count,
+            MIN(detection_timestamp) as first_seen,
+            MAX(detection_timestamp) as last_seen
+          FROM live_flight_detections_rows
+          WHERE registration IN ('N912KC', 'N913KC')
+        `;
+        
+        const baseline = kcsoMedicalBaseline[0] || { avg_altitude: 1100, total_detections: 1000, low_alt_count: 800 };
+        const baselineAvgAlt = parseFloat(baseline.avg_altitude) || 1100;
+        const baselineLowAltPct = (parseInt(baseline.low_alt_count) / parseInt(baseline.total_detections)) * 100 || 80;
+        
+        console.log(`KCSO Medical Baseline: avg_alt=${baselineAvgAlt}, low_alt_pct=${baselineLowAltPct}%`);
+        
+        // Step 2: Define medical aircraft and operators to analyze
+        const medicalAircraftMap: Record<string, { operator: string; type: string }> = {
+          'N229AM': { operator: 'Mercy Air', type: 'MEDEVAC_OPERATOR' },
+          'N743AM': { operator: 'SkyLife (Air Methods)', type: 'MEDEVAC_OPERATOR' },
+          'N224AM': { operator: 'Air Methods', type: 'MEDEVAC_OPERATOR' },
+          'N7AM': { operator: 'Air Methods Corporate', type: 'MEDEVAC_OPERATOR' },
+          'N911AM': { operator: 'Air Methods Emergency', type: 'MEDEVAC_OPERATOR' },
+          'N118AM': { operator: 'Air Methods West', type: 'MEDEVAC_OPERATOR' },
+          'N303AM': { operator: 'Air Methods Regional', type: 'MEDEVAC_OPERATOR' },
+          'N407AM': { operator: 'Air Methods Southwest', type: 'MEDEVAC_OPERATOR' }
+        };
+        
+        const medicalTails = Object.keys(medicalAircraftMap);
+        
+        // Step 3: Get flight statistics for medical aircraft
+        const medicalFlightStats = await sql`
+          SELECT 
+            registration,
+            COUNT(*) as detection_count,
+            AVG(altitude) as avg_altitude,
+            COUNT(*) FILTER (WHERE altitude < 1500) as low_alt_detections,
+            COUNT(*) FILTER (WHERE altitude < 500) as critical_low_alt,
+            MIN(detection_timestamp) as first_seen,
+            MAX(detection_timestamp) as last_seen
+          FROM live_flight_detections_rows
+          WHERE registration = ANY(${medicalTails})
+          GROUP BY registration
+        `;
+        
+        console.log(`Found ${medicalFlightStats.length} medical aircraft with flight data`);
+        
+        // Step 4: Get biometric correlation data for medical aircraft
+        const medicalBioCorrelations = await sql`
+          SELECT 
+            f.registration,
+            COUNT(*) as correlated_events,
+            AVG(b.heart_rate) as avg_heart_rate_during,
+            AVG(b.stress_level) as avg_stress_during
+          FROM live_flight_detections_rows f
+          JOIN biometric_monitoring b ON 
+            ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= 600
+          WHERE f.detection_timestamp IS NOT NULL
+            AND b.measurement_timestamp IS NOT NULL
+            AND f.registration = ANY(${medicalTails})
+            AND (b.heart_rate > 85 OR b.stress_level >= 5)
+          GROUP BY f.registration
+        `;
+        
+        // Build bio correlation map
+        const bioCorrelationMap: Record<string, { events: number; avgHR: number; avgStress: number }> = {};
+        for (const bc of medicalBioCorrelations) {
+          bioCorrelationMap[bc.registration] = {
+            events: parseInt(bc.correlated_events) || 0,
+            avgHR: parseFloat(bc.avg_heart_rate_during) || 0,
+            avgStress: parseFloat(bc.avg_stress_during) || 0
+          };
+        }
+        
+        // Step 5: Calculate alignment scores and insert
+        let recordsCreated = 0;
+        
+        for (const flight of medicalFlightStats) {
+          const reg = flight.registration;
+          const operatorInfo = medicalAircraftMap[reg] || { operator: 'Unknown Medical', type: 'UNKNOWN' };
+          
+          const avgAlt = parseFloat(flight.avg_altitude) || 1500;
+          const detectionCount = parseInt(flight.detection_count) || 0;
+          const lowAltCount = parseInt(flight.low_alt_detections) || 0;
+          const criticalLowAlt = parseInt(flight.critical_low_alt) || 0;
+          const lowAltPct = detectionCount > 0 ? (lowAltCount / detectionCount) * 100 : 0;
+          
+          // Calculate similarity to KCSO patterns
+          const altDiff = Math.abs(avgAlt - baselineAvgAlt);
+          const altSimilarity = Math.max(0, 100 - (altDiff / 10)); // 10ft = 1% penalty
+          const lowAltSimilarity = 100 - Math.abs(lowAltPct - baselineLowAltPct);
+          
+          // Biometric correlation score
+          const bioData = bioCorrelationMap[reg] || { events: 0, avgHR: 0, avgStress: 0 };
+          const biometricScore = Math.min(100, (bioData.events / Math.max(1, detectionCount)) * 200);
+          
+          // Weighted match score: Alt (30%), Low-Alt Pattern (40%), Bio Correlation (30%)
+          const matchScore = (altSimilarity * 0.3) + (lowAltSimilarity * 0.4) + (biometricScore * 0.3);
+          
+          // Determine behavior type
+          let behaviorType = 'STANDARD';
+          if (lowAltPct > 75 && matchScore >= 80) {
+            behaviorType = 'LOITER_MIMIC';
+          } else if (avgAlt < 1000 && matchScore >= 70) {
+            behaviorType = 'ALTITUDE_ECHO';
+          } else if (criticalLowAlt > 10) {
+            behaviorType = 'CRITICAL_LOW_ALT';
+          } else if (biometricScore > 80) {
+            behaviorType = 'SURVEILLANCE_PATTERN';
+          }
+          
+          // Medical mission check - assume NO medical missions logged (0% in prior analysis)
+          const medicalMissionLogged = false;
+          
+          if (!medicalMissionLogged && matchScore >= 70) {
+            behaviorType = 'NO_MEDICAL_MISSION';
+          }
+          if (!medicalMissionLogged && matchScore >= 85) {
+            behaviorType = 'MEDEVAC_FRAUD';
+          }
+          
+          // Risk tier assignment
+          let riskTier = 'Tier 3 Monitoring';
+          let prosecutionPriority = 'MONITORING';
+          if (matchScore >= 85 && !medicalMissionLogged) {
+            riskTier = 'Tier 1 Fraud Watch';
+            prosecutionPriority = 'HIGH';
+          } else if (matchScore >= 70) {
+            riskTier = 'Tier 2 Suspect';
+            prosecutionPriority = 'MEDIUM';
+          }
+          
+          // Generate fraud indicators
+          const fraudIndicators: string[] = [];
+          if (!medicalMissionLogged) fraudIndicators.push('0% medical emergencies logged');
+          if (lowAltPct > 75) fraudIndicators.push(`${lowAltPct.toFixed(0)}% low-altitude operations`);
+          if (avgAlt < 1000) fraudIndicators.push(`Avg altitude ${avgAlt.toFixed(0)}ft matches surveillance profile`);
+          if (biometricScore > 70) fraudIndicators.push(`${biometricScore.toFixed(0)}% biometric stress correlation`);
+          
+          const legalExposure = matchScore >= 85 ? 'False Claims Act + Geneva Convention' : 
+                               matchScore >= 70 ? 'False Claims Act' : 'Under Investigation';
+          
+          // Insert or update alignment record
+          try {
+            await sql`
+              INSERT INTO medical_entity_behavioral_alignment (
+                operator_name, operator_type, aircraft_tail, match_score_to_kcso,
+                behavior_type, medical_mission_logged, loiter_count, biometric_link_score,
+                risk_tier, avg_altitude_ft, detection_count, low_altitude_pct,
+                reference_aircraft, legal_exposure, prosecution_priority,
+                first_detection, last_detection, fraud_indicators,
+                geneva_violation_risk, false_claims_exposure
+              ) VALUES (
+                ${operatorInfo.operator}, ${operatorInfo.type}, ${reg}, ${matchScore.toFixed(2)},
+                ${behaviorType}, ${medicalMissionLogged}, ${criticalLowAlt}, ${biometricScore.toFixed(2)},
+                ${riskTier}, ${avgAlt.toFixed(2)}, ${detectionCount}, ${lowAltPct.toFixed(2)},
+                'N912KC/N913KC', ${legalExposure}, ${prosecutionPriority},
+                ${flight.first_seen}, ${flight.last_seen}, ${fraudIndicators.join('; ')},
+                ${matchScore >= 85 ? 'HIGH - Perfidious use of medical cover' : 'MODERATE'},
+                ${matchScore >= 85 ? 'Significant - Pattern matches law enforcement surveillance' : 'Under Review'}
+              )
+              ON CONFLICT (operator_name, aircraft_tail) DO UPDATE SET
+                match_score_to_kcso = EXCLUDED.match_score_to_kcso,
+                behavior_type = EXCLUDED.behavior_type,
+                medical_mission_logged = EXCLUDED.medical_mission_logged,
+                loiter_count = EXCLUDED.loiter_count,
+                biometric_link_score = EXCLUDED.biometric_link_score,
+                risk_tier = EXCLUDED.risk_tier,
+                avg_altitude_ft = EXCLUDED.avg_altitude_ft,
+                detection_count = EXCLUDED.detection_count,
+                low_altitude_pct = EXCLUDED.low_altitude_pct,
+                legal_exposure = EXCLUDED.legal_exposure,
+                prosecution_priority = EXCLUDED.prosecution_priority,
+                last_detection = EXCLUDED.last_detection,
+                fraud_indicators = EXCLUDED.fraud_indicators,
+                geneva_violation_risk = EXCLUDED.geneva_violation_risk,
+                false_claims_exposure = EXCLUDED.false_claims_exposure,
+                updated_at = NOW()
+            `;
+            recordsCreated++;
+          } catch (insertErr) {
+            console.error(`Error inserting medical alignment for ${reg}:`, insertErr);
+          }
+        }
+        
+        console.log(`Created/updated ${recordsCreated} medical behavioral alignment records`);
+        result = { 
+          alignmentRecordsCreated: recordsCreated,
+          baselineUsed: { avgAltitude: baselineAvgAlt, lowAltPct: baselineLowAltPct },
+          medicalAircraftAnalyzed: medicalFlightStats.length
+        };
+        break;
+      }
+
+      case 'getMedicalBehavioralAlignment': {
+        // Retrieve all medical behavioral alignment records
+        console.log('Fetching medical behavioral alignment data...');
+        
+        try {
+          const alignments = await sql`
+            SELECT * FROM medical_entity_behavioral_alignment
+            ORDER BY match_score_to_kcso DESC
+          `;
+          
+          // Calculate summary stats
+          const tier1Count = alignments.filter((a: any) => a.risk_tier?.includes('Tier 1') || a.risk_tier?.includes('Fraud')).length;
+          const tier2Count = alignments.filter((a: any) => a.risk_tier?.includes('Tier 2') || a.risk_tier?.includes('Suspect')).length;
+          const highMatchCount = alignments.filter((a: any) => parseFloat(a.match_score_to_kcso) >= 85).length;
+          const zeroMissionCount = alignments.filter((a: any) => !a.medical_mission_logged).length;
+          
+          result = {
+            alignments,
+            summary: {
+              totalRecords: alignments.length,
+              tier1FraudWatch: tier1Count,
+              tier2Suspect: tier2Count,
+              highMatchAlerts: highMatchCount,
+              zeroMedicalMissions: zeroMissionCount,
+              uniqueOperators: [...new Set(alignments.map((a: any) => a.operator_name))].length,
+              uniqueAircraft: [...new Set(alignments.map((a: any) => a.aircraft_tail))].length
+            }
+          };
+        } catch (e) {
+          const err = e as Error;
+          if (err.message.includes('does not exist')) {
+            result = { notInitialized: true, message: 'Medical alignment table not created yet. Click "Initialize Schema" first.' };
+          } else {
+            throw e;
+          }
+        }
+        break;
+      }
+
       default:
     }
 

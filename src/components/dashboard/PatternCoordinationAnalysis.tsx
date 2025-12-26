@@ -303,11 +303,11 @@ export function PatternCoordinationAnalysis() {
                   {entity.notes && (
                     <p className="text-xs text-yellow-400 font-mono">{entity.notes}</p>
                   )}
-                  {entity.legal_exposure && (
+                  {Array.isArray(entity.legal_exposure) && entity.legal_exposure.length > 0 && (
                     <div className="flex flex-wrap gap-1 mt-2">
                       {entity.legal_exposure.map((exposure, i) => (
                         <Badge key={i} variant="outline" className="text-xs text-red-300 border-red-500/30">
-                          {exposure.replace(/_/g, ' ')}
+                          {String(exposure).replace(/_/g, ' ')}
                         </Badge>
                       ))}
                     </div>

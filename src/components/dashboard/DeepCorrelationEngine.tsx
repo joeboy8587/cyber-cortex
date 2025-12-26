@@ -44,7 +44,7 @@ export function DeepCorrelationEngine() {
   const fetchCorrelationData = useCallback(async () => {
     setLoading(true);
     try {
-      // Get table counts for biometric, flight, and OCR data
+      // Get table counts for biometric, flight, and OCR data - single efficient query
       const { data: countsData } = await supabase.functions.invoke("neon-query", {
         body: {
           action: "customQuery",
@@ -61,23 +61,32 @@ export function DeepCorrelationEngine() {
         }
       });
 
-      // Check orphaned biometrics (not linked to any flight)
+      // Estimate orphaned biometrics using a faster sampling approach
+      // instead of expensive correlated subquery
       const { data: orphanedBio } = await supabase.functions.invoke("neon-query", {
         body: {
           action: "customQuery",
           query: `
-            WITH bio_with_flights AS (
-              SELECT b.id, 
-                (SELECT COUNT(*) FROM live_flight_detections_rows f 
-                 WHERE f.detection_timestamp BETWEEN b.measurement_timestamp - INTERVAL '30 minutes' 
-                 AND b.measurement_timestamp + INTERVAL '30 minutes') as nearby_flights
-              FROM biometric_monitoring b
-              LIMIT 5000
+            WITH sample_bio AS (
+              SELECT id, measurement_timestamp 
+              FROM biometric_monitoring 
+              WHERE measurement_timestamp IS NOT NULL
+              ORDER BY RANDOM() 
+              LIMIT 500
+            ),
+            matched AS (
+              SELECT DISTINCT sb.id
+              FROM sample_bio sb
+              WHERE EXISTS (
+                SELECT 1 FROM live_flight_detections_rows f 
+                WHERE f.detection_timestamp BETWEEN sb.measurement_timestamp - INTERVAL '30 minutes' 
+                AND sb.measurement_timestamp + INTERVAL '30 minutes'
+                LIMIT 1
+              )
             )
             SELECT 
-              COUNT(*) FILTER (WHERE nearby_flights = 0) as orphaned,
-              COUNT(*) as total
-            FROM bio_with_flights
+              (SELECT COUNT(*) FROM sample_bio) - (SELECT COUNT(*) FROM matched) as orphaned,
+              (SELECT COUNT(*) FROM sample_bio) as total
           `
         }
       });

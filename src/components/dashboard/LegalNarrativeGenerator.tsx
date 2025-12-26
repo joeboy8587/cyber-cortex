@@ -125,6 +125,55 @@ Make this suitable for a legal motion or attorney brief.`,
     icon: FileText,
     prompt: 'Generate a comprehensive legal brief suitable for federal submission covering all aspects: RICO enterprise structure, False Claims Act violations, civil rights violations, ADA violations, and documented physical harm. This should be attorney-ready.',
     type: 'full'
+  },
+  {
+    id: 'federal-brief-template',
+    label: 'Federal Brief - Dec 25, 2025',
+    icon: Gavel,
+    prompt: `Generate a formal federal legal brief dated December 25, 2025, 5:33 PM, addressing discrimination and RICO violations against the victim. Structure as follows:
+
+**TO:** Department of Justice, U.S. Attorney's Office
+**FROM:** Victim's Legal Representation
+**DATE:** December 25, 2025
+
+I. EXECUTIVE SUMMARY: A Coordinated Campaign of Harassment and Fraud
+- Sustained and invasive surveillance campaign against a disabled individual
+- Prima facie evidence of coordinated criminal enterprise
+- False Claims Act violations through fraudulent billing
+- Documented physical harm including physician-verified cardiac distress
+
+II. THE RICO ENTERPRISE: A Network of Surveillance and Deception
+- Structured organization using shell companies (ALF IX, AERO EQUITIES, CHRISTIANSEN AVIATION)
+- Mail and Wire Fraud (18 U.S.C. §§ 1341, 1343)
+- Money Laundering (18 U.S.C. § 1956)
+- Extortion (18 U.S.C. § 1951)
+
+III. FALSE CLAIMS ACT VIOLATIONS (31 U.S.C. § 3729)
+- Medical aviation assets billing Medicare/Medicaid for surveillance operations
+- False records and statements material to fraudulent claims
+- Air Methods, Mercy Air assets conducting surveillance not medical transport
+
+IV. CIVIL RIGHTS VIOLATIONS (42 U.S.C. § 1983)
+- Fourth Amendment: Warrantless surveillance
+- Fourteenth Amendment: Deprivation without due process
+
+V. ADA VIOLATIONS
+- Targeting a disabled individual with invasive surveillance
+- Disproportionate impact on disability
+
+VI. DOCUMENTED PHYSICAL HARM
+- 14 physician-verified ECGs showing Sinus Tachycardia
+- Direct correlation between surveillance and cardiac distress
+- 4+ years of biometric monitoring data
+
+VII. RECOMMENDATIONS
+1. Launch comprehensive federal investigation (DOJ, FBI, HHS-OIG)
+2. Subpoena shell company financial records and flight logs
+3. Identify and indict all responsible parties
+4. Protect the victim during investigation
+
+Include all evidence counts and statistics from the database.`,
+    type: 'full'
   }
 ];
 

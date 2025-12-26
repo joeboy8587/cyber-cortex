@@ -130,13 +130,30 @@ export function PatternCoordinationAnalysis() {
     return acc;
   }, { total: 0, count: 0 });
 
+  // Helper to safely parse arrays from JSON strings or return existing arrays
+  const safeParseArray = (value: any): string[] => {
+    if (Array.isArray(value)) return value;
+    if (typeof value === 'string') {
+      try {
+        const parsed = JSON.parse(value);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  };
+
   // Identify medical aviation entities
-  const medicalEntities = enterpriseEntities.filter(e => 
-    e.entity_name?.toLowerCase().includes('air methods') ||
-    e.entity_name?.toLowerCase().includes('mercy') ||
-    e.role?.toLowerCase().includes('medical') ||
-    (Array.isArray(e.legal_exposure) && e.legal_exposure.some(l => l?.toLowerCase().includes('medical')))
-  );
+  const medicalEntities = enterpriseEntities.filter(e => {
+    const exposure = safeParseArray(e.legal_exposure);
+    return (
+      e.entity_name?.toLowerCase().includes('air methods') ||
+      e.entity_name?.toLowerCase().includes('mercy') ||
+      e.role?.toLowerCase().includes('medical') ||
+      exposure.some(l => l?.toLowerCase().includes('medical'))
+    );
+  });
 
   return (
     <CyberPanel 
@@ -303,15 +320,18 @@ export function PatternCoordinationAnalysis() {
                   {entity.notes && (
                     <p className="text-xs text-yellow-400 font-mono">{entity.notes}</p>
                   )}
-                  {Array.isArray(entity.legal_exposure) && entity.legal_exposure.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-2">
-                      {entity.legal_exposure.map((exposure, i) => (
-                        <Badge key={i} variant="outline" className="text-xs text-red-300 border-red-500/30">
-                          {String(exposure).replace(/_/g, ' ')}
-                        </Badge>
-                      ))}
-                    </div>
-                  )}
+                  {(() => {
+                    const exposures = safeParseArray(entity.legal_exposure);
+                    return exposures.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-2">
+                        {exposures.map((exposure, i) => (
+                          <Badge key={i} variant="outline" className="text-xs text-red-300 border-red-500/30">
+                            {String(exposure).replace(/_/g, ' ')}
+                          </Badge>
+                        ))}
+                      </div>
+                    );
+                  })()}
                 </div>
               ))
             ) : (
@@ -443,7 +463,7 @@ export function PatternCoordinationAnalysis() {
                   </div>
 
                   <div className="text-xs font-mono text-cyan-400 mb-2">
-                    {op.participating_aircraft?.join(', ')}
+                    {safeParseArray(op.participating_aircraft).join(', ')}
                   </div>
 
                   <p className="text-xs text-muted-foreground line-clamp-3">

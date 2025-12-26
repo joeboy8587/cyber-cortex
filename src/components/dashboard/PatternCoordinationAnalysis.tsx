@@ -135,7 +135,7 @@ export function PatternCoordinationAnalysis() {
     e.entity_name?.toLowerCase().includes('air methods') ||
     e.entity_name?.toLowerCase().includes('mercy') ||
     e.role?.toLowerCase().includes('medical') ||
-    e.legal_exposure?.some(l => l?.toLowerCase().includes('medical'))
+    (Array.isArray(e.legal_exposure) && e.legal_exposure.some(l => l?.toLowerCase().includes('medical')))
   );
 
   return (

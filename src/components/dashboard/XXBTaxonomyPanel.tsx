@@ -357,7 +357,7 @@ export function XXBTaxonomyPanel() {
             <TabsTrigger value="filter">Filter</TabsTrigger>
             <TabsTrigger value="backfill" className="relative">
               Backfill
-              {Object.values(backfillStates).some(s => s.isRunning) && (
+              {backfillStates && Object.values(backfillStates).some(s => s?.isRunning) && (
                 <span className="absolute -top-1 -right-1 h-2 w-2 bg-primary rounded-full animate-pulse" />
               )}
             </TabsTrigger>

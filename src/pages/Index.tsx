@@ -30,6 +30,7 @@ import { KCSODeepDiveReport } from "@/components/dashboard/KCSODeepDiveReport";
 import { ShellCompanyMatrix } from "@/components/dashboard/ShellCompanyMatrix";
 import { ShellBehavioralAlignment } from "@/components/dashboard/ShellBehavioralAlignment";
 import { MedicalBehavioralAlignment } from "@/components/dashboard/MedicalBehavioralAlignment";
+import { MilitaryGovBehavioralAlignment } from "@/components/dashboard/MilitaryGovBehavioralAlignment";
 import { MilitaryAircraftPanel } from "@/components/dashboard/MilitaryAircraftPanel";
 import { DailyEventImporter } from "@/components/dashboard/DailyEventImporter";
 import { NotionAutoWatcher } from "@/components/dashboard/NotionAutoWatcher";
@@ -159,6 +160,7 @@ const Index = () => {
             <ShellCompanyMatrix />
             <ShellBehavioralAlignment />
             <MedicalBehavioralAlignment />
+            <MilitaryGovBehavioralAlignment />
           </section>
           
           <section id="data-quality">

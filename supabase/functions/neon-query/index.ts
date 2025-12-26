@@ -1673,6 +1673,393 @@ serve(async (req) => {
         break;
       }
 
+      case 'createMilitaryGovBehavioralAlignmentTable': {
+        // Create military/government behavioral alignment table for extended entity classification
+        console.log('Creating military_gov_behavioral_alignment table...');
+        
+        const createMilGovQuery = `
+          CREATE TABLE IF NOT EXISTS military_gov_behavioral_alignment (
+            id SERIAL PRIMARY KEY,
+            entity_name TEXT NOT NULL,
+            entity_type TEXT DEFAULT 'MILITARY_CONTRACT',
+            classification TEXT DEFAULT 'TIER_WATCH_MILITARY_CONTRACT',
+            aircraft_tail TEXT,
+            match_score_to_kcso NUMERIC(5,2) DEFAULT 0,
+            behavior_type TEXT,
+            spoofed_transponder BOOLEAN DEFAULT false,
+            contract_operator TEXT,
+            loiter_count INTEGER DEFAULT 0,
+            biometric_link_score NUMERIC(5,2) DEFAULT 0,
+            risk_tier TEXT DEFAULT 'Tier 3 Monitoring',
+            avg_altitude_ft NUMERIC(8,2),
+            detection_count INTEGER DEFAULT 0,
+            low_altitude_pct NUMERIC(5,2) DEFAULT 0,
+            reference_aircraft TEXT DEFAULT 'N912KC/N913KC',
+            legal_exposure TEXT,
+            prosecution_priority TEXT DEFAULT 'MONITORING',
+            first_detection TIMESTAMP,
+            last_detection TIMESTAMP,
+            intel_notes TEXT,
+            vertical_stack_detected BOOLEAN DEFAULT false,
+            paired_high_alt_asset TEXT,
+            created_at TIMESTAMP DEFAULT NOW(),
+            updated_at TIMESTAMP DEFAULT NOW(),
+            UNIQUE(entity_name, aircraft_tail)
+          )
+        `;
+        await sql.unsafe(createMilGovQuery);
+        
+        // Create indexes
+        await sql.unsafe(`CREATE INDEX IF NOT EXISTS idx_milgov_risk_tier ON military_gov_behavioral_alignment(risk_tier)`);
+        await sql.unsafe(`CREATE INDEX IF NOT EXISTS idx_milgov_match_score ON military_gov_behavioral_alignment(match_score_to_kcso DESC)`);
+        await sql.unsafe(`CREATE INDEX IF NOT EXISTS idx_milgov_classification ON military_gov_behavioral_alignment(classification)`);
+        
+        result = { created: true, message: 'military_gov_behavioral_alignment table created with indexes' };
+        break;
+      }
+
+      case 'computeMilitaryGovBehavioralAlignment': {
+        // Compute behavioral alignment for extended entity classes
+        console.log('Computing military/government behavioral alignment...');
+        
+        // Step 1: Get KCSO Tier 1 reference patterns (N912KC, N913KC baseline)
+        const kcsoMilBaseline = await sql`
+          SELECT 
+            AVG(altitude) as avg_altitude,
+            COUNT(*) as total_detections,
+            COUNT(*) FILTER (WHERE altitude < 1500) as low_alt_count,
+            MIN(detection_timestamp) as first_seen,
+            MAX(detection_timestamp) as last_seen
+          FROM live_flight_detections_rows
+          WHERE registration IN ('N912KC', 'N913KC')
+        `;
+        
+        const milBaseline = kcsoMilBaseline[0] || { avg_altitude: 1100, total_detections: 1000, low_alt_count: 800 };
+        const baselineMilAvgAlt = parseFloat(milBaseline.avg_altitude) || 1100;
+        const baselineMilLowAltPct = (parseInt(milBaseline.low_alt_count) / parseInt(milBaseline.total_detections)) * 100 || 80;
+        
+        console.log(`KCSO Mil Baseline: avg_alt=${baselineMilAvgAlt}, low_alt_pct=${baselineMilLowAltPct}%`);
+        
+        // Step 2: Define extended entity classification map
+        const extendedEntityMap: Record<string, { entity: string; type: string; classification: string; contractor?: string }> = {
+          // Extended MEDEVAC operators
+          'N*REACH': { entity: 'REACH Air Medical', type: 'MEDEVAC_OPERATOR', classification: 'MEDEVAC_EXTENSION', contractor: 'REACH Medical Holdings' },
+          'N*PHI': { entity: 'PHI Air Medical', type: 'MEDEVAC_OPERATOR', classification: 'MEDEVAC_EXTENSION', contractor: 'PHI Inc' },
+          'N*CALSTAR': { entity: 'CALSTAR Air Ambulance', type: 'MEDEVAC_OPERATOR', classification: 'MEDEVAC_EXTENSION', contractor: 'CALSTAR' },
+          'N*CARE': { entity: 'CareFlight Nevada', type: 'MEDEVAC_OPERATOR', classification: 'MEDEVAC_EXTENSION', contractor: 'CareFlight' },
+          // Government agency aircraft - DEA
+          'N900AL': { entity: 'DEA Aviation', type: 'GOV_AGENCY', classification: 'GOV_AGENCY', contractor: 'DEA' },
+          'N967SP': { entity: 'DEA Aviation', type: 'GOV_AGENCY', classification: 'GOV_AGENCY', contractor: 'DEA' },
+          'N874DA': { entity: 'DEA Aviation', type: 'GOV_AGENCY', classification: 'GOV_AGENCY', contractor: 'DEA' },
+          // DHS / Sierra Nevada Corp
+          'N287SA': { entity: 'DHS Surveillance', type: 'GOV_AGENCY', classification: 'GOV_AGENCY', contractor: 'Sierra Nevada Corp' },
+          'N392SA': { entity: 'DHS Surveillance', type: 'GOV_AGENCY', classification: 'GOV_AGENCY', contractor: 'Sierra Nevada Corp' },
+          // Known military-contract patterns  
+          'N*HNT': { entity: 'Hunter Aviation', type: 'MILITARY_CONTRACT', classification: 'TIER_WATCH_MILITARY_CONTRACT', contractor: 'Hunter Aviation LLC' },
+          'N*AAR': { entity: 'AAR Airlift', type: 'MILITARY_CONTRACT', classification: 'TIER_WATCH_MILITARY_CONTRACT', contractor: 'AAR Corp' },
+          'N*PHX': { entity: 'Phoenix Air', type: 'MILITARY_CONTRACT', classification: 'TIER_WATCH_MILITARY_CONTRACT', contractor: 'Phoenix Air Group' }
+        };
+        
+        // Get all flight registrations to pattern match
+        const allRegistrations = await sql`
+          SELECT DISTINCT registration
+          FROM live_flight_detections_rows
+          WHERE registration IS NOT NULL AND registration != ''
+        `;
+        
+        // Find matching aircraft using pattern or direct lookup
+        const matchedAircraft: Array<{ registration: string; info: typeof extendedEntityMap[string] }> = [];
+        
+        for (const row of allRegistrations) {
+          const reg = row.registration?.toUpperCase() || '';
+          
+          // Check direct matches first
+          if (extendedEntityMap[reg]) {
+            matchedAircraft.push({ registration: reg, info: extendedEntityMap[reg] });
+            continue;
+          }
+          
+          // Check patterns (REACH, PHI, etc.)
+          if (reg.includes('REACH')) {
+            matchedAircraft.push({ registration: reg, info: { entity: 'REACH Air Medical', type: 'MEDEVAC_OPERATOR', classification: 'MEDEVAC_EXTENSION', contractor: 'REACH Medical Holdings' }});
+          } else if (reg.includes('PHI')) {
+            matchedAircraft.push({ registration: reg, info: { entity: 'PHI Air Medical', type: 'MEDEVAC_OPERATOR', classification: 'MEDEVAC_EXTENSION', contractor: 'PHI Inc' }});
+          } else if (reg.includes('CALSTAR') || reg.includes('CAL')) {
+            matchedAircraft.push({ registration: reg, info: { entity: 'CALSTAR Air Ambulance', type: 'MEDEVAC_OPERATOR', classification: 'MEDEVAC_EXTENSION', contractor: 'CALSTAR' }});
+          }
+          
+          // Check for PAT/RCH military prefixes (Priority Air Transport / Air Mobility Command)
+          if (reg.startsWith('PAT') || row.registration?.includes('PAT')) {
+            matchedAircraft.push({ registration: reg, info: { entity: 'Priority Air Transport', type: 'MILITARY_CONTRACT', classification: 'TIER_WATCH_MILITARY_CONTRACT', contractor: 'US Army/Air Force' }});
+          } else if (reg.startsWith('RCH') || row.registration?.includes('RCH')) {
+            matchedAircraft.push({ registration: reg, info: { entity: 'Air Mobility Command REACH', type: 'MILITARY_CONTRACT', classification: 'TIER_WATCH_MILITARY_CONTRACT', contractor: 'USAF AMC' }});
+          }
+          
+          // Check for potential spoofed transponders (dynamic hex, ~MLAT prefix, xxb patterns)
+          if (reg.startsWith('~') || reg.startsWith('XXB') || reg.includes('_MLAT')) {
+            matchedAircraft.push({ registration: reg, info: { entity: 'Spoofed/Anonymous Asset', type: 'UNKNOWN', classification: 'SPOOFED_GOV_ASSET', contractor: 'Unknown' }});
+          }
+        }
+        
+        console.log(`Matched ${matchedAircraft.length} aircraft to extended entity classifications`);
+        
+        // Step 3: Get flight stats for matched aircraft
+        const matchedTails = matchedAircraft.map(m => m.registration);
+        
+        if (matchedTails.length === 0) {
+          result = { alignmentRecordsCreated: 0, message: 'No matching extended entities found in flight data' };
+          break;
+        }
+        
+        const milFlightStats = await sql`
+          SELECT 
+            registration,
+            COUNT(*) as detection_count,
+            AVG(altitude) as avg_altitude,
+            COUNT(*) FILTER (WHERE altitude < 1500) as low_alt_detections,
+            COUNT(*) FILTER (WHERE altitude < 500) as critical_low_alt,
+            COUNT(*) FILTER (WHERE altitude > 15000) as high_alt_detections,
+            MIN(detection_timestamp) as first_seen,
+            MAX(detection_timestamp) as last_seen
+          FROM live_flight_detections_rows
+          WHERE registration = ANY(${matchedTails})
+          GROUP BY registration
+        `;
+        
+        console.log(`Flight stats retrieved for ${milFlightStats.length} aircraft`);
+        
+        // Step 4: Detect Vertical Stack patterns (high + low alt simultaneous operations)
+        const verticalStackQuery = await sql`
+          SELECT 
+            high.registration as high_alt_asset,
+            low.registration as low_alt_asset,
+            COUNT(*) as paired_events
+          FROM live_flight_detections_rows high
+          JOIN live_flight_detections_rows low ON 
+            ABS(EXTRACT(EPOCH FROM (high.detection_timestamp - low.detection_timestamp))) <= 600
+            AND high.altitude > 15000
+            AND low.altitude < 1200
+            AND high.registration != low.registration
+          WHERE high.registration = ANY(${matchedTails})
+            OR low.registration = ANY(${matchedTails})
+          GROUP BY high.registration, low.registration
+          HAVING COUNT(*) >= 2
+        `;
+        
+        const verticalStackMap: Record<string, string> = {};
+        for (const vs of verticalStackQuery) {
+          verticalStackMap[vs.low_alt_asset] = vs.high_alt_asset;
+          verticalStackMap[vs.high_alt_asset] = vs.low_alt_asset;
+        }
+        
+        console.log(`Detected ${Object.keys(verticalStackMap).length / 2} vertical stack pairings`);
+        
+        // Step 5: Get biometric correlations
+        const milBioCorr = await sql`
+          SELECT 
+            f.registration,
+            COUNT(*) as correlated_events,
+            AVG(b.heart_rate) as avg_heart_rate_during,
+            AVG(b.stress_level) as avg_stress_during
+          FROM live_flight_detections_rows f
+          JOIN biometric_monitoring b ON 
+            ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= 600
+          WHERE f.detection_timestamp IS NOT NULL
+            AND b.measurement_timestamp IS NOT NULL
+            AND f.registration = ANY(${matchedTails})
+            AND (b.heart_rate > 85 OR b.stress_level >= 5)
+          GROUP BY f.registration
+        `;
+        
+        const milBioMap: Record<string, { events: number; avgHR: number }> = {};
+        for (const bc of milBioCorr) {
+          milBioMap[bc.registration] = {
+            events: parseInt(bc.correlated_events) || 0,
+            avgHR: parseFloat(bc.avg_heart_rate_during) || 0
+          };
+        }
+        
+        // Step 6: Calculate alignment scores and insert
+        let milRecordsCreated = 0;
+        
+        for (const flight of milFlightStats) {
+          const reg = flight.registration;
+          const entityInfo = matchedAircraft.find(m => m.registration === reg)?.info || 
+            { entity: 'Unknown', type: 'UNKNOWN', classification: 'TIER_WATCH_MILITARY_CONTRACT', contractor: null };
+          
+          const avgAlt = parseFloat(flight.avg_altitude) || 5000;
+          const detectionCount = parseInt(flight.detection_count) || 0;
+          const lowAltCount = parseInt(flight.low_alt_detections) || 0;
+          const criticalLowAlt = parseInt(flight.critical_low_alt) || 0;
+          const highAltCount = parseInt(flight.high_alt_detections) || 0;
+          const lowAltPct = detectionCount > 0 ? (lowAltCount / detectionCount) * 100 : 0;
+          
+          // Calculate similarity to KCSO patterns
+          const altDiff = Math.abs(avgAlt - baselineMilAvgAlt);
+          const altSimilarity = Math.max(0, 100 - (altDiff / 15)); // 15ft = 1% penalty
+          const lowAltSimilarity = 100 - Math.abs(lowAltPct - baselineMilLowAltPct);
+          
+          // Biometric correlation score
+          const bioData = milBioMap[reg] || { events: 0, avgHR: 0 };
+          const biometricScore = Math.min(100, (bioData.events / Math.max(1, detectionCount)) * 200);
+          
+          // Weighted match score
+          const matchScore = (altSimilarity * 0.3) + (lowAltSimilarity * 0.35) + (biometricScore * 0.35);
+          
+          // Determine behavior type
+          let behaviorType = 'STANDARD';
+          const hasVerticalStack = !!verticalStackMap[reg];
+          const isSpoofed = entityInfo.classification === 'SPOOFED_GOV_ASSET';
+          
+          if (hasVerticalStack) {
+            behaviorType = 'VERTICAL_STACK';
+          } else if (isSpoofed) {
+            behaviorType = 'DYNAMIC_CALLSIGN';
+          } else if (highAltCount > lowAltCount && highAltCount > 10) {
+            behaviorType = 'SIGINT_PATTERN';
+          } else if (lowAltPct > 75 && matchScore >= 80) {
+            behaviorType = 'LOITER_MIMIC';
+          } else if (avgAlt < 1000 && matchScore >= 70) {
+            behaviorType = 'ALTITUDE_ECHO';
+          } else if (criticalLowAlt > 10) {
+            behaviorType = 'CRITICAL_LOW_ALT';
+          } else if (biometricScore > 80) {
+            behaviorType = 'SURVEILLANCE_PATTERN';
+          }
+          
+          // Risk tier assignment
+          let riskTier = 'Tier 3 Monitoring';
+          let prosecutionPriority = 'MONITORING';
+          if (matchScore >= 85 || hasVerticalStack) {
+            riskTier = 'Tier 1 Probationary';
+            prosecutionPriority = 'HIGH';
+          } else if (matchScore >= 70 || isSpoofed) {
+            riskTier = 'Tier 2 Watch';
+            prosecutionPriority = 'MEDIUM';
+          } else if (matchScore >= 50) {
+            riskTier = 'Tier 2 Suspect';
+            prosecutionPriority = 'MEDIUM';
+          }
+          
+          // Generate intel notes
+          const intelNotes: string[] = [];
+          if (hasVerticalStack) {
+            intelNotes.push(`Vertical stack paired with ${verticalStackMap[reg]}`);
+          }
+          if (isSpoofed) {
+            intelNotes.push('Dynamic callsign injection detected');
+          }
+          if (highAltCount > 10) {
+            intelNotes.push(`${highAltCount} high-altitude (15K+ ft) SIGINT-profile detections`);
+          }
+          if (biometricScore > 70) {
+            intelNotes.push(`${biometricScore.toFixed(0)}% biometric stress correlation`);
+          }
+          
+          const legalExposure = matchScore >= 85 ? 'RICO + Conspiracy + Civil Rights Violations' : 
+                               matchScore >= 70 ? 'Civil Rights Investigation' : 'Pattern Monitoring';
+          
+          // Insert or update alignment record
+          try {
+            await sql`
+              INSERT INTO military_gov_behavioral_alignment (
+                entity_name, entity_type, classification, aircraft_tail, match_score_to_kcso,
+                behavior_type, spoofed_transponder, contract_operator, loiter_count, biometric_link_score,
+                risk_tier, avg_altitude_ft, detection_count, low_altitude_pct,
+                reference_aircraft, legal_exposure, prosecution_priority,
+                first_detection, last_detection, intel_notes,
+                vertical_stack_detected, paired_high_alt_asset
+              ) VALUES (
+                ${entityInfo.entity}, ${entityInfo.type}, ${entityInfo.classification}, ${reg}, ${matchScore.toFixed(2)},
+                ${behaviorType}, ${isSpoofed}, ${entityInfo.contractor || null}, ${criticalLowAlt}, ${biometricScore.toFixed(2)},
+                ${riskTier}, ${avgAlt.toFixed(2)}, ${detectionCount}, ${lowAltPct.toFixed(2)},
+                'N912KC/N913KC', ${legalExposure}, ${prosecutionPriority},
+                ${flight.first_seen}, ${flight.last_seen}, ${intelNotes.join('; ') || null},
+                ${hasVerticalStack}, ${verticalStackMap[reg] || null}
+              )
+              ON CONFLICT (entity_name, aircraft_tail) DO UPDATE SET
+                match_score_to_kcso = EXCLUDED.match_score_to_kcso,
+                behavior_type = EXCLUDED.behavior_type,
+                spoofed_transponder = EXCLUDED.spoofed_transponder,
+                loiter_count = EXCLUDED.loiter_count,
+                biometric_link_score = EXCLUDED.biometric_link_score,
+                risk_tier = EXCLUDED.risk_tier,
+                avg_altitude_ft = EXCLUDED.avg_altitude_ft,
+                detection_count = EXCLUDED.detection_count,
+                low_altitude_pct = EXCLUDED.low_altitude_pct,
+                legal_exposure = EXCLUDED.legal_exposure,
+                prosecution_priority = EXCLUDED.prosecution_priority,
+                last_detection = EXCLUDED.last_detection,
+                intel_notes = EXCLUDED.intel_notes,
+                vertical_stack_detected = EXCLUDED.vertical_stack_detected,
+                paired_high_alt_asset = EXCLUDED.paired_high_alt_asset,
+                updated_at = NOW()
+            `;
+            milRecordsCreated++;
+          } catch (insertErr) {
+            console.error(`Error inserting military/gov alignment for ${reg}:`, insertErr);
+          }
+        }
+        
+        console.log(`Created/updated ${milRecordsCreated} military/gov behavioral alignment records`);
+        result = { 
+          alignmentRecordsCreated: milRecordsCreated,
+          baselineUsed: { avgAltitude: baselineMilAvgAlt, lowAltPct: baselineMilLowAltPct },
+          matchedAircraft: matchedAircraft.length,
+          verticalStackPairings: Object.keys(verticalStackMap).length / 2
+        };
+        break;
+      }
+
+      case 'getMilitaryGovBehavioralAlignment': {
+        // Retrieve all military/government behavioral alignment records
+        console.log('Fetching military/government behavioral alignment data...');
+        
+        try {
+          const milGovAlignments = await sql`
+            SELECT * FROM military_gov_behavioral_alignment
+            ORDER BY match_score_to_kcso DESC
+          `;
+          
+          // Calculate summary stats
+          const tier1Count = milGovAlignments.filter((a: any) => a.risk_tier?.includes('Tier 1')).length;
+          const tier2Count = milGovAlignments.filter((a: any) => a.risk_tier?.includes('Tier 2')).length;
+          const highMatchCount = milGovAlignments.filter((a: any) => parseFloat(a.match_score_to_kcso) >= 85).length;
+          const verticalStackCount = milGovAlignments.filter((a: any) => a.vertical_stack_detected).length;
+          const spoofedCount = milGovAlignments.filter((a: any) => a.spoofed_transponder).length;
+          const medevacCount = milGovAlignments.filter((a: any) => a.classification === 'MEDEVAC_EXTENSION').length;
+          const militaryCount = milGovAlignments.filter((a: any) => 
+            a.classification === 'MILITARY_CONTRACT' || a.classification === 'TIER_WATCH_MILITARY_CONTRACT'
+          ).length;
+          const govCount = milGovAlignments.filter((a: any) => a.classification === 'GOV_AGENCY').length;
+          
+          result = {
+            alignments: milGovAlignments,
+            summary: {
+              totalRecords: milGovAlignments.length,
+              tier1Watch: tier1Count,
+              tier2Suspect: tier2Count,
+              highMatchAlerts: highMatchCount,
+              verticalStackEvents: verticalStackCount,
+              spoofedTransponders: spoofedCount,
+              medevacExtensions: medevacCount,
+              militaryContracts: militaryCount,
+              govAgencies: govCount,
+              uniqueEntities: [...new Set(milGovAlignments.map((a: any) => a.entity_name))].length,
+              uniqueAircraft: [...new Set(milGovAlignments.map((a: any) => a.aircraft_tail))].length
+            }
+          };
+        } catch (e) {
+          const err = e as Error;
+          if (err.message.includes('does not exist')) {
+            result = { notInitialized: true, message: 'Military/Gov alignment table not created yet. Click "Initialize Schema" first.' };
+          } else {
+            throw e;
+          }
+        }
+        break;
+      }
+
       default:
     }
 

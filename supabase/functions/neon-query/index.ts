@@ -762,7 +762,7 @@ serve(async (req) => {
           'N790FA', 'N788FA', 'N791FA', 'N997SE', 'N2464D',
           'N766ME', 'N118SY'
         ];
-        
+        // Use IN clause with explicit values to avoid postgres.js array handling issues
         try {
           // Step 1: Get flight-biometric correlations within ±10 minute windows
           const flightBioCorrelations = await sql`
@@ -785,7 +785,7 @@ serve(async (req) => {
               AND b.measurement_timestamp IS NOT NULL
               AND ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= 600
               AND (
-                f.registration = ANY(${priorityAircraft})
+                f.registration IN ('N912KC', 'N913KC', 'N743AM', 'N229AM', 'N790FA', 'N788FA', 'N791FA', 'N997SE', 'N2464D', 'N766ME', 'N118SY')
                 OR f.altitude < 1500
                 OR f.registration LIKE 'N91_KC'
                 OR f.callsign ILIKE '%KCSO%'

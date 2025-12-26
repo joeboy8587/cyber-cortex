@@ -31,6 +31,7 @@ import { ShellCompanyMatrix } from "@/components/dashboard/ShellCompanyMatrix";
 import { MilitaryAircraftPanel } from "@/components/dashboard/MilitaryAircraftPanel";
 import { DailyEventImporter } from "@/components/dashboard/DailyEventImporter";
 import { NotionAutoWatcher } from "@/components/dashboard/NotionAutoWatcher";
+import { NotionGapAnalyzer } from "@/components/dashboard/NotionGapAnalyzer";
 import { XXBTaxonomyPanel } from "@/components/dashboard/XXBTaxonomyPanel";
 import { GlobalAISearch } from "@/components/dashboard/GlobalAISearch";
 import { WatchtowerAlertsHub } from "@/components/dashboard/WatchtowerAlertsHub";
@@ -105,11 +106,14 @@ const Index = () => {
             </div>
           </section>
           
-          <section id="enterprise-network" className="grid grid-cols-1 xl:grid-cols-4 gap-6">
-            <CriminalEnterpriseNetwork />
-            <EnterpriseProfiles />
-            <DailyEventImporter />
-            <NotionAutoWatcher />
+          <section id="enterprise-network" className="space-y-6">
+            <NotionGapAnalyzer />
+            <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
+              <CriminalEnterpriseNetwork />
+              <EnterpriseProfiles />
+              <DailyEventImporter />
+              <NotionAutoWatcher />
+            </div>
           </section>
           
           <section id="pattern-analysis" className="space-y-6">

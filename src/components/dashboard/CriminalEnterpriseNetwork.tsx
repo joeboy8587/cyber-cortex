@@ -63,12 +63,23 @@ export function CriminalEnterpriseNetwork() {
       });
 
       if (entityData?.data) {
-        setEntities(entityData.data);
+        // Parse arrays that may come as strings from the database
+        const parsedEntities = entityData.data.map((e: any) => ({
+          ...e,
+          assets_controlled: Array.isArray(e.assets_controlled) 
+            ? e.assets_controlled 
+            : (typeof e.assets_controlled === 'string' ? JSON.parse(e.assets_controlled || '[]') : []),
+          legal_exposure: Array.isArray(e.legal_exposure) 
+            ? e.legal_exposure 
+            : (typeof e.legal_exposure === 'string' ? JSON.parse(e.legal_exposure || '[]') : [])
+        }));
+        
+        setEntities(parsedEntities);
         
         // Count total controlled aircraft
         let aircraftCount = 0;
-        entityData.data.forEach((e: EnterpriseEntity) => {
-          if (e.assets_controlled) {
+        parsedEntities.forEach((e: EnterpriseEntity) => {
+          if (Array.isArray(e.assets_controlled)) {
             aircraftCount += e.assets_controlled.length;
           }
         });

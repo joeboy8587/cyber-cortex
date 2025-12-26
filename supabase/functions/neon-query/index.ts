@@ -141,11 +141,37 @@ serve(async (req) => {
         const normalizedQuery = query.trim().toUpperCase();
         const isSelectQuery = normalizedQuery.startsWith('SELECT') || normalizedQuery.startsWith('WITH');
         const hasDangerousKeywords = /\b(INSERT|UPDATE|DELETE|DROP|TRUNCATE|ALTER|CREATE|GRANT|REVOKE)\b/i.test(query);
-        
+
         if (!isSelectQuery || hasDangerousKeywords) {
           throw new Error('Only SELECT queries are allowed');
         }
-        result = await sql.unsafe(query);
+
+        try {
+          result = await sql.unsafe(query);
+        } catch (e) {
+          // IMPORTANT: Do not return a 500 for expected schema drift (missing tables/columns).
+          // The UI probes many optional tables; when they don't exist we return a 200 with an empty dataset.
+          const err = e as any;
+          const code = String(err?.code || '');
+          const message = String(err?.message || 'Query failed');
+
+          const isMissingRelation = code === '42P01' || message.includes('does not exist');
+          const isMissingColumn = code === '42703' || message.includes('column') && message.includes('does not exist');
+
+          let hint: string | undefined;
+          if (isMissingColumn && message.includes('"timestamp"')) {
+            hint = 'This dataset uses detection_timestamp (flights) or measurement_timestamp (biometrics) rather than a generic timestamp column.';
+          }
+
+          console.warn('customQuery non-fatal database error:', { code, message, hint });
+          result = {
+            data: [],
+            nonFatal: true,
+            code,
+            error: message,
+            hint,
+          };
+        }
         break;
       }
 

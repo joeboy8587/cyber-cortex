@@ -147,33 +147,46 @@ export function BiometricCorrelation() {
   const fetchCorrelations = useCallback(async () => {
     setLoading(true);
     try {
-      // Fetch biometric sources first
-      const { data: sourcesData } = await supabase.functions.invoke("neon-query", {
-        body: {
-          action: "customQuery",
-          query: `
-            SELECT table_name, record_count FROM (
-              SELECT 'biometric_monitoring' as table_name, COUNT(*) as record_count FROM biometric_monitoring
-              UNION ALL SELECT 'biometric_vector_correlations', COUNT(*) FROM biometric_vector_correlations
-              UNION ALL SELECT 'integrated_biometric_data', COUNT(*) FROM integrated_biometric_data
-              UNION ALL SELECT 'biometric_flight_correlations_rows_5', COUNT(*) FROM biometric_flight_correlations_rows_5
-              UNION ALL SELECT 'biometric_logs_rows', COUNT(*) FROM biometric_logs_rows
-              UNION ALL SELECT 'biometric_evidence', COUNT(*) FROM biometric_evidence
-              UNION ALL SELECT 'biometrics_rows', COUNT(*) FROM biometrics_rows
-              UNION ALL SELECT 'confirmed_biometric_detections', COUNT(*) FROM confirmed_biometric_detections
-              UNION ALL SELECT 'biometric_measurements', COUNT(*) FROM biometric_measurements
-              UNION ALL SELECT 'biometric_correlation_events', COUNT(*) FROM biometric_correlation_events
-              UNION ALL SELECT 'physician_verified_ecgs', COUNT(*) FROM physician_verified_ecgs
-              UNION ALL SELECT 'joseph_nipper_physiological_impact', COUNT(*) FROM joseph_nipper_physiological_impact
-            ) t
-            WHERE record_count > 0
-            ORDER BY record_count DESC
-          `
-        }
-      });
+      // Fetch biometric sources using safe individual queries (some tables may not exist)
+      const biometricTables = [
+        'biometric_monitoring',
+        'biometric_vector_correlations', 
+        'integrated_biometric_data',
+        'biometric_flight_correlations_rows_5',
+        'biometric_evidence',
+        'biometrics_rows',
+        'confirmed_biometric_detections',
+        'biometric_measurements',
+        'biometric_correlation_events',
+        'physician_verified_ecgs',
+        'joseph_nipper_physiological_impact'
+      ];
       
-      setBiometricSources(sourcesData?.data || []);
-      const totalBio = (sourcesData?.data || []).reduce((sum: number, s: BiometricSource) => sum + s.record_count, 0);
+      const sourceResults: BiometricSource[] = [];
+      
+      for (const tableName of biometricTables) {
+        try {
+          const { data: countData, error } = await supabase.functions.invoke("neon-query", {
+            body: {
+              action: "customQuery",
+              query: `SELECT COUNT(*) as record_count FROM ${tableName}`
+            }
+          });
+          
+          if (!error && countData?.data?.[0]?.record_count > 0) {
+            sourceResults.push({
+              table_name: tableName,
+              record_count: parseInt(countData.data[0].record_count) || 0
+            });
+          }
+        } catch {
+          // Table may not exist, skip silently
+        }
+      }
+      
+      sourceResults.sort((a, b) => b.record_count - a.record_count);
+      setBiometricSources(sourceResults);
+      const totalBio = sourceResults.reduce((sum, s) => sum + s.record_count, 0);
 
       // Fetch live correlations with time window join
       const { data: corrData, error: corrError } = await supabase.functions.invoke("neon-query", {

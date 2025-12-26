@@ -125,7 +125,12 @@ serve(async (req) => {
       });
     }
 
-    return new Response(JSON.stringify(results), {
+    // Convert BigInt to Number for JSON serialization
+    const safeResults = JSON.parse(JSON.stringify(results, (_, value) =>
+      typeof value === 'bigint' ? Number(value) : value
+    ));
+
+    return new Response(JSON.stringify(safeResults), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 

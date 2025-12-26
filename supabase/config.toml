@@ -63,3 +63,6 @@ verify_jwt = false
 
 [functions.legal-narrative]
 verify_jwt = false
+
+[functions.multimodal-enrichment]
+verify_jwt = false

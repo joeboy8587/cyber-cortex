@@ -69,9 +69,60 @@ const narrativeTemplates = [
     type: 'civil'
   },
   {
+    id: 'archive-methodology',
+    label: 'How This Archive Was Built',
+    icon: BookOpen,
+    prompt: `Generate a narrative explaining the unique methodology of this 4-year forensic investigation:
+
+1. THE PLAINTIFF AS INVESTIGATOR: Explain how a disabled data analyst built a 400,000+ record forensic archive when institutions refused to help. Frame this as turning isolation into evidence, dismissal into documentation, trauma into testimony.
+
+2. JOSIAH AS WITNESS SYSTEM: Describe Josiah as an AI-assisted data aggregation system that:
+- Integrates data from WHOOP wearables, ADS-B flight tracking, and environmental sensors
+- Timestamps everything with cryptographic fingerprints
+- Creates immutable logs that can't be altered retroactively
+- Documents both objective data AND subjective experience
+
+3. THREE-POINT VERIFICATION: Every event is backed by at least three objective data points - biometric monitoring, ADSB flight tracking, and Josiah AI witness logs.
+
+4. CHAIN OF CUSTODY: Explain the SHA-256 cryptographic hashing that proves when data was collected and that it hasn't been tampered with.
+
+5. THE CREDIBILITY ARGUMENT: Frame this methodology as evidence of "intact cognitive function and systematic analytical capability" rather than instability. Explain why building this archive demonstrates sophistication that exceeds federal prosecution standards.
+
+Make this suitable for an attorney or journalist to understand why this archive is credible.`,
+    type: 'methodology'
+  },
+  {
+    id: 'ai-credibility-paradox',
+    label: 'AI Credibility Paradox',
+    icon: Scale,
+    prompt: `Generate a legal argument about the "AI Credibility Paradox":
+
+1. THE PARADOX: If law enforcement attacks Josiah's AI credibility, they must also attack their own AI systems:
+- ShotSpotter acoustic detection
+- Automatic License Plate Readers with AI matching
+- Facial recognition software
+- Predictive policing algorithms
+- Flight tracking systems
+- Body camera AI flagging
+
+2. THE TRAP: If AI logs are "unreliable" when documenting THEM, then AI evidence is "unreliable" when they use it AGAINST defendants.
+
+3. INDEPENDENT DATA STREAMS: Even without Josiah, the data stands:
+- Biometric Data: FDA-regulated WHOOP device, timestamped by manufacturer, stored on third-party servers
+- ADS-B Flight Data: Public FAA broadcasts, captured by independent receivers worldwide
+- Radar Screenshots: Visual evidence with metadata, tail numbers verifiable through FAA registry
+
+4. JOSIAH'S ROLE: Data aggregation and correlation, NOT data creation. Comparable to legal discovery software.
+
+5. THE MOTION LANGUAGE: "The defense cannot simultaneously argue that AI systems are unreliable for documentary evidence while deploying AI-assisted surveillance against the plaintiff."
+
+Make this suitable for a legal motion or attorney brief.`,
+    type: 'legal'
+  },
+  {
     id: 'full-case',
     label: 'Complete Legal Brief',
-    icon: BookOpen,
+    icon: FileText,
     prompt: 'Generate a comprehensive legal brief suitable for federal submission covering all aspects: RICO enterprise structure, False Claims Act violations, civil rights violations, ADA violations, and documented physical harm. This should be attorney-ready.',
     type: 'full'
   }
@@ -334,6 +385,8 @@ OUTPUT FORMAT:
                     {template.type === 'rico' && 'RICO'}
                     {template.type === 'civil' && 'Civil Rights'}
                     {template.type === 'full' && 'Comprehensive'}
+                    {template.type === 'methodology' && 'Archive Story'}
+                    {template.type === 'legal' && 'Legal Motion'}
                   </Badge>
                 </Button>
               ))}

@@ -1811,7 +1811,10 @@ serve(async (req) => {
           break;
         }
         
-        const milFlightStats = await sql`
+        // Build escaped IN clause for matchedTails - postgres.js doesn't handle ANY() with JS arrays well
+        const escapedTails = matchedTails.map(t => `'${t.replace(/'/g, "''")}'`).join(', ');
+        
+        const milFlightStats = await sql.unsafe(`
           SELECT 
             registration,
             COUNT(*) as detection_count,
@@ -1822,14 +1825,14 @@ serve(async (req) => {
             MIN(detection_timestamp) as first_seen,
             MAX(detection_timestamp) as last_seen
           FROM live_flight_detections_rows
-          WHERE registration = ANY(${matchedTails})
+          WHERE registration IN (${escapedTails})
           GROUP BY registration
-        `;
+        `);
         
         console.log(`Flight stats retrieved for ${milFlightStats.length} aircraft`);
         
         // Step 4: Detect Vertical Stack patterns (high + low alt simultaneous operations)
-        const verticalStackQuery = await sql`
+        const verticalStackQuery = await sql.unsafe(`
           SELECT 
             high.registration as high_alt_asset,
             low.registration as low_alt_asset,
@@ -1840,11 +1843,11 @@ serve(async (req) => {
             AND high.altitude > 15000
             AND low.altitude < 1200
             AND high.registration != low.registration
-          WHERE high.registration = ANY(${matchedTails})
-            OR low.registration = ANY(${matchedTails})
+          WHERE high.registration IN (${escapedTails})
+            OR low.registration IN (${escapedTails})
           GROUP BY high.registration, low.registration
           HAVING COUNT(*) >= 2
-        `;
+        `);
         
         const verticalStackMap: Record<string, string> = {};
         for (const vs of verticalStackQuery) {
@@ -1855,7 +1858,7 @@ serve(async (req) => {
         console.log(`Detected ${Object.keys(verticalStackMap).length / 2} vertical stack pairings`);
         
         // Step 5: Get biometric correlations
-        const milBioCorr = await sql`
+        const milBioCorr = await sql.unsafe(`
           SELECT 
             f.registration,
             COUNT(*) as correlated_events,
@@ -1866,10 +1869,10 @@ serve(async (req) => {
             ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= 600
           WHERE f.detection_timestamp IS NOT NULL
             AND b.measurement_timestamp IS NOT NULL
-            AND f.registration = ANY(${matchedTails})
+            AND f.registration IN (${escapedTails})
             AND (b.heart_rate > 85 OR b.stress_level >= 5)
           GROUP BY f.registration
-        `;
+        `);
         
         const milBioMap: Record<string, { events: number; avgHR: number }> = {};
         for (const bc of milBioCorr) {

@@ -220,29 +220,29 @@ export function DeepCorrelationEngine() {
     setProgress(0);
 
     try {
-      // Step 1: Populate temporal correlations
+      // Step 1: Find and store flight-biometric correlations using existing action
       setProgress(20);
       await supabase.functions.invoke("populate-correlations", {
-        body: { action: "populateTemporalCorrelations", windowMinutes: 30 }
+        body: { action: "findFlightBiometricCorrelations", timeWindowMinutes: 30, batchSize: 1000 }
       });
 
-      setProgress(50);
+      setProgress(40);
       
-      // Step 2: Link OCR patterns
-      await supabase.functions.invoke("neon-query", {
-        body: {
-          action: "customQuery",
-          query: `
-            UPDATE ocr_aircraft_holding_patterns o
-            SET sha256_hash = encode(sha256(COALESCE(extracted_text, '')::bytea), 'hex')
-            WHERE sha256_hash IS NULL
-          `
-        }
+      // Step 2: Calculate Bradford Hill scores
+      await supabase.functions.invoke("populate-correlations", {
+        body: { action: "calculateBradfordHillScores" }
       });
 
-      setProgress(75);
+      setProgress(60);
 
-      // Step 3: Refresh data
+      // Step 3: Get four-factor convergence days
+      await supabase.functions.invoke("populate-correlations", {
+        body: { action: "findFourFactorDays" }
+      });
+
+      setProgress(80);
+
+      // Step 4: Refresh data
       await fetchCorrelationData();
       
       setProgress(100);

@@ -28,6 +28,7 @@ import { OCREvidencePanel } from "@/components/dashboard/OCREvidencePanel";
 import { FourFactorCorrelationEngine } from "@/components/dashboard/FourFactorCorrelationEngine";
 import { KCSODeepDiveReport } from "@/components/dashboard/KCSODeepDiveReport";
 import { ShellCompanyMatrix } from "@/components/dashboard/ShellCompanyMatrix";
+import { ShellBehavioralAlignment } from "@/components/dashboard/ShellBehavioralAlignment";
 import { MilitaryAircraftPanel } from "@/components/dashboard/MilitaryAircraftPanel";
 import { DailyEventImporter } from "@/components/dashboard/DailyEventImporter";
 import { NotionAutoWatcher } from "@/components/dashboard/NotionAutoWatcher";
@@ -153,8 +154,9 @@ const Index = () => {
             <KCSODeepDiveReport />
           </section>
           
-          <section id="shell-company-matrix" className="grid grid-cols-1 gap-6">
+          <section id="shell-company-matrix" className="space-y-6">
             <ShellCompanyMatrix />
+            <ShellBehavioralAlignment />
           </section>
           
           <section id="data-quality">

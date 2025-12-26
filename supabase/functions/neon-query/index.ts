@@ -987,6 +987,297 @@ serve(async (req) => {
         break;
       }
 
+      case 'createBehavioralAlignmentTable': {
+        // Create shell_entity_behavioral_alignment table for RICO pattern matching
+        console.log('Creating shell_entity_behavioral_alignment table...');
+        
+        const createQuery = `
+          CREATE TABLE IF NOT EXISTS shell_entity_behavioral_alignment (
+            id SERIAL PRIMARY KEY,
+            entity_name TEXT NOT NULL,
+            entity_type TEXT DEFAULT 'SHELL_COMPANY',
+            aircraft_tail TEXT,
+            match_score_to_kcso NUMERIC(5,2) DEFAULT 0,
+            behavior_type TEXT,
+            confirmed_flight_overlap BOOLEAN DEFAULT false,
+            geofence_radius_km NUMERIC(5,2),
+            biometric_link_score NUMERIC(5,2) DEFAULT 0,
+            risk_tier TEXT DEFAULT 'Tier 3',
+            avg_altitude_ft NUMERIC(8,2),
+            loiter_count INTEGER DEFAULT 0,
+            detection_count INTEGER DEFAULT 0,
+            low_altitude_pct NUMERIC(5,2) DEFAULT 0,
+            time_of_day_pattern TEXT,
+            reentry_frequency INTEGER DEFAULT 0,
+            reference_aircraft TEXT,
+            similarity_notes TEXT,
+            legal_exposure TEXT,
+            prosecution_priority TEXT DEFAULT 'MONITORING',
+            first_detection TIMESTAMP,
+            last_detection TIMESTAMP,
+            created_at TIMESTAMP DEFAULT NOW(),
+            updated_at TIMESTAMP DEFAULT NOW(),
+            UNIQUE(entity_name, aircraft_tail)
+          )
+        `;
+        await sql.unsafe(createQuery);
+        
+        // Create index for fast lookups
+        await sql.unsafe(`CREATE INDEX IF NOT EXISTS idx_behavioral_risk_tier ON shell_entity_behavioral_alignment(risk_tier)`);
+        await sql.unsafe(`CREATE INDEX IF NOT EXISTS idx_behavioral_match_score ON shell_entity_behavioral_alignment(match_score_to_kcso DESC)`);
+        
+        result = { created: true, message: 'shell_entity_behavioral_alignment table created with indexes' };
+        break;
+      }
+
+      case 'computeBehavioralAlignment': {
+        // Compute behavioral similarity scores for all shell entities against KCSO Tier 1 assets
+        console.log('Computing behavioral alignment scores...');
+        
+        // Step 1: Get KCSO Tier 1 reference patterns (N912KC, N913KC baseline)
+        const kcsoBaseline = await sql`
+          SELECT 
+            AVG(altitude) as avg_altitude,
+            AVG(speed) as avg_speed,
+            COUNT(*) as total_detections,
+            COUNT(*) FILTER (WHERE altitude < 1500) as low_alt_count,
+            COUNT(DISTINCT DATE(detection_timestamp)) as active_days,
+            MIN(detection_timestamp) as first_seen,
+            MAX(detection_timestamp) as last_seen
+          FROM live_flight_detections_rows
+          WHERE registration IN ('N912KC', 'N913KC')
+        `;
+        
+        const baseline = kcsoBaseline[0] || { avg_altitude: 1100, avg_speed: 120, total_detections: 1000, low_alt_count: 800 };
+        const baselineAvgAlt = parseFloat(baseline.avg_altitude) || 1100;
+        const baselineLowAltPct = (parseInt(baseline.low_alt_count) / parseInt(baseline.total_detections)) * 100 || 80;
+        
+        console.log(`KCSO Baseline: avg_alt=${baselineAvgAlt}, low_alt_pct=${baselineLowAltPct}%`);
+        
+        // Step 2: Get enterprise entities with their associated aircraft
+        const enterpriseEntities = await sql`
+          SELECT 
+            entity_name,
+            entity_type,
+            assets_controlled,
+            tier,
+            prosecution_priority,
+            legal_exposure,
+            notes
+          FROM criminal_enterprise_command_structure
+          WHERE entity_type IN ('SHELL_COMPANY', 'CONTRACTOR', 'MEDICAL_ASSET', 'INFRASTRUCTURE_SUPPORT')
+        `;
+        
+        console.log(`Found ${enterpriseEntities.length} shell/contractor entities to analyze`);
+        
+        // Step 3: Get all flight detections grouped by operator pattern
+        const flightsByOperator = await sql`
+          SELECT 
+            registration,
+            COUNT(*) as detection_count,
+            AVG(altitude) as avg_altitude,
+            AVG(speed) as avg_speed,
+            COUNT(*) FILTER (WHERE altitude < 1500) as low_alt_detections,
+            COUNT(*) FILTER (WHERE altitude < 500) as critical_low_alt,
+            COUNT(DISTINCT DATE(detection_timestamp)) as active_days,
+            MIN(detection_timestamp) as first_detection,
+            MAX(detection_timestamp) as last_detection,
+            ROUND(COUNT(*) FILTER (WHERE altitude < 1500)::numeric / NULLIF(COUNT(*)::numeric, 0) * 100, 2) as low_alt_pct
+          FROM live_flight_detections_rows
+          WHERE registration IS NOT NULL AND registration != ''
+          GROUP BY registration
+          HAVING COUNT(*) >= 3
+          ORDER BY detection_count DESC
+        `;
+        
+        // Step 4: Get biometric correlation data for each aircraft
+        const bioCorrelations = await sql`
+          SELECT 
+            f.registration,
+            COUNT(*) as bio_correlation_count,
+            AVG(b.heart_rate) as avg_heart_rate_during,
+            AVG(b.stress_level) as avg_stress_during
+          FROM live_flight_detections_rows f
+          CROSS JOIN biometric_monitoring b
+          WHERE f.detection_timestamp IS NOT NULL
+            AND b.measurement_timestamp IS NOT NULL
+            AND ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= 600
+            AND (b.heart_rate > 85 OR b.stress_level >= 5)
+          GROUP BY f.registration
+        `;
+        
+        const bioMap = new Map();
+        for (const bc of bioCorrelations) {
+          bioMap.set(bc.registration, {
+            count: parseInt(bc.bio_correlation_count) || 0,
+            avgHR: parseFloat(bc.avg_heart_rate_during) || 0,
+            avgStress: parseFloat(bc.avg_stress_during) || 0
+          });
+        }
+        
+        // Step 5: Calculate behavioral alignment scores
+        const alignmentRecords: any[] = [];
+        
+        // Known shell company aircraft mappings
+        const shellAircraftMap: Record<string, string[]> = {
+          'ALF IX LLC': ['N788FA', 'N790FA', 'N791FA', 'N899JR'],
+          'AERO EQUITIES LLC': ['N997SE', 'N2464D'],
+          'CHRISTIANSEN AVIATION LLC': ['N828CF', 'N83SF', 'N8274E', 'N840PA'],
+          'Air Methods': ['N743AM', 'N229AM', 'N7AM'],
+          'Mercy Air': ['N911AM'],
+          'XING KONG AVIATION SERVICE LLC': [],
+          'K.S. Aviation Inc.': [],
+          'Xin Han Aviation LLC': []
+        };
+        
+        for (const entity of enterpriseEntities) {
+          const entityName = entity.entity_name;
+          const knownAircraft = shellAircraftMap[entityName] || [];
+          
+          // Find matching flight records
+          const matchingFlights = flightsByOperator.filter((f: any) => 
+            knownAircraft.includes(f.registration) ||
+            (entity.assets_controlled && entity.assets_controlled.includes(f.registration))
+          );
+          
+          for (const flight of matchingFlights) {
+            const avgAlt = parseFloat(flight.avg_altitude) || 0;
+            const lowAltPct = parseFloat(flight.low_alt_pct) || 0;
+            const detections = parseInt(flight.detection_count) || 0;
+            
+            // Calculate altitude similarity (closer to KCSO = higher score)
+            const altDiff = Math.abs(avgAlt - baselineAvgAlt);
+            const altSimilarity = Math.max(0, 100 - (altDiff / 50)); // 50ft diff = 1% reduction
+            
+            // Calculate low-altitude pattern similarity
+            const lowAltDiff = Math.abs(lowAltPct - baselineLowAltPct);
+            const lowAltSimilarity = Math.max(0, 100 - lowAltDiff);
+            
+            // Get biometric correlation score
+            const bioData = bioMap.get(flight.registration) || { count: 0, avgHR: 0, avgStress: 0 };
+            const bioScore = Math.min(100, (bioData.count / 10) * 20 + (bioData.avgStress / 10) * 30);
+            
+            // Calculate weighted match score
+            const matchScore = (altSimilarity * 0.3) + (lowAltSimilarity * 0.4) + (bioScore * 0.3);
+            
+            // Determine behavior type
+            let behaviorType = 'STANDARD';
+            if (lowAltPct > 50 && avgAlt < 1500) behaviorType = 'LOITER_MIMIC';
+            else if (Math.abs(avgAlt - baselineAvgAlt) < 200) behaviorType = 'ALTITUDE_ECHO';
+            else if (detections > 100 && lowAltPct > 30) behaviorType = 'PERSISTENT_PRESENCE';
+            else if (parseInt(flight.critical_low_alt) > 10) behaviorType = 'CRITICAL_LOW_ALT';
+            
+            // Determine risk tier based on match score
+            let riskTier = 'Tier 3';
+            if (matchScore >= 85) riskTier = 'Tier 1 Probationary';
+            else if (matchScore >= 70) riskTier = 'Tier 2';
+            else if (matchScore >= 50) riskTier = 'Tier 2 Watch';
+            
+            alignmentRecords.push({
+              entity_name: entityName,
+              entity_type: entity.entity_type,
+              aircraft_tail: flight.registration,
+              match_score_to_kcso: matchScore.toFixed(2),
+              behavior_type: behaviorType,
+              confirmed_flight_overlap: detections > 10,
+              geofence_radius_km: 5.0, // Default Oildale geofence
+              biometric_link_score: bioScore.toFixed(2),
+              risk_tier: riskTier,
+              avg_altitude_ft: avgAlt.toFixed(0),
+              loiter_count: parseInt(flight.critical_low_alt) || 0,
+              detection_count: detections,
+              low_altitude_pct: lowAltPct,
+              reference_aircraft: 'N912KC/N913KC',
+              first_detection: flight.first_detection,
+              last_detection: flight.last_detection,
+              legal_exposure: entity.legal_exposure,
+              prosecution_priority: matchScore >= 85 ? 'HIGH' : matchScore >= 70 ? 'MEDIUM' : 'MONITORING'
+            });
+          }
+        }
+        
+        // Step 6: Insert/update records
+        let insertedCount = 0;
+        for (const rec of alignmentRecords) {
+          try {
+            await sql.unsafe(`
+              INSERT INTO shell_entity_behavioral_alignment 
+              (entity_name, entity_type, aircraft_tail, match_score_to_kcso, behavior_type, 
+               confirmed_flight_overlap, geofence_radius_km, biometric_link_score, risk_tier,
+               avg_altitude_ft, loiter_count, detection_count, low_altitude_pct, reference_aircraft,
+               first_detection, last_detection, legal_exposure, prosecution_priority)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+              ON CONFLICT (entity_name, aircraft_tail) 
+              DO UPDATE SET 
+                match_score_to_kcso = EXCLUDED.match_score_to_kcso,
+                behavior_type = EXCLUDED.behavior_type,
+                biometric_link_score = EXCLUDED.biometric_link_score,
+                risk_tier = EXCLUDED.risk_tier,
+                detection_count = EXCLUDED.detection_count,
+                low_altitude_pct = EXCLUDED.low_altitude_pct,
+                last_detection = EXCLUDED.last_detection,
+                updated_at = NOW()
+            `, [
+              rec.entity_name, rec.entity_type, rec.aircraft_tail, rec.match_score_to_kcso,
+              rec.behavior_type, rec.confirmed_flight_overlap, rec.geofence_radius_km,
+              rec.biometric_link_score, rec.risk_tier, rec.avg_altitude_ft, rec.loiter_count,
+              rec.detection_count, rec.low_altitude_pct, rec.reference_aircraft,
+              rec.first_detection, rec.last_detection, rec.legal_exposure, rec.prosecution_priority
+            ]);
+            insertedCount++;
+          } catch (e) {
+            console.error('Insert error for', rec.entity_name, rec.aircraft_tail, e);
+          }
+        }
+        
+        result = {
+          computed: true,
+          baselineAltitude: baselineAvgAlt,
+          baselineLowAltPct: baselineLowAltPct,
+          entitiesAnalyzed: enterpriseEntities.length,
+          alignmentRecordsCreated: insertedCount,
+          records: alignmentRecords.sort((a, b) => parseFloat(b.match_score_to_kcso) - parseFloat(a.match_score_to_kcso))
+        };
+        break;
+      }
+
+      case 'getBehavioralAlignment': {
+        // Retrieve all behavioral alignment records
+        console.log('Fetching behavioral alignment data...');
+        
+        try {
+          const alignments = await sql`
+            SELECT * FROM shell_entity_behavioral_alignment
+            ORDER BY match_score_to_kcso DESC
+          `;
+          
+          // Calculate summary stats
+          const tier1Count = alignments.filter((a: any) => a.risk_tier?.includes('Tier 1')).length;
+          const tier2Count = alignments.filter((a: any) => a.risk_tier?.includes('Tier 2')).length;
+          const highMatchCount = alignments.filter((a: any) => parseFloat(a.match_score_to_kcso) >= 85).length;
+          
+          result = {
+            alignments,
+            summary: {
+              totalRecords: alignments.length,
+              tier1Probationary: tier1Count,
+              tier2Watch: tier2Count,
+              highMatchAlerts: highMatchCount,
+              uniqueEntities: [...new Set(alignments.map((a: any) => a.entity_name))].length,
+              uniqueAircraft: [...new Set(alignments.map((a: any) => a.aircraft_tail))].length
+            }
+          };
+        } catch (e) {
+          const err = e as Error;
+          if (err.message.includes('does not exist')) {
+            result = { notInitialized: true, message: 'Table not created yet. Click "Initialize Schema" first.' };
+          } else {
+            throw e;
+          }
+        }
+        break;
+      }
+
       default:
     }
 

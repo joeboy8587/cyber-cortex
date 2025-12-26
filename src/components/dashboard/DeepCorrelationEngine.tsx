@@ -220,10 +220,10 @@ export function DeepCorrelationEngine() {
     setProgress(0);
 
     try {
-      // Step 1: Find and store flight-biometric correlations using existing action
+      // Step 1: Populate temporal correlations (batch-insert into correlation tables)
       setProgress(20);
       await supabase.functions.invoke("populate-correlations", {
-        body: { action: "findFlightBiometricCorrelations", timeWindowMinutes: 30, batchSize: 1000 }
+        body: { action: "populateTemporalCorrelations", windowMinutes: 30, batchSize: 1000 }
       });
 
       setProgress(40);

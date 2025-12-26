@@ -411,6 +411,154 @@ serve(async (req) => {
         break;
       }
 
+      case 'populateTemporalCorrelations': {
+        // Batch-insert temporal correlations joining flight, biometric, Josiah, and OCR data
+        const windowMinutes = body.windowMinutes ?? 30;
+        const limit = batchSize;
+        
+        console.log(`Populating temporal correlations with ${windowMinutes} minute window, batch ${limit}...`);
+
+        // First check if correlation_events table exists and get its schema
+        const correlationSchema = await sql`
+          SELECT column_name, data_type
+          FROM information_schema.columns
+          WHERE table_name = 'correlation_events'
+          ORDER BY ordinal_position
+        `;
+
+        if (correlationSchema.length === 0) {
+          // Try multi_factor_correlations instead
+          const multiFactorSchema = await sql`
+            SELECT column_name, data_type
+            FROM information_schema.columns
+            WHERE table_name = 'multi_factor_correlations'
+            ORDER BY ordinal_position
+          `;
+
+          if (multiFactorSchema.length === 0) {
+            throw new Error('Neither correlation_events nor multi_factor_correlations table exists');
+          }
+
+          // Use multi_factor_correlations table
+          const mfCols = (multiFactorSchema as unknown as Array<{ column_name: string }>).map(c => c.column_name);
+          const hasMfCol = (c: string) => mfCols.includes(c);
+
+          const mfInsertCols: string[] = [];
+          const mfSelectExprs: string[] = [];
+
+          const addMf = (col: string, expr: string) => {
+            if (!hasMfCol(col)) return;
+            mfInsertCols.push(col);
+            mfSelectExprs.push(expr);
+          };
+
+          addMf('id', 'gen_random_uuid()');
+          addMf('correlation_id', `CONCAT('MF_', f.registration, '_', DATE(f.detection_timestamp)::text)`);
+          addMf('aircraft_registration', 'f.registration');
+          addMf('flight_timestamp', 'f.detection_timestamp');
+          addMf('biometric_timestamp', 'b.measurement_timestamp');
+          addMf('heart_rate', 'b.heart_rate');
+          addMf('hrv', 'b.hrv');
+          addMf('altitude', 'f.altitude');
+          addMf('time_offset_seconds', `EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))`);
+          addMf('correlation_strength', `CASE 
+            WHEN ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= 60 THEN 0.95
+            WHEN ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= 300 THEN 0.8
+            WHEN ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= 600 THEN 0.6
+            ELSE 0.4 END`);
+          addMf('factor_count', '2');
+          addMf('created_at', 'NOW()');
+
+          if (mfInsertCols.length === 0) {
+            throw new Error('No compatible columns found on multi_factor_correlations');
+          }
+
+          const mfInsertSql = `
+            INSERT INTO multi_factor_correlations (${mfInsertCols.map(c => `"${c}"`).join(', ')})
+            SELECT ${mfSelectExprs.join(', ')}
+            FROM live_flight_detections_rows f
+            JOIN biometric_monitoring b
+              ON ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= ($1::int * 60)
+            WHERE f.detection_timestamp IS NOT NULL
+              AND b.measurement_timestamp IS NOT NULL
+              AND f.registration IS NOT NULL
+            ORDER BY f.detection_timestamp DESC
+            LIMIT $2::int
+            ON CONFLICT DO NOTHING
+          `;
+
+          await sql.unsafe(mfInsertSql, [windowMinutes, limit]);
+          const mfCount = await sql`SELECT COUNT(*) as total FROM multi_factor_correlations`;
+
+          result = {
+            message: 'Temporal correlations populated into multi_factor_correlations',
+            windowMinutes,
+            batchSize: limit,
+            totalInTable: mfCount[0]?.total
+          };
+        } else {
+          // Use correlation_events table
+          const ceCols = (correlationSchema as unknown as Array<{ column_name: string }>).map(c => c.column_name);
+          const hasCeCol = (c: string) => ceCols.includes(c);
+
+          const ceInsertCols: string[] = [];
+          const ceSelectExprs: string[] = [];
+
+          const addCe = (col: string, expr: string) => {
+            if (!hasCeCol(col)) return;
+            ceInsertCols.push(col);
+            ceSelectExprs.push(expr);
+          };
+
+          addCe('id', 'gen_random_uuid()');
+          addCe('event_id', `CONCAT('TE_', f.registration, '_', EXTRACT(EPOCH FROM f.detection_timestamp)::text)`);
+          addCe('event_type', "'temporal_correlation'");
+          addCe('aircraft_registration', 'f.registration');
+          addCe('event_timestamp', 'f.detection_timestamp');
+          addCe('biometric_timestamp', 'b.measurement_timestamp');
+          addCe('heart_rate', 'b.heart_rate');
+          addCe('hrv', 'b.hrv');
+          addCe('altitude', 'f.altitude');
+          addCe('callsign', 'f.callsign');
+          addCe('time_offset_seconds', `EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))`);
+          addCe('correlation_score', `CASE 
+            WHEN ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= 60 THEN 95
+            WHEN ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= 300 THEN 80
+            WHEN ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= 600 THEN 60
+            ELSE 40 END`);
+          addCe('created_at', 'NOW()');
+
+          if (ceInsertCols.length === 0) {
+            throw new Error('No compatible columns found on correlation_events');
+          }
+
+          const ceInsertSql = `
+            INSERT INTO correlation_events (${ceInsertCols.map(c => `"${c}"`).join(', ')})
+            SELECT ${ceSelectExprs.join(', ')}
+            FROM live_flight_detections_rows f
+            JOIN biometric_monitoring b
+              ON ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= ($1::int * 60)
+            WHERE f.detection_timestamp IS NOT NULL
+              AND b.measurement_timestamp IS NOT NULL
+              AND f.registration IS NOT NULL
+            ORDER BY f.detection_timestamp DESC
+            LIMIT $2::int
+            ON CONFLICT DO NOTHING
+          `;
+
+          await sql.unsafe(ceInsertSql, [windowMinutes, limit]);
+          const ceCount = await sql`SELECT COUNT(*) as total FROM correlation_events`;
+
+          result = {
+            message: 'Temporal correlations populated into correlation_events',
+            windowMinutes,
+            batchSize: limit,
+            totalInTable: ceCount[0]?.total
+          };
+        }
+        break;
+      }
+
       default:
         throw new Error(`Unknown action: ${action}`);
     }

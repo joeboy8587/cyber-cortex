@@ -54,109 +54,162 @@ export function DeepCorrelationEngine() {
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
 
+  // Helper to safely extract array data from neon-query response
+  const safeExtractData = (response: any): any[] => {
+    if (!response) return [];
+    // If it's already an array, return it
+    if (Array.isArray(response)) return response;
+    // If it has a 'data' property that's an array, return that
+    if (response.data && Array.isArray(response.data)) return response.data;
+    // If nonFatal error, return empty
+    if (response.nonFatal) return [];
+    // Otherwise wrap single object in array
+    if (typeof response === 'object') return [response];
+    return [];
+  };
+
   const fetchCorrelationData = useCallback(async () => {
     setLoading(true);
     try {
-      // Get table counts for biometric, flight, and OCR data - single efficient query
-      const { data: countsData } = await supabase.functions.invoke("neon-query", {
-        body: {
-          action: "customQuery",
-          query: `
-            SELECT 
-              (SELECT COUNT(*) FROM biometric_monitoring) as biometric_count,
-              (SELECT COUNT(*) FROM integrated_biometric_data) as integrated_bio_count,
-              (SELECT COUNT(*) FROM biometrics_rows) as biometrics_rows_count,
-              (SELECT COUNT(*) FROM biometric_readings_extended) as bio_extended_count,
-              (SELECT COUNT(*) FROM biometric_data_rows) as bio_data_count,
-              (SELECT COUNT(*) FROM live_flight_detections_rows) as flight_count,
-              (SELECT COUNT(*) FROM biometric_vector_correlations) as correlation_count,
-              (SELECT COUNT(*) FROM ocr_aircraft_holding_patterns) as ocr_holding_count,
-              (SELECT COUNT(*) FROM screenshot_ocr_data) as ocr_screenshot_count,
-              (SELECT COUNT(*) FROM josiah_reflections_rows) as reflections_count,
-              (SELECT COUNT(*) FROM flagged_aircraft_rows_rows) as flagged_count
-          `
-        }
-      });
+      // Get table counts for biometric, flight, and OCR data - using individual safe queries
+      const tableQueries = [
+        { key: 'biometric_count', query: 'SELECT COUNT(*) as cnt FROM biometric_monitoring' },
+        { key: 'integrated_bio_count', query: 'SELECT COUNT(*) as cnt FROM integrated_biometric_data' },
+        { key: 'biometrics_rows_count', query: 'SELECT COUNT(*) as cnt FROM biometrics_rows' },
+        { key: 'bio_extended_count', query: 'SELECT COUNT(*) as cnt FROM biometric_readings_extended' },
+        { key: 'bio_data_count', query: 'SELECT COUNT(*) as cnt FROM biometric_data_rows' },
+        { key: 'flight_count', query: 'SELECT COUNT(*) as cnt FROM live_flight_detections_rows' },
+        { key: 'correlation_count', query: 'SELECT COUNT(*) as cnt FROM biometric_vector_correlations' },
+        { key: 'ocr_holding_count', query: 'SELECT COUNT(*) as cnt FROM ocr_aircraft_holding_patterns' },
+        { key: 'ocr_screenshot_count', query: 'SELECT COUNT(*) as cnt FROM screenshot_ocr_data' },
+        { key: 'reflections_count', query: 'SELECT COUNT(*) as cnt FROM josiah_reflections_rows' },
+        { key: 'flagged_count', query: 'SELECT COUNT(*) as cnt FROM flagged_aircraft_rows_rows' },
+      ];
+
+      const counts: Record<string, number> = {};
+      
+      // Run queries in parallel
+      const results = await Promise.all(
+        tableQueries.map(async ({ key, query }) => {
+          try {
+            const { data } = await supabase.functions.invoke("neon-query", {
+              body: { action: "customQuery", query }
+            });
+            const extracted = safeExtractData(data);
+            return { key, value: parseInt(extracted[0]?.cnt) || 0 };
+          } catch {
+            return { key, value: 0 };
+          }
+        })
+      );
+
+      for (const { key, value } of results) {
+        counts[key] = value;
+      }
 
       // Get Bradford Hill scores with aircraft-biometric links
-      const { data: bradfordData } = await supabase.functions.invoke("populate-correlations", {
-        body: { action: "calculateBradfordHillScores" }
-      });
+      try {
+        const { data: bradfordData } = await supabase.functions.invoke("populate-correlations", {
+          body: { action: "calculateBradfordHillScores" }
+        });
 
-      if (bradfordData?.scores) {
-        setAircraftBioLinks(bradfordData.scores.slice(0, 20));
+        if (bradfordData?.scores && Array.isArray(bradfordData.scores)) {
+          setAircraftBioLinks(bradfordData.scores.slice(0, 20));
+        }
+      } catch (err) {
+        console.warn("Bradford Hill scores fetch failed:", err);
       }
 
       // Get actual flight-biometric correlation count
-      const { data: flightBioData } = await supabase.functions.invoke("populate-correlations", {
-        body: { action: "findFlightBiometricCorrelations", timeWindowMinutes: 5, batchSize: 5000 }
-      });
+      let flightBioCount = 0;
+      try {
+        const { data: flightBioData } = await supabase.functions.invoke("populate-correlations", {
+          body: { action: "findFlightBiometricCorrelations", timeWindowMinutes: 5, batchSize: 5000 }
+        });
+        flightBioCount = flightBioData?.count || 0;
+      } catch (err) {
+        console.warn("Flight-biometric correlations fetch failed:", err);
+      }
 
-      // Estimate orphaned biometrics using a faster sampling approach
-      const { data: orphanedBio } = await supabase.functions.invoke("neon-query", {
-        body: {
-          action: "customQuery",
-          query: `
-            WITH sample_bio AS (
-              SELECT id, measurement_timestamp 
-              FROM biometric_monitoring 
-              WHERE measurement_timestamp IS NOT NULL
-              ORDER BY RANDOM() 
-              LIMIT 500
-            ),
-            matched AS (
-              SELECT DISTINCT sb.id
-              FROM sample_bio sb
-              WHERE EXISTS (
-                SELECT 1 FROM live_flight_detections_rows f 
-                WHERE f.detection_timestamp BETWEEN sb.measurement_timestamp - INTERVAL '30 minutes' 
-                AND sb.measurement_timestamp + INTERVAL '30 minutes'
-                LIMIT 1
+      // Estimate orphaned biometrics using a safer query
+      let orphanedBio = { orphaned: 0, total: 0 };
+      try {
+        const { data: orphanedData } = await supabase.functions.invoke("neon-query", {
+          body: {
+            action: "customQuery",
+            query: `
+              WITH sample_bio AS (
+                SELECT id, measurement_timestamp 
+                FROM biometric_monitoring 
+                WHERE measurement_timestamp IS NOT NULL
+                ORDER BY RANDOM() 
+                LIMIT 500
+              ),
+              matched AS (
+                SELECT DISTINCT sb.id
+                FROM sample_bio sb
+                WHERE EXISTS (
+                  SELECT 1 FROM live_flight_detections_rows f 
+                  WHERE f.detection_timestamp BETWEEN sb.measurement_timestamp - INTERVAL '30 minutes' 
+                  AND sb.measurement_timestamp + INTERVAL '30 minutes'
+                  LIMIT 1
+                )
               )
-            )
-            SELECT 
-              (SELECT COUNT(*) FROM sample_bio) - (SELECT COUNT(*) FROM matched) as orphaned,
-              (SELECT COUNT(*) FROM sample_bio) as total
-          `
+              SELECT 
+                (SELECT COUNT(*) FROM sample_bio) - (SELECT COUNT(*) FROM matched) as orphaned,
+                (SELECT COUNT(*) FROM sample_bio) as total
+            `
+          }
+        });
+        const extracted = safeExtractData(orphanedData);
+        if (extracted.length > 0) {
+          orphanedBio = {
+            orphaned: parseInt(extracted[0]?.orphaned) || 0,
+            total: parseInt(extracted[0]?.total) || 0
+          };
         }
-      });
+      } catch (err) {
+        console.warn("Orphaned biometrics query failed:", err);
+      }
 
       // Check orphaned flights
-      const { data: orphanedFlights } = await supabase.functions.invoke("neon-query", {
-        body: {
-          action: "customQuery",
-          query: `
-            SELECT COUNT(*) as orphaned_flagged
-            FROM flagged_aircraft_rows_rows f
-            WHERE NOT EXISTS (
-              SELECT 1 FROM biometric_vector_correlations bvc
-              WHERE bvc.matched_aircraft::text ILIKE '%' || COALESCE(f.hex, f.flight, '') || '%'
-            )
-          `
-        }
-      });
-
-      // Calculate stats
-      const counts = countsData?.data?.[0] || {};
-      const bioOrphan = orphanedBio?.data?.[0] || { orphaned: 0, total: 0 };
-      const flightOrphan = orphanedFlights?.data?.[0] || { orphaned_flagged: 0 };
+      let orphanedFlightCount = 0;
+      try {
+        const { data: orphanedFlights } = await supabase.functions.invoke("neon-query", {
+          body: {
+            action: "customQuery",
+            query: `
+              SELECT COUNT(*) as orphaned_flagged
+              FROM flagged_aircraft_rows_rows f
+              WHERE NOT EXISTS (
+                SELECT 1 FROM biometric_vector_correlations bvc
+                WHERE bvc.matched_aircraft::text ILIKE '%' || COALESCE(f.hex, f.flight, '') || '%'
+              )
+            `
+          }
+        });
+        const extracted = safeExtractData(orphanedFlights);
+        orphanedFlightCount = parseInt(extracted[0]?.orphaned_flagged) || 0;
+      } catch (err) {
+        console.warn("Orphaned flights query failed:", err);
+      }
 
       // Total biometrics across all tables
       const totalBio = 
-        (parseInt(counts.biometric_count) || 0) +
-        (parseInt(counts.integrated_bio_count) || 0) +
-        (parseInt(counts.biometrics_rows_count) || 0) +
-        (parseInt(counts.bio_extended_count) || 0) +
-        (parseInt(counts.bio_data_count) || 0);
+        counts.biometric_count +
+        counts.integrated_bio_count +
+        counts.biometrics_rows_count +
+        counts.bio_extended_count +
+        counts.bio_data_count;
 
       setStats({
         total_biometric_records: totalBio,
-        total_flight_records: parseInt(counts.flight_count) || 0,
-        total_ocr_records: (parseInt(counts.ocr_holding_count) || 0) + (parseInt(counts.ocr_screenshot_count) || 0),
-        existing_correlations: flightBioData?.count || parseInt(counts.correlation_count) || 0,
+        total_flight_records: counts.flight_count,
+        total_ocr_records: counts.ocr_holding_count + counts.ocr_screenshot_count,
+        existing_correlations: flightBioCount || counts.correlation_count,
         potential_correlations: Math.min(totalBio, 10000),
-        orphaned_biometrics: parseInt(bioOrphan.orphaned) || 0,
-        orphaned_flights: parseInt(flightOrphan.orphaned_flagged) || 0
+        orphaned_biometrics: orphanedBio.orphaned,
+        orphaned_flights: orphanedFlightCount
       });
 
       // Build correlation matrix
@@ -167,10 +220,10 @@ export function DeepCorrelationEngine() {
         source_table: 'biometric_monitoring',
         target_table: 'live_flight_detections_rows',
         correlation_type: 'Temporal (±30min)',
-        linked_records: parseInt(counts.correlation_count) || 0,
-        orphaned_records: parseInt(bioOrphan.orphaned) || 0,
-        coverage_percent: bioOrphan.total > 0 
-          ? Math.round(((bioOrphan.total - bioOrphan.orphaned) / bioOrphan.total) * 100) 
+        linked_records: counts.correlation_count,
+        orphaned_records: orphanedBio.orphaned,
+        coverage_percent: orphanedBio.total > 0 
+          ? Math.round(((orphanedBio.total - orphanedBio.orphaned) / orphanedBio.total) * 100) 
           : 0
       });
 
@@ -179,10 +232,10 @@ export function DeepCorrelationEngine() {
         source_table: 'flagged_aircraft_rows_rows',
         target_table: 'biometric_vector_correlations',
         correlation_type: 'Aircraft Match',
-        linked_records: parseInt(counts.flagged_count) - parseInt(flightOrphan.orphaned_flagged),
-        orphaned_records: parseInt(flightOrphan.orphaned_flagged) || 0,
+        linked_records: counts.flagged_count - orphanedFlightCount,
+        orphaned_records: orphanedFlightCount,
         coverage_percent: counts.flagged_count > 0 
-          ? Math.round(((parseInt(counts.flagged_count) - parseInt(flightOrphan.orphaned_flagged)) / parseInt(counts.flagged_count)) * 100) 
+          ? Math.round(((counts.flagged_count - orphanedFlightCount) / counts.flagged_count) * 100) 
           : 0
       });
 
@@ -191,8 +244,8 @@ export function DeepCorrelationEngine() {
         source_table: 'ocr_aircraft_holding_patterns',
         target_table: 'live_flight_detections_rows',
         correlation_type: 'Pattern Match',
-        linked_records: Math.round(parseInt(counts.ocr_holding_count) * 0.4) || 0,
-        orphaned_records: Math.round(parseInt(counts.ocr_holding_count) * 0.6) || 0,
+        linked_records: Math.round(counts.ocr_holding_count * 0.4),
+        orphaned_records: Math.round(counts.ocr_holding_count * 0.6),
         coverage_percent: 40
       });
 
@@ -201,8 +254,8 @@ export function DeepCorrelationEngine() {
         source_table: 'josiah_reflections_rows',
         target_table: 'biometric_monitoring',
         correlation_type: 'Event Causation',
-        linked_records: Math.round(parseInt(counts.reflections_count) * 0.7) || 0,
-        orphaned_records: Math.round(parseInt(counts.reflections_count) * 0.3) || 0,
+        linked_records: Math.round(counts.reflections_count * 0.7),
+        orphaned_records: Math.round(counts.reflections_count * 0.3),
         coverage_percent: 70
       });
 
@@ -212,17 +265,17 @@ export function DeepCorrelationEngine() {
       setOrphaned([
         {
           table_name: 'biometric_monitoring',
-          orphaned_count: parseInt(bioOrphan.orphaned) || 0,
-          total_count: parseInt(bioOrphan.total) || 0,
-          orphan_percent: bioOrphan.total > 0 ? Math.round((bioOrphan.orphaned / bioOrphan.total) * 100) : 0,
+          orphaned_count: orphanedBio.orphaned,
+          total_count: orphanedBio.total,
+          orphan_percent: orphanedBio.total > 0 ? Math.round((orphanedBio.orphaned / orphanedBio.total) * 100) : 0,
           sample_ids: []
         },
         {
           table_name: 'flagged_aircraft_rows_rows',
-          orphaned_count: parseInt(flightOrphan.orphaned_flagged) || 0,
-          total_count: parseInt(counts.flagged_count) || 0,
+          orphaned_count: orphanedFlightCount,
+          total_count: counts.flagged_count,
           orphan_percent: counts.flagged_count > 0 
-            ? Math.round((parseInt(flightOrphan.orphaned_flagged) / parseInt(counts.flagged_count)) * 100) 
+            ? Math.round((orphanedFlightCount / counts.flagged_count) * 100) 
             : 0,
           sample_ids: []
         }

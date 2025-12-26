@@ -20,6 +20,24 @@ import {
   Scale
 } from 'lucide-react';
 
+// Helper to safely parse PostgreSQL arrays that may come as strings
+const safeParseArray = (value: unknown): string[] => {
+  if (!value) return [];
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'string') {
+    if (value.startsWith('{') && value.endsWith('}')) {
+      return value.slice(1, -1).split(',').filter(Boolean);
+    }
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+};
+
 interface CorrelationEvent {
   date: string;
   flight_count: number;
@@ -238,7 +256,7 @@ export const FourFactorCorrelationEngine = () => {
           josiah_count: josiahCount,
           ocr_count: ocrCount,
           factor_count: factorCount,
-          registrations: (f.registrations || []).slice(0, 5),
+          registrations: safeParseArray(f.registrations).slice(0, 5),
           peak_hr: bioInfo.peakHr,
           has_kcso: f.has_kcso || false
         };
@@ -719,11 +737,11 @@ export const FourFactorCorrelationEngine = () => {
                       </Badge>
                     </div>
                     <div className="flex flex-wrap gap-1">
-                      {cluster.aircraft_registrations.slice(0, 8).map(reg => (
+                      {safeParseArray(cluster.aircraft_registrations).slice(0, 8).map((reg, i) => (
                         <Badge 
-                          key={reg} 
+                          key={i} 
                           variant="outline" 
-                          className={`text-xs ${reg?.includes('KC') ? 'border-yellow-500/30 text-yellow-400' : ''}`}
+                          className={`text-xs ${String(reg)?.includes('KC') ? 'border-yellow-500/30 text-yellow-400' : ''}`}
                         >
                           {reg}
                         </Badge>
@@ -954,24 +972,27 @@ export const FourFactorCorrelationEngine = () => {
                   </div>
                 </div>
 
-                {corr.registrations.length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    {corr.registrations.slice(0, 4).map(reg => (
-                      <Badge 
-                        key={reg} 
-                        variant="outline" 
-                        className={`text-xs ${reg?.includes('KC') ? 'border-yellow-500/30 text-yellow-400' : ''}`}
-                      >
-                        {reg}
-                      </Badge>
-                    ))}
-                    {corr.registrations.length > 4 && (
-                      <Badge variant="outline" className="text-xs">
-                        +{corr.registrations.length - 4}
-                      </Badge>
-                    )}
-                  </div>
-                )}
+                {(() => {
+                  const regs = safeParseArray(corr.registrations);
+                  return regs.length > 0 ? (
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {regs.slice(0, 4).map((reg, i) => (
+                        <Badge 
+                          key={i} 
+                          variant="outline" 
+                          className={`text-xs ${String(reg)?.includes('KC') ? 'border-yellow-500/30 text-yellow-400' : ''}`}
+                        >
+                          {reg}
+                        </Badge>
+                      ))}
+                      {regs.length > 4 && (
+                        <Badge variant="outline" className="text-xs">
+                          +{regs.length - 4}
+                        </Badge>
+                      )}
+                    </div>
+                  ) : null;
+                })()}
               </div>
             ))
           )}

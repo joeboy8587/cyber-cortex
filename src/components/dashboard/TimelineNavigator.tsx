@@ -375,13 +375,16 @@ export function TimelineNavigator() {
                     </div>
                   </div>
                   
-                  {Array.isArray(event.aircraftSeen) && event.aircraftSeen.length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-1">
-                      {event.aircraftSeen.slice(0, 3).map(a => (
-                        <Badge key={a} variant="outline" className="text-xs">{a}</Badge>
-                      ))}
-                    </div>
-                  )}
+                  {(() => {
+                    const aircraft = safeParseArray((event as any).aircraftSeen);
+                    return aircraft.length > 0 ? (
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {aircraft.slice(0, 3).map((a) => (
+                          <Badge key={a} variant="outline" className="text-xs">{a}</Badge>
+                        ))}
+                      </div>
+                    ) : null;
+                  })()}
                   
                   {event.highestStressScore && event.highestStressScore > 70 && (
                     <div className="mt-2 flex items-center gap-1 text-xs text-red-400">

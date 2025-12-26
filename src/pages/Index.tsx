@@ -54,6 +54,7 @@ import { OperatorEnrichmentPanel } from "@/components/dashboard/OperatorEnrichme
 import { DirectAircraftCorrelation } from "@/components/dashboard/DirectAircraftCorrelation";
 import { AircraftAlertSystem } from "@/components/dashboard/AircraftAlertSystem";
 import { LegalNarrativeGenerator } from "@/components/dashboard/LegalNarrativeGenerator";
+import { LegalIntakeStrategy } from "@/components/dashboard/LegalIntakeStrategy";
 
 const Index = () => {
   return (
@@ -90,6 +91,7 @@ const Index = () => {
           
           <section id="legal-analysis" className="space-y-6">
             <LegalNarrativeGenerator />
+            <LegalIntakeStrategy />
             <LegalBriefDashboard />
             <GenevaConventionAnalysis />
             <TROEvidenceCompiler />

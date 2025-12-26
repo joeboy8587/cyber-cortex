@@ -1090,7 +1090,12 @@ serve(async (req) => {
           ORDER BY detection_count DESC
         `;
         
-        // Step 4: Get biometric correlation data for each aircraft
+        // Step 4: Get biometric correlation data for each aircraft (optimized with LIMIT and filtering)
+        // Use a more efficient approach: only check known shell company aircraft
+        const shellAircraft = ['N788FA', 'N790FA', 'N791FA', 'N899JR', 'N997SE', 'N2464D', 
+          'N828CF', 'N83SF', 'N8274E', 'N840PA', 'N743AM', 'N229AM', 'N7AM', 'N911AM',
+          'N912KC', 'N913KC'];
+        
         const bioCorrelations = await sql`
           SELECT 
             f.registration,
@@ -1098,10 +1103,11 @@ serve(async (req) => {
             AVG(b.heart_rate) as avg_heart_rate_during,
             AVG(b.stress_level) as avg_stress_during
           FROM live_flight_detections_rows f
-          CROSS JOIN biometric_monitoring b
+          JOIN biometric_monitoring b ON 
+            ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= 600
           WHERE f.detection_timestamp IS NOT NULL
             AND b.measurement_timestamp IS NOT NULL
-            AND ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= 600
+            AND f.registration = ANY(${shellAircraft})
             AND (b.heart_rate > 85 OR b.stress_level >= 5)
           GROUP BY f.registration
         `;

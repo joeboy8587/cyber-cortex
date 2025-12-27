@@ -2017,7 +2017,7 @@ serve(async (req) => {
           // Generate intel notes
           const intelNotes: string[] = [];
           if (hasVerticalStack) {
-            intelNotes.push(`Vertical stack paired with ${verticalStackMap[reg]}`);
+            intelNotes.push(`Vertical stack paired with ${verticalStackMap[aircraftId]}`);
           }
           if (isSpoofed) {
             intelNotes.push('Dynamic callsign injection detected');
@@ -2043,12 +2043,12 @@ serve(async (req) => {
                 first_detection, last_detection, intel_notes,
                 vertical_stack_detected, paired_high_alt_asset
               ) VALUES (
-                ${entityInfo.entity}, ${entityInfo.type}, ${entityInfo.classification}, ${reg}, ${matchScore.toFixed(2)},
+                ${entityInfo.entity}, ${entityInfo.type}, ${entityInfo.classification}, ${aircraftId}, ${matchScore.toFixed(2)},
                 ${behaviorType}, ${isSpoofed}, ${entityInfo.contractor || null}, ${criticalLowAlt}, ${biometricScore.toFixed(2)},
                 ${riskTier}, ${avgAlt.toFixed(2)}, ${detectionCount}, ${lowAltPct.toFixed(2)},
                 'N912KC/N913KC', ${legalExposure}, ${prosecutionPriority},
                 ${flight.first_seen}, ${flight.last_seen}, ${intelNotes.join('; ') || null},
-                ${hasVerticalStack}, ${verticalStackMap[reg] || null}
+                ${hasVerticalStack}, ${verticalStackMap[aircraftId] || null}
               )
               ON CONFLICT (entity_name, aircraft_tail) DO UPDATE SET
                 match_score_to_kcso = EXCLUDED.match_score_to_kcso,
@@ -2070,7 +2070,7 @@ serve(async (req) => {
             `;
             milRecordsCreated++;
           } catch (insertErr) {
-            console.error(`Error inserting military/gov alignment for ${reg}:`, insertErr);
+            console.error(`Error inserting military/gov alignment for ${aircraftId}:`, insertErr);
           }
         }
         

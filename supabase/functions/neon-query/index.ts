@@ -1883,22 +1883,38 @@ serve(async (req) => {
         
         console.log(`Detected ${Object.keys(verticalStackMap).length / 2} vertical stack pairings`);
         
-        // Step 5: Get biometric correlations
-        const milBioCorr = await sql.unsafe(`
-          SELECT 
-            f.registration,
-            COUNT(*) as correlated_events,
-            AVG(b.heart_rate) as avg_heart_rate_during,
-            AVG(b.stress_level) as avg_stress_during
-          FROM live_flight_detections_rows f
-          JOIN biometric_monitoring b ON 
-            ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= 600
-          WHERE f.detection_timestamp IS NOT NULL
-            AND b.measurement_timestamp IS NOT NULL
-            AND f.registration IN (${escapedTails})
-            AND (b.heart_rate > 85 OR b.stress_level >= 5)
-          GROUP BY f.registration
-        `);
+        // Step 5: Get biometric correlations (optional)
+        let biometricsAvailable = true;
+        let biometricsWarning: string | null = null;
+        let milBioCorr: any[] = [];
+
+        try {
+          milBioCorr = await sql.unsafe(`
+            SELECT 
+              f.registration,
+              COUNT(*) as correlated_events,
+              AVG(b.heart_rate) as avg_heart_rate_during,
+              AVG(b.stress_level) as avg_stress_during
+            FROM live_flight_detections_rows f
+            JOIN biometric_monitoring b ON 
+              ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= 600
+            WHERE f.detection_timestamp IS NOT NULL
+              AND b.measurement_timestamp IS NOT NULL
+              AND f.registration IN (${escapedTails})
+              AND (b.heart_rate > 85 OR b.stress_level >= 5)
+            GROUP BY f.registration
+          `);
+        } catch (e) {
+          const err = e as Error;
+          if (err.message.includes('does not exist') && err.message.includes('biometric_monitoring')) {
+            biometricsAvailable = false;
+            biometricsWarning = 'Biometric correlation skipped (biometric_monitoring table not available)';
+            console.warn(biometricsWarning);
+            milBioCorr = [];
+          } else {
+            throw e;
+          }
+        }
         
         const milBioMap: Record<string, { events: number; avgHR: number }> = {};
         for (const bc of milBioCorr) {
@@ -2035,7 +2051,9 @@ serve(async (req) => {
           alignmentRecordsCreated: milRecordsCreated,
           baselineUsed: { avgAltitude: baselineMilAvgAlt, lowAltPct: baselineMilLowAltPct },
           matchedAircraft: matchedAircraft.length,
-          verticalStackPairings: Object.keys(verticalStackMap).length / 2
+          verticalStackPairings: Object.keys(verticalStackMap).length / 2,
+          biometricsAvailable,
+          biometricsWarning
         };
         break;
       }

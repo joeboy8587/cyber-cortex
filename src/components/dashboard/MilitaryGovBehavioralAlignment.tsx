@@ -78,19 +78,25 @@ export function MilitaryGovBehavioralAlignment() {
         body: { action: 'getMilitaryGovBehavioralAlignment' }
       });
 
-      if (error) throw error;
+      if (error) {
+        console.error('Fetch error:', error);
+        setInitialized(false);
+        return;
+      }
 
-      if (data.data?.notInitialized) {
+      const result = data?.data;
+      if (!result || result.notInitialized) {
         setInitialized(false);
         setAlignments([]);
         setSummary(null);
       } else {
         setInitialized(true);
-        setAlignments(data.data?.alignments || []);
-        setSummary(data.data?.summary || null);
+        setAlignments(result.alignments || []);
+        setSummary(result.summary || null);
       }
     } catch (err) {
       console.error('Error fetching military/gov alignments:', err);
+      setInitialized(false);
       toast.error('Failed to fetch military/government alignment data');
     } finally {
       setLoading(false);

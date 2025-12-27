@@ -142,6 +142,7 @@ export function BiometricCorrelation() {
   const [filterMode, setFilterMode] = useState<FilterMode>('all');
   const [viewMode, setViewMode] = useState<ViewMode>('timeline');
   const [timeWindow, setTimeWindow] = useState(5); // minutes
+  const [lookbackDays, setLookbackDays] = useState(30); // reduce query size while still showing recent history
   const [expandedConvergences, setExpandedConvergences] = useState<Set<string>>(new Set());
 
   const fetchCorrelations = useCallback(async () => {
@@ -209,6 +210,7 @@ export function BiometricCorrelation() {
                 'biometric_monitoring' as source
               FROM biometric_monitoring
               WHERE measurement_timestamp IS NOT NULL
+                AND measurement_timestamp > NOW() - INTERVAL '${lookbackDays} days'
                 AND heart_rate IS NOT NULL
                 AND heart_rate >= 40 AND heart_rate <= 220
               UNION ALL
@@ -227,6 +229,7 @@ export function BiometricCorrelation() {
                 'biometric_vector_correlations'
               FROM biometric_vector_correlations
               WHERE timestamp IS NOT NULL
+                AND timestamp > NOW() - INTERVAL '${lookbackDays} days'
                 AND heart_rate IS NOT NULL
                 AND heart_rate >= 40 AND heart_rate <= 220
             ),
@@ -239,6 +242,7 @@ export function BiometricCorrelation() {
                 detection_timestamp as timestamp
               FROM live_flight_detections_rows
               WHERE detection_timestamp IS NOT NULL
+                AND detection_timestamp > NOW() - INTERVAL '${lookbackDays} days'
                 AND registration IS NOT NULL
             ),
             correlations AS (

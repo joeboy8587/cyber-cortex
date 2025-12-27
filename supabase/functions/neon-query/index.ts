@@ -1766,13 +1766,8 @@ serve(async (req) => {
         
         console.log(`KCSO Mil Baseline: avg_alt=${baselineMilAvgAlt}, low_alt_pct=${baselineMilLowAltPct}%`);
         
-        // Step 2: Define extended entity classification map
-        const extendedEntityMap: Record<string, { entity: string; type: string; classification: string; contractor?: string }> = {
-          // Extended MEDEVAC operators
-          'N*REACH': { entity: 'REACH Air Medical', type: 'MEDEVAC_OPERATOR', classification: 'MEDEVAC_EXTENSION', contractor: 'REACH Medical Holdings' },
-          'N*PHI': { entity: 'PHI Air Medical', type: 'MEDEVAC_OPERATOR', classification: 'MEDEVAC_EXTENSION', contractor: 'PHI Inc' },
-          'N*CALSTAR': { entity: 'CALSTAR Air Ambulance', type: 'MEDEVAC_OPERATOR', classification: 'MEDEVAC_EXTENSION', contractor: 'CALSTAR' },
-          'N*CARE': { entity: 'CareFlight Nevada', type: 'MEDEVAC_OPERATOR', classification: 'MEDEVAC_EXTENSION', contractor: 'CareFlight' },
+        // Step 2: Define extended entity classification map (direct tail matches)
+        const extendedEntityMap: Record<string, { entity: string; type: string; classification: string; contractor?: string | null }> = {
           // Government agency aircraft - DEA
           'N900AL': { entity: 'DEA Aviation', type: 'GOV_AGENCY', classification: 'GOV_AGENCY', contractor: 'DEA' },
           'N967SP': { entity: 'DEA Aviation', type: 'GOV_AGENCY', classification: 'GOV_AGENCY', contractor: 'DEA' },
@@ -1780,69 +1775,97 @@ serve(async (req) => {
           // DHS / Sierra Nevada Corp
           'N287SA': { entity: 'DHS Surveillance', type: 'GOV_AGENCY', classification: 'GOV_AGENCY', contractor: 'Sierra Nevada Corp' },
           'N392SA': { entity: 'DHS Surveillance', type: 'GOV_AGENCY', classification: 'GOV_AGENCY', contractor: 'Sierra Nevada Corp' },
-          // Known military-contract patterns  
-          'N*HNT': { entity: 'Hunter Aviation', type: 'MILITARY_CONTRACT', classification: 'TIER_WATCH_MILITARY_CONTRACT', contractor: 'Hunter Aviation LLC' },
-          'N*AAR': { entity: 'AAR Airlift', type: 'MILITARY_CONTRACT', classification: 'TIER_WATCH_MILITARY_CONTRACT', contractor: 'AAR Corp' },
-          'N*PHX': { entity: 'Phoenix Air', type: 'MILITARY_CONTRACT', classification: 'TIER_WATCH_MILITARY_CONTRACT', contractor: 'Phoenix Air Group' }
         };
-        
-        // Get all flight registrations to pattern match
-        const allRegistrations = await sql`
-          SELECT DISTINCT registration
-          FROM live_flight_detections_rows
-          WHERE registration IS NOT NULL AND registration != ''
+
+        // Step 3: Discover candidate aircraft IDs (registration OR callsign) and classify by patterns
+        // NOTE: Many of these entities are identifiable by callsign prefixes (PAT/RCH/REACH/etc.), not tail numbers.
+        const candidateRows = await sql`
+                callsign ILIKE '%PHI%' OR
+                callsign ILIKE '%CALSTAR%' OR
+                callsign ILIKE '%CARE%' OR
+                callsign ILIKE '%HNT%' OR
+                callsign ILIKE '%AAR%' OR
+                callsign ILIKE '%PHX%' OR
+                callsign ILIKE '%MLAT%' OR
+                callsign ILIKE '~%'
+              ))
+              OR
+              (registration IS NOT NULL AND (
+                registration ILIKE 'N%REACH%' OR
+                registration ILIKE 'N%PHI%' OR
+                registration ILIKE 'N%CAL%' OR
+                registration ILIKE 'N%CARE%' OR
+                registration ILIKE 'XXB%'
+              ))
+              OR
+              registration IN ('N900AL','N967SP','N874DA','N287SA','N392SA')
+            )
         `;
-        
-        // Find matching aircraft using pattern or direct lookup
-        const matchedAircraft: Array<{ registration: string; info: typeof extendedEntityMap[string] }> = [];
-        
-        for (const row of allRegistrations) {
-          const reg = row.registration?.toUpperCase() || '';
-          
-          // Check direct matches first
-          if (extendedEntityMap[reg]) {
-            matchedAircraft.push({ registration: reg, info: extendedEntityMap[reg] });
+
+        const matchedAircraft: Array<{ aircraftId: string; registration?: string | null; callsign?: string | null; info: { entity: string; type: string; classification: string; contractor?: string | null } }> = [];
+        const seen = new Set<string>();
+
+        for (const row of candidateRows as any[]) {
+          const registration = (row.registration || '') as string;
+          const callsign = (row.callsign || '') as string;
+          const aircraftId = (registration || callsign).toUpperCase();
+          if (!aircraftId || seen.has(aircraftId)) continue;
+
+          const regU = registration.toUpperCase();
+          const csU = callsign.toUpperCase();
+
+          // Direct tail matches (agency known tails)
+          if (extendedEntityMap[regU]) {
+            matchedAircraft.push({ aircraftId, registration: regU, callsign: csU || null, info: extendedEntityMap[regU] });
+            seen.add(aircraftId);
             continue;
           }
-          
-          // Check patterns (REACH, PHI, etc.)
-          if (reg.includes('REACH')) {
-            matchedAircraft.push({ registration: reg, info: { entity: 'REACH Air Medical', type: 'MEDEVAC_OPERATOR', classification: 'MEDEVAC_EXTENSION', contractor: 'REACH Medical Holdings' }});
-          } else if (reg.includes('PHI')) {
-            matchedAircraft.push({ registration: reg, info: { entity: 'PHI Air Medical', type: 'MEDEVAC_OPERATOR', classification: 'MEDEVAC_EXTENSION', contractor: 'PHI Inc' }});
-          } else if (reg.includes('CALSTAR') || reg.includes('CAL')) {
-            matchedAircraft.push({ registration: reg, info: { entity: 'CALSTAR Air Ambulance', type: 'MEDEVAC_OPERATOR', classification: 'MEDEVAC_EXTENSION', contractor: 'CALSTAR' }});
+
+          // Callsign-driven patterns
+          if (csU.includes('REACH')) {
+            matchedAircraft.push({ aircraftId, registration: regU || null, callsign: csU || null, info: { entity: 'REACH Air Medical', type: 'MEDEVAC_OPERATOR', classification: 'MEDEVAC_EXTENSION', contractor: 'REACH Medical Holdings' } });
+          } else if (csU.includes('PHI')) {
+            matchedAircraft.push({ aircraftId, registration: regU || null, callsign: csU || null, info: { entity: 'PHI Air Medical', type: 'MEDEVAC_OPERATOR', classification: 'MEDEVAC_EXTENSION', contractor: 'PHI Inc' } });
+          } else if (csU.includes('CALSTAR') || csU.includes('CALSTAR'.slice(0, 3))) {
+            matchedAircraft.push({ aircraftId, registration: regU || null, callsign: csU || null, info: { entity: 'CALSTAR Air Ambulance', type: 'MEDEVAC_OPERATOR', classification: 'MEDEVAC_EXTENSION', contractor: 'CALSTAR' } });
+          } else if (csU.startsWith('PAT')) {
+            matchedAircraft.push({ aircraftId, registration: regU || null, callsign: csU || null, info: { entity: 'Priority Air Transport', type: 'MILITARY_CONTRACT', classification: 'TIER_WATCH_MILITARY_CONTRACT', contractor: 'US DoD' } });
+          } else if (csU.startsWith('RCH')) {
+            matchedAircraft.push({ aircraftId, registration: regU || null, callsign: csU || null, info: { entity: 'Air Mobility Command', type: 'MILITARY_CONTRACT', classification: 'TIER_WATCH_MILITARY_CONTRACT', contractor: 'USAF AMC' } });
+          } else if (csU.includes('HNT')) {
+            matchedAircraft.push({ aircraftId, registration: regU || null, callsign: csU || null, info: { entity: 'Hunter Aviation', type: 'MILITARY_CONTRACT', classification: 'TIER_WATCH_MILITARY_CONTRACT', contractor: 'Hunter Aviation LLC' } });
+          } else if (csU.includes('AAR')) {
+            matchedAircraft.push({ aircraftId, registration: regU || null, callsign: csU || null, info: { entity: 'AAR Airlift', type: 'MILITARY_CONTRACT', classification: 'TIER_WATCH_MILITARY_CONTRACT', contractor: 'AAR Corp' } });
+          } else if (csU.includes('PHX')) {
+            matchedAircraft.push({ aircraftId, registration: regU || null, callsign: csU || null, info: { entity: 'Phoenix Air', type: 'MILITARY_CONTRACT', classification: 'TIER_WATCH_MILITARY_CONTRACT', contractor: 'Phoenix Air Group' } });
           }
-          
-          // Check for PAT/RCH military prefixes (Priority Air Transport / Air Mobility Command)
-          if (reg.startsWith('PAT') || row.registration?.includes('PAT')) {
-            matchedAircraft.push({ registration: reg, info: { entity: 'Priority Air Transport', type: 'MILITARY_CONTRACT', classification: 'TIER_WATCH_MILITARY_CONTRACT', contractor: 'US Army/Air Force' }});
-          } else if (reg.startsWith('RCH') || row.registration?.includes('RCH')) {
-            matchedAircraft.push({ registration: reg, info: { entity: 'Air Mobility Command REACH', type: 'MILITARY_CONTRACT', classification: 'TIER_WATCH_MILITARY_CONTRACT', contractor: 'USAF AMC' }});
+
+          // Spoof / anonymous assets
+          if (csU.startsWith('~') || csU.includes('MLAT') || aircraftId.startsWith('XXB')) {
+            matchedAircraft.push({ aircraftId, registration: regU || null, callsign: csU || null, info: { entity: 'Spoofed/Anonymous Asset', type: 'UNKNOWN', classification: 'SPOOFED_GOV_ASSET', contractor: 'Unknown' } });
           }
-          
-          // Check for potential spoofed transponders (dynamic hex, ~MLAT prefix, xxb patterns)
-          if (reg.startsWith('~') || reg.startsWith('XXB') || reg.includes('_MLAT')) {
-            matchedAircraft.push({ registration: reg, info: { entity: 'Spoofed/Anonymous Asset', type: 'UNKNOWN', classification: 'SPOOFED_GOV_ASSET', contractor: 'Unknown' }});
+
+          if (matchedAircraft.length > 0 && matchedAircraft[matchedAircraft.length - 1]?.aircraftId === aircraftId) {
+            seen.add(aircraftId);
           }
         }
-        
+
         console.log(`Matched ${matchedAircraft.length} aircraft to extended entity classifications`);
-        
-        // Step 3: Get flight stats for matched aircraft
-        const matchedTails = matchedAircraft.map(m => m.registration);
-        
-        if (matchedTails.length === 0) {
+
+        // Step 3: Get flight stats for matched aircraft (registration OR callsign key)
+        const matchedIds = matchedAircraft.map(m => m.aircraftId);
+
+        if (matchedIds.length === 0) {
           result = { alignmentRecordsCreated: 0, message: 'No matching extended entities found in flight data' };
           break;
         }
-        
-        // Build escaped IN clause for matchedTails - postgres.js doesn't handle ANY() with JS arrays well
-        const escapedTails = matchedTails.map(t => `'${t.replace(/'/g, "''")}'`).join(', ');
-        
+
+        // Build escaped IN clause - postgres.js doesn't handle ANY() with JS arrays well
+        const escapedIds = matchedIds.map(t => `'${t.replace(/'/g, "''")}'`).join(', ');
+
         const milFlightStats = await sql.unsafe(`
           SELECT 
-            registration,
+            COALESCE(NULLIF(TRIM(registration), ''), NULLIF(TRIM(callsign), '')) as aircraft_id,
             COUNT(*) as detection_count,
             AVG(altitude) as avg_altitude,
             COUNT(*) FILTER (WHERE altitude < 1500) as low_alt_detections,
@@ -1851,38 +1874,39 @@ serve(async (req) => {
             MIN(detection_timestamp) as first_seen,
             MAX(detection_timestamp) as last_seen
           FROM live_flight_detections_rows
-          WHERE registration IN (${escapedTails})
-          GROUP BY registration
+          WHERE COALESCE(NULLIF(TRIM(registration), ''), NULLIF(TRIM(callsign), '')) IN (${escapedIds})
+          GROUP BY COALESCE(NULLIF(TRIM(registration), ''), NULLIF(TRIM(callsign), ''))
         `);
-        
+
         console.log(`Flight stats retrieved for ${milFlightStats.length} aircraft`);
-        
+
         // Step 4: Detect Vertical Stack patterns (high + low alt simultaneous operations)
         const verticalStackQuery = await sql.unsafe(`
           SELECT 
-            high.registration as high_alt_asset,
-            low.registration as low_alt_asset,
+            COALESCE(NULLIF(TRIM(high.registration), ''), NULLIF(TRIM(high.callsign), '')) as high_alt_asset,
+            COALESCE(NULLIF(TRIM(low.registration), ''), NULLIF(TRIM(low.callsign), '')) as low_alt_asset,
             COUNT(*) as paired_events
           FROM live_flight_detections_rows high
           JOIN live_flight_detections_rows low ON 
             ABS(EXTRACT(EPOCH FROM (high.detection_timestamp - low.detection_timestamp))) <= 600
             AND high.altitude > 15000
             AND low.altitude < 1200
-            AND high.registration != low.registration
-          WHERE high.registration IN (${escapedTails})
-            OR low.registration IN (${escapedTails})
-          GROUP BY high.registration, low.registration
+            AND COALESCE(NULLIF(TRIM(high.registration), ''), NULLIF(TRIM(high.callsign), '')) != COALESCE(NULLIF(TRIM(low.registration), ''), NULLIF(TRIM(low.callsign), ''))
+          WHERE COALESCE(NULLIF(TRIM(high.registration), ''), NULLIF(TRIM(high.callsign), '')) IN (${escapedIds})
+             OR COALESCE(NULLIF(TRIM(low.registration), ''), NULLIF(TRIM(low.callsign), '')) IN (${escapedIds})
+          GROUP BY 1, 2
           HAVING COUNT(*) >= 2
         `);
-        
+
         const verticalStackMap: Record<string, string> = {};
-        for (const vs of verticalStackQuery) {
-          verticalStackMap[vs.low_alt_asset] = vs.high_alt_asset;
-          verticalStackMap[vs.high_alt_asset] = vs.low_alt_asset;
+        for (const vs of verticalStackQuery as any[]) {
+          if (!vs?.low_alt_asset || !vs?.high_alt_asset) continue;
+          verticalStackMap[String(vs.low_alt_asset).toUpperCase()] = String(vs.high_alt_asset).toUpperCase();
+          verticalStackMap[String(vs.high_alt_asset).toUpperCase()] = String(vs.low_alt_asset).toUpperCase();
         }
-        
+
         console.log(`Detected ${Object.keys(verticalStackMap).length / 2} vertical stack pairings`);
-        
+
         // Step 5: Get biometric correlations (optional)
         let biometricsAvailable = true;
         let biometricsWarning: string | null = null;
@@ -1891,7 +1915,7 @@ serve(async (req) => {
         try {
           milBioCorr = await sql.unsafe(`
             SELECT 
-              f.registration,
+              COALESCE(NULLIF(TRIM(f.registration), ''), NULLIF(TRIM(f.callsign), '')) as aircraft_id,
               COUNT(*) as correlated_events,
               AVG(b.heart_rate) as avg_heart_rate_during,
               AVG(b.stress_level) as avg_stress_during
@@ -1900,9 +1924,9 @@ serve(async (req) => {
               ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= 600
             WHERE f.detection_timestamp IS NOT NULL
               AND b.measurement_timestamp IS NOT NULL
-              AND f.registration IN (${escapedTails})
+              AND COALESCE(NULLIF(TRIM(f.registration), ''), NULLIF(TRIM(f.callsign), '')) IN (${escapedIds})
               AND (b.heart_rate > 85 OR b.stress_level >= 5)
-            GROUP BY f.registration
+            GROUP BY COALESCE(NULLIF(TRIM(f.registration), ''), NULLIF(TRIM(f.callsign), ''))
           `);
         } catch (e) {
           const err = e as Error;
@@ -1915,21 +1939,25 @@ serve(async (req) => {
             throw e;
           }
         }
-        
+
         const milBioMap: Record<string, { events: number; avgHR: number }> = {};
-        for (const bc of milBioCorr) {
-          milBioMap[bc.registration] = {
+        for (const bc of milBioCorr as any[]) {
+          const id = String(bc.aircraft_id || '').toUpperCase();
+          if (!id) continue;
+          milBioMap[id] = {
             events: parseInt(bc.correlated_events) || 0,
             avgHR: parseFloat(bc.avg_heart_rate_during) || 0
           };
         }
-        
+
         // Step 6: Calculate alignment scores and insert
         let milRecordsCreated = 0;
         
-        for (const flight of milFlightStats) {
-          const reg = flight.registration;
-          const entityInfo = matchedAircraft.find(m => m.registration === reg)?.info || 
+        for (const flight of milFlightStats as any[]) {
+          const aircraftId = String(flight.aircraft_id || '').toUpperCase();
+          if (!aircraftId) continue;
+
+          const entityInfo = matchedAircraft.find(m => m.aircraftId === aircraftId)?.info || 
             { entity: 'Unknown', type: 'UNKNOWN', classification: 'TIER_WATCH_MILITARY_CONTRACT', contractor: null };
           
           const avgAlt = parseFloat(flight.avg_altitude) || 5000;
@@ -1945,7 +1973,7 @@ serve(async (req) => {
           const lowAltSimilarity = 100 - Math.abs(lowAltPct - baselineMilLowAltPct);
           
           // Biometric correlation score
-          const bioData = milBioMap[reg] || { events: 0, avgHR: 0 };
+          const bioData = milBioMap[aircraftId] || { events: 0, avgHR: 0 };
           const biometricScore = Math.min(100, (bioData.events / Math.max(1, detectionCount)) * 200);
           
           // Weighted match score
@@ -1953,9 +1981,9 @@ serve(async (req) => {
           
           // Determine behavior type
           let behaviorType = 'STANDARD';
-          const hasVerticalStack = !!verticalStackMap[reg];
+          const hasVerticalStack = !!verticalStackMap[aircraftId];
           const isSpoofed = entityInfo.classification === 'SPOOFED_GOV_ASSET';
-          
+
           if (hasVerticalStack) {
             behaviorType = 'VERTICAL_STACK';
           } else if (isSpoofed) {

@@ -127,7 +127,11 @@ export function MilitaryGovBehavioralAlignment() {
       if (error) throw error;
       
       const result = data.data;
-      toast.success(`Computed ${result?.alignmentRecordsCreated || 0} military/gov alignment records`);
+      const created = result?.alignmentRecordsCreated || 0;
+      toast.success(`Computed ${created} military/gov alignment records`);
+      if (result?.biometricsAvailable === false && result?.biometricsWarning) {
+        toast.message(result.biometricsWarning);
+      }
       await fetchAlignments();
     } catch (err) {
       console.error('Error computing military/gov alignments:', err);

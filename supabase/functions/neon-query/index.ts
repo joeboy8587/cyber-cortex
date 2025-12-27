@@ -1780,6 +1780,14 @@ serve(async (req) => {
         // Step 3: Discover candidate aircraft IDs (registration OR callsign) and classify by patterns
         // NOTE: Many of these entities are identifiable by callsign prefixes (PAT/RCH/REACH/etc.), not tail numbers.
         const candidateRows = await sql`
+          SELECT DISTINCT registration, callsign
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() - INTERVAL '90 days'
+            AND (
+              (callsign IS NOT NULL AND (
+                callsign ILIKE '%REACH%' OR
+                callsign ILIKE '%PAT%' OR
+                callsign ILIKE '%RCH%' OR
                 callsign ILIKE '%PHI%' OR
                 callsign ILIKE '%CALSTAR%' OR
                 callsign ILIKE '%CARE%' OR

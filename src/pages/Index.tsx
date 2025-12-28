@@ -36,6 +36,7 @@ import { DailyEventImporter } from "@/components/dashboard/DailyEventImporter";
 import { NotionAutoWatcher } from "@/components/dashboard/NotionAutoWatcher";
 import { NotionGapAnalyzer } from "@/components/dashboard/NotionGapAnalyzer";
 import { XXBTaxonomyPanel } from "@/components/dashboard/XXBTaxonomyPanel";
+import { XXBEvidenceDashboard } from "@/components/dashboard/XXBEvidenceDashboard";
 import { GlobalAISearch } from "@/components/dashboard/GlobalAISearch";
 import { WatchtowerAlertsHub } from "@/components/dashboard/WatchtowerAlertsHub";
 import { MaterializedViewsPanel } from "@/components/dashboard/MaterializedViewsPanel";
@@ -211,7 +212,8 @@ const Index = () => {
             <SafetyMonitoringPanel />
           </section>
           
-          <section id="xxb-taxonomy" className="space-y-6">
+          <section id="xxb-evidence" className="space-y-6">
+            <XXBEvidenceDashboard />
             <OperatorEnrichmentPanel />
             <XXBTaxonomyPanel />
           </section>

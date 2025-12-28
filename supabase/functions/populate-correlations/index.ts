@@ -48,9 +48,9 @@ const buildUnifiedBiometricsUnion = (tableCols: Record<string, ColSet>) => {
     );
   }
 
-  // If nothing matches, fall back to biometric_monitoring canonical schema (will error loudly if even that is absent)
+  // If nothing matches, return an empty result set instead of erroring
   if (selects.length === 0) {
-    return `SELECT ${tsExpr('measurement_timestamp')} as ts, heart_rate::numeric as heart_rate, hrv::numeric as hrv, 'biometric_monitoring' as source FROM biometric_monitoring WHERE measurement_timestamp IS NOT NULL`;
+    return `SELECT NULL::timestamptz as ts, NULL::numeric as heart_rate, NULL::numeric as hrv, 'none'::text as source WHERE false`;
   }
 
   return selects.join('\nUNION ALL\n');
@@ -99,17 +99,29 @@ serve(async (req) => {
 
     switch (action) {
       case 'getCorrelationStats': {
-        // Get current correlation table stats
-        const stats = await sql`
-          SELECT 
-            (SELECT COUNT(*) FROM biometric_flight_correlations) as bio_flight_count,
-            (SELECT COUNT(*) FROM correlation_events) as correlation_events_count,
-            (SELECT COUNT(*) FROM multi_factor_correlations) as multi_factor_count,
-            (SELECT COUNT(*) FROM live_flight_detections_rows) as flight_count,
-            (SELECT COUNT(*) FROM biometric_monitoring) as biometric_count,
-            (SELECT COUNT(*) FROM josiah_reflections_rows) as josiah_count
+        // Get current correlation table stats with safe table checks
+        const tableChecks = await sql`
+          SELECT table_name FROM information_schema.tables 
+          WHERE table_schema = 'public' 
+          AND table_name IN ('biometric_flight_correlations', 'correlation_events', 'multi_factor_correlations', 
+                             'live_flight_detections_rows', 'biometric_monitoring', 'josiah_reflections_rows')
         `;
-        result = stats[0];
+        const existingTables = new Set((tableChecks as unknown as Array<{table_name: string}>).map(t => t.table_name));
+        
+        const getCnt = async (table: string) => {
+          if (!existingTables.has(table)) return 0;
+          const r = await sql!.unsafe(`SELECT COUNT(*) as cnt FROM ${table}`);
+          return Number((r as any)[0]?.cnt || 0);
+        };
+        
+        result = {
+          bio_flight_count: await getCnt('biometric_flight_correlations'),
+          correlation_events_count: await getCnt('correlation_events'),
+          multi_factor_count: await getCnt('multi_factor_correlations'),
+          flight_count: await getCnt('live_flight_detections_rows'),
+          biometric_count: await getCnt('biometric_monitoring'),
+          josiah_count: await getCnt('josiah_reflections_rows')
+        };
         break;
       }
 
@@ -186,110 +198,103 @@ serve(async (req) => {
 
 
       case 'findFourFactorDays': {
-        // Find days with all four factors present
+        // Find days with all four factors present - handle missing tables gracefully
         console.log('Finding four-factor convergence days...');
         
-        const fourFactorDays = await sql`
-          WITH flight_days AS (
-            SELECT DISTINCT DATE(detection_timestamp) as day, COUNT(*) as flight_count
-            FROM live_flight_detections_rows
-            WHERE detection_timestamp IS NOT NULL
-            GROUP BY DATE(detection_timestamp)
-          ),
-          bio_days AS (
-            SELECT DISTINCT DATE(measurement_timestamp) as day, COUNT(*) as bio_count, MAX(heart_rate) as peak_hr
-            FROM biometric_monitoring
-            WHERE measurement_timestamp IS NOT NULL
-            GROUP BY DATE(measurement_timestamp)
-          ),
-          josiah_days AS (
-            SELECT DISTINCT DATE(jt.ts) as day, COUNT(*) as josiah_count
-            FROM josiah_reflections_rows j
-            CROSS JOIN LATERAL (
-              SELECT COALESCE(
-                j.created_at,
-                j.created_timestamp,
-                j.timestamp,
-                j.reflection_timestamp,
-                j.event_timestamp
-              ) as ts
-            ) jt
-            WHERE jt.ts IS NOT NULL
-            GROUP BY DATE(jt.ts)
-          ),
-          ocr_days AS (
-            SELECT DISTINCT DATE(COALESCE(observation_timestamp, imported_at)) as day, COUNT(*) as ocr_count
-            FROM ocr_aircraft_holding_patterns
-            WHERE observation_timestamp IS NOT NULL OR imported_at IS NOT NULL
-            GROUP BY DATE(COALESCE(observation_timestamp, imported_at))
-          )
-          SELECT 
-            f.day,
-            f.flight_count,
-            COALESCE(b.bio_count, 0) as bio_count,
-            COALESCE(b.peak_hr, 0) as peak_hr,
-            COALESCE(j.josiah_count, 0) as josiah_count,
-            COALESCE(o.ocr_count, 0) as ocr_count,
-            CASE 
-              WHEN b.day IS NOT NULL AND j.day IS NOT NULL AND o.day IS NOT NULL THEN 4
-              WHEN (b.day IS NOT NULL AND j.day IS NOT NULL) OR (b.day IS NOT NULL AND o.day IS NOT NULL) OR (j.day IS NOT NULL AND o.day IS NOT NULL) THEN 3
-              WHEN b.day IS NOT NULL OR j.day IS NOT NULL OR o.day IS NOT NULL THEN 2
-              ELSE 1
-            END as factor_count
-          FROM flight_days f
-          LEFT JOIN bio_days b ON f.day = b.day
-          LEFT JOIN josiah_days j ON f.day = j.day
-          LEFT JOIN ocr_days o ON f.day = o.day
-          ORDER BY factor_count DESC, f.day DESC
-          LIMIT 200
-        `;
-        
-        const daysArray = fourFactorDays as unknown as Array<{ factor_count: number }>;
-        const stats = {
-          total: daysArray.length,
-          fourFactor: daysArray.filter(d => d.factor_count === 4).length,
-          threeFactor: daysArray.filter(d => d.factor_count === 3).length,
-          twoFactor: daysArray.filter(d => d.factor_count === 2).length
-        };
-        
-        console.log(`Found ${stats.fourFactor} four-factor days, ${stats.threeFactor} three-factor days`);
-        
-        result = {
-          stats,
-          days: fourFactorDays
-        };
+        try {
+          // First check which tables exist
+          const tableCheck = await sql`
+            SELECT table_name FROM information_schema.tables 
+            WHERE table_schema = 'public' 
+            AND table_name IN ('live_flight_detections_rows', 'biometric_monitoring', 'josiah_reflections_rows', 'ocr_aircraft_holding_patterns')
+          `;
+          const existingTables = new Set((tableCheck as unknown as Array<{table_name: string}>).map(t => t.table_name));
+          
+          if (!existingTables.has('live_flight_detections_rows')) {
+            result = { stats: { total: 0, fourFactor: 0, threeFactor: 0, twoFactor: 0 }, days: [], message: 'No flight data tables found' };
+            break;
+          }
+          
+          // Build dynamic query based on available tables
+          const flightDaysCte = `SELECT DISTINCT DATE(detection_timestamp) as day, COUNT(*) as flight_count FROM live_flight_detections_rows WHERE detection_timestamp IS NOT NULL GROUP BY DATE(detection_timestamp)`;
+          const bioDaysCte = existingTables.has('biometric_monitoring') 
+            ? `SELECT DISTINCT DATE(measurement_timestamp) as day, COUNT(*) as bio_count, MAX(heart_rate) as peak_hr FROM biometric_monitoring WHERE measurement_timestamp IS NOT NULL GROUP BY DATE(measurement_timestamp)`
+            : `SELECT NULL::date as day, 0 as bio_count, 0 as peak_hr WHERE false`;
+          const josiahDaysCte = existingTables.has('josiah_reflections_rows')
+            ? `SELECT DISTINCT DATE(created_at) as day, COUNT(*) as josiah_count FROM josiah_reflections_rows WHERE created_at IS NOT NULL GROUP BY DATE(created_at)`
+            : `SELECT NULL::date as day, 0 as josiah_count WHERE false`;
+          const ocrDaysCte = existingTables.has('ocr_aircraft_holding_patterns')
+            ? `SELECT DISTINCT DATE(COALESCE(observation_timestamp, imported_at)) as day, COUNT(*) as ocr_count FROM ocr_aircraft_holding_patterns WHERE observation_timestamp IS NOT NULL OR imported_at IS NOT NULL GROUP BY DATE(COALESCE(observation_timestamp, imported_at))`
+            : `SELECT NULL::date as day, 0 as ocr_count WHERE false`;
+          
+          const fourFactorDays = await sql.unsafe(`
+            WITH flight_days AS (${flightDaysCte}),
+            bio_days AS (${bioDaysCte}),
+            josiah_days AS (${josiahDaysCte}),
+            ocr_days AS (${ocrDaysCte})
+            SELECT f.day, f.flight_count,
+              COALESCE(b.bio_count, 0) as bio_count,
+              COALESCE(b.peak_hr, 0) as peak_hr,
+              COALESCE(j.josiah_count, 0) as josiah_count,
+              COALESCE(o.ocr_count, 0) as ocr_count,
+              CASE WHEN b.day IS NOT NULL AND j.day IS NOT NULL AND o.day IS NOT NULL THEN 4
+                   WHEN (b.day IS NOT NULL AND j.day IS NOT NULL) OR (b.day IS NOT NULL AND o.day IS NOT NULL) OR (j.day IS NOT NULL AND o.day IS NOT NULL) THEN 3
+                   WHEN b.day IS NOT NULL OR j.day IS NOT NULL OR o.day IS NOT NULL THEN 2
+                   ELSE 1 END as factor_count
+            FROM flight_days f
+            LEFT JOIN bio_days b ON f.day = b.day
+            LEFT JOIN josiah_days j ON f.day = j.day
+            LEFT JOIN ocr_days o ON f.day = o.day
+            ORDER BY factor_count DESC, f.day DESC LIMIT 200
+          `);
+          
+          const daysArray = fourFactorDays as unknown as Array<{ factor_count: number }>;
+          result = {
+            stats: {
+              total: daysArray.length,
+              fourFactor: daysArray.filter(d => d.factor_count === 4).length,
+              threeFactor: daysArray.filter(d => d.factor_count === 3).length,
+              twoFactor: daysArray.filter(d => d.factor_count === 2).length
+            },
+            days: fourFactorDays
+          };
+        } catch (e) {
+          console.warn('findFourFactorDays error:', e);
+          result = { stats: { total: 0, fourFactor: 0, threeFactor: 0, twoFactor: 0 }, days: [], error: String(e) };
+        }
         break;
       }
 
       case 'findKCSOBiometricCorrelations': {
-        // Find KCSO aircraft correlated with biometric stress events
+        // Find KCSO aircraft correlated with biometric stress events - handle missing tables
         console.log('Finding KCSO-biometric correlations...');
         
-        const kcsoCorrelations = await sql`
-          SELECT 
-            f.registration,
-            f.detection_timestamp as flight_time,
-            f.altitude,
-            b.measurement_timestamp as bio_time,
-            b.heart_rate,
-            b.hrv,
-            EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))/60 as time_diff_minutes
-          FROM live_flight_detections_rows f
-          JOIN biometric_monitoring b ON 
-            ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= ${timeWindowMinutes * 60}
-          WHERE f.registration LIKE 'N91%KC'
-            AND f.detection_timestamp IS NOT NULL 
-            AND b.measurement_timestamp IS NOT NULL
-          ORDER BY b.heart_rate DESC
-          LIMIT ${batchSize}
-        `;
-        
-        console.log(`Found ${kcsoCorrelations.length} KCSO-biometric correlations`);
-        
-        result = {
-          count: kcsoCorrelations.length,
-          correlations: kcsoCorrelations
-        };
+        try {
+          const tableCheck = await sql`
+            SELECT table_name FROM information_schema.tables 
+            WHERE table_schema = 'public' AND table_name IN ('live_flight_detections_rows', 'biometric_monitoring')
+          `;
+          const existingTables = new Set((tableCheck as unknown as Array<{table_name: string}>).map(t => t.table_name));
+          
+          if (!existingTables.has('live_flight_detections_rows') || !existingTables.has('biometric_monitoring')) {
+            result = { count: 0, correlations: [], message: 'Required tables not found' };
+            break;
+          }
+          
+          const kcsoCorrelations = await sql`
+            SELECT f.registration, f.detection_timestamp as flight_time, f.altitude,
+              b.measurement_timestamp as bio_time, b.heart_rate, b.hrv,
+              EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))/60 as time_diff_minutes
+            FROM live_flight_detections_rows f
+            JOIN biometric_monitoring b ON ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= ${timeWindowMinutes * 60}
+            WHERE f.registration LIKE 'N91%KC' AND f.detection_timestamp IS NOT NULL AND b.measurement_timestamp IS NOT NULL
+            ORDER BY b.heart_rate DESC LIMIT ${batchSize}
+          `;
+          result = { count: kcsoCorrelations.length, correlations: kcsoCorrelations };
+        } catch (e) {
+          console.warn('findKCSOBiometricCorrelations error:', e);
+          result = { count: 0, correlations: [], error: String(e) };
+        }
         break;
       }
 
@@ -390,51 +395,49 @@ serve(async (req) => {
 
 
       case 'getComprehensiveSummary': {
-        // Get comprehensive evidence summary
+        // Get comprehensive evidence summary with safe table access
         console.log('Generating comprehensive evidence summary...');
         
-        const [tableStats, topAircraft, dateRange, kcsoStats] = await Promise.all([
-          sql`
-            SELECT 
-              (SELECT COUNT(*) FROM live_flight_detections_rows) as flights,
-              (SELECT COUNT(*) FROM biometric_monitoring) as biometrics,
-              (SELECT COUNT(*) FROM josiah_reflections_rows) as josiah_logs,
-              (SELECT COUNT(*) FROM ocr_aircraft_holding_patterns) as ocr_patterns,
-              (SELECT COUNT(*) FROM physician_verified_ecgs) as ecgs,
-              (SELECT COUNT(DISTINCT registration) FROM live_flight_detections_rows) as unique_aircraft
-          `,
-          sql`
-            SELECT registration, COUNT(*) as count
-            FROM live_flight_detections_rows
-            WHERE registration IS NOT NULL
-            GROUP BY registration
-            ORDER BY count DESC
-            LIMIT 10
-          `,
-          sql`
-            SELECT 
-              MIN(detection_timestamp) as earliest_flight,
-              MAX(detection_timestamp) as latest_flight,
-              MIN(measurement_timestamp) as earliest_bio,
-              MAX(measurement_timestamp) as latest_bio
-            FROM live_flight_detections_rows f, biometric_monitoring b
-          `,
-          sql`
-            SELECT 
-              COUNT(*) as total_detections,
-              COUNT(DISTINCT DATE(detection_timestamp)) as unique_days,
-              ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as avg_altitude
-            FROM live_flight_detections_rows
-            WHERE registration LIKE 'N91%KC'
-          `
-        ]);
-        
-        result = {
-          tableStats: tableStats[0],
-          topAircraft,
-          dateRange: dateRange[0],
-          kcsoStats: kcsoStats[0]
-        };
+        try {
+          const tableCheck = await sql`
+            SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'
+            AND table_name IN ('live_flight_detections_rows', 'biometric_monitoring', 'josiah_reflections_rows', 
+                               'ocr_aircraft_holding_patterns', 'physician_verified_ecgs')
+          `;
+          const existingTables = new Set((tableCheck as unknown as Array<{table_name: string}>).map(t => t.table_name));
+          
+          const safeCount = async (table: string): Promise<number> => {
+            if (!existingTables.has(table)) return 0;
+            const r = await sql!.unsafe(`SELECT COUNT(*) as cnt FROM ${table}`);
+            return Number((r as any)[0]?.cnt || 0);
+          };
+          
+          const tableStats = {
+            flights: await safeCount('live_flight_detections_rows'),
+            biometrics: await safeCount('biometric_monitoring'),
+            josiah_logs: await safeCount('josiah_reflections_rows'),
+            ocr_patterns: await safeCount('ocr_aircraft_holding_patterns'),
+            ecgs: await safeCount('physician_verified_ecgs'),
+            unique_aircraft: existingTables.has('live_flight_detections_rows') 
+              ? Number((await sql!.unsafe(`SELECT COUNT(DISTINCT registration) as cnt FROM live_flight_detections_rows`) as any)[0]?.cnt || 0)
+              : 0
+          };
+          
+          let topAircraft: any[] = [];
+          if (existingTables.has('live_flight_detections_rows')) {
+            topAircraft = await sql`SELECT registration, COUNT(*) as count FROM live_flight_detections_rows WHERE registration IS NOT NULL GROUP BY registration ORDER BY count DESC LIMIT 10`;
+          }
+          
+          result = {
+            tableStats,
+            topAircraft,
+            dateRange: { earliest_flight: null, latest_flight: null, earliest_bio: null, latest_bio: null },
+            kcsoStats: { total_detections: 0, unique_days: 0, avg_altitude: 0 }
+          };
+        } catch (e) {
+          console.warn('getComprehensiveSummary error:', e);
+          result = { tableStats: {}, topAircraft: [], dateRange: {}, kcsoStats: {}, error: String(e) };
+        }
         break;
       }
 

@@ -59,6 +59,8 @@ import { AircraftAlertSystem } from "@/components/dashboard/AircraftAlertSystem"
 import { LegalNarrativeGenerator } from "@/components/dashboard/LegalNarrativeGenerator";
 import { LegalIntakeStrategy } from "@/components/dashboard/LegalIntakeStrategy";
 import { MultimodalEnrichmentPanel } from "@/components/dashboard/MultimodalEnrichmentPanel";
+import { DatabaseCoverageDashboard } from "@/components/dashboard/DatabaseCoverageDashboard";
+import { MasterEvidenceHub } from "@/components/dashboard/MasterEvidenceHub";
 
 const Index = () => {
   return (
@@ -66,8 +68,13 @@ const Index = () => {
       <div className="relative z-10">
         <CommandHeader />
         <main className="container py-6 space-y-6">
-          <section id="database-stats">
+          <section id="database-stats" className="space-y-6">
             <DatabaseStats />
+            <DatabaseCoverageDashboard />
+          </section>
+
+          <section id="master-evidence">
+            <MasterEvidenceHub />
           </section>
 
           <section id="command-center" className="space-y-6">

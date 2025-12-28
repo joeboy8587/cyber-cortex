@@ -119,10 +119,10 @@ export function MasterEvidenceHub() {
         `).catch(() => [])
       ]);
 
-      setWatchtowerData(watchtower);
-      setInvestigatorData(investigator);
-      setTimelineData(timeline);
-      setLegalData(legal);
+      setWatchtowerData(Array.isArray(watchtower) ? watchtower : []);
+      setInvestigatorData(Array.isArray(investigator) ? investigator : []);
+      setTimelineData(Array.isArray(timeline) ? timeline : []);
+      setLegalData(Array.isArray(legal) ? legal : []);
 
     } catch (err) {
       console.error('Error fetching master evidence:', err);
@@ -157,10 +157,12 @@ export function MasterEvidenceHub() {
   };
 
   const filterData = <T extends Record<string, unknown>>(data: T[]): T[] => {
-    if (!searchTerm) return data;
+    // Ensure data is always an array
+    const safeData = Array.isArray(data) ? data : [];
+    if (!searchTerm) return safeData;
     const term = searchTerm.toLowerCase();
-    return data.filter(item => 
-      Object.values(item).some(v => 
+    return safeData.filter(item => 
+      Object.values(item || {}).some(v => 
         String(v || '').toLowerCase().includes(term)
       )
     );

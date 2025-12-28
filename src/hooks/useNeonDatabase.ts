@@ -49,6 +49,26 @@ export function useNeonDatabase() {
       throw err;
     }
 
+    const fallbackFor = () => {
+      switch (action) {
+        case 'getTables':
+        case 'getTableData':
+        case 'getTableSchema':
+          return [];
+        case 'getStats':
+          return { tableCount: 0, totalRecords: 0 } satisfies DatabaseStats;
+        case 'customQuery':
+          return [];
+        default:
+          return null;
+      }
+    };
+
+    const isBootError = (message: string) =>
+      message.includes('BOOT_ERROR') ||
+      message.includes('Function failed to start') ||
+      message.includes('Edge function returned 503');
+
     setIsLoading(true);
     setError(null);
 
@@ -58,17 +78,29 @@ export function useNeonDatabase() {
       });
 
       if (fnError) {
-        throw new Error(fnError.message);
+        const msg = fnError.message || 'Database function error';
+        // Keep UI alive when the backend function is temporarily unavailable.
+        if (isBootError(msg)) {
+          setError(msg);
+          return fallbackFor();
+        }
+        throw new Error(msg);
       }
 
       if (data?.error) {
-        throw new Error(data.error);
+        const msg = String(data.error);
+        if (isBootError(msg)) {
+          setError(msg);
+          return fallbackFor();
+        }
+        throw new Error(msg);
       }
 
       return data?.data;
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Database query failed';
       setError(message);
+      // If we already detected a boot error above, we returned fallbacks.
       throw err;
     } finally {
       setIsLoading(false);

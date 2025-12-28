@@ -95,34 +95,40 @@ export function MasterEvidenceHub() {
         legal: legalCount[0]?.cnt || 0
       });
 
-      // Fetch sample data from each source
+      // Fetch sample data from each source - using safe column-agnostic queries
       const [watchtower, investigator, timeline, legal] = await Promise.all([
         customQuery(`
           SELECT * FROM watchtower_unified_master 
-          ORDER BY COALESCE(event_timestamp, created_at, NOW()) DESC 
           LIMIT 50
         `).catch(() => []),
         customQuery(`
           SELECT * FROM investigator_master_view_rows 
-          ORDER BY COALESCE(timestamp, created_at, NOW()) DESC 
           LIMIT 50
         `).catch(() => []),
         customQuery(`
           SELECT * FROM unified_timeline_enhanced 
-          ORDER BY COALESCE(event_timestamp, created_at, NOW()) DESC 
           LIMIT 50
         `).catch(() => []),
         customQuery(`
           SELECT * FROM legal_ada_violations_proper 
-          ORDER BY COALESCE(date_identified, created_at, NOW()) DESC 
           LIMIT 50
         `).catch(() => [])
       ]);
 
-      setWatchtowerData(Array.isArray(watchtower) ? watchtower : []);
-      setInvestigatorData(Array.isArray(investigator) ? investigator : []);
-      setTimelineData(Array.isArray(timeline) ? timeline : []);
-      setLegalData(Array.isArray(legal) ? legal : []);
+      // Extract array from response, handling error objects
+      const extractArray = (result: unknown): unknown[] => {
+        if (Array.isArray(result)) return result;
+        if (result && typeof result === 'object' && 'data' in result) {
+          const nested = (result as { data: unknown }).data;
+          if (Array.isArray(nested)) return nested;
+        }
+        return [];
+      };
+
+      setWatchtowerData(extractArray(watchtower) as WatchtowerRecord[]);
+      setInvestigatorData(extractArray(investigator) as InvestigatorRecord[]);
+      setTimelineData(extractArray(timeline) as TimelineRecord[]);
+      setLegalData(extractArray(legal) as LegalViolation[]);
 
     } catch (err) {
       console.error('Error fetching master evidence:', err);

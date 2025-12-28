@@ -283,7 +283,13 @@ export function BiometricCorrelation() {
 
       if (corrError) throw corrError;
       
-      const rawCorrelations: Correlation[] = corrData?.data || [];
+      // Safely extract array from response
+      let rawCorrelations: Correlation[] = [];
+      if (Array.isArray(corrData?.data)) {
+        rawCorrelations = corrData.data;
+      } else if (corrData?.data && typeof corrData.data === 'object' && !('error' in corrData.data)) {
+        rawCorrelations = [];
+      }
       
       // Filter for valid biometrics client-side as backup
       const validCorrelations = rawCorrelations.filter(c => isValidBiometric(c.heart_rate));

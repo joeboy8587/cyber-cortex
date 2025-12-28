@@ -54,6 +54,11 @@ const INTEGRATED_TABLES = new Set([
   'flight_events',
   'surveillance_logs',
   'real_time_surveillance_feed',
+  // Priority tables now integrated via MasterEvidenceHub
+  'watchtower_unified_master',
+  'investigator_master_view_rows',
+  'unified_timeline_enhanced',
+  'legal_ada_violations_proper',
 ]);
 
 // Categorize tables by their purpose

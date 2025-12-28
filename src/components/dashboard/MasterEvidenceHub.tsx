@@ -8,51 +8,68 @@ import { Input } from '@/components/ui/input';
 import { Eye, RefreshCw, Loader2, Search, Clock, Plane, Shield, Scale } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 
+// watchtower_unified_master schema
 interface WatchtowerRecord {
   [key: string]: unknown;
-  id?: string;
+  event_id?: string;
   event_type?: string;
   source_table?: string;
   event_timestamp?: string;
   registration?: string;
   callsign?: string;
-  description?: string;
-  severity?: string;
-  category?: string;
+  heart_rate?: number;
+  hrv?: number;
+  stress_level?: number;
+  altitude_ft?: number;
+  operator?: string;
 }
 
+// investigator_master_view_rows schema
 interface InvestigatorRecord {
   [key: string]: unknown;
-  id?: string;
+  serial_id?: number;
+  event_id?: string;
   event_type?: string;
-  timestamp?: string;
-  description?: string;
-  source?: string;
-  priority?: string;
-  linked_evidence?: string;
+  event_description?: string;
+  event_timestamp?: string;
+  aircraft_id?: string;
+  threat_level?: string;
+  altitude?: number;
+  heart_rate?: number;
+  stress_score?: number;
+  correlation_strength?: string;
 }
 
+// unified_timeline_enhanced schema
 interface TimelineRecord {
   [key: string]: unknown;
-  id?: string;
-  event_timestamp?: string;
+  id?: number;
+  event_id?: string;
+  event_time?: string;
   event_type?: string;
-  title?: string;
   description?: string;
-  source_table?: string;
-  severity?: string;
+  source?: string;
   aircraft_id?: string;
+  altitude?: number;
+  threat_level?: string;
+  heart_rate?: number;
+  correlation_score?: number;
 }
 
+// legal_ada_violations_proper schema
 interface LegalViolation {
   [key: string]: unknown;
+  serial_id?: number;
   id?: string;
+  aircraft_id?: string;
+  aircraft_registration?: string;
+  stress_score?: number;
+  heart_rate?: number;
+  correlation_score?: number;
+  biometric_timestamp?: string;
+  harm_severity?: string;
   violation_type?: string;
-  description?: string;
-  date_identified?: string;
-  severity?: string;
-  evidence_refs?: string;
-  status?: string;
+  created_at?: string;
 }
 
 export function MasterEvidenceHub() {
@@ -95,22 +112,26 @@ export function MasterEvidenceHub() {
         legal: legalCount[0]?.cnt || 0
       });
 
-      // Fetch sample data from each source - using safe column-agnostic queries
+      // Fetch sample data with correct column ordering
       const [watchtower, investigator, timeline, legal] = await Promise.all([
         customQuery(`
           SELECT * FROM watchtower_unified_master 
+          ORDER BY event_timestamp DESC NULLS LAST
           LIMIT 50
         `).catch(() => []),
         customQuery(`
           SELECT * FROM investigator_master_view_rows 
+          ORDER BY event_timestamp DESC NULLS LAST
           LIMIT 50
         `).catch(() => []),
         customQuery(`
           SELECT * FROM unified_timeline_enhanced 
+          ORDER BY event_time DESC NULLS LAST
           LIMIT 50
         `).catch(() => []),
         customQuery(`
           SELECT * FROM legal_ada_violations_proper 
+          ORDER BY created_at DESC NULLS LAST
           LIMIT 50
         `).catch(() => [])
       ]);
@@ -255,32 +276,29 @@ export function MasterEvidenceHub() {
                     <div key={idx} className="bg-muted/30 rounded-lg p-3 border border-cyan-500/20">
                       <div className="flex justify-between items-start mb-2">
                         <div className="flex items-center gap-2">
-                          <Badge className={getSeverityBadge(String(record.severity || ''))}>
-                            {String(record.severity || 'INFO')}
+                          <Badge className="bg-cyan-500/20 text-cyan-400 border-cyan-500/30">
+                            {String(record.event_type || 'Event')}
                           </Badge>
-                          <span className="text-sm font-medium">{String(record.event_type || 'Event')}</span>
+                          <span className="text-sm font-medium">{String(record.source_table || '')}</span>
                         </div>
                         <span className="text-xs text-muted-foreground">
                           {formatDate(String(record.event_timestamp || ''))}
                         </span>
                       </div>
-                      <div className="text-sm text-muted-foreground line-clamp-2">
-                        {String(record.description || 'No description')}
+                      <div className="flex flex-wrap gap-2 text-xs">
+                        {record.registration && (
+                          <Badge variant="outline">Reg: {String(record.registration)}</Badge>
+                        )}
+                        {record.callsign && (
+                          <Badge variant="outline">CS: {String(record.callsign)}</Badge>
+                        )}
+                        {record.heart_rate && (
+                          <Badge variant="outline" className="bg-red-500/10 text-red-400">HR: {record.heart_rate}</Badge>
+                        )}
+                        {record.altitude_ft && (
+                          <Badge variant="outline" className="bg-yellow-500/10 text-yellow-400">Alt: {record.altitude_ft}ft</Badge>
+                        )}
                       </div>
-                      {(record.registration || record.callsign) && (
-                        <div className="flex gap-2 mt-2">
-                          {record.registration && (
-                            <Badge variant="outline" className="text-xs">
-                              Reg: {String(record.registration)}
-                            </Badge>
-                          )}
-                          {record.callsign && (
-                            <Badge variant="outline" className="text-xs">
-                              CS: {String(record.callsign)}
-                            </Badge>
-                          )}
-                        </div>
-                      )}
                     </div>
                   ))}
                   {watchtowerData.length === 0 && (
@@ -299,23 +317,26 @@ export function MasterEvidenceHub() {
                     <div key={idx} className="bg-muted/30 rounded-lg p-3 border border-orange-500/20">
                       <div className="flex justify-between items-start mb-2">
                         <div className="flex items-center gap-2">
-                          <Badge className={getSeverityBadge(String(record.priority || ''))}>
-                            {String(record.priority || 'NORMAL')}
+                          <Badge className={getSeverityBadge(String(record.threat_level || ''))}>
+                            {String(record.threat_level || 'NORMAL')}
                           </Badge>
                           <span className="text-sm font-medium">{String(record.event_type || 'Investigation')}</span>
                         </div>
                         <span className="text-xs text-muted-foreground">
-                          {formatDate(String(record.timestamp || ''))}
+                          {formatDate(String(record.event_timestamp || ''))}
                         </span>
                       </div>
                       <div className="text-sm text-muted-foreground line-clamp-2">
-                        {String(record.description || 'No description')}
+                        {String(record.event_description || 'No description')}
                       </div>
-                      {record.source && (
-                        <Badge variant="outline" className="text-xs mt-2">
-                          Source: {String(record.source)}
-                        </Badge>
-                      )}
+                      <div className="flex flex-wrap gap-2 mt-2 text-xs">
+                        {record.aircraft_id && (
+                          <Badge variant="outline">Aircraft: {String(record.aircraft_id)}</Badge>
+                        )}
+                        {record.correlation_strength && (
+                          <Badge variant="outline" className="bg-purple-500/10 text-purple-400">Corr: {String(record.correlation_strength)}</Badge>
+                        )}
+                      </div>
                     </div>
                   ))}
                   {investigatorData.length === 0 && (
@@ -334,23 +355,26 @@ export function MasterEvidenceHub() {
                     <div key={idx} className="bg-muted/30 rounded-lg p-3 border border-green-500/20">
                       <div className="flex justify-between items-start mb-2">
                         <div className="flex items-center gap-2">
-                          <Badge className={getSeverityBadge(String(record.severity || ''))}>
+                          <Badge className={getSeverityBadge(String(record.threat_level || ''))}>
                             {String(record.event_type || 'EVENT')}
                           </Badge>
-                          <span className="text-sm font-medium">{String(record.title || 'Timeline Event')}</span>
+                          <span className="text-sm font-medium">{String(record.source || 'Timeline')}</span>
                         </div>
                         <span className="text-xs text-muted-foreground">
-                          {formatDate(String(record.event_timestamp || ''))}
+                          {formatDate(String(record.event_time || ''))}
                         </span>
                       </div>
                       <div className="text-sm text-muted-foreground line-clamp-2">
                         {String(record.description || 'No description')}
                       </div>
-                      {record.source_table && (
-                        <Badge variant="outline" className="text-xs mt-2">
-                          From: {String(record.source_table)}
-                        </Badge>
-                      )}
+                      <div className="flex flex-wrap gap-2 mt-2 text-xs">
+                        {record.aircraft_id && (
+                          <Badge variant="outline">Aircraft: {String(record.aircraft_id)}</Badge>
+                        )}
+                        {record.correlation_score && (
+                          <Badge variant="outline" className="bg-green-500/10 text-green-400">Score: {record.correlation_score}</Badge>
+                        )}
+                      </div>
                     </div>
                   ))}
                   {timelineData.length === 0 && (
@@ -369,23 +393,29 @@ export function MasterEvidenceHub() {
                     <div key={idx} className="bg-muted/30 rounded-lg p-3 border border-red-500/20">
                       <div className="flex justify-between items-start mb-2">
                         <div className="flex items-center gap-2">
-                          <Badge className={getSeverityBadge(String(record.severity || ''))}>
-                            {String(record.severity || 'VIOLATION')}
+                          <Badge className={getSeverityBadge(String(record.harm_severity || ''))}>
+                            {String(record.harm_severity || 'VIOLATION')}
                           </Badge>
                           <span className="text-sm font-medium">{String(record.violation_type || 'Legal Violation')}</span>
                         </div>
                         <span className="text-xs text-muted-foreground">
-                          {formatDate(String(record.date_identified || ''))}
+                          {formatDate(String(record.created_at || record.biometric_timestamp || ''))}
                         </span>
                       </div>
-                      <div className="text-sm text-muted-foreground line-clamp-2">
-                        {String(record.description || 'No description')}
+                      <div className="flex flex-wrap gap-2 mt-2 text-xs">
+                        {record.aircraft_registration && (
+                          <Badge variant="outline">Reg: {String(record.aircraft_registration)}</Badge>
+                        )}
+                        {record.heart_rate && (
+                          <Badge variant="outline" className="bg-red-500/10 text-red-400">HR: {record.heart_rate}</Badge>
+                        )}
+                        {record.stress_score && (
+                          <Badge variant="outline" className="bg-orange-500/10 text-orange-400">Stress: {record.stress_score}</Badge>
+                        )}
+                        {record.correlation_score && (
+                          <Badge variant="outline" className="bg-purple-500/10 text-purple-400">Corr: {record.correlation_score}</Badge>
+                        )}
                       </div>
-                      {record.status && (
-                        <Badge variant="outline" className="text-xs mt-2">
-                          Status: {String(record.status)}
-                        </Badge>
-                      )}
                     </div>
                   ))}
                   {legalData.length === 0 && (

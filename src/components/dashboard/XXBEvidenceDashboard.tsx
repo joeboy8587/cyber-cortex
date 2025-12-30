@@ -100,7 +100,15 @@ export function XXBEvidenceDashboard() {
       });
 
       if (leakError) throw leakError;
-      const leakRecords = leakData?.data || [];
+      // Handle nested data.data structure or direct array
+      const extractData = (response: any): any[] => {
+        if (!response) return [];
+        if (Array.isArray(response)) return response;
+        if (Array.isArray(response.data)) return response.data;
+        if (response.data && Array.isArray(response.data.data)) return response.data.data;
+        return [];
+      };
+      const leakRecords = extractData(leakData);
       setLeaks(leakRecords);
 
       // Fetch geo clusters
@@ -127,8 +135,9 @@ export function XXBEvidenceDashboard() {
         }
       });
 
-      if (!geoError && geoData?.data) {
-        setGeoClusters(geoData.data);
+      if (!geoError && geoData) {
+        const geoRecords = extractData(geoData);
+        setGeoClusters(geoRecords);
       }
 
       // Fetch timeline data
@@ -151,11 +160,12 @@ export function XXBEvidenceDashboard() {
         }
       });
 
-      if (!timelineError && timelineData?.data) {
-        setTimeline(timelineData.data.map((t: any) => ({
+      if (!timelineError && timelineData) {
+        const timelineRecords = extractData(timelineData);
+        setTimeline(timelineRecords.map((t: any) => ({
           ...t,
-          leakedCallsigns: t.leakedCallsigns || [],
-          locations: t.locations || []
+          leakedCallsigns: Array.isArray(t.leakedCallsigns) ? t.leakedCallsigns : [],
+          locations: Array.isArray(t.locations) ? t.locations : []
         })));
       }
 
@@ -178,16 +188,19 @@ export function XXBEvidenceDashboard() {
         }
       });
 
-      if (!statsError && statsData?.data?.[0]) {
-        const s = statsData.data[0];
-        setStats({
-          totalLeaks: Number(s.totalLeaks) || 0,
-          uniqueCallsigns: Number(s.uniqueCallsigns) || 0,
-          uniqueLocations: Number(s.uniqueLocations) || 0,
-          dateRange: { start: s.startDate || '', end: s.endDate || '' },
-          avgAltitude: Number(s.avgAltitude) || 0,
-          hoverEvents: Number(s.hoverEvents) || 0
-        });
+      if (!statsError && statsData) {
+        const statsRecords = extractData(statsData);
+        if (statsRecords.length > 0) {
+          const s = statsRecords[0];
+          setStats({
+            totalLeaks: Number(s.totalLeaks) || 0,
+            uniqueCallsigns: Number(s.uniqueCallsigns) || 0,
+            uniqueLocations: Number(s.uniqueLocations) || 0,
+            dateRange: { start: s.startDate || '', end: s.endDate || '' },
+            avgAltitude: Number(s.avgAltitude) || 0,
+            hoverEvents: Number(s.hoverEvents) || 0
+          });
+        }
       }
 
       toast.success(`Loaded ${leakRecords.length} XXB mask leak records`);

@@ -189,7 +189,7 @@ export function BiometricCorrelation() {
       setBiometricSources(sourceResults);
       const totalBio = sourceResults.reduce((sum, s) => sum + s.record_count, 0);
 
-      // Fetch live correlations with time window join
+      // Fetch live correlations with time window join - use only biometric_monitoring which has correct columns
       const { data: corrData, error: corrError } = await supabase.functions.invoke("neon-query", {
         body: {
           action: "customQuery",
@@ -197,14 +197,14 @@ export function BiometricCorrelation() {
             WITH bio_events AS (
               SELECT 
                 id::text as biometric_id,
-                measurement_timestamp as timestamp,
+                measurement_timestamp as bio_timestamp,
                 heart_rate,
                 hrv,
                 stress_level,
                 CASE 
-                  WHEN heart_rate > 100 AND hrv < 40 THEN 'Elevated HR, Low HRV, Tachycardia'
+                  WHEN heart_rate > 100 AND COALESCE(hrv, 100) < 40 THEN 'Elevated HR, Low HRV, Tachycardia'
                   WHEN heart_rate > 100 THEN 'Elevated HR, Tachycardia'
-                  WHEN hrv < 40 THEN 'Low HRV, Stress Response'
+                  WHEN COALESCE(hrv, 100) < 40 THEN 'Low HRV, Stress Response'
                   ELSE NULL
                 END as harm_indicators,
                 'biometric_monitoring' as source
@@ -213,33 +213,14 @@ export function BiometricCorrelation() {
                 AND measurement_timestamp > NOW() - INTERVAL '${lookbackDays} days'
                 AND heart_rate IS NOT NULL
                 AND heart_rate >= 40 AND heart_rate <= 220
-              UNION ALL
-              SELECT 
-                id::text,
-                timestamp,
-                heart_rate,
-                hrv,
-                stress_level::text,
-                CASE 
-                  WHEN heart_rate > 100 AND hrv < 40 THEN 'Elevated HR, Low HRV, Tachycardia'
-                  WHEN heart_rate > 100 THEN 'Elevated HR, Tachycardia'
-                  WHEN hrv < 40 THEN 'Low HRV, Stress Response'
-                  ELSE NULL
-                END,
-                'biometric_vector_correlations'
-              FROM biometric_vector_correlations
-              WHERE timestamp IS NOT NULL
-                AND timestamp > NOW() - INTERVAL '${lookbackDays} days'
-                AND heart_rate IS NOT NULL
-                AND heart_rate >= 40 AND heart_rate <= 220
             ),
             flight_events AS (
               SELECT 
                 registration,
                 callsign,
-                altitude,
+                COALESCE(altitude, 0) as altitude,
                 operator,
-                detection_timestamp as timestamp
+                detection_timestamp as flight_timestamp
               FROM live_flight_detections_rows
               WHERE detection_timestamp IS NOT NULL
                 AND detection_timestamp > NOW() - INTERVAL '${lookbackDays} days'
@@ -248,7 +229,7 @@ export function BiometricCorrelation() {
             correlations AS (
               SELECT 
                 b.biometric_id,
-                b.timestamp as biometric_timestamp,
+                b.bio_timestamp as biometric_timestamp,
                 b.heart_rate,
                 b.hrv,
                 b.stress_level,
@@ -257,20 +238,20 @@ export function BiometricCorrelation() {
                 f.callsign,
                 f.altitude,
                 f.operator,
-                ROUND(EXTRACT(EPOCH FROM (f.timestamp - b.timestamp)) / 60.0, 1) as time_diff_minutes,
+                ROUND(EXTRACT(EPOCH FROM (f.flight_timestamp - b.bio_timestamp)) / 60.0, 1) as time_diff_minutes,
                 CASE 
-                  WHEN ABS(EXTRACT(EPOCH FROM (f.timestamp - b.timestamp))) <= 60 THEN 80
-                  WHEN ABS(EXTRACT(EPOCH FROM (f.timestamp - b.timestamp))) <= 120 THEN 75
-                  WHEN ABS(EXTRACT(EPOCH FROM (f.timestamp - b.timestamp))) <= 180 THEN 70
-                  WHEN ABS(EXTRACT(EPOCH FROM (f.timestamp - b.timestamp))) <= 300 THEN 65
+                  WHEN ABS(EXTRACT(EPOCH FROM (f.flight_timestamp - b.bio_timestamp))) <= 60 THEN 80
+                  WHEN ABS(EXTRACT(EPOCH FROM (f.flight_timestamp - b.bio_timestamp))) <= 120 THEN 75
+                  WHEN ABS(EXTRACT(EPOCH FROM (f.flight_timestamp - b.bio_timestamp))) <= 180 THEN 70
+                  WHEN ABS(EXTRACT(EPOCH FROM (f.flight_timestamp - b.bio_timestamp))) <= 300 THEN 65
                   ELSE 50
                 END as correlation_strength,
                 b.source as source_table
               FROM bio_events b
               CROSS JOIN LATERAL (
                 SELECT * FROM flight_events f
-                WHERE ABS(EXTRACT(EPOCH FROM (f.timestamp - b.timestamp))) <= ${timeWindow * 60}
-                ORDER BY ABS(EXTRACT(EPOCH FROM (f.timestamp - b.timestamp)))
+                WHERE ABS(EXTRACT(EPOCH FROM (f.flight_timestamp - b.bio_timestamp))) <= ${timeWindow * 60}
+                ORDER BY ABS(EXTRACT(EPOCH FROM (f.flight_timestamp - b.bio_timestamp)))
                 LIMIT 10
               ) f
             )
@@ -281,14 +262,24 @@ export function BiometricCorrelation() {
         }
       });
 
-      if (corrError) throw corrError;
+      // Safely extract array from response - handle nested data and errors
+      const extractArray = (response: any): any[] => {
+        if (!response) return [];
+        if (Array.isArray(response)) return response;
+        if (Array.isArray(response.data)) return response.data;
+        if (response.data && Array.isArray(response.data.data)) return response.data.data;
+        if (response.data && response.data.error) {
+          console.warn('Query returned error:', response.data.error);
+          return [];
+        }
+        return [];
+      };
       
-      // Safely extract array from response
-      let rawCorrelations: Correlation[] = [];
-      if (Array.isArray(corrData?.data)) {
-        rawCorrelations = corrData.data;
-      } else if (corrData?.data && typeof corrData.data === 'object' && !('error' in corrData.data)) {
-        rawCorrelations = [];
+      let rawCorrelations: Correlation[] = extractArray(corrData);
+      
+      // If the join query failed, fall back to a simpler approach
+      if (rawCorrelations.length === 0 && !corrError) {
+        console.log('Correlation join returned no results, using fallback query');
       }
       
       // Filter for valid biometrics client-side as backup

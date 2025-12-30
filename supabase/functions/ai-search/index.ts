@@ -122,6 +122,37 @@ When answering:
 
 Format your response clearly with sections if needed.`;
 
+    // Add shell company and enterprise context
+    let enterpriseContext = "";
+    if (NEON_DATABASE_URL) {
+      const sql = postgres(NEON_DATABASE_URL, { ssl: "require", max: 1 });
+      try {
+        const shellCompanies = await sql`
+          SELECT name, entity_type, tier, role, legal_exposure 
+          FROM criminal_enterprise_command_structure 
+          ORDER BY tier LIMIT 15
+        `.catch(() => []);
+        
+        if (shellCompanies.length > 0) {
+          enterpriseContext = `\n\nCriminal Enterprise Structure:\n${shellCompanies.map((s: any) => `- ${s.name} (Tier ${s.tier}): ${s.role || s.entity_type}`).join("\n")}`;
+        }
+
+        const convergenceData = await sql`
+          SELECT COUNT(*) as total_correlations FROM biometric_flight_correlations
+        `.catch(() => [{ total_correlations: 0 }]);
+        
+        const ecgData = await sql`
+          SELECT COUNT(*) as ecg_count FROM physician_verified_ecgs
+        `.catch(() => [{ ecg_count: 0 }]);
+        
+        enterpriseContext += `\n\nConvergence Evidence:\n- Biometric-Flight Correlations: ${convergenceData[0]?.total_correlations || 0}\n- Physician-Verified ECGs: ${ecgData[0]?.ecg_count || 0}`;
+        
+        await sql.end();
+      } catch (e) {
+        console.error("Enterprise context error:", e);
+      }
+    }
+
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -129,9 +160,9 @@ Format your response clearly with sections if needed.`;
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
+        model: "google/gemini-2.5-pro",
         messages: [
-          { role: "system", content: systemPrompt },
+          { role: "system", content: systemPrompt + enterpriseContext },
           { role: "user", content: query }
         ],
         stream: true,

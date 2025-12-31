@@ -315,7 +315,13 @@ serve(async (req) => {
           let flaggedInserted = 0;
           
           for (const flight of transformedFlights) {
+            // Skip flights without valid coordinates OR identification
             if (!flight.hex && !flight.registration) continue;
+            if (flight.latitude == null || flight.longitude == null || 
+                flight.latitude === 0 || flight.longitude === 0) {
+              console.log(`Skipping flight ${flight.registration || flight.hex} - no valid coordinates`);
+              continue;
+            }
             
             try {
               const flightId = crypto.randomUUID();
@@ -562,8 +568,11 @@ serve(async (req) => {
             const sql = postgres(neonUrl, { ssl: 'require', max: 1, idle_timeout: 10, connect_timeout: 15 });
             
             for (const flight of transformedFlights) {
-              // Only store flights with valid coordinates
-              if (!flight.latitude || !flight.longitude) continue;
+              // Only store flights with valid non-zero coordinates
+              if (!flight.latitude || !flight.longitude || 
+                  flight.latitude === 0 || flight.longitude === 0) {
+                continue;
+              }
               
               try {
                 const flightId = crypto.randomUUID();

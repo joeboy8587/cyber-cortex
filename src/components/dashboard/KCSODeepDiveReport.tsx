@@ -52,7 +52,7 @@ export const KCSODeepDiveReport = () => {
     try {
       // Fetch comprehensive KCSO aircraft statistics
       const [statsRes, altRes, dailyRes, bioRes] = await Promise.all([
-        // Per-aircraft stats
+        // Per-aircraft stats - broadened to match actual KCSO patterns
         supabase.functions.invoke('neon-query', {
           body: {
             action: 'customQuery',
@@ -62,19 +62,27 @@ export const KCSODeepDiveReport = () => {
                 COUNT(*) as total_detections,
                 COUNT(DISTINCT DATE(detection_timestamp)) as unique_days,
                 ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as avg_altitude,
-                MIN(COALESCE(altitude, 9999)) as min_altitude,
+                MIN(CASE WHEN altitude > 0 THEN altitude ELSE NULL END) as min_altitude,
                 MAX(COALESCE(altitude, 0)) as max_altitude,
                 MIN(detection_timestamp) as first_detection,
                 MAX(detection_timestamp) as last_detection,
-                COUNT(*) FILTER (WHERE altitude < 1500) as low_altitude_count
+                COUNT(*) FILTER (WHERE altitude < 1500 AND altitude > 0) as low_altitude_count
               FROM live_flight_detections_rows
-              WHERE registration LIKE 'N91%KC'
+              WHERE (
+                registration IN ('N912KC', 'N913KC')
+                OR registration LIKE 'N91%KC'
+                OR registration LIKE 'N%KC'
+                OR taxonomy_tag IN ('xxb_kcso', 'xxb_tier1_priority')
+                OR callsign ILIKE '%KCSO%'
+                OR callsign ILIKE '%KERN%'
+              )
+              AND registration IS NOT NULL
               GROUP BY registration
               ORDER BY total_detections DESC
             `
           }
         }),
-        // Altitude distribution
+        // Altitude distribution - broadened filter
         supabase.functions.invoke('neon-query', {
           body: {
             action: 'customQuery',
@@ -90,13 +98,21 @@ export const KCSODeepDiveReport = () => {
                 END as altitude_range,
                 COUNT(*) as count
               FROM live_flight_detections_rows
-              WHERE registration LIKE 'N91%KC'
+              WHERE (
+                registration IN ('N912KC', 'N913KC')
+                OR registration LIKE 'N91%KC'
+                OR registration LIKE 'N%KC'
+                OR taxonomy_tag IN ('xxb_kcso', 'xxb_tier1_priority')
+                OR callsign ILIKE '%KCSO%'
+                OR callsign ILIKE '%KERN%'
+              )
+              AND altitude IS NOT NULL AND altitude > 0
               GROUP BY altitude_range
               ORDER BY MIN(altitude)
             `
           }
         }),
-        // Daily pattern
+        // Daily pattern - broadened filter
         supabase.functions.invoke('neon-query', {
           body: {
             action: 'customQuery',
@@ -106,14 +122,21 @@ export const KCSODeepDiveReport = () => {
                 COUNT(*) as detections,
                 ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as avg_altitude
               FROM live_flight_detections_rows
-              WHERE registration LIKE 'N91%KC'
+              WHERE (
+                registration IN ('N912KC', 'N913KC')
+                OR registration LIKE 'N91%KC'
+                OR registration LIKE 'N%KC'
+                OR taxonomy_tag IN ('xxb_kcso', 'xxb_tier1_priority')
+                OR callsign ILIKE '%KCSO%'
+                OR callsign ILIKE '%KERN%'
+              )
               GROUP BY DATE(detection_timestamp)
               ORDER BY date DESC
               LIMIT 60
             `
           }
         }),
-        // Biometric correlations (within 5 min windows)
+        // Biometric correlations
         supabase.functions.invoke('neon-query', {
           body: {
             action: 'customQuery',

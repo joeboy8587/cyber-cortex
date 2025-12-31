@@ -41,21 +41,6 @@ export const ShellCompanyMatrix = () => {
   const fetchShellData = useCallback(async () => {
     setLoading(true);
     try {
-      const pickTimestampColumn = async (tableName: string, candidates: string[]) => {
-        const { data: schemaRes } = await supabase.functions.invoke('neon-query', {
-          body: { action: 'getTableSchema', table: tableName }
-        });
-        const cols: string[] = (schemaRes?.data || []).map((c: any) => String(c.column_name));
-        return candidates.find(c => cols.includes(c)) || null;
-      };
-
-      const flaggedTsCol = await pickTimestampColumn('flagged_aircraft_rows_rows', [
-        'created_at',
-        'detection_timestamp',
-        'timestamp',
-        'flagged_at'
-      ]);
-
       // Get aircraft grouped by operator/callsign patterns
       const [operatorRes, flaggedRes] = await Promise.all([
         supabase.functions.invoke('neon-query', {
@@ -70,7 +55,7 @@ export const ShellCompanyMatrix = () => {
                 MIN(detection_timestamp) as first_seen,
                 MAX(detection_timestamp) as last_seen
               FROM live_flight_detections_rows
-              WHERE registration IS NOT NULL
+              WHERE registration IS NOT NULL AND registration != ''
               GROUP BY callsign, registration
               ORDER BY detections DESC
               LIMIT 200
@@ -83,7 +68,7 @@ export const ShellCompanyMatrix = () => {
             action: 'customQuery',
             query: `
               SELECT * FROM flagged_aircraft_rows_rows
-              ${flaggedTsCol ? `ORDER BY ${flaggedTsCol} DESC` : ''}
+              ORDER BY created_at DESC NULLS LAST
               LIMIT 100
             `
           }

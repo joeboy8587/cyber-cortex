@@ -37,6 +37,10 @@ serve(async (req) => {
 
     console.log('Scraping URL:', formattedUrl);
 
+    // Create abort controller with 90 second timeout for slow sites
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 90000);
+
     const response = await fetch('https://api.firecrawl.dev/v1/scrape', {
       method: 'POST',
       headers: {
@@ -47,10 +51,14 @@ serve(async (req) => {
         url: formattedUrl,
         formats: options?.formats || ['markdown'],
         onlyMainContent: options?.onlyMainContent ?? true,
-        waitFor: options?.waitFor,
+        waitFor: options?.waitFor || 5000,
+        timeout: 60000,
         location: options?.location,
       }),
+      signal: controller.signal,
     });
+
+    clearTimeout(timeoutId);
 
     const data = await response.json();
 
@@ -69,7 +77,9 @@ serve(async (req) => {
     );
   } catch (error) {
     console.error('Error scraping:', error);
-    const errorMessage = error instanceof Error ? error.message : 'Failed to scrape';
+    const errorMessage = error instanceof Error 
+      ? (error.name === 'AbortError' ? 'Request timed out - try a simpler page' : error.message)
+      : 'Failed to scrape';
     return new Response(
       JSON.stringify({ success: false, error: errorMessage }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

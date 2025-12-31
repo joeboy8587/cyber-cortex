@@ -69,6 +69,7 @@ import { LegalEvidenceDashboard } from "@/components/dashboard/LegalEvidenceDash
 import { FlightDataScraper } from "@/components/dashboard/FlightDataScraper";
 import { EvidenceUploader } from "@/components/dashboard/EvidenceUploader";
 import { FlightSaturationAnalyzer } from "@/components/dashboard/FlightSaturationAnalyzer";
+import { FireclawExtractionPanel } from "@/components/dashboard/FireclawExtractionPanel";
 
 const Index = () => {
   return (
@@ -125,7 +126,8 @@ const Index = () => {
             <OutreachHub />
           </section>
           
-          <section id="evidence-upload">
+          <section id="evidence-upload" className="space-y-6">
+            <FireclawExtractionPanel />
             <EvidenceUploader />
           </section>
           

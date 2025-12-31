@@ -1,9 +1,10 @@
-import React, { useEffect, useState, useCallback, lazy, Suspense } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { RefreshCw, Plane, AlertTriangle, Shield, Target, Loader2 } from 'lucide-react';
+import { RefreshCw, Plane, AlertTriangle, Shield, Target } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
+import AircraftMapContent from './AircraftMapContent';
 
 interface FlightData {
   hex: string;
@@ -35,8 +36,6 @@ const threatRadius = {
   normal: 6
 };
 
-// Lazy load the map component to avoid SSR issues with react-leaflet
-const MapContent = lazy(() => import('./AircraftMapContent'));
 
 const AircraftMapVisualization: React.FC = () => {
   const [flights, setFlights] = useState<FlightData[]>([]);
@@ -190,17 +189,11 @@ const AircraftMapVisualization: React.FC = () => {
       
       <CardContent className="p-0">
         <div className="h-[500px] w-full rounded-b-lg overflow-hidden">
-          <Suspense fallback={
-            <div className="h-full w-full flex items-center justify-center bg-muted/20">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
-          }>
-            <MapContent 
-              flights={filteredFlights} 
-              threatColors={threatColors}
-              threatRadius={threatRadius}
-            />
-          </Suspense>
+          <AircraftMapContent 
+            flights={filteredFlights} 
+            threatColors={threatColors}
+            threatRadius={threatRadius}
+          />
         </div>
         
         {lastUpdate && (

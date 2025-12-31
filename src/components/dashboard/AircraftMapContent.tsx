@@ -1,6 +1,5 @@
-import React, { useEffect } from 'react';
-import { MapContainer, TileLayer, CircleMarker, Popup, useMap } from 'react-leaflet';
-import 'leaflet/dist/leaflet.css';
+import React, { useEffect, useState } from 'react';
+import { Loader2 } from 'lucide-react';
 
 interface FlightData {
   hex: string;
@@ -24,23 +23,31 @@ interface MapContentProps {
   threatRadius: Record<string, number>;
 }
 
-function MapBoundsUpdater({ flights }: { flights: FlightData[] }) {
-  const map = useMap();
-  
-  useEffect(() => {
-    if (flights.length > 0) {
-      const validFlights = flights.filter(f => f.latitude && f.longitude);
-      if (validFlights.length > 0) {
-        const bounds = validFlights.map(f => [f.latitude, f.longitude] as [number, number]);
-        map.fitBounds(bounds, { padding: [50, 50], maxZoom: 8 });
-      }
-    }
-  }, [flights, map]);
-  
-  return null;
-}
-
 const AircraftMapContent: React.FC<MapContentProps> = ({ flights, threatColors, threatRadius }) => {
+  const [MapComponents, setMapComponents] = useState<any>(null);
+  const [isClient, setIsClient] = useState(false);
+
+  useEffect(() => {
+    setIsClient(true);
+    // Dynamically import react-leaflet components
+    Promise.all([
+      import('react-leaflet'),
+      import('leaflet/dist/leaflet.css')
+    ]).then(([reactLeaflet]) => {
+      setMapComponents(reactLeaflet);
+    });
+  }, []);
+
+  if (!isClient || !MapComponents) {
+    return (
+      <div className="h-full w-full flex items-center justify-center bg-muted/20">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  const { MapContainer, TileLayer, CircleMarker, Popup } = MapComponents;
+
   return (
     <MapContainer
       center={[35.4, -119.0]}
@@ -52,8 +59,6 @@ const AircraftMapContent: React.FC<MapContentProps> = ({ flights, threatColors, 
         attribution='&copy; <a href="https://carto.com/">CARTO</a>'
         url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
       />
-      
-      <MapBoundsUpdater flights={flights} />
       
       {flights.map((flight, idx) => (
         <CircleMarker

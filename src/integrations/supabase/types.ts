@@ -143,6 +143,48 @@ export type Database = {
         }
         Relationships: []
       }
+      kcso_fleet: {
+        Row: {
+          created_at: string
+          frequent_oildale_operation: boolean | null
+          id: string
+          model: string
+          model_citation: string | null
+          oildale_citation: string | null
+          surveillance_capabilities: string | null
+          surveillance_citation: string | null
+          tail_number: string
+          tail_number_citation: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          frequent_oildale_operation?: boolean | null
+          id?: string
+          model: string
+          model_citation?: string | null
+          oildale_citation?: string | null
+          surveillance_capabilities?: string | null
+          surveillance_citation?: string | null
+          tail_number: string
+          tail_number_citation?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          frequent_oildale_operation?: boolean | null
+          id?: string
+          model?: string
+          model_citation?: string | null
+          oildale_citation?: string | null
+          surveillance_capabilities?: string | null
+          surveillance_citation?: string | null
+          tail_number?: string
+          tail_number_citation?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never

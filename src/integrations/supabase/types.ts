@@ -14,7 +14,96 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      aircraft_registry: {
+        Row: {
+          aircraft_manufacturer: string | null
+          aircraft_model: string | null
+          airworthiness_date: string | null
+          certificate_issue_date: string | null
+          created_at: string
+          engine_manufacturer: string | null
+          engine_model: string | null
+          expiration_date: string | null
+          fractional_owner: boolean | null
+          id: string
+          last_action_date: string | null
+          mode_s_code: string | null
+          mode_s_hex: string | null
+          n_number: string
+          raw_data: Json | null
+          registrant_city: string | null
+          registrant_country: string | null
+          registrant_name: string | null
+          registrant_state: string | null
+          registrant_street: string | null
+          registrant_type: string | null
+          registrant_zip: string | null
+          scraped_at: string
+          serial_number: string | null
+          status: string | null
+          updated_at: string
+          year_manufactured: number | null
+        }
+        Insert: {
+          aircraft_manufacturer?: string | null
+          aircraft_model?: string | null
+          airworthiness_date?: string | null
+          certificate_issue_date?: string | null
+          created_at?: string
+          engine_manufacturer?: string | null
+          engine_model?: string | null
+          expiration_date?: string | null
+          fractional_owner?: boolean | null
+          id?: string
+          last_action_date?: string | null
+          mode_s_code?: string | null
+          mode_s_hex?: string | null
+          n_number: string
+          raw_data?: Json | null
+          registrant_city?: string | null
+          registrant_country?: string | null
+          registrant_name?: string | null
+          registrant_state?: string | null
+          registrant_street?: string | null
+          registrant_type?: string | null
+          registrant_zip?: string | null
+          scraped_at?: string
+          serial_number?: string | null
+          status?: string | null
+          updated_at?: string
+          year_manufactured?: number | null
+        }
+        Update: {
+          aircraft_manufacturer?: string | null
+          aircraft_model?: string | null
+          airworthiness_date?: string | null
+          certificate_issue_date?: string | null
+          created_at?: string
+          engine_manufacturer?: string | null
+          engine_model?: string | null
+          expiration_date?: string | null
+          fractional_owner?: boolean | null
+          id?: string
+          last_action_date?: string | null
+          mode_s_code?: string | null
+          mode_s_hex?: string | null
+          n_number?: string
+          raw_data?: Json | null
+          registrant_city?: string | null
+          registrant_country?: string | null
+          registrant_name?: string | null
+          registrant_state?: string | null
+          registrant_street?: string | null
+          registrant_type?: string | null
+          registrant_zip?: string | null
+          scraped_at?: string
+          serial_number?: string | null
+          status?: string | null
+          updated_at?: string
+          year_manufactured?: number | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { CyberPanel } from '@/components/ui/cyber-panel';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -6,6 +6,8 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { firecrawlApi } from '@/lib/api/firecrawl';
+import { parseFAAMarkdown, formatRecordForDisplay, FAARegistryRecord } from '@/lib/parsers/faaParser';
+import { useAircraftRegistry, AircraftRegistryEntry } from '@/hooks/useAircraftRegistry';
 import { toast } from 'sonner';
 import { 
   Search, 
@@ -16,7 +18,9 @@ import {
   FileText,
   AlertTriangle,
   CheckCircle2,
-  ExternalLink
+  Save,
+  History,
+  List
 } from 'lucide-react';
 
 interface ScrapeResult {
@@ -26,6 +30,8 @@ interface ScrapeResult {
   success: boolean;
   data?: any;
   error?: string;
+  parsedRecords?: FAARegistryRecord[];
+  savedToDb?: boolean;
 }
 
 export function FlightDataScraper() {
@@ -34,6 +40,19 @@ export function FlightDataScraper() {
   const [isLoading, setIsLoading] = useState(false);
   const [results, setResults] = useState<ScrapeResult[]>([]);
   const [activeTab, setActiveTab] = useState('faa');
+  const [recentRecords, setRecentRecords] = useState<AircraftRegistryEntry[]>([]);
+  const [autoSave, setAutoSave] = useState(true);
+  
+  const { isSaving, saveMultipleRecords, getRecentRecords } = useAircraftRegistry();
+
+  useEffect(() => {
+    loadRecentRecords();
+  }, []);
+
+  const loadRecentRecords = async () => {
+    const records = await getRecentRecords(10);
+    setRecentRecords(records);
+  };
 
   const addResult = (result: ScrapeResult) => {
     setResults(prev => [result, ...prev].slice(0, 50));
@@ -52,17 +71,37 @@ export function FlightDataScraper() {
       toast.info(`Looking up N${cleanNNumber} in FAA Registry...`);
       const response = await firecrawlApi.lookupFaaRegistry(cleanNNumber);
       
-      addResult({
+      const rawData = response.data?.data || response.data;
+      const markdown = rawData?.markdown || '';
+      
+      // Parse the FAA response into structured records
+      const parsedRecords = parseFAAMarkdown(markdown, `N${cleanNNumber}`);
+      
+      const result: ScrapeResult = {
         source: 'FAA Registry',
         registration: `N${cleanNNumber}`,
         timestamp: new Date().toISOString(),
         success: response.success,
-        data: response.data?.data || response.data,
-        error: response.error
-      });
+        data: rawData,
+        error: response.error,
+        parsedRecords,
+        savedToDb: false
+      };
+
+      // Auto-save if enabled and we have parsed records
+      if (autoSave && response.success && parsedRecords.length > 0) {
+        const savedCount = await saveMultipleRecords(parsedRecords, rawData);
+        result.savedToDb = savedCount > 0;
+        if (savedCount > 0) {
+          loadRecentRecords();
+        }
+      }
+
+      addResult(result);
 
       if (response.success) {
-        toast.success(`FAA data retrieved for N${cleanNNumber}`);
+        const recordCount = parsedRecords.length;
+        toast.success(`FAA data retrieved for N${cleanNNumber} (${recordCount} record${recordCount !== 1 ? 's' : ''})`);
       } else {
         toast.error(`FAA lookup failed: ${response.error}`);
       }
@@ -152,17 +191,33 @@ export function FlightDataScraper() {
 
     for (const reg of registrations) {
       try {
-        const response = await firecrawlApi.lookupFaaRegistry(reg.replace(/^N/, ''));
-        addResult({
+        const cleanReg = reg.replace(/^N/, '');
+        const response = await firecrawlApi.lookupFaaRegistry(cleanReg);
+        
+        const rawData = response.data?.data || response.data;
+        const markdown = rawData?.markdown || '';
+        const parsedRecords = parseFAAMarkdown(markdown, reg);
+        
+        const result: ScrapeResult = {
           source: 'FAA Registry (Bulk)',
           registration: reg,
           timestamp: new Date().toISOString(),
           success: response.success,
-          data: response.data?.data || response.data,
-          error: response.error
-        });
+          data: rawData,
+          error: response.error,
+          parsedRecords,
+          savedToDb: false
+        };
+
+        if (autoSave && response.success && parsedRecords.length > 0) {
+          const savedCount = await saveMultipleRecords(parsedRecords, rawData);
+          result.savedToDb = savedCount > 0;
+        }
+
+        addResult(result);
+        
         // Small delay to avoid rate limiting
-        await new Promise(r => setTimeout(r, 1000));
+        await new Promise(r => setTimeout(r, 1500));
       } catch (error) {
         addResult({
           source: 'FAA Registry (Bulk)',
@@ -176,6 +231,23 @@ export function FlightDataScraper() {
 
     setIsLoading(false);
     toast.success('Bulk lookup complete');
+    loadRecentRecords();
+  };
+
+  const handleSaveResult = async (result: ScrapeResult) => {
+    if (!result.parsedRecords || result.parsedRecords.length === 0) {
+      toast.error('No parsed data to save');
+      return;
+    }
+
+    const savedCount = await saveMultipleRecords(result.parsedRecords, result.data);
+    if (savedCount > 0) {
+      // Update the result to show it's saved
+      setResults(prev => prev.map(r => 
+        r === result ? { ...r, savedToDb: true } : r
+      ));
+      loadRecentRecords();
+    }
   };
 
   // Known watchlist for quick lookup
@@ -188,7 +260,7 @@ export function FlightDataScraper() {
     <CyberPanel title="Flight Data Scraper" icon={<Search className="h-5 w-5" />}>
       <div className="space-y-4">
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid grid-cols-3 w-full">
+          <TabsList className="grid grid-cols-4 w-full">
             <TabsTrigger value="faa" className="text-xs">
               <Plane className="h-3 w-3 mr-1" />
               FAA Registry
@@ -199,7 +271,11 @@ export function FlightDataScraper() {
             </TabsTrigger>
             <TabsTrigger value="operator" className="text-xs">
               <Building2 className="h-3 w-3 mr-1" />
-              Operator Search
+              Operator
+            </TabsTrigger>
+            <TabsTrigger value="saved" className="text-xs">
+              <History className="h-3 w-3 mr-1" />
+              Saved
             </TabsTrigger>
           </TabsList>
 
@@ -210,23 +286,37 @@ export function FlightDataScraper() {
                 value={nNumber}
                 onChange={(e) => setNNumber(e.target.value)}
                 className="flex-1"
+                onKeyDown={(e) => e.key === 'Enter' && handleFaaLookup()}
               />
               <Button onClick={handleFaaLookup} disabled={isLoading}>
                 {isLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Lookup'}
               </Button>
             </div>
-            <div className="flex flex-wrap gap-1">
-              {watchlistAircraft.slice(0, 5).map(reg => (
-                <Badge 
-                  key={reg}
-                  variant="outline"
-                  className="cursor-pointer hover:bg-primary/20 text-xs"
-                  onClick={() => setNNumber(reg)}
-                >
-                  {reg}
-                </Badge>
-              ))}
+            
+            <div className="flex items-center justify-between">
+              <div className="flex flex-wrap gap-1">
+                {watchlistAircraft.slice(0, 5).map(reg => (
+                  <Badge 
+                    key={reg}
+                    variant="outline"
+                    className="cursor-pointer hover:bg-primary/20 text-xs"
+                    onClick={() => setNNumber(reg)}
+                  >
+                    {reg}
+                  </Badge>
+                ))}
+              </div>
+              <label className="flex items-center gap-2 text-xs">
+                <input 
+                  type="checkbox" 
+                  checked={autoSave} 
+                  onChange={(e) => setAutoSave(e.target.checked)}
+                  className="rounded"
+                />
+                Auto-save
+              </label>
             </div>
+            
             <Button 
               variant="secondary" 
               size="sm" 
@@ -246,6 +336,7 @@ export function FlightDataScraper() {
                 value={nNumber}
                 onChange={(e) => setNNumber(e.target.value)}
                 className="flex-1"
+                onKeyDown={(e) => e.key === 'Enter' && handleFlightAwareLookup()}
               />
               <Button onClick={handleFlightAwareLookup} disabled={isLoading}>
                 {isLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Search'}
@@ -263,6 +354,7 @@ export function FlightDataScraper() {
                 value={operatorSearch}
                 onChange={(e) => setOperatorSearch(e.target.value)}
                 className="flex-1"
+                onKeyDown={(e) => e.key === 'Enter' && handleOperatorSearch()}
               />
               <Button onClick={handleOperatorSearch} disabled={isLoading}>
                 {isLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Search'}
@@ -280,6 +372,43 @@ export function FlightDataScraper() {
                 </Badge>
               ))}
             </div>
+          </TabsContent>
+
+          <TabsContent value="saved" className="space-y-3">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-medium">Recently Saved Aircraft</span>
+              <Button variant="ghost" size="sm" onClick={loadRecentRecords}>
+                <RefreshCw className="h-3 w-3 mr-1" />
+                Refresh
+              </Button>
+            </div>
+            <ScrollArea className="h-[250px]">
+              {recentRecords.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <Database className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                  <p className="text-sm">No saved records yet</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {recentRecords.map(record => (
+                    <div key={record.id} className="p-2 rounded border bg-background/50">
+                      <div className="flex items-center justify-between">
+                        <Badge variant="secondary">{record.n_number}</Badge>
+                        <span className="text-xs text-muted-foreground">
+                          {new Date(record.scraped_at).toLocaleDateString()}
+                        </span>
+                      </div>
+                      <p className="text-xs mt-1">
+                        {[record.aircraft_manufacturer, record.aircraft_model].filter(Boolean).join(' ') || 'Unknown aircraft'}
+                      </p>
+                      {record.registrant_name && (
+                        <p className="text-xs text-muted-foreground">{record.registrant_name}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </ScrollArea>
           </TabsContent>
         </Tabs>
 
@@ -316,17 +445,54 @@ export function FlightDataScraper() {
                       {result.registration && (
                         <Badge variant="secondary" className="text-xs">{result.registration}</Badge>
                       )}
+                      {result.parsedRecords && result.parsedRecords.length > 1 && (
+                        <Badge variant="outline" className="text-xs">
+                          <List className="h-3 w-3 mr-1" />
+                          {result.parsedRecords.length} records
+                        </Badge>
+                      )}
+                      {result.savedToDb && (
+                        <Badge variant="default" className="text-xs bg-blue-500">
+                          <Save className="h-3 w-3 mr-1" />
+                          Saved
+                        </Badge>
+                      )}
                     </div>
-                    <span className="text-xs text-muted-foreground">
-                      {new Date(result.timestamp).toLocaleTimeString()}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground">
+                        {new Date(result.timestamp).toLocaleTimeString()}
+                      </span>
+                      {result.success && result.parsedRecords && !result.savedToDb && (
+                        <Button 
+                          size="sm" 
+                          variant="ghost"
+                          onClick={() => handleSaveResult(result)}
+                          disabled={isSaving}
+                        >
+                          <Save className="h-3 w-3" />
+                        </Button>
+                      )}
+                    </div>
                   </div>
                   
                   {result.error && (
                     <p className="text-xs text-red-400">{result.error}</p>
                   )}
                   
-                  {result.success && result.data && (
+                  {result.success && result.parsedRecords && result.parsedRecords.length > 0 && (
+                    <div className="mt-2 space-y-1">
+                      {result.parsedRecords.map((record, rIdx) => (
+                        <div key={rIdx} className="text-xs bg-background/50 p-2 rounded">
+                          <div className="font-medium text-primary">{record.nNumber}</div>
+                          <div className="text-muted-foreground">
+                            {formatRecordForDisplay(record) || 'No structured data extracted'}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  
+                  {result.success && (!result.parsedRecords || result.parsedRecords.length === 0) && result.data && (
                     <div className="mt-2">
                       {result.data.markdown ? (
                         <pre className="text-xs bg-background/50 p-2 rounded max-h-32 overflow-auto whitespace-pre-wrap">

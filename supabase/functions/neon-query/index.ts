@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
 
-const VERSION = "2.3.0";
+const VERSION = "2.4.0";
 console.log(`neon-query v${VERSION} booting...`);
 
 const corsHeaders = {
@@ -9,28 +9,70 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// Helper to create connection with retry logic
+// Helper to create connection with robust retry logic
 async function createConnection(databaseUrl: string, attempt = 1): Promise<ReturnType<typeof postgres>> {
-  const maxAttempts = 3;
+  const maxAttempts = 5;
+  const baseDelay = 300;
+  
   try {
     const sql = postgres(databaseUrl, {
       ssl: 'require',
-      max: 1,
-      idle_timeout: 20,
-      connect_timeout: 30,
+      max: 3,
+      idle_timeout: 30,
+      connect_timeout: 45,
       fetch_types: false,
+      connection: {
+        application_name: 'neon-query-edge'
+      }
     });
-    // Test connection
-    await sql`SELECT 1`;
+    // Test connection with timeout
+    const testPromise = sql`SELECT 1`;
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Connection test timeout')), 10000)
+    );
+    await Promise.race([testPromise, timeoutPromise]);
     return sql;
   } catch (error) {
-    console.error(`Connection attempt ${attempt} failed:`, error);
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    console.error(`Connection attempt ${attempt}/${maxAttempts} failed: ${errorMsg}`);
+    
     if (attempt < maxAttempts) {
-      await new Promise(r => setTimeout(r, 500 * attempt));
+      const delay = baseDelay * Math.pow(2, attempt - 1); // Exponential backoff
+      console.log(`Retrying in ${delay}ms...`);
+      await new Promise(r => setTimeout(r, delay));
       return createConnection(databaseUrl, attempt + 1);
     }
-    throw error;
+    throw new Error(`Failed to connect after ${maxAttempts} attempts: ${errorMsg}`);
   }
+}
+
+// Wrapper to execute query with retry on transient failures
+async function executeWithRetry<T>(
+  sql: ReturnType<typeof postgres>,
+  queryFn: () => Promise<T>,
+  maxRetries = 2
+): Promise<T> {
+  let lastError: Error | null = null;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await queryFn();
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      const isTransient = lastError.message.includes('connection') || 
+                          lastError.message.includes('network') ||
+                          lastError.message.includes('timeout') ||
+                          lastError.message.includes('ECONNRESET');
+      
+      if (isTransient && attempt < maxRetries) {
+        console.warn(`Query attempt ${attempt} failed (transient), retrying: ${lastError.message}`);
+        await new Promise(r => setTimeout(r, 200 * attempt));
+        continue;
+      }
+      throw lastError;
+    }
+  }
+  throw lastError;
 }
 
 serve(async (req) => {

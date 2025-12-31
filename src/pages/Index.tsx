@@ -63,6 +63,7 @@ import { LegalIntakeStrategy } from "@/components/dashboard/LegalIntakeStrategy"
 import { MultimodalEnrichmentPanel } from "@/components/dashboard/MultimodalEnrichmentPanel";
 import { DatabaseCoverageDashboard } from "@/components/dashboard/DatabaseCoverageDashboard";
 import { MasterEvidenceHub } from "@/components/dashboard/MasterEvidenceHub";
+import { LegalEvidenceDashboard } from "@/components/dashboard/LegalEvidenceDashboard";
 
 const Index = () => {
   return (
@@ -103,6 +104,7 @@ const Index = () => {
           </section>
           
           <section id="legal-analysis" className="space-y-6">
+            <LegalEvidenceDashboard />
             <LegalNarrativeGenerator />
             <LegalIntakeStrategy />
             <LegalBriefDashboard />

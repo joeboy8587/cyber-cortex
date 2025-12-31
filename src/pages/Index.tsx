@@ -5,6 +5,8 @@ import { BiometricCorrelation } from "@/components/dashboard/BiometricCorrelatio
 
 import { DataHardeningHub } from "@/components/dashboard/DataHardeningHub";
 import { CriminalEnterpriseNetwork } from "@/components/dashboard/CriminalEnterpriseNetwork";
+import { EnterpriseNetworkGraph } from "@/components/dashboard/EnterpriseNetworkGraph";
+import { FCACaseBuilder } from "@/components/dashboard/FCACaseBuilder";
 import { DataStreams } from "@/components/dashboard/DataStreams";
 import { EnterpriseProfiles } from "@/components/dashboard/EnterpriseProfiles";
 import { EvidenceTimeline } from "@/components/dashboard/EvidenceTimeline";
@@ -112,6 +114,8 @@ const Index = () => {
             <GenevaConventionAnalysis />
             <TROEvidenceCompiler />
             <FalseClaimsActCompiler />
+            <FCACaseBuilder />
+            <EnterpriseNetworkGraph />
             <LegalAnalysisAI />
           </section>
           

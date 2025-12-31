@@ -1,11 +1,9 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { MapContainer, TileLayer, CircleMarker, Popup, useMap } from 'react-leaflet';
+import React, { useEffect, useState, useCallback, lazy, Suspense } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { RefreshCw, Plane, AlertTriangle, Shield, Target } from 'lucide-react';
+import { RefreshCw, Plane, AlertTriangle, Shield, Target, Loader2 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
-import 'leaflet/dist/leaflet.css';
 
 interface FlightData {
   hex: string;
@@ -37,22 +35,8 @@ const threatRadius = {
   normal: 6
 };
 
-// Component to handle map bounds fitting
-function MapBoundsUpdater({ flights }: { flights: FlightData[] }) {
-  const map = useMap();
-  
-  useEffect(() => {
-    if (flights.length > 0) {
-      const validFlights = flights.filter(f => f.latitude && f.longitude);
-      if (validFlights.length > 0) {
-        const bounds = validFlights.map(f => [f.latitude, f.longitude] as [number, number]);
-        map.fitBounds(bounds, { padding: [50, 50], maxZoom: 8 });
-      }
-    }
-  }, [flights, map]);
-  
-  return null;
-}
+// Lazy load the map component to avoid SSR issues with react-leaflet
+const MapContent = lazy(() => import('./AircraftMapContent'));
 
 const AircraftMapVisualization: React.FC = () => {
   const [flights, setFlights] = useState<FlightData[]>([]);
@@ -114,7 +98,7 @@ const AircraftMapVisualization: React.FC = () => {
 
   useEffect(() => {
     fetchFlightData();
-    const interval = setInterval(fetchFlightData, 30000); // Refresh every 30 seconds
+    const interval = setInterval(fetchFlightData, 30000);
     return () => clearInterval(interval);
   }, [fetchFlightData]);
 
@@ -206,62 +190,17 @@ const AircraftMapVisualization: React.FC = () => {
       
       <CardContent className="p-0">
         <div className="h-[500px] w-full rounded-b-lg overflow-hidden">
-          <MapContainer
-            center={[35.4, -119.0]}
-            zoom={6}
-            style={{ height: '100%', width: '100%' }}
-            className="z-0"
-          >
-            <TileLayer
-              attribution='&copy; <a href="https://carto.com/">CARTO</a>'
-              url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+          <Suspense fallback={
+            <div className="h-full w-full flex items-center justify-center bg-muted/20">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            </div>
+          }>
+            <MapContent 
+              flights={filteredFlights} 
+              threatColors={threatColors}
+              threatRadius={threatRadius}
             />
-            
-            <MapBoundsUpdater flights={filteredFlights} />
-            
-            {filteredFlights.map((flight, idx) => (
-              <CircleMarker
-                key={`${flight.registration}-${idx}`}
-                center={[flight.latitude, flight.longitude]}
-                radius={threatRadius[flight.threat_level]}
-                fillColor={threatColors[flight.threat_level]}
-                fillOpacity={0.8}
-                color={flight.is_flagged ? '#fff' : threatColors[flight.threat_level]}
-                weight={flight.is_flagged ? 2 : 1}
-              >
-                <Popup>
-                  <div className="text-sm space-y-1 min-w-[200px]">
-                    <div className="font-bold text-base flex items-center gap-2">
-                      {flight.registration || flight.hex}
-                      {flight.is_flagged && (
-                        <span className="text-xs px-1.5 py-0.5 bg-red-500 text-white rounded">
-                          FLAGGED
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-gray-600">Callsign: {flight.callsign || 'N/A'}</div>
-                    <div className="text-gray-600">Altitude: {flight.altitude?.toFixed(0) || 'N/A'} ft</div>
-                    <div className="text-gray-600">Speed: {flight.speed?.toFixed(0) || 'N/A'} kts</div>
-                    <div className="text-gray-600">Heading: {flight.heading?.toFixed(0) || 'N/A'}°</div>
-                    <div className="text-gray-600">
-                      Threat: <span style={{ color: threatColors[flight.threat_level] }}>
-                        {flight.threat_level.toUpperCase()}
-                      </span>
-                      {flight.threat_score > 0 && ` (${flight.threat_score})`}
-                    </div>
-                    {flight.taxonomy_tag && (
-                      <div className="text-gray-600">Tag: {flight.taxonomy_tag}</div>
-                    )}
-                    {flight.flagged_reasons && (
-                      <div className="text-red-600 text-xs mt-1">
-                        {flight.flagged_reasons}
-                      </div>
-                    )}
-                  </div>
-                </Popup>
-              </CircleMarker>
-            ))}
-          </MapContainer>
+          </Suspense>
         </div>
         
         {lastUpdate && (

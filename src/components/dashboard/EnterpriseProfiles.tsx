@@ -29,145 +29,99 @@ export function EnterpriseProfiles() {
 
   const fetchEnterpriseData = async () => {
     try {
-      // Helper to extract array from nested response
-      const extractArray = (response: any): any[] => {
-        if (!response) return [];
-        if (Array.isArray(response)) return response;
-        if (response.data && Array.isArray(response.data)) return response.data;
-        if (typeof response === 'object') {
-          // Check for nested data property
-          for (const key of Object.keys(response)) {
-            if (Array.isArray(response[key])) return response[key];
-          }
-        }
-        return [];
-      };
-
-      // Fetch top aircraft from registry with detection stats
-      const { data: aircraftData, error: aircraftError } = await supabase.functions.invoke("neon-query", {
-        body: {
-          action: "customQuery",
-          query: `
-            SELECT 
-              registration,
-              detection_count,
-              avg_threat_score,
-              first_seen,
-              last_seen
-            FROM aircraft_registry_enriched
-            WHERE detection_count > 10
-            ORDER BY detection_count DESC
-            LIMIT 20
-          `
-        }
+      // Use dedicated action for enterprise profiles
+      const { data: enterpriseData, error } = await supabase.functions.invoke("neon-query", {
+        body: { action: "getEnterpriseProfiles" }
       });
 
-      if (aircraftError) {
-        console.warn("Aircraft registry query failed:", aircraftError);
+      if (error) {
+        console.warn("Enterprise profiles query failed:", error);
       }
 
-      // Get flagged aircraft stats
-      const { data: flaggedData, error: flaggedError } = await supabase.functions.invoke("neon-query", {
-        body: {
-          action: "customQuery",
-          query: `
-            SELECT 
-              hex,
-              COUNT(*) as detection_count,
-              MIN(flagged_at) as first_seen,
-              MAX(flagged_at) as last_seen
-            FROM flagged_aircraft_rows_rows
-            GROUP BY hex
-            HAVING COUNT(*) > 10
-            ORDER BY COUNT(*) DESC
-            LIMIT 20
-          `
-        }
-      });
-
-      if (flaggedError) {
-        console.warn("Flagged aircraft query failed:", flaggedError);
-      }
-
-      // Get overall stats
-      const { data: statsData, error: statsError } = await supabase.functions.invoke("neon-query", {
-        body: {
-          action: "customQuery",
-          query: `
-            SELECT 
-              (SELECT COUNT(*) FROM aircraft_registry_enriched) as total_aircraft,
-              (SELECT COALESCE(SUM(detection_count), 0) FROM aircraft_registry_enriched) as total_detections,
-              (SELECT COUNT(DISTINCT hex) FROM flagged_aircraft_rows_rows) as total_flagged
-          `
-        }
-      });
-
-      if (statsError) {
-        console.warn("Stats query failed:", statsError);
-      }
-      const processedProfiles: AircraftProfile[] = [];
-
-      // Process registry data - use safe extraction
-      const aircraftList = extractArray(aircraftData);
-      aircraftList.forEach((a: any) => {
-        try {
-          const threatScore = Number(a.avg_threat_score) || 0;
+      if (enterpriseData?.profiles && Array.isArray(enterpriseData.profiles)) {
+        const processedProfiles: AircraftProfile[] = enterpriseData.profiles.map((p: any) => {
+          const threatScore = Number(p.avg_threat_score) || 0;
+          const count = Number(p.detection_count) || 0;
           let threatLevel: "high" | "medium" | "low" = "low";
-          if (threatScore > 0.7 || Number(a.detection_count) > 100) threatLevel = "high";
-          else if (threatScore > 0.4 || Number(a.detection_count) > 30) threatLevel = "medium";
+          if (threatScore > 70 || count > 100) threatLevel = "high";
+          else if (threatScore > 40 || count > 30) threatLevel = "medium";
 
-          processedProfiles.push({
-            hex: a.registration || "Unknown",
-            registration: a.registration || "Unknown",
-            detectionCount: Number(a.detection_count) || 0,
+          return {
+            hex: p.registration || "Unknown",
+            registration: p.registration || "Unknown",
+            detectionCount: count,
             avgThreatScore: threatScore,
-            firstSeen: a.first_seen || "",
-            lastSeen: a.last_seen || "",
+            firstSeen: p.first_seen || "",
+            lastSeen: p.last_seen || "",
             threatLevel
-          });
-        } catch (parseErr) {
-          console.warn("Error parsing aircraft entry:", parseErr);
-        }
-      });
-
-      // Add flagged aircraft if not already present - use safe extraction
-      const flaggedList = extractArray(flaggedData);
-      flaggedList.forEach((f: any) => {
-        try {
-          const exists = processedProfiles.some(p => p.hex === f.hex);
-          if (!exists && f.hex) {
-            const count = Number(f.detection_count) || 0;
-            let threatLevel: "high" | "medium" | "low" = "low";
-            if (count > 100) threatLevel = "high";
-            else if (count > 30) threatLevel = "medium";
-
-            processedProfiles.push({
-              hex: f.hex,
-              registration: f.hex,
-              detectionCount: count,
-              avgThreatScore: 0,
-              firstSeen: f.first_seen || "",
-              lastSeen: f.last_seen || "",
-              threatLevel
-            });
-          }
-        } catch (parseErr) {
-          console.warn("Error parsing flagged entry:", parseErr);
-        }
-      });
-
-      // Sort by detection count
-      processedProfiles.sort((a, b) => b.detectionCount - a.detectionCount);
-      setProfiles(processedProfiles.slice(0, 20));
-
-      // Process stats - use safe extraction
-      const statsList = extractArray(statsData);
-      if (statsList.length > 0) {
-        setStats({
-          totalAircraft: Number(statsList[0].total_aircraft) || 0,
-          totalDetections: Number(statsList[0].total_detections) || 0,
-          totalFlagged: Number(statsList[0].total_flagged) || 0
+          };
         });
+
+        setProfiles(processedProfiles.slice(0, 20));
+        
+        if (enterpriseData.stats) {
+          setStats({
+            totalAircraft: Number(enterpriseData.stats.totalAircraft) || 0,
+            totalDetections: Number(enterpriseData.stats.totalDetections) || 0,
+            totalFlagged: Number(enterpriseData.stats.totalFlagged) || 0
+          });
+        }
+      } else {
+        // Fallback to customQuery if dedicated action fails
+        const { data: fallbackData } = await supabase.functions.invoke("neon-query", {
+          body: {
+            action: "customQuery",
+            query: `
+              SELECT 
+                COALESCE(registration, hex) as registration,
+                COUNT(*) as detection_count,
+                COALESCE(AVG(threat_score), 0) as avg_threat_score,
+                MIN(detection_timestamp) as first_seen,
+                MAX(detection_timestamp) as last_seen
+              FROM live_flight_detections_rows
+              WHERE registration IS NOT NULL OR hex IS NOT NULL
+              GROUP BY COALESCE(registration, hex)
+              HAVING COUNT(*) > 5
+              ORDER BY COUNT(*) DESC
+              LIMIT 25
+            `
+          }
+        });
+
+        if (fallbackData && Array.isArray(fallbackData)) {
+          const processedProfiles: AircraftProfile[] = fallbackData.map((p: any) => {
+            const threatScore = Number(p.avg_threat_score) || 0;
+            const count = Number(p.detection_count) || 0;
+            let threatLevel: "high" | "medium" | "low" = "low";
+            if (threatScore > 70 || count > 100) threatLevel = "high";
+            else if (threatScore > 40 || count > 30) threatLevel = "medium";
+
+            return {
+              hex: p.registration || "Unknown",
+              registration: p.registration || "Unknown",
+              detectionCount: count,
+              avgThreatScore: threatScore,
+              firstSeen: p.first_seen || "",
+              lastSeen: p.last_seen || "",
+              threatLevel
+            };
+          });
+
+          setProfiles(processedProfiles.slice(0, 20));
+        }
+
+        // Get stats separately
+        const { data: statsData } = await supabase.functions.invoke("neon-query", {
+          body: { action: "getDashboardCounts" }
+        });
+
+        if (statsData) {
+          setStats({
+            totalAircraft: Number(statsData.total_flights) || 0,
+            totalDetections: Number(statsData.total_flights) || 0,
+            totalFlagged: Number(statsData.flagged_flights) || 0
+          });
+        }
       }
     } catch (error) {
       console.error("Error fetching enterprise data:", error);

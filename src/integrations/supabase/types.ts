@@ -104,6 +104,45 @@ export type Database = {
         }
         Relationships: []
       }
+      evidence_documents: {
+        Row: {
+          content: string
+          document_type: string | null
+          file_size: number | null
+          filename: string
+          id: string
+          sha256_hash: string | null
+          tags: string[] | null
+          title: string
+          updated_at: string
+          uploaded_at: string
+        }
+        Insert: {
+          content: string
+          document_type?: string | null
+          file_size?: number | null
+          filename: string
+          id?: string
+          sha256_hash?: string | null
+          tags?: string[] | null
+          title: string
+          updated_at?: string
+          uploaded_at?: string
+        }
+        Update: {
+          content?: string
+          document_type?: string | null
+          file_size?: number | null
+          filename?: string
+          id?: string
+          sha256_hash?: string | null
+          tags?: string[] | null
+          title?: string
+          updated_at?: string
+          uploaded_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never

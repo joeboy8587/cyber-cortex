@@ -64,6 +64,7 @@ import { MultimodalEnrichmentPanel } from "@/components/dashboard/MultimodalEnri
 import { DatabaseCoverageDashboard } from "@/components/dashboard/DatabaseCoverageDashboard";
 import { MasterEvidenceHub } from "@/components/dashboard/MasterEvidenceHub";
 import { LegalEvidenceDashboard } from "@/components/dashboard/LegalEvidenceDashboard";
+import { FlightDataScraper } from "@/components/dashboard/FlightDataScraper";
 
 const Index = () => {
   return (
@@ -157,6 +158,7 @@ const Index = () => {
           <section id="fleet-tracking" className="space-y-6">
             <AircraftMapVisualization />
             <LiveFlightTracker />
+            <FlightDataScraper />
             <FleetTrackingLedger />
           </section>
           

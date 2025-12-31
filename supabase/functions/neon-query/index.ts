@@ -166,6 +166,96 @@ serve(async (req) => {
         break;
       }
 
+      case 'getLegalAnalysisStats': {
+        const flightStats = await sql`SELECT COUNT(*) as total FROM live_flight_detections_rows`;
+        const flaggedStats = await sql`SELECT COUNT(*) as total FROM flagged_aircraft_rows_rows`;
+        const shellStats = await sql`SELECT COUNT(*) as total FROM shell_companies`;
+        result = {
+          totalFlights: parseInt(flightStats[0]?.total || '0'),
+          flaggedAircraft: parseInt(flaggedStats[0]?.total || '0'),
+          shellCompanies: parseInt(shellStats[0]?.total || '0')
+        };
+        break;
+      }
+
+      case 'getFederalCaseConvergence': {
+        result = { convergence: [], summary: { totalCases: 0 } };
+        break;
+      }
+
+      case 'scanAllTables': {
+        result = await sql`
+          SELECT 
+            n.nspname as schemaname,
+            c.relname as tablename,
+            c.reltuples::bigint as row_count
+          FROM pg_class c
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE c.relkind = 'r' 
+            AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+          ORDER BY c.reltuples DESC
+          LIMIT 100
+        `;
+        break;
+      }
+
+      case 'getMilitaryGovBehavioralAlignment': {
+        try {
+          result = await sql`
+            SELECT * FROM military_gov_behavioral_alignment 
+            ORDER BY created_at DESC 
+            LIMIT 100
+          `;
+        } catch {
+          result = [];
+        }
+        break;
+      }
+
+      case 'getTaxonomy': {
+        try {
+          result = await sql`
+            SELECT * FROM xxb_taxonomy 
+            ORDER BY created_at DESC 
+            LIMIT 100
+          `;
+        } catch {
+          result = [];
+        }
+        break;
+      }
+
+      case 'taxonomyStats': {
+        result = { total: 0, categories: [] };
+        break;
+      }
+
+      case 'getBehavioralAlignment': {
+        try {
+          result = await sql`
+            SELECT * FROM behavioral_alignment 
+            ORDER BY created_at DESC 
+            LIMIT 100
+          `;
+        } catch {
+          result = [];
+        }
+        break;
+      }
+
+      case 'getMedicalBehavioralAlignment': {
+        try {
+          result = await sql`
+            SELECT * FROM medical_behavioral_alignment 
+            ORDER BY created_at DESC 
+            LIMIT 100
+          `;
+        } catch {
+          result = [];
+        }
+        break;
+      }
+
       default:
         throw new Error(`Unknown action: ${action}`);
     }

@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { safeFixed, safeParseFloat } from '@/lib/formatters';
 
 interface MaskLeak {
   id: string;
@@ -71,12 +72,42 @@ export function XXBEvidenceDashboard() {
 
   const fetchXXBData = useCallback(async () => {
     setIsLoading(true);
+
+    const extractData = (response: any): any[] => {
+      if (!response) return [];
+      if (Array.isArray(response)) return response;
+      if (Array.isArray(response.data)) return response.data;
+      if (response.data && Array.isArray(response.data.data)) return response.data.data;
+      return [];
+    };
+
+    const invokeNeonWithRetry = async <T,>(body: Record<string, any>, attempts = 3): Promise<{ data: T | null; error: any | null }> => {
+      let lastError: any = null;
+
+      for (let i = 1; i <= attempts; i++) {
+        const { data, error } = await supabase.functions.invoke('neon-query', { body });
+
+        // Some failures come back as a 200 with a BOOT_ERROR payload
+        const isBootError = (data as any)?.code === 'BOOT_ERROR';
+
+        if (!error && !isBootError) return { data: data as T, error: null };
+
+        lastError = error || data;
+        const msg = String((error as any)?.message || (data as any)?.message || '').toLowerCase();
+        const isRetryable = isBootError || msg.includes('boot_error') || msg.includes('failed to start') || msg.includes('network') || msg.includes('timeout') || msg.includes('503');
+
+        if (!isRetryable || i === attempts) break;
+        await new Promise((r) => setTimeout(r, 350 * i));
+      }
+
+      return { data: null, error: lastError };
+    };
+
     try {
       // Fetch XXB mask leaks - records where registration is XXB but callsign reveals identity
-      const { data: leakData, error: leakError } = await supabase.functions.invoke('neon-query', {
-        body: {
-          action: 'customQuery',
-          query: `
+      const { data: leakData, error: leakError } = await invokeNeonWithRetry<any[]>({
+        action: 'customQuery',
+        query: `
             SELECT 
               id::text,
               registration,
@@ -93,27 +124,26 @@ export function XXBEvidenceDashboard() {
               AND callsign != 'XXB'
             ORDER BY COALESCE(detection_timestamp, created_at) DESC
             LIMIT 200
-          `
-        }
+          `,
       });
 
       if (leakError) throw leakError;
-      // Handle nested data.data structure or direct array
-      const extractData = (response: any): any[] => {
-        if (!response) return [];
-        if (Array.isArray(response)) return response;
-        if (Array.isArray(response.data)) return response.data;
-        if (response.data && Array.isArray(response.data.data)) return response.data.data;
-        return [];
-      };
+
       const leakRecords = extractData(leakData);
-      setLeaks(leakRecords);
+      setLeaks(
+        leakRecords.map((r: any) => ({
+          ...r,
+          latitude: safeParseFloat(r.latitude, 0),
+          longitude: safeParseFloat(r.longitude, 0),
+          altitude: safeParseFloat(r.altitude, 0),
+          speed: safeParseFloat(r.speed, 0),
+        }))
+      );
 
       // Fetch geo clusters
-      const { data: geoData, error: geoError } = await supabase.functions.invoke('neon-query', {
-        body: {
-          action: 'customQuery',
-          query: `
+      const { data: geoData, error: geoError } = await invokeNeonWithRetry<any[]>({
+        action: 'customQuery',
+        query: `
             SELECT 
               ROUND(latitude::numeric, 2)::text || ',' || ROUND(longitude::numeric, 2)::text as location,
               AVG(latitude) as lat,
@@ -129,8 +159,7 @@ export function XXBEvidenceDashboard() {
             GROUP BY ROUND(latitude::numeric, 2), ROUND(longitude::numeric, 2)
             ORDER BY count DESC
             LIMIT 20
-          `
-        }
+          `,
       });
 
       if (!geoError && geoData) {
@@ -146,23 +175,21 @@ export function XXBEvidenceDashboard() {
       }
 
       // Fetch timeline data
-      const { data: timelineData, error: timelineError } = await supabase.functions.invoke('neon-query', {
-        body: {
-          action: 'customQuery',
-          query: `
-            SELECT 
-              DATE(COALESCE(detection_timestamp, created_at))::text as date,
-              COUNT(*) as count,
-              ARRAY_AGG(DISTINCT callsign) FILTER (WHERE callsign IS NOT NULL AND callsign != '' AND callsign != 'XXB') as "leakedCallsigns",
-              ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as "avgAltitude",
-              ARRAY_AGG(DISTINCT ROUND(latitude::numeric, 2)::text || '°N, ' || ROUND(longitude::numeric, 2)::text || '°W') FILTER (WHERE latitude IS NOT NULL) as locations
-            FROM live_flight_detections_rows
-            WHERE UPPER(registration) = 'XXB'
-            GROUP BY DATE(COALESCE(detection_timestamp, created_at))
-            ORDER BY date DESC
-            LIMIT 30
-          `
-        }
+      const { data: timelineData, error: timelineError } = await invokeNeonWithRetry<any[]>({
+        action: 'customQuery',
+        query: `
+             SELECT 
+               DATE(COALESCE(detection_timestamp, created_at))::text as date,
+               COUNT(*) as count,
+               ARRAY_AGG(DISTINCT callsign) FILTER (WHERE callsign IS NOT NULL AND callsign != '' AND callsign != 'XXB') as "leakedCallsigns",
+               ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as "avgAltitude",
+               ARRAY_AGG(DISTINCT ROUND(latitude::numeric, 2)::text || '°N, ' || ROUND(longitude::numeric, 2)::text || '°W') FILTER (WHERE latitude IS NOT NULL) as locations
+             FROM live_flight_detections_rows
+             WHERE UPPER(registration) = 'XXB'
+             GROUP BY DATE(COALESCE(detection_timestamp, created_at))
+             ORDER BY date DESC
+             LIMIT 30
+           `,
       });
 
       if (!timelineError && timelineData) {
@@ -175,22 +202,20 @@ export function XXBEvidenceDashboard() {
       }
 
       // Calculate stats
-      const { data: statsData, error: statsError } = await supabase.functions.invoke('neon-query', {
-        body: {
-          action: 'customQuery',
-          query: `
-            SELECT 
-              COUNT(*) FILTER (WHERE callsign IS NOT NULL AND callsign != '' AND callsign != 'XXB') as "totalLeaks",
-              COUNT(DISTINCT callsign) FILTER (WHERE callsign IS NOT NULL AND callsign != '' AND callsign != 'XXB') as "uniqueCallsigns",
-              COUNT(DISTINCT ROUND(latitude::numeric, 2)::text || ',' || ROUND(longitude::numeric, 2)::text) as "uniqueLocations",
-              MIN(COALESCE(detection_timestamp, created_at))::text as "startDate",
-              MAX(COALESCE(detection_timestamp, created_at))::text as "endDate",
-              ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as "avgAltitude",
-              COUNT(*) FILTER (WHERE COALESCE(speed, 0) < 30) as "hoverEvents"
-            FROM live_flight_detections_rows
-            WHERE UPPER(registration) = 'XXB'
-          `
-        }
+      const { data: statsData, error: statsError } = await invokeNeonWithRetry<any[]>({
+        action: 'customQuery',
+        query: `
+             SELECT 
+               COUNT(*) FILTER (WHERE callsign IS NOT NULL AND callsign != '' AND callsign != 'XXB') as "totalLeaks",
+               COUNT(DISTINCT callsign) FILTER (WHERE callsign IS NOT NULL AND callsign != '' AND callsign != 'XXB') as "uniqueCallsigns",
+               COUNT(DISTINCT ROUND(latitude::numeric, 2)::text || ',' || ROUND(longitude::numeric, 2)::text) as "uniqueLocations",
+               MIN(COALESCE(detection_timestamp, created_at))::text as "startDate",
+               MAX(COALESCE(detection_timestamp, created_at))::text as "endDate",
+               ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as "avgAltitude",
+               COUNT(*) FILTER (WHERE COALESCE(speed, 0) < 30) as "hoverEvents"
+             FROM live_flight_detections_rows
+             WHERE UPPER(registration) = 'XXB'
+           `,
       });
 
       if (!statsError && statsData) {
@@ -427,7 +452,7 @@ export function XXBEvidenceDashboard() {
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
                     <div>
                       <span className="text-muted-foreground">Coords:</span>
-                      <span className="ml-1 font-mono">{leak.latitude?.toFixed(4) ?? 'N/A'}°N, {Math.abs(leak.longitude ?? 0).toFixed(4)}°W</span>
+                      <span className="ml-1 font-mono">{safeFixed(leak.latitude, 4)}°N, {safeFixed(Math.abs(leak.longitude), 4)}°W</span>
                     </div>
                     <div>
                       <span className="text-muted-foreground">Alt:</span>

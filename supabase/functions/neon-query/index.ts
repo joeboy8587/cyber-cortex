@@ -301,91 +301,89 @@ serve(async (req) => {
         break;
       }
 
+      // ============== KERN COUNTY OPTIMIZED QUERY ==============
+      case 'getKernCountyFlights': {
+        const limitCount = body.limit || 100;
+        // Kern County bounds: lat 34.8-35.8, lon -119.5 to -117.5
+        result = await sql`
+          SELECT 
+            COALESCE(icao_code, '') as hex,
+            COALESCE(registration, '') as registration,
+            COALESCE(callsign, '') as callsign,
+            COALESCE(altitude, 0) as altitude,
+            COALESCE(speed, 0) as speed,
+            latitude,
+            longitude,
+            COALESCE(heading, 0) as heading,
+            COALESCE(detection_timestamp, created_at) as event_time,
+            taxonomy_tag,
+            COALESCE(threat_score, 0) as threat_score,
+            COALESCE(flagged, false) as is_flagged,
+            flagged_reasons,
+            'live_detection' as data_source,
+            CASE 
+              WHEN taxonomy_tag IN ('xxb_tier1_priority', 'xxb_kcso', 'xxb_kcso_shell') THEN 'critical'
+              WHEN taxonomy_tag IN ('xxb_tier2_shell', 'xxb_shell') THEN 'high'
+              WHEN taxonomy_tag = 'xxb_military' THEN 'high'
+              WHEN taxonomy_tag = 'xxb_medical_air' THEN 'medium'
+              WHEN taxonomy_tag = 'xxb_low_alt_suspicious' THEN 'medium'
+              WHEN altitude < 1500 AND altitude > 0 THEN 'medium'
+              ELSE 'normal'
+            END as threat_level,
+            CASE WHEN taxonomy_tag = 'xxb_military' OR registration ~ '^[0-9]{2}-[0-9]{5}$' THEN true ELSE false END as is_military
+          FROM live_flight_detections_rows
+          WHERE latitude BETWEEN 34.8 AND 35.8
+            AND longitude BETWEEN -119.5 AND -117.5
+            AND latitude IS NOT NULL AND longitude IS NOT NULL
+          ORDER BY detection_timestamp DESC NULLS LAST
+          LIMIT ${limitCount}
+        `;
+        break;
+      }
+
       // ============== UNIFIED FLIGHT QUERY (combines all flight tables) ==============
       case 'unifiedFlightQuery': {
-        const timeWindow = body.timeWindow || '365 days';
+        const timeWindow = body.timeWindow || '30 days';
         const limitCount = body.limit || 200;
-        const includeAllHistoric = body.includeAllHistoric || false;
+        const kernCountyOnly = body.kernCountyOnly || false;
         
-        // If includeAllHistoric is true, show all data regardless of timestamp
-        const timeFilter = includeAllHistoric 
-          ? `1=1`  // No time filter - show ALL data
-          : `(detection_timestamp > NOW() - INTERVAL '${timeWindow}' OR (detection_timestamp IS NULL AND created_at > NOW() - INTERVAL '${timeWindow}'))`;
+        // Simplified and faster query - focus on recent data with Kern County option
+        const geoFilter = kernCountyOnly 
+          ? `AND latitude BETWEEN 34.5 AND 36.0 AND longitude BETWEEN -120.0 AND -117.0`
+          : '';
         
         result = await sql.unsafe(`
-          WITH unified_flights AS (
-            -- Primary: live_flight_detections_rows (3.74M records, actively updated)
-            SELECT 
-              COALESCE(icao_code, '') as hex,
-              COALESCE(registration, '') as registration,
-              COALESCE(callsign, '') as callsign,
-              COALESCE(altitude, 0) as altitude,
-              COALESCE(speed, 0) as speed,
-              COALESCE(latitude, 0) as latitude,
-              COALESCE(longitude, 0) as longitude,
-              COALESCE(heading, 0) as heading,
-              COALESCE(detection_timestamp, created_at, NOW()) as event_time,
-              taxonomy_tag,
-              COALESCE(threat_score, 0) as threat_score,
-              COALESCE(flagged, false) as is_flagged,
-              flagged_reasons,
-              'live_detection' as data_source,
-              CASE 
-                WHEN taxonomy_tag IN ('xxb_tier1_priority', 'xxb_kcso', 'xxb_kcso_shell') THEN 'critical'
-                WHEN taxonomy_tag IN ('xxb_tier2_shell', 'xxb_shell') THEN 'high'
-                WHEN taxonomy_tag = 'xxb_military' THEN 'high'
-                WHEN taxonomy_tag = 'xxb_medical_air' THEN 'medium'
-                WHEN taxonomy_tag = 'xxb_low_alt_suspicious' THEN 'medium'
-                WHEN altitude < 1500 AND altitude > 0 THEN 'medium'
-                ELSE 'normal'
-              END as threat_level,
-              CASE WHEN taxonomy_tag = 'xxb_military' OR registration ~ '^[0-9]{2}-[0-9]{5}$' THEN true ELSE false END as is_military
-            FROM live_flight_detections_rows
-            WHERE ${timeFilter}
-              AND latitude IS NOT NULL AND longitude IS NOT NULL
-              AND latitude != 0 AND longitude != 0
-            
-            UNION ALL
-            
-            -- Secondary: real_time_surveillance_feed (13K curated events with biometric correlation)
-            SELECT 
-              '' as hex,
-              COALESCE(aircraft_id, '') as registration,
-              '' as callsign,
-              COALESCE(altitude_ft, 0)::int as altitude,
-              0 as speed,
-              COALESCE(location_lat::float, 0) as latitude,
-              COALESCE(location_lon::float, 0) as longitude,
-              0 as heading,
-              COALESCE(event_timestamp, created_at, NOW()) as event_time,
-              event_type as taxonomy_tag,
-              CASE threat_level 
-                WHEN 'CRITICAL' THEN 95 
-                WHEN 'HIGH' THEN 75 
-                WHEN 'ELEVATED' THEN 50
-                ELSE 25 
-              END as threat_score,
-              COALESCE(biometric_impact, false) as is_flagged,
-              NULL as flagged_reasons,
-              'surveillance_feed' as data_source,
-              CASE 
-                WHEN threat_level = 'CRITICAL' THEN 'critical'
-                WHEN threat_level = 'HIGH' THEN 'high'
-                WHEN threat_level = 'ELEVATED' THEN 'medium'
-                ELSE 'normal'
-              END as threat_level,
-              false as is_military
-            FROM real_time_surveillance_feed
-            WHERE ${includeAllHistoric ? '1=1' : `event_timestamp > NOW() - INTERVAL '${timeWindow}'`}
-              AND location_lat IS NOT NULL AND location_lon IS NOT NULL
-          )
-          SELECT DISTINCT ON (registration, data_source) 
-            hex, registration, callsign, altitude, speed, latitude, longitude, heading,
-            event_time, taxonomy_tag, threat_score, is_flagged, flagged_reasons,
-            data_source, threat_level, is_military
-          FROM unified_flights
-          WHERE registration != ''
-          ORDER BY registration, data_source, event_time DESC
+          SELECT 
+            COALESCE(icao_code, '') as hex,
+            COALESCE(registration, '') as registration,
+            COALESCE(callsign, '') as callsign,
+            COALESCE(altitude, 0) as altitude,
+            COALESCE(speed, 0) as speed,
+            latitude,
+            longitude,
+            COALESCE(heading, 0) as heading,
+            COALESCE(detection_timestamp, created_at, NOW()) as event_time,
+            taxonomy_tag,
+            COALESCE(threat_score, 0) as threat_score,
+            COALESCE(flagged, false) as is_flagged,
+            flagged_reasons,
+            'live_detection' as data_source,
+            CASE 
+              WHEN taxonomy_tag IN ('xxb_tier1_priority', 'xxb_kcso', 'xxb_kcso_shell') THEN 'critical'
+              WHEN taxonomy_tag IN ('xxb_tier2_shell', 'xxb_shell') THEN 'high'
+              WHEN taxonomy_tag = 'xxb_military' THEN 'high'
+              WHEN taxonomy_tag = 'xxb_medical_air' THEN 'medium'
+              WHEN taxonomy_tag = 'xxb_low_alt_suspicious' THEN 'medium'
+              WHEN altitude < 1500 AND altitude > 0 THEN 'medium'
+              ELSE 'normal'
+            END as threat_level,
+            CASE WHEN taxonomy_tag = 'xxb_military' OR registration ~ '^[0-9]{2}-[0-9]{5}$' THEN true ELSE false END as is_military
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() - INTERVAL '${timeWindow}'
+            AND latitude IS NOT NULL AND longitude IS NOT NULL
+            AND latitude != 0 AND longitude != 0
+            ${geoFilter}
+          ORDER BY detection_timestamp DESC
           LIMIT ${limitCount}
         `);
         break;

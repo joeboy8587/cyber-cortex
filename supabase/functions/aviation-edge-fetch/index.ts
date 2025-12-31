@@ -477,7 +477,7 @@ serve(async (req) => {
       }
     }
 
-    // Focused area tracking (Bakersfield/Kern County)
+    // Focused area tracking (Bakersfield/Kern County) - WITH DATABASE STORAGE
     if (action === 'fetchKernCounty') {
       // Kern County approximate bounds
       const kernBounds = { north: 35.8, south: 34.8, east: -117.5, west: -119.5 };
@@ -503,6 +503,7 @@ serve(async (req) => {
               flights: [],
               count: 0,
               flagged: 0,
+              inserted: 0,
               bounds: kernBounds,
               apiMessage: 'API returned non-JSON response'
             }),
@@ -523,6 +524,7 @@ serve(async (req) => {
               flights: [],
               count: 0,
               flagged: 0,
+              inserted: 0,
               bounds: kernBounds,
               apiMessage: data.error
             }),
@@ -530,22 +532,89 @@ serve(async (req) => {
           );
         }
 
-        const classified = (Array.isArray(flights) ? flights : []).map((f: any) => {
+        // Transform and classify flights with full data for storage
+        const now = new Date().toISOString();
+        const transformedFlights = (Array.isArray(flights) ? flights : []).map((f: any) => {
           const registration = f.aircraft?.regNumber || '';
-          const callsign = f.flight?.iataNumber || '';
+          const callsign = f.flight?.iataNumber || f.flight?.icaoNumber || '';
           const altitude = f.geography?.altitude || 0;
+          const classification = classifyAircraft(registration, callsign, altitude);
+          
           return {
-            ...f,
-            ...classifyAircraft(registration, callsign, altitude)
+            hex: f.aircraft?.icaoCode || f.aircraft?.iataCode || '',
+            registration,
+            callsign,
+            altitude,
+            speed: f.speed?.horizontal || 0,
+            latitude: f.geography?.latitude || null,
+            longitude: f.geography?.longitude || null,
+            heading: f.geography?.direction || 0,
+            vertical_rate: f.speed?.vspeed || 0,
+            detected_at: now,
+            ...classification
           };
         });
+
+        // Store flights in database
+        let inserted = 0;
+        if (neonUrl && transformedFlights.length > 0) {
+          try {
+            const sql = postgres(neonUrl, { ssl: 'require', max: 1, idle_timeout: 10, connect_timeout: 15 });
+            
+            for (const flight of transformedFlights) {
+              // Only store flights with valid coordinates
+              if (!flight.latitude || !flight.longitude) continue;
+              
+              try {
+                const flightId = crypto.randomUUID();
+                
+                await sql`
+                  INSERT INTO live_flight_detections_rows (
+                    id, icao_code, registration, callsign, altitude, speed,
+                    latitude, longitude, heading, vertical_rate,
+                    detection_timestamp, created_at, taxonomy_tag,
+                    threat_score, tier_level, flagged, flagged_reasons
+                  ) VALUES (
+                    ${flightId},
+                    ${flight.hex || 'UNKNOWN'},
+                    ${flight.registration || 'N/A'},
+                    ${flight.callsign || ''},
+                    ${flight.altitude},
+                    ${flight.speed},
+                    ${flight.latitude},
+                    ${flight.longitude},
+                    ${flight.heading},
+                    ${flight.vertical_rate},
+                    NOW(),
+                    NOW(),
+                    ${flight.taxonomyTag},
+                    ${flight.threatScore},
+                    ${flight.tierLevel},
+                    ${flight.flagged},
+                    ${flight.flaggedReasons.join('; ')}
+                  )
+                  ON CONFLICT DO NOTHING
+                `;
+                inserted++;
+              } catch (insertErr) {
+                // Silent fail for individual inserts
+              }
+            }
+            
+            await sql.end();
+            console.log(`Kern County: Inserted ${inserted} flights into database`);
+          } catch (dbErr) {
+            console.error('Kern County DB error:', dbErr);
+          }
+        }
 
         return new Response(
           JSON.stringify({ 
             success: true,
-            flights: classified,
-            count: classified.length,
-            flagged: classified.filter(f => f.flagged).length,
+            flights: transformedFlights,
+            count: transformedFlights.length,
+            flagged: transformedFlights.filter(f => f.flagged).length,
+            inserted,
             bounds: kernBounds
           }),
           { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -558,6 +627,7 @@ serve(async (req) => {
             flights: [],
             count: 0,
             flagged: 0,
+            inserted: 0,
             bounds: kernBounds,
             apiMessage: fetchErr instanceof Error ? fetchErr.message : 'Fetch failed'
           }),

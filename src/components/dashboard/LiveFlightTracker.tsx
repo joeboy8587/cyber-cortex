@@ -45,7 +45,7 @@ export function LiveFlightTracker() {
   const [apiConnected, setApiConnected] = useState<boolean | null>(null);
   const [dataSource, setDataSource] = useState<'all' | 'live' | 'surveillance'>('all');
 
-  // Fetch live flights from Aviation Edge API - focused on Kern County/Bakersfield
+  // Fetch live flights from Aviation Edge API - focused on Kern County
   const fetchFromAviationEdge = useCallback(async () => {
     try {
       console.log('Fetching from Aviation Edge API (Kern County focus)...');
@@ -69,10 +69,11 @@ export function LiveFlightTracker() {
       console.log(`Aviation Edge returned ${data?.count || 0} flights, inserted ${data?.inserted || 0}`);
       
       if (data?.inserted > 0) {
-        toast.success(`Imported ${data.inserted} live flights from Aviation Edge`);
+        toast.success(`Imported ${data.inserted} live flights from Kern County`);
       }
       
-      return data;
+      // Return the flights directly from API response for immediate display
+      return data?.flights || [];
     } catch (err) {
       console.error('Aviation Edge exception:', err);
       setApiConnected(false);
@@ -84,45 +85,83 @@ export function LiveFlightTracker() {
     setLoading(true);
     
     try {
-      // First try to fetch fresh data from Aviation Edge
-      await fetchFromAviationEdge();
+      // First fetch fresh data from Aviation Edge - this now stores to DB too
+      const liveApiFlights = await fetchFromAviationEdge();
       
-      // Then get UNIFIED data from database (combines all flight tables)
-      // Use a very long time window to include all historic data
-      const unifiedData = await getUnifiedFlights('365 days', 500);
+      // Also get recent data from database (Kern County focused, last 7 days)
+      let dbFlights: UnifiedFlight[] = [];
+      try {
+        const { data, error } = await supabase.functions.invoke('neon-query', {
+          body: { action: 'getKernCountyFlights', limit: 200 }
+        });
+        if (!error && data) {
+          dbFlights = Array.isArray(data) ? data : [];
+        }
+      } catch (dbErr) {
+        console.warn('DB fetch error, using API data only:', dbErr);
+      }
       
-      // Calculate stats from unified data
-      const flightList = unifiedData || [];
+      // Merge: prefer live API data, fallback to DB data
+      const apiFlightsTransformed: UnifiedFlight[] = (liveApiFlights || [])
+        .filter((f: any) => f.latitude && f.longitude)
+        .map((f: any) => ({
+          hex: f.hex || '',
+          registration: f.registration || 'N/A',
+          callsign: f.callsign || '',
+          altitude: f.altitude || 0,
+          speed: f.speed || 0,
+          latitude: f.latitude,
+          longitude: f.longitude,
+          heading: f.heading || 0,
+          event_time: f.detected_at || new Date().toISOString(),
+          taxonomy_tag: f.taxonomyTag || 'xxb_live',
+          threat_score: f.threatScore || 0,
+          is_flagged: f.flagged || false,
+          flagged_reasons: f.flaggedReasons?.join('; ') || null,
+          data_source: 'live_detection' as const,
+          threat_level: (f.tierLevel === 1 ? 'critical' : f.tierLevel === 2 ? 'high' : f.tierLevel === 3 ? 'medium' : 'normal') as 'critical' | 'high' | 'medium' | 'normal',
+          is_military: f.taxonomyTag === 'xxb_military'
+        }));
+      
+      // Combine: API flights first (fresher), then DB flights not already in API set
+      const apiRegistrations = new Set(apiFlightsTransformed.map(f => f.registration));
+      const combinedFlights = [
+        ...apiFlightsTransformed,
+        ...dbFlights.filter(f => !apiRegistrations.has(f.registration))
+      ];
+      
+      // Calculate stats
+      const flightList = combinedFlights;
       
       const calculatedStats: FlightStats = {
         total_active: flightList.length,
-        flagged_count: flightList.filter((f: UnifiedFlight) => f.is_flagged).length,
-        military_count: flightList.filter((f: UnifiedFlight) => f.is_military).length,
-        low_altitude_count: flightList.filter((f: UnifiedFlight) => f.altitude < 1500 && f.altitude > 0).length,
-        kcso_related: flightList.filter((f: UnifiedFlight) => 
+        flagged_count: flightList.filter((f) => f.is_flagged).length,
+        military_count: flightList.filter((f) => f.is_military).length,
+        low_altitude_count: flightList.filter((f) => f.altitude < 1500 && f.altitude > 0).length,
+        kcso_related: flightList.filter((f) => 
           f.taxonomy_tag?.includes('kcso') || f.threat_level === 'critical'
         ).length,
-        shell_count: flightList.filter((f: UnifiedFlight) => f.taxonomy_tag?.includes('shell')).length,
-        medical_count: flightList.filter((f: UnifiedFlight) => f.taxonomy_tag?.includes('medical')).length,
+        shell_count: flightList.filter((f) => f.taxonomy_tag?.includes('shell')).length,
+        medical_count: flightList.filter((f) => f.taxonomy_tag?.includes('medical')).length,
         avg_altitude: flightList.length > 0 
-          ? Math.round(flightList.reduce((sum: number, f: UnifiedFlight) => sum + f.altitude, 0) / flightList.length)
+          ? Math.round(flightList.reduce((sum, f) => sum + f.altitude, 0) / flightList.length)
           : 0,
-        max_threat: Math.max(...flightList.map((f: UnifiedFlight) => f.threat_score), 0),
-        live_api_count: flightList.filter((f: UnifiedFlight) => f.data_source === 'live_detection').length,
-        surveillance_count: flightList.filter((f: UnifiedFlight) => f.data_source === 'surveillance_feed').length,
-        db_cache_count: flightList.length
+        max_threat: Math.max(...flightList.map((f) => f.threat_score), 0),
+        live_api_count: apiFlightsTransformed.length,
+        surveillance_count: flightList.filter((f) => f.data_source === 'surveillance_feed').length,
+        db_cache_count: dbFlights.length
       };
 
       // Filter based on selected data source
       let filteredFlights = flightList;
       if (dataSource === 'live') {
-        filteredFlights = flightList.filter((f: UnifiedFlight) => f.data_source === 'live_detection');
+        filteredFlights = apiFlightsTransformed;
       } else if (dataSource === 'surveillance') {
-        filteredFlights = flightList.filter((f: UnifiedFlight) => f.data_source === 'surveillance_feed');
+        filteredFlights = flightList.filter((f) => f.data_source === 'surveillance_feed');
       }
 
       // Sort by threat level and time
-      filteredFlights.sort((a: UnifiedFlight, b: UnifiedFlight) => {
+      filteredFlights.sort((a, b) => {
         const threatOrder = { critical: 0, high: 1, medium: 2, normal: 3 };
         const aOrder = threatOrder[a.threat_level] ?? 4;
         const bOrder = threatOrder[b.threat_level] ?? 4;
@@ -139,7 +178,7 @@ export function LiveFlightTracker() {
     } finally {
       setLoading(false);
     }
-  }, [fetchFromAviationEdge, getUnifiedFlights, dataSource]);
+  }, [fetchFromAviationEdge, dataSource]);
 
   useEffect(() => {
     fetchLiveFlights();

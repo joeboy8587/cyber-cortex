@@ -439,6 +439,115 @@ serve(async (req) => {
         break;
       }
 
+      // ============== DATA QUALITY / INGESTION STATISTICS ==============
+      case 'getIngestionStats': {
+        console.log('Fetching ingestion statistics...');
+        
+        // Get coordinate quality stats
+        const coordStats = await sql`
+          SELECT 
+            COUNT(*) as total_records,
+            COUNT(CASE WHEN latitude IS NOT NULL AND longitude IS NOT NULL AND latitude != 0 AND longitude != 0 THEN 1 END) as valid_coordinates,
+            COUNT(CASE WHEN latitude IS NULL OR longitude IS NULL THEN 1 END) as null_coordinates,
+            COUNT(CASE WHEN latitude = 0 OR longitude = 0 THEN 1 END) as zero_coordinates,
+            COUNT(CASE WHEN latitude BETWEEN 34.5 AND 36.0 AND longitude BETWEEN -120.0 AND -117.0 THEN 1 END) as kern_county_flights
+          FROM live_flight_detections_rows
+        `;
+        
+        // Get taxonomy distribution
+        const taxonomyStats = await sql`
+          SELECT 
+            COALESCE(taxonomy_tag, 'untagged') as taxonomy_tag,
+            COUNT(*) as count,
+            COUNT(CASE WHEN latitude IS NOT NULL AND longitude IS NOT NULL THEN 1 END) as with_coords
+          FROM live_flight_detections_rows
+          GROUP BY taxonomy_tag
+          ORDER BY count DESC
+          LIMIT 15
+        `;
+        
+        // Get recent ingestion activity (last 24 hours)
+        const recentActivity = await sql`
+          SELECT 
+            DATE_TRUNC('hour', created_at) as hour,
+            COUNT(*) as records_inserted,
+            COUNT(CASE WHEN latitude IS NOT NULL AND longitude IS NOT NULL AND latitude != 0 AND longitude != 0 THEN 1 END) as valid_coords,
+            COUNT(CASE WHEN flagged = true THEN 1 END) as flagged_count
+          FROM live_flight_detections_rows
+          WHERE created_at > NOW() - INTERVAL '24 hours'
+          GROUP BY DATE_TRUNC('hour', created_at)
+          ORDER BY hour DESC
+          LIMIT 24
+        `;
+        
+        // Get flagged vs unflagged stats
+        const flagStats = await sql`
+          SELECT 
+            COUNT(CASE WHEN flagged = true THEN 1 END) as flagged,
+            COUNT(CASE WHEN flagged = false OR flagged IS NULL THEN 1 END) as unflagged,
+            COUNT(CASE WHEN tier_level = 1 THEN 1 END) as tier1,
+            COUNT(CASE WHEN tier_level = 2 THEN 1 END) as tier2,
+            COUNT(CASE WHEN tier_level = 3 THEN 1 END) as tier3,
+            COUNT(CASE WHEN tier_level >= 4 OR tier_level IS NULL THEN 1 END) as tier4plus
+          FROM live_flight_detections_rows
+        `;
+        
+        // Get unique registrations and ICAO codes
+        const uniqueStats = await sql`
+          SELECT 
+            COUNT(DISTINCT registration) as unique_registrations,
+            COUNT(DISTINCT icao_code) as unique_icao_codes,
+            COUNT(DISTINCT callsign) as unique_callsigns
+          FROM live_flight_detections_rows
+          WHERE registration IS NOT NULL AND registration != 'N/A' AND registration != ''
+        `;
+        
+        const cs = coordStats[0] || {};
+        const fs = flagStats[0] || {};
+        const us = uniqueStats[0] || {};
+        
+        const totalRecords = parseInt(cs.total_records) || 0;
+        const validCoords = parseInt(cs.valid_coordinates) || 0;
+        const coordValidationRate = totalRecords > 0 ? ((validCoords / totalRecords) * 100).toFixed(1) : '0';
+        
+        result = {
+          coordinateStats: {
+            totalRecords,
+            validCoordinates: validCoords,
+            nullCoordinates: parseInt(cs.null_coordinates) || 0,
+            zeroCoordinates: parseInt(cs.zero_coordinates) || 0,
+            kernCountyFlights: parseInt(cs.kern_county_flights) || 0,
+            validationRate: parseFloat(coordValidationRate)
+          },
+          taxonomyDistribution: taxonomyStats.map((t: any) => ({
+            tag: t.taxonomy_tag,
+            count: parseInt(t.count),
+            withCoords: parseInt(t.with_coords)
+          })),
+          recentActivity: recentActivity.map((a: any) => ({
+            hour: a.hour,
+            recordsInserted: parseInt(a.records_inserted),
+            validCoords: parseInt(a.valid_coords),
+            flaggedCount: parseInt(a.flagged_count)
+          })),
+          flagStats: {
+            flagged: parseInt(fs.flagged) || 0,
+            unflagged: parseInt(fs.unflagged) || 0,
+            tier1: parseInt(fs.tier1) || 0,
+            tier2: parseInt(fs.tier2) || 0,
+            tier3: parseInt(fs.tier3) || 0,
+            tier4plus: parseInt(fs.tier4plus) || 0
+          },
+          uniqueIdentifiers: {
+            registrations: parseInt(us.unique_registrations) || 0,
+            icaoCodes: parseInt(us.unique_icao_codes) || 0,
+            callsigns: parseInt(us.unique_callsigns) || 0
+          },
+          timestamp: new Date().toISOString()
+        };
+        break;
+      }
+
       // ============== DATABASE-WIDE COUNTS FOR DASHBOARDS ==============
       case 'getDashboardCounts': {
         const counts = await sql`

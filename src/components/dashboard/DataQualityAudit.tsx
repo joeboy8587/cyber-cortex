@@ -15,7 +15,12 @@ import {
   Clock,
   Layers,
   FileWarning,
-  Brain
+  Brain,
+  MapPin,
+  TrendingUp,
+  Activity,
+  Target,
+  Trash2
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -54,28 +59,48 @@ interface TimelineRange {
   count: number;
 }
 
+interface IngestionStats {
+  coordinateStats: {
+    totalRecords: number;
+    validCoordinates: number;
+    nullCoordinates: number;
+    zeroCoordinates: number;
+    kernCountyFlights: number;
+    validationRate: number;
+  };
+  taxonomyDistribution: Array<{ tag: string; count: number; withCoords: number }>;
+  recentActivity: Array<{ hour: string; recordsInserted: number; validCoords: number; flaggedCount: number }>;
+  flagStats: { flagged: number; unflagged: number; tier1: number; tier2: number; tier3: number; tier4plus: number };
+  uniqueIdentifiers: { registrations: number; icaoCodes: number; callsigns: number };
+  timestamp: string;
+}
+
 export default function DataQualityAudit() {
   const [loading, setLoading] = useState(false);
+  const [cleaningUp, setCleaningUp] = useState(false);
   const [summary, setSummary] = useState<AuditSummary | null>(null);
   const [ocrAudit, setOcrAudit] = useState<OcrAuditResult[]>([]);
   const [domains, setDomains] = useState<Record<string, EvidenceDomain>>({});
   const [timeline, setTimeline] = useState<TimelineRange[]>([]);
+  const [ingestionStats, setIngestionStats] = useState<IngestionStats | null>(null);
 
   const runAudit = async () => {
     setLoading(true);
     try {
-      // Run all audits in parallel
-      const [summaryRes, ocrRes, domainsRes, timelineRes] = await Promise.all([
+      // Run all audits in parallel including ingestion stats
+      const [summaryRes, ocrRes, domainsRes, timelineRes, ingestionRes] = await Promise.all([
         supabase.functions.invoke('data-quality-audit', { body: { action: 'getAuditSummary' } }),
         supabase.functions.invoke('data-quality-audit', { body: { action: 'auditOcrTables' } }),
         supabase.functions.invoke('data-quality-audit', { body: { action: 'getEvidenceDomains' } }),
-        supabase.functions.invoke('data-quality-audit', { body: { action: 'getTimelineRange' } })
+        supabase.functions.invoke('data-quality-audit', { body: { action: 'getTimelineRange' } }),
+        supabase.functions.invoke('neon-query', { body: { action: 'getIngestionStats' } })
       ]);
 
       if (summaryRes.data?.data) setSummary(summaryRes.data.data);
       if (ocrRes.data?.data) setOcrAudit(ocrRes.data.data);
       if (domainsRes.data?.data) setDomains(domainsRes.data.data);
       if (timelineRes.data?.data) setTimeline(timelineRes.data.data);
+      if (ingestionRes.data) setIngestionStats(ingestionRes.data);
 
       toast.success('Audit complete');
     } catch (err) {
@@ -85,12 +110,32 @@ export default function DataQualityAudit() {
     }
   };
 
+  const cleanupNullDetections = async () => {
+    setCleaningUp(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('neon-query', { 
+        body: { action: 'cleanupNullDetections' } 
+      });
+      
+      if (error) throw error;
+      
+      toast.success(`Cleaned up ${data?.deletedCount || 0} invalid records`);
+      // Refresh stats after cleanup
+      runAudit();
+    } catch (err) {
+      toast.error('Cleanup failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
+    } finally {
+      setCleaningUp(false);
+    }
+  };
+
   useEffect(() => {
     runAudit();
   }, []);
 
   const formatNumber = (n: number) => n?.toLocaleString() || '0';
   const formatDate = (d: string) => d ? new Date(d).toLocaleDateString() : 'N/A';
+  const formatDateTime = (d: string) => d ? new Date(d).toLocaleString() : 'N/A';
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -104,6 +149,12 @@ export default function DataQualityAudit() {
       default:
         return <Badge variant="outline">{status}</Badge>;
     }
+  };
+
+  const getValidationColor = (rate: number) => {
+    if (rate >= 95) return 'text-green-400';
+    if (rate >= 80) return 'text-yellow-400';
+    return 'text-red-400';
   };
 
   const domainIcons: Record<string, typeof Database> = {
@@ -137,13 +188,221 @@ export default function DataQualityAudit() {
         </Button>
       }
     >
-      <Tabs defaultValue="overview" className="w-full">
-        <TabsList className="grid w-full grid-cols-4 bg-background/50">
+      <Tabs defaultValue="ingestion" className="w-full">
+        <TabsList className="grid w-full grid-cols-5 bg-background/50">
+          <TabsTrigger value="ingestion">Ingestion Stats</TabsTrigger>
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="ocr">OCR Quality</TabsTrigger>
           <TabsTrigger value="domains">Evidence Domains</TabsTrigger>
           <TabsTrigger value="timeline">Timeline</TabsTrigger>
         </TabsList>
+
+        {/* NEW INGESTION STATS TAB */}
+        <TabsContent value="ingestion" className="space-y-4 mt-4">
+          {ingestionStats ? (
+            <>
+              {/* Coordinate Validation Stats */}
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                <div className="bg-background/30 rounded-lg p-4 border border-cyan-500/20">
+                  <div className="flex items-center gap-2 mb-1">
+                    <Database className="w-4 h-4 text-cyan-400" />
+                    <span className="text-xs text-muted-foreground">Total Records</span>
+                  </div>
+                  <div className="text-2xl font-bold text-cyan-400">
+                    {formatNumber(ingestionStats.coordinateStats.totalRecords)}
+                  </div>
+                </div>
+                <div className="bg-background/30 rounded-lg p-4 border border-green-500/20">
+                  <div className="flex items-center gap-2 mb-1">
+                    <MapPin className="w-4 h-4 text-green-400" />
+                    <span className="text-xs text-muted-foreground">Valid Coords</span>
+                  </div>
+                  <div className="text-2xl font-bold text-green-400">
+                    {formatNumber(ingestionStats.coordinateStats.validCoordinates)}
+                  </div>
+                </div>
+                <div className="bg-background/30 rounded-lg p-4 border border-red-500/20">
+                  <div className="flex items-center gap-2 mb-1">
+                    <AlertTriangle className="w-4 h-4 text-red-400" />
+                    <span className="text-xs text-muted-foreground">Null/Zero</span>
+                  </div>
+                  <div className="text-2xl font-bold text-red-400">
+                    {formatNumber(ingestionStats.coordinateStats.nullCoordinates + ingestionStats.coordinateStats.zeroCoordinates)}
+                  </div>
+                </div>
+                <div className="bg-background/30 rounded-lg p-4 border border-purple-500/20">
+                  <div className="flex items-center gap-2 mb-1">
+                    <Target className="w-4 h-4 text-purple-400" />
+                    <span className="text-xs text-muted-foreground">Kern County</span>
+                  </div>
+                  <div className="text-2xl font-bold text-purple-400">
+                    {formatNumber(ingestionStats.coordinateStats.kernCountyFlights)}
+                  </div>
+                </div>
+                <div className="bg-background/30 rounded-lg p-4 border border-yellow-500/20">
+                  <div className="flex items-center gap-2 mb-1">
+                    <TrendingUp className="w-4 h-4 text-yellow-400" />
+                    <span className="text-xs text-muted-foreground">Validation Rate</span>
+                  </div>
+                  <div className={`text-2xl font-bold ${getValidationColor(ingestionStats.coordinateStats.validationRate)}`}>
+                    {ingestionStats.coordinateStats.validationRate}%
+                  </div>
+                </div>
+              </div>
+
+              {/* Coordinate Validation Progress */}
+              <div className="bg-background/30 rounded-lg p-4 border border-border/30">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-medium">Coordinate Validation Rate</span>
+                  <div className="flex items-center gap-2">
+                    <span className={`text-sm ${getValidationColor(ingestionStats.coordinateStats.validationRate)}`}>
+                      {ingestionStats.coordinateStats.validationRate}%
+                    </span>
+                    {(ingestionStats.coordinateStats.nullCoordinates + ingestionStats.coordinateStats.zeroCoordinates) > 0 && (
+                      <Button 
+                        size="sm" 
+                        variant="outline" 
+                        onClick={cleanupNullDetections}
+                        disabled={cleaningUp}
+                        className="border-red-500/30 text-red-400 hover:bg-red-500/10 h-7"
+                      >
+                        <Trash2 className={`w-3 h-3 mr-1 ${cleaningUp ? 'animate-spin' : ''}`} />
+                        {cleaningUp ? 'Cleaning...' : 'Cleanup Nulls'}
+                      </Button>
+                    )}
+                  </div>
+                </div>
+                <Progress value={ingestionStats.coordinateStats.validationRate} className="h-2" />
+                <div className="flex justify-between text-xs text-muted-foreground mt-1">
+                  <span>Valid: {formatNumber(ingestionStats.coordinateStats.validCoordinates)}</span>
+                  <span>Invalid: {formatNumber(ingestionStats.coordinateStats.nullCoordinates + ingestionStats.coordinateStats.zeroCoordinates)}</span>
+                </div>
+              </div>
+
+              {/* Flagging & Tier Stats */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="bg-background/30 rounded-lg p-4 border border-border/30">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Shield className="w-4 h-4 text-red-400" />
+                    <span className="font-medium">Flagged Aircraft Distribution</span>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-muted-foreground">Tier 1 (Critical)</span>
+                      <Badge className="bg-red-500/20 text-red-400 border-red-500/30">
+                        {formatNumber(ingestionStats.flagStats.tier1)}
+                      </Badge>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-muted-foreground">Tier 2 (High)</span>
+                      <Badge className="bg-orange-500/20 text-orange-400 border-orange-500/30">
+                        {formatNumber(ingestionStats.flagStats.tier2)}
+                      </Badge>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-muted-foreground">Tier 3 (Medium)</span>
+                      <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30">
+                        {formatNumber(ingestionStats.flagStats.tier3)}
+                      </Badge>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-muted-foreground">Tier 4+ (Normal)</span>
+                      <Badge className="bg-gray-500/20 text-gray-400 border-gray-500/30">
+                        {formatNumber(ingestionStats.flagStats.tier4plus)}
+                      </Badge>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-background/30 rounded-lg p-4 border border-border/30">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Database className="w-4 h-4 text-cyan-400" />
+                    <span className="font-medium">Unique Identifiers</span>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-muted-foreground">Unique Registrations</span>
+                      <span className="text-cyan-400 font-mono">{formatNumber(ingestionStats.uniqueIdentifiers.registrations)}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-muted-foreground">Unique ICAO Codes</span>
+                      <span className="text-cyan-400 font-mono">{formatNumber(ingestionStats.uniqueIdentifiers.icaoCodes)}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-muted-foreground">Unique Callsigns</span>
+                      <span className="text-cyan-400 font-mono">{formatNumber(ingestionStats.uniqueIdentifiers.callsigns)}</span>
+                    </div>
+                    <div className="flex justify-between items-center pt-2 border-t border-border/20">
+                      <span className="text-sm text-muted-foreground">Flagged Total</span>
+                      <span className="text-red-400 font-bold">{formatNumber(ingestionStats.flagStats.flagged)}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Taxonomy Distribution */}
+              <div className="bg-background/30 rounded-lg p-4 border border-border/30">
+                <div className="flex items-center gap-2 mb-3">
+                  <Layers className="w-4 h-4 text-purple-400" />
+                  <span className="font-medium">XXB Taxonomy Distribution</span>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2">
+                  {ingestionStats.taxonomyDistribution.map((t) => (
+                    <div key={t.tag} className="bg-background/20 rounded p-2 border border-border/20">
+                      <div className="text-xs text-muted-foreground truncate">{t.tag}</div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm font-mono text-cyan-400">{formatNumber(t.count)}</span>
+                        <span className="text-xs text-green-400">
+                          {t.count > 0 ? Math.round((t.withCoords / t.count) * 100) : 0}% ✓
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Recent Activity */}
+              <div className="bg-background/30 rounded-lg p-4 border border-border/30">
+                <div className="flex items-center gap-2 mb-3">
+                  <Activity className="w-4 h-4 text-green-400" />
+                  <span className="font-medium">Recent Ingestion Activity (24h)</span>
+                </div>
+                {ingestionStats.recentActivity.length === 0 ? (
+                  <div className="text-center py-4 text-muted-foreground">No recent activity</div>
+                ) : (
+                  <div className="space-y-1 max-h-48 overflow-y-auto">
+                    {ingestionStats.recentActivity.map((a, i) => (
+                      <div key={i} className="flex items-center justify-between p-2 bg-background/20 rounded text-sm">
+                        <span className="text-muted-foreground font-mono text-xs">
+                          {formatDateTime(a.hour)}
+                        </span>
+                        <div className="flex gap-4">
+                          <span className="text-cyan-400">
+                            +{formatNumber(a.recordsInserted)}
+                          </span>
+                          <span className="text-green-400">
+                            {a.recordsInserted > 0 ? Math.round((a.validCoords / a.recordsInserted) * 100) : 0}% valid
+                          </span>
+                          <span className="text-red-400">
+                            {a.flaggedCount} flagged
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="text-xs text-muted-foreground text-right">
+                Last updated: {formatDateTime(ingestionStats.timestamp)}
+              </div>
+            </>
+          ) : (
+            <div className="text-center py-8 text-muted-foreground">
+              Loading ingestion statistics...
+            </div>
+          )}
+        </TabsContent>
 
         <TabsContent value="overview" className="space-y-4 mt-4">
           {summary && (
@@ -327,7 +586,7 @@ export default function DataQualityAudit() {
       <div className="mt-4 pt-4 border-t border-border/20 text-xs text-muted-foreground">
         <div className="flex items-center gap-2">
           <CheckCircle2 className="w-3 h-3 text-green-400" />
-          <span>Forensic audit validates data integrity, identifies OCR errors, and verifies chain of custody for legal admissibility.</span>
+          <span>Forensic audit validates data integrity, coordinates, XXB taxonomy, and chain of custody for legal admissibility.</span>
         </div>
       </div>
     </CyberPanel>

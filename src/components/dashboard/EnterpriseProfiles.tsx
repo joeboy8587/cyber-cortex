@@ -29,8 +29,22 @@ export function EnterpriseProfiles() {
 
   const fetchEnterpriseData = async () => {
     try {
+      // Helper to extract array from nested response
+      const extractArray = (response: any): any[] => {
+        if (!response) return [];
+        if (Array.isArray(response)) return response;
+        if (response.data && Array.isArray(response.data)) return response.data;
+        if (typeof response === 'object') {
+          // Check for nested data property
+          for (const key of Object.keys(response)) {
+            if (Array.isArray(response[key])) return response[key];
+          }
+        }
+        return [];
+      };
+
       // Fetch top aircraft from registry with detection stats
-      const { data: aircraftData } = await supabase.functions.invoke("neon-query", {
+      const { data: aircraftData, error: aircraftError } = await supabase.functions.invoke("neon-query", {
         body: {
           action: "customQuery",
           query: `
@@ -48,8 +62,12 @@ export function EnterpriseProfiles() {
         }
       });
 
+      if (aircraftError) {
+        console.warn("Aircraft registry query failed:", aircraftError);
+      }
+
       // Get flagged aircraft stats
-      const { data: flaggedData } = await supabase.functions.invoke("neon-query", {
+      const { data: flaggedData, error: flaggedError } = await supabase.functions.invoke("neon-query", {
         body: {
           action: "customQuery",
           query: `
@@ -67,24 +85,32 @@ export function EnterpriseProfiles() {
         }
       });
 
+      if (flaggedError) {
+        console.warn("Flagged aircraft query failed:", flaggedError);
+      }
+
       // Get overall stats
-      const { data: statsData } = await supabase.functions.invoke("neon-query", {
+      const { data: statsData, error: statsError } = await supabase.functions.invoke("neon-query", {
         body: {
           action: "customQuery",
           query: `
             SELECT 
               (SELECT COUNT(*) FROM aircraft_registry_enriched) as total_aircraft,
-              (SELECT SUM(detection_count) FROM aircraft_registry_enriched) as total_detections,
+              (SELECT COALESCE(SUM(detection_count), 0) FROM aircraft_registry_enriched) as total_detections,
               (SELECT COUNT(DISTINCT hex) FROM flagged_aircraft_rows_rows) as total_flagged
           `
         }
       });
 
+      if (statsError) {
+        console.warn("Stats query failed:", statsError);
+      }
       const processedProfiles: AircraftProfile[] = [];
 
-      // Process registry data
-      if (aircraftData?.data) {
-        aircraftData.data.forEach((a: any) => {
+      // Process registry data - use safe extraction
+      const aircraftList = extractArray(aircraftData);
+      aircraftList.forEach((a: any) => {
+        try {
           const threatScore = Number(a.avg_threat_score) || 0;
           let threatLevel: "high" | "medium" | "low" = "low";
           if (threatScore > 0.7 || Number(a.detection_count) > 100) threatLevel = "high";
@@ -99,14 +125,17 @@ export function EnterpriseProfiles() {
             lastSeen: a.last_seen || "",
             threatLevel
           });
-        });
-      }
+        } catch (parseErr) {
+          console.warn("Error parsing aircraft entry:", parseErr);
+        }
+      });
 
-      // Add flagged aircraft if not already present
-      if (flaggedData?.data) {
-        flaggedData.data.forEach((f: any) => {
+      // Add flagged aircraft if not already present - use safe extraction
+      const flaggedList = extractArray(flaggedData);
+      flaggedList.forEach((f: any) => {
+        try {
           const exists = processedProfiles.some(p => p.hex === f.hex);
-          if (!exists) {
+          if (!exists && f.hex) {
             const count = Number(f.detection_count) || 0;
             let threatLevel: "high" | "medium" | "low" = "low";
             if (count > 100) threatLevel = "high";
@@ -122,18 +151,22 @@ export function EnterpriseProfiles() {
               threatLevel
             });
           }
-        });
-      }
+        } catch (parseErr) {
+          console.warn("Error parsing flagged entry:", parseErr);
+        }
+      });
 
       // Sort by detection count
       processedProfiles.sort((a, b) => b.detectionCount - a.detectionCount);
       setProfiles(processedProfiles.slice(0, 20));
 
-      if (statsData?.data?.[0]) {
+      // Process stats - use safe extraction
+      const statsList = extractArray(statsData);
+      if (statsList.length > 0) {
         setStats({
-          totalAircraft: Number(statsData.data[0].total_aircraft) || 0,
-          totalDetections: Number(statsData.data[0].total_detections) || 0,
-          totalFlagged: Number(statsData.data[0].total_flagged) || 0
+          totalAircraft: Number(statsList[0].total_aircraft) || 0,
+          totalDetections: Number(statsList[0].total_detections) || 0,
+          totalFlagged: Number(statsList[0].total_flagged) || 0
         });
       }
     } catch (error) {

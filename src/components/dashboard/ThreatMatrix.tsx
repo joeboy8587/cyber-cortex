@@ -37,13 +37,28 @@ export function ThreatMatrix() {
   const [threatData, setThreatData] = useState<ThreatData[]>([]);
   const [loadingData, setLoadingData] = useState(true);
 
+  // Helper to extract array from nested response
+  const extractArray = (response: any): any[] => {
+    if (!response) return [];
+    if (Array.isArray(response)) return response;
+    if (response.data && Array.isArray(response.data)) return response.data;
+    if (typeof response === 'object') {
+      for (const key of Object.keys(response)) {
+        if (Array.isArray(response[key])) return response[key];
+      }
+    }
+    return [];
+  };
+
   const fetchThreatData = async () => {
     setLoadingData(true);
     try {
       // Try custom threat matrix query first
       const data = await getThreatMatrix();
-      if (data.length > 0) {
-        setThreatData(data);
+      const threatList = extractArray(data);
+      
+      if (threatList.length > 0) {
+        setThreatData(threatList);
       } else {
         // Fallback: Get top tables by row count as threat indicators
         const tables = await customQuery(`
@@ -59,15 +74,16 @@ export function ThreatMatrix() {
           LIMIT 8
         `);
         
-        setThreatData(tables?.map((t: { name: string; row_count: number }, i: number) => ({
+        const tableList = extractArray(tables);
+        setThreatData(tableList.map((t: { name: string; row_count: number }, i: number) => ({
           id: t.name?.substring(0, 10).toUpperCase() || `TBL-${i}`,
           name: t.name || 'Unknown Table',
-          level: (t.row_count > 100000 ? 'critical' : t.row_count > 10000 ? 'high' : t.row_count > 1000 ? 'medium' : 'low') as ThreatData['level'],
-          detections: t.row_count || 0,
+          level: (Number(t.row_count) > 100000 ? 'critical' : Number(t.row_count) > 10000 ? 'high' : Number(t.row_count) > 1000 ? 'medium' : 'low') as ThreatData['level'],
+          detections: Number(t.row_count) || 0,
           avgAltitude: '-',
           violations: 0,
-          enrichment: `${Math.floor((t.row_count || 0) / 1000)}×`,
-        })) || []);
+          enrichment: `${Math.floor((Number(t.row_count) || 0) / 1000)}×`,
+        })));
       }
     } catch (err) {
       console.error('Failed to fetch threat data:', err);

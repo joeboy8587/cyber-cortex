@@ -23,6 +23,19 @@ export const FleetTrackingLedger = () => {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'le' | 'high-freq'>('all');
 
+  // Helper to extract array from nested response
+  const extractArray = (response: any): any[] => {
+    if (!response) return [];
+    if (Array.isArray(response)) return response;
+    if (response.data && Array.isArray(response.data)) return response.data;
+    if (typeof response === 'object') {
+      for (const key of Object.keys(response)) {
+        if (Array.isArray(response[key])) return response[key];
+      }
+    }
+    return [];
+  };
+
   const fetchFleetData = useCallback(async () => {
     setLoading(true);
     try {
@@ -48,13 +61,16 @@ export const FleetTrackingLedger = () => {
         }
       });
 
-      if (flightError) throw flightError;
+      if (flightError) {
+        console.warn('Flight data query failed:', flightError);
+      }
 
       // Correlation map will be empty for now - no direct aircraft_registration column in josiah tables
       const correlationMap = new Map<string, number>();
 
       // Process and enrich fleet data
-      const enrichedFleet: AircraftEntry[] = (flightData?.data || []).map((row: {
+      const flightList = extractArray(flightData);
+      const enrichedFleet: AircraftEntry[] = flightList.map((row: {
         registration: string;
         frequency: number;
         avg_altitude: number;

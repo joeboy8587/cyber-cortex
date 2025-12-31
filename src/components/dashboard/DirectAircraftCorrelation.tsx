@@ -66,6 +66,19 @@ export function DirectAircraftCorrelation() {
   const [expandedAircraft, setExpandedAircraft] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'significant' | 'critical'>('all');
 
+  // Helper to extract array from nested response
+  const extractArray = (response: any): any[] => {
+    if (!response) return [];
+    if (Array.isArray(response)) return response;
+    if (response.data && Array.isArray(response.data)) return response.data;
+    if (typeof response === 'object') {
+      for (const key of Object.keys(response)) {
+        if (Array.isArray(response[key])) return response[key];
+      }
+    }
+    return [];
+  };
+
   const fetchCorrelations = useCallback(async () => {
     setLoading(true);
     try {
@@ -118,23 +131,97 @@ export function DirectAircraftCorrelation() {
         }
       });
 
-      if (error) throw error;
+      if (error) {
+        console.warn("Correlation matrix query failed:", error);
+        // Try fallback query with simpler data
+        const { data: fallbackData } = await supabase.functions.invoke("neon-query", {
+          body: {
+            action: "customQuery",
+            query: `
+              SELECT 
+                registration as matrix_id,
+                COALESCE(icao_code, registration) as icao,
+                registration,
+                NULL as aircraft_type,
+                NULL as owner_name,
+                COUNT(*) as total_encounters,
+                0 as encounters_with_biometric_data,
+                600 as correlation_window_seconds,
+                NULL as avg_hr_during_encounters,
+                NULL as max_hr_during_encounters,
+                0 as hr_spike_count,
+                NULL as avg_hr_delta,
+                NULL as hr_correlation_coefficient,
+                NULL as avg_stress_during_encounters,
+                0 as stress_spike_count,
+                NULL as stress_correlation_coefficient,
+                NULL as avg_hrv_during_encounters,
+                0 as hrv_drop_count,
+                NULL as hrv_correlation_coefficient,
+                MIN(detection_timestamp) as first_encounter,
+                MAX(detection_timestamp) as last_encounter,
+                CASE 
+                  WHEN AVG(CAST(threat_score AS FLOAT)) >= 45 THEN 'SEVERE'
+                  WHEN AVG(CAST(threat_score AS FLOAT)) >= 30 THEN 'HIGH'
+                  ELSE 'MODERATE'
+                END as harm_level,
+                ROUND(AVG(CAST(threat_score AS FLOAT))::numeric, 1) as combined_harm_score,
+                0.5 as confidence_score,
+                0 as physiological_impact_score,
+                '1x' as threat_multiplier,
+                false as statistically_significant,
+                false as clinically_significant,
+                false as loitering_correlation,
+                BOOL_OR(altitude < 500) as low_altitude_correlation,
+                false as night_operation_correlation,
+                'FLIGHT_PATTERN' as primary_harm_indicator
+              FROM live_flight_detections_rows
+              WHERE registration IS NOT NULL
+              GROUP BY registration, icao_code
+              HAVING COUNT(*) >= 5
+              ORDER BY COUNT(*) DESC
+              LIMIT 50
+            `
+          }
+        });
+        
+        const results = extractArray(fallbackData);
+        setCorrelations(results);
+        
+        const critical = results.filter((r: AircraftCorrelation) => 
+          r.harm_level === 'SEVERE' || r.harm_level === 'CRITICAL' || (r.combined_harm_score && r.combined_harm_score > 50)
+        );
+        const avgHarm = results.length > 0 
+          ? results.reduce((sum: number, r: AircraftCorrelation) => sum + (Number(r.combined_harm_score) || 0), 0) / results.length 
+          : 0;
 
-      const results = data?.data || [];
+        setStats({
+          totalAircraft: results.length,
+          totalCorrelations: results.reduce((sum: number, r: AircraftCorrelation) => sum + (Number(r.total_encounters) || 0), 0),
+          significantCorrelations: 0,
+          avgHarmScore: Math.round(avgHarm * 10) / 10,
+          criticalThreats: critical.length,
+        });
+
+        toast.success(`Loaded ${results.length} aircraft from fallback query`);
+        return;
+      }
+
+      const results = extractArray(data);
       setCorrelations(results);
 
       // Calculate stats
       const significant = results.filter((r: AircraftCorrelation) => r.statistically_significant);
       const critical = results.filter((r: AircraftCorrelation) => 
-        r.harm_level === 'SEVERE' || r.harm_level === 'CRITICAL' || r.combined_harm_score > 50
+        r.harm_level === 'SEVERE' || r.harm_level === 'CRITICAL' || (r.combined_harm_score && r.combined_harm_score > 50)
       );
       const avgHarm = results.length > 0 
-        ? results.reduce((sum: number, r: AircraftCorrelation) => sum + (r.combined_harm_score || 0), 0) / results.length 
+        ? results.reduce((sum: number, r: AircraftCorrelation) => sum + (Number(r.combined_harm_score) || 0), 0) / results.length 
         : 0;
 
       setStats({
         totalAircraft: results.length,
-        totalCorrelations: results.reduce((sum: number, r: AircraftCorrelation) => sum + (r.total_encounters || 0), 0),
+        totalCorrelations: results.reduce((sum: number, r: AircraftCorrelation) => sum + (Number(r.total_encounters) || 0), 0),
         significantCorrelations: significant.length,
         avgHarmScore: Math.round(avgHarm * 10) / 10,
         criticalThreats: critical.length,

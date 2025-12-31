@@ -2143,6 +2143,202 @@ serve(async (req) => {
         break;
       }
 
+      case 'scanAllTables': {
+        // Comprehensive scan of all database tables with row counts and sample data
+        console.log('Scanning all database tables for evidence patterns...');
+        
+        const allTables = await sql`
+          SELECT 
+            n.nspname as schema_name,
+            c.relname as table_name,
+            c.reltuples::bigint as estimated_rows,
+            pg_size_pretty(pg_total_relation_size(c.oid)) as total_size
+          FROM pg_class c
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE c.relkind = 'r' 
+            AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+          ORDER BY c.reltuples DESC
+        `;
+        
+        // Categorize tables
+        const categories = {
+          flight: [] as any[],
+          biometric: [] as any[],
+          evidence: [] as any[],
+          enterprise: [] as any[],
+          legal: [] as any[],
+          correlation: [] as any[],
+          other: [] as any[],
+        };
+        
+        for (const t of allTables) {
+          const name = t.table_name.toLowerCase();
+          const entry = {
+            schema: t.schema_name,
+            table: t.table_name,
+            rows: parseInt(t.estimated_rows) || 0,
+            size: t.total_size,
+          };
+          
+          if (name.includes('flight') || name.includes('aircraft') || name.includes('adsb') || 
+              name.includes('detection') || name.includes('radar')) {
+            categories.flight.push(entry);
+          } else if (name.includes('biometric') || name.includes('hrv') || name.includes('ecg') || 
+                     name.includes('heart') || name.includes('stress')) {
+            categories.biometric.push(entry);
+          } else if (name.includes('evidence') || name.includes('ocr') || name.includes('screenshot') ||
+                     name.includes('josiah') || name.includes('witness')) {
+            categories.evidence.push(entry);
+          } else if (name.includes('enterprise') || name.includes('shell') || name.includes('operator') ||
+                     name.includes('rico') || name.includes('criminal')) {
+            categories.enterprise.push(entry);
+          } else if (name.includes('legal') || name.includes('violation') || name.includes('claim') ||
+                     name.includes('tro') || name.includes('geneva')) {
+            categories.legal.push(entry);
+          } else if (name.includes('correlation') || name.includes('alignment') || name.includes('matrix')) {
+            categories.correlation.push(entry);
+          } else {
+            categories.other.push(entry);
+          }
+        }
+        
+        // Calculate totals
+        const totalRows = allTables.reduce((sum: number, t: any) => sum + (parseInt(t.estimated_rows) || 0), 0);
+        
+        result = {
+          summary: {
+            totalTables: allTables.length,
+            totalRows: totalRows,
+            flightTables: categories.flight.length,
+            biometricTables: categories.biometric.length,
+            evidenceTables: categories.evidence.length,
+            enterpriseTables: categories.enterprise.length,
+            legalTables: categories.legal.length,
+            correlationTables: categories.correlation.length,
+          },
+          categories,
+          allTables: allTables.map((t: any) => ({
+            schema: t.schema_name,
+            table: t.table_name,
+            rows: parseInt(t.estimated_rows) || 0,
+            size: t.total_size,
+          })),
+        };
+        break;
+      }
+
+      case 'getEvidencePatterns': {
+        // Analyze patterns across all evidence tables
+        console.log('Analyzing evidence patterns...');
+        
+        const patterns = {
+          flightAnomalies: 0,
+          biometricSpikes: 0,
+          witnessReports: 0,
+          ocrCaptures: 0,
+          correlatedEvents: 0,
+        };
+        
+        // Count low-altitude flights (below 500ft)
+        try {
+          const lowAlt = await sql`
+            SELECT COUNT(*) as count FROM live_flight_detections_rows 
+            WHERE altitude < 500
+          `;
+          patterns.flightAnomalies = parseInt(lowAlt[0]?.count) || 0;
+        } catch (e) { console.log('Flight anomalies query failed'); }
+        
+        // Count biometric spikes (HR > 100 or stress > 70)
+        try {
+          const spikes = await sql`
+            SELECT COUNT(*) as count FROM biometric_monitoring 
+            WHERE heart_rate > 100 OR stress_level > 70
+          `;
+          patterns.biometricSpikes = parseInt(spikes[0]?.count) || 0;
+        } catch (e) { console.log('Biometric spikes query failed'); }
+        
+        // Count witness reports
+        try {
+          const witness = await sql`
+            SELECT COUNT(*) as count FROM josiah_reflections_rows
+          `;
+          patterns.witnessReports = parseInt(witness[0]?.count) || 0;
+        } catch (e) { console.log('Witness reports query failed'); }
+        
+        // Count OCR captures
+        try {
+          const ocr = await sql`
+            SELECT COUNT(*) as count FROM ocr_aircraft_holding_patterns
+          `;
+          patterns.ocrCaptures = parseInt(ocr[0]?.count) || 0;
+        } catch (e) { console.log('OCR captures query failed'); }
+        
+        // Count correlated events
+        try {
+          const correlated = await sql`
+            SELECT COUNT(*) as count FROM biometric_flight_correlations
+          `;
+          patterns.correlatedEvents = parseInt(correlated[0]?.count) || 0;
+        } catch (e) { console.log('Correlated events query failed'); }
+        
+        result = patterns;
+        break;
+      }
+
+      case 'refreshCommandCenter': {
+        // Comprehensive command center data refresh
+        console.log('Refreshing command center data...');
+        
+        const commandData: any = {
+          timestamp: new Date().toISOString(),
+          tables: { count: 0, byCategory: {} },
+          records: { total: 0, byCategory: {} },
+          recentActivity: [],
+          criticalAlerts: [],
+        };
+        
+        // Get all tables with row counts
+        const tables = await sql`
+          SELECT 
+            c.relname as table_name,
+            c.reltuples::bigint as row_count
+          FROM pg_class c
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE c.relkind = 'r' 
+            AND n.nspname = 'public'
+          ORDER BY c.reltuples DESC
+        `;
+        
+        commandData.tables.count = tables.length;
+        commandData.records.total = tables.reduce((sum: number, t: any) => 
+          sum + (parseInt(t.row_count) || 0), 0
+        );
+        
+        // Get recent flagged aircraft
+        try {
+          const flagged = await sql`
+            SELECT registration, callsign, altitude, flagged_at 
+            FROM flagged_aircraft_rows_rows
+            ORDER BY flagged_at DESC LIMIT 10
+          `;
+          commandData.recentActivity = flagged;
+        } catch (e) { console.log('Flagged aircraft query failed'); }
+        
+        // Get critical alerts (low altitude + high threat)
+        try {
+          const critical = await sql`
+            SELECT registration, callsign, altitude, threat_score, detection_timestamp
+            FROM live_flight_detections_rows
+            WHERE altitude < 500 AND CAST(threat_score AS FLOAT) >= 45
+            ORDER BY detection_timestamp DESC LIMIT 10
+          `;
+          commandData.criticalAlerts = critical;
+        } catch (e) { console.log('Critical alerts query failed'); }
+        
+        result = commandData;
+        break;
+      }
+
       default:
     }
 

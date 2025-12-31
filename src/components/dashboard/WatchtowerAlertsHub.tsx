@@ -49,15 +49,14 @@ export function WatchtowerAlertsHub() {
   const loadAlerts = useCallback(async () => {
     setRefreshing(true);
     try {
-      // Fetch recent anomalies from multiple sources
+      // Fetch ALL anomalies from multiple sources - no time filter to show all data
       const [flightAlerts, biometricAlerts, patternAlerts] = await Promise.all([
         customQuery(`
           SELECT id, callsign, taxonomy_tag, detection_timestamp, altitude, speed
           FROM live_flight_detections_rows 
           WHERE taxonomy_tag = 'xxb_mlat' 
-          AND detection_timestamp > NOW() - INTERVAL '24 hours'
           ORDER BY detection_timestamp DESC
-          LIMIT 20
+          LIMIT 50
         `).catch(() => []),
         customQuery(`
           SELECT id, 
@@ -77,9 +76,8 @@ export function WatchtowerAlertsHub() {
               ELSE 'info' 
             END as severity
           FROM biometric_monitoring 
-          WHERE measurement_timestamp > NOW() - INTERVAL '24 hours'
           ORDER BY measurement_timestamp DESC
-          LIMIT 10
+          LIMIT 30
         `).catch(() => []),
         // Pattern recognition - gracefully return empty if table doesn't exist
         Promise.resolve([])

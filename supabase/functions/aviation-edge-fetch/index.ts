@@ -206,9 +206,9 @@ serve(async (req) => {
               detection_timestamp as detected_at, taxonomy_tag,
               threat_score, tier_level, flagged, flagged_reasons
             FROM live_flight_detections_rows
-            WHERE detection_timestamp > NOW() - INTERVAL '1 hour'
+            WHERE latitude IS NOT NULL AND longitude IS NOT NULL
             ORDER BY registration, detection_timestamp DESC
-            LIMIT 250
+            LIMIT 500
           `;
           await sql.end();
           

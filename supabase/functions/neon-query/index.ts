@@ -382,7 +382,7 @@ serve(async (req) => {
           SELECT 
             COUNT(*) as total,
             MAX(detection_timestamp) as last_update,
-            COUNT(CASE WHEN detection_timestamp > NOW() - INTERVAL '1 hour' THEN 1 END) as recent
+            COUNT(CASE WHEN detection_timestamp > NOW() - INTERVAL '30 days' THEN 1 END) as recent
           FROM live_flight_detections_rows
         `;
         
@@ -390,7 +390,7 @@ serve(async (req) => {
           SELECT 
             COUNT(*) as total,
             MAX(event_timestamp) as last_update,
-            COUNT(CASE WHEN event_timestamp > NOW() - INTERVAL '1 hour' THEN 1 END) as recent
+            COUNT(CASE WHEN event_timestamp > NOW() - INTERVAL '30 days' THEN 1 END) as recent
           FROM real_time_surveillance_feed
         `;
         
@@ -398,7 +398,7 @@ serve(async (req) => {
           SELECT 
             COUNT(*) as total,
             MAX(measurement_timestamp) as last_update,
-            COUNT(CASE WHEN measurement_timestamp > NOW() - INTERVAL '1 hour' THEN 1 END) as recent
+            COUNT(CASE WHEN measurement_timestamp > NOW() - INTERVAL '30 days' THEN 1 END) as recent
           FROM biometric_monitoring
         `;
         

@@ -142,7 +142,7 @@ export function BiometricCorrelation() {
   const [filterMode, setFilterMode] = useState<FilterMode>('all');
   const [viewMode, setViewMode] = useState<ViewMode>('timeline');
   const [timeWindow, setTimeWindow] = useState(5); // minutes
-  const [lookbackDays, setLookbackDays] = useState(30); // reduce query size while still showing recent history
+  const [lookbackDays, setLookbackDays] = useState(365); // Show ALL historic data
   const [expandedConvergences, setExpandedConvergences] = useState<Set<string>>(new Set());
 
   const fetchCorrelations = useCallback(async () => {

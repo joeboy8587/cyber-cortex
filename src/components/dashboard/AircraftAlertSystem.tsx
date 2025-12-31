@@ -97,7 +97,7 @@ export const AircraftAlertSystem = () => {
     try {
       const watchlistRegs = WATCHLIST.map(w => `'${w.registration}'`).join(',');
       
-      // First try recent 24-hour data
+      // Get ALL historical data - no time filter to show all watchlist activity
       const { data, error } = await supabase.functions.invoke('neon-query', {
         body: {
           action: 'customQuery',
@@ -112,7 +112,6 @@ export const AircraftAlertSystem = () => {
               NOW() - detection_timestamp as time_since
             FROM live_flight_detections_rows
             WHERE registration IN (${watchlistRegs})
-              AND detection_timestamp > NOW() - INTERVAL '24 hours'
             ORDER BY detection_timestamp DESC
             LIMIT 100
           `
@@ -121,31 +120,7 @@ export const AircraftAlertSystem = () => {
 
       if (error) throw new Error(error.message);
 
-      let detections = data?.data || [];
-      
-      // If no recent data, get historical data with most recent detections
-      if (detections.length === 0) {
-        const { data: historicalData } = await supabase.functions.invoke('neon-query', {
-          body: {
-            action: 'customQuery',
-            query: `
-              SELECT 
-                registration,
-                detection_timestamp,
-                altitude,
-                latitude,
-                longitude,
-                callsign,
-                NOW() - detection_timestamp as time_since
-              FROM live_flight_detections_rows
-              WHERE registration IN (${watchlistRegs})
-              ORDER BY detection_timestamp DESC
-              LIMIT 100
-            `
-          }
-        });
-        detections = historicalData?.data || [];
-      }
+      const detections = data?.data || [];
       
       // Get total watchlist detections ever
       const { data: totalData } = await supabase.functions.invoke('neon-query', {

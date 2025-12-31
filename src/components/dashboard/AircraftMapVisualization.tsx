@@ -54,8 +54,8 @@ const AircraftMapVisualization: React.FC = () => {
   const fetchFlightData = useCallback(async () => {
     setLoading(true);
     try {
-      // Use unified query that combines all flight tables
-      const unifiedData = await getUnifiedFlights('24 hours', 500);
+      // Use unified query with ALL historic data - no time restriction
+      const unifiedData = await getUnifiedFlights('365 days', 500);
       
       // Transform to FlightData format
       const flightData: FlightData[] = (unifiedData || [])

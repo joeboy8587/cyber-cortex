@@ -414,6 +414,31 @@ serve(async (req) => {
         break;
       }
       
+      // ============== CLEANUP NULL DETECTIONS ==============
+      case 'cleanupNullDetections': {
+        console.log('Cleaning up null/invalid coordinate detections...');
+        
+        // Delete records with null or zero coordinates
+        const deleted = await sql`
+          DELETE FROM live_flight_detections_rows
+          WHERE latitude IS NULL 
+             OR longitude IS NULL 
+             OR latitude = 0 
+             OR longitude = 0
+          RETURNING id
+        `;
+        
+        const deletedCount = Array.isArray(deleted) ? deleted.length : 0;
+        console.log(`Deleted ${deletedCount} null/invalid detection records`);
+        
+        result = { 
+          success: true, 
+          deletedCount,
+          message: `Cleaned up ${deletedCount} records with null or zero coordinates`
+        };
+        break;
+      }
+
       // ============== DATABASE-WIDE COUNTS FOR DASHBOARDS ==============
       case 'getDashboardCounts': {
         const counts = await sql`

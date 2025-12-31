@@ -92,28 +92,57 @@ export function DatabaseCoverageDashboard() {
   const [totalStats, setTotalStats] = useState({ tables: 0, records: 0, integrated: 0, coverage: 0 });
   const [missingRecords, setMissingRecords] = useState(0);
 
+  // Helper to extract array from nested response
+  const extractArray = (response: any): any[] => {
+    if (!response) return [];
+    if (Array.isArray(response)) return response;
+    if (response.data && Array.isArray(response.data)) return response.data;
+    if (response.allTables && Array.isArray(response.allTables)) return response.allTables;
+    if (typeof response === 'object') {
+      for (const key of Object.keys(response)) {
+        if (Array.isArray(response[key])) return response[key];
+      }
+    }
+    return [];
+  };
+
   const fetchCoverage = async () => {
     setLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke('neon-query', {
-        body: {
-          action: 'customQuery',
-          query: `
-            SELECT relname as table_name, reltuples::bigint as estimated_rows 
-            FROM pg_class c 
-            JOIN pg_namespace n ON n.oid = c.relnamespace 
-            WHERE n.nspname = 'public' AND c.relkind = 'r' 
-            ORDER BY reltuples DESC
-          `
-        }
+      // Try the new scanAllTables action first
+      const { data: scanData, error: scanError } = await supabase.functions.invoke('neon-query', {
+        body: { action: 'scanAllTables' }
       });
 
-      if (error) throw error;
+      let rawTables: any[] = [];
       
-      const rawTables = data?.data || [];
+      if (!scanError && scanData?.data?.allTables) {
+        // Use the new scan action results
+        rawTables = scanData.data.allTables.map((t: any) => ({
+          table_name: t.table,
+          estimated_rows: t.rows || 0
+        }));
+      } else {
+        // Fallback to direct query
+        const { data, error } = await supabase.functions.invoke('neon-query', {
+          body: {
+            action: 'customQuery',
+            query: `
+              SELECT relname as table_name, reltuples::bigint as estimated_rows 
+              FROM pg_class c 
+              JOIN pg_namespace n ON n.oid = c.relnamespace 
+              WHERE n.nspname = 'public' AND c.relkind = 'r' 
+              ORDER BY reltuples DESC
+            `
+          }
+        });
+
+        if (error) throw error;
+        rawTables = extractArray(data);
+      }
       
-      const processed: TableStats[] = rawTables.map((t: { table_name: string; estimated_rows: string }) => {
-        const rows = parseInt(t.estimated_rows) || 0;
+      const processed: TableStats[] = rawTables.map((t: { table_name: string; estimated_rows: string | number }) => {
+        const rows = Number(t.estimated_rows) || 0;
         const category = categorizeTable(t.table_name);
         return {
           table_name: t.table_name,

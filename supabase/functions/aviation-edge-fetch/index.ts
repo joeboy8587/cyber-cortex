@@ -341,6 +341,8 @@ serve(async (req) => {
           let inserted = 0;
           let flaggedInserted = 0;
           
+          let skippedBadCoords = 0;
+          
           for (const flight of transformedFlights) {
             // Skip flights without valid coordinates OR identification
             if (!flight.hex && !flight.registration) continue;
@@ -349,6 +351,41 @@ serve(async (req) => {
               console.log(`Skipping flight ${flight.registration || flight.hex} - no valid coordinates`);
               continue;
             }
+            
+            // CRITICAL: Validate longitude is negative for US/California data
+            // Aviation Edge API sometimes returns corrupted longitude values:
+            // - Positive values like 119.xxx (should be -119.xxx)
+            // - Truncated values like 19.xxx (should be -119.xxx)
+            let correctedLongitude = flight.longitude;
+            const lat = flight.latitude;
+            const lon = flight.longitude;
+            
+            // Check if coordinates are in valid US continental bounds (lat: 24-50, lon: -125 to -66)
+            const isValidUSCoords = lat >= 24 && lat <= 50 && lon >= -125 && lon <= -66;
+            
+            // Detect corrupted California coordinates
+            if (lat >= 32 && lat <= 42) { // California latitude range
+              if (lon > 0 && lon < 125) {
+                // Positive longitude that should be negative (e.g., 119.xxx -> -119.xxx)
+                correctedLongitude = -lon;
+                console.log(`CORRECTED longitude for ${flight.registration}: ${lon} -> ${correctedLongitude}`);
+              } else if (lon > 0 && lon < 25) {
+                // Truncated longitude (e.g., 19.xxx -> -119.xxx)
+                correctedLongitude = -(100 + lon);
+                console.log(`CORRECTED truncated longitude for ${flight.registration}: ${lon} -> ${correctedLongitude}`);
+              }
+            }
+            
+            // Skip if coordinates still don't make sense for US
+            const finalLon = correctedLongitude;
+            if (!(lat >= 24 && lat <= 50 && finalLon >= -125 && finalLon <= -66)) {
+              skippedBadCoords++;
+              console.log(`Skipping flight ${flight.registration} - invalid coords: ${lat}, ${finalLon} (original lon: ${lon})`);
+              continue;
+            }
+            
+            // Update the flight object with corrected longitude
+            flight.longitude = correctedLongitude;
             
             try {
               const flightId = crypto.randomUUID();
@@ -388,11 +425,12 @@ serve(async (req) => {
           }
           
           await sql.end();
-          console.log(`Inserted ${inserted} flights (${flaggedInserted} flagged) into database`);
+          console.log(`Inserted ${inserted} flights (${flaggedInserted} flagged), skipped ${skippedBadCoords} with bad coordinates`);
           
           return new Response(
             JSON.stringify({ 
               success: true,
+              skippedBadCoords,
               flights: transformedFlights,
               stats,
               inserted,

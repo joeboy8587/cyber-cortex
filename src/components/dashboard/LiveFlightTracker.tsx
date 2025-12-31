@@ -45,12 +45,12 @@ export function LiveFlightTracker() {
   const [apiConnected, setApiConnected] = useState<boolean | null>(null);
   const [dataSource, setDataSource] = useState<'all' | 'live' | 'surveillance'>('all');
 
-  // Fetch live flights from Aviation Edge API
+  // Fetch live flights from Aviation Edge API - focused on Kern County/Bakersfield
   const fetchFromAviationEdge = useCallback(async () => {
     try {
-      console.log('Fetching from Aviation Edge API...');
+      console.log('Fetching from Aviation Edge API (Kern County focus)...');
       const { data, error } = await supabase.functions.invoke("aviation-edge-fetch", {
-        body: { action: "fetchFlights" }
+        body: { action: "fetchKernCounty" }
       });
 
       if (error) {

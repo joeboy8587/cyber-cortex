@@ -34,9 +34,10 @@ const AircraftMapContent: React.FC<MapContentProps> = ({ flights, threatColors, 
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return;
 
+    // Center on Bakersfield, CA (Kern County)
     mapRef.current = L.map(mapContainerRef.current, {
-      center: [35.4, -119.0],
-      zoom: 6,
+      center: [35.373, -119.019],
+      zoom: 9,
     });
 
     L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {

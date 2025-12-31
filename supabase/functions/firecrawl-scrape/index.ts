@@ -51,9 +51,10 @@ serve(async (req) => {
         url: formattedUrl,
         formats: options?.formats || ['markdown'],
         onlyMainContent: options?.onlyMainContent ?? true,
-        waitFor: options?.waitFor || 5000,
-        timeout: 60000,
-        location: options?.location,
+        // Only pass waitFor if caller provided it (some pages time out when we force JS rendering)
+        ...(typeof options?.waitFor === 'number' ? { waitFor: options.waitFor } : {}),
+        // Only pass location if provided
+        ...(options?.location ? { location: options.location } : {}),
       }),
       signal: controller.signal,
     });

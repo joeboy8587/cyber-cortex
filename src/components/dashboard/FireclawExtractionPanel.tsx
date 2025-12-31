@@ -96,11 +96,11 @@ export function FireclawExtractionPanel() {
     try {
       console.log(`[FIRECLAW] Initiating extraction: ${targetUrl}`);
       
-      // Scrape the URL using Firecrawl
+      // Scrape the URL using Firecrawl (default to fast, low-risk settings)
       const response = await firecrawlApi.scrape(targetUrl, {
-        formats: ['markdown', 'html'],
+        formats: ['markdown'],
         onlyMainContent: true,
-        waitFor: 5000 // Wait for dynamic content
+        // NOTE: We intentionally do NOT set waitFor by default; forcing JS rendering can cause timeouts.
       });
 
       if (!response.success) {

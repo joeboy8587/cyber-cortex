@@ -116,8 +116,8 @@ export function XXBEvidenceDashboard() {
           query: `
             SELECT 
               ROUND(latitude::numeric, 2)::text || ',' || ROUND(longitude::numeric, 2)::text as location,
-              ROUND(AVG(latitude)::numeric, 4) as lat,
-              ROUND(AVG(longitude)::numeric, 4) as lon,
+              AVG(latitude) as lat,
+              AVG(longitude) as lon,
               COUNT(*) as count,
               MIN(COALESCE(detection_timestamp, created_at))::text as "firstSeen",
               MAX(COALESCE(detection_timestamp, created_at))::text as "lastSeen",
@@ -135,7 +135,14 @@ export function XXBEvidenceDashboard() {
 
       if (!geoError && geoData) {
         const geoRecords = extractData(geoData);
-        setGeoClusters(geoRecords);
+        // Ensure lat/lon are numbers
+        setGeoClusters(geoRecords.map((r: any) => ({
+          ...r,
+          lat: parseFloat(r.lat) || 0,
+          lon: parseFloat(r.lon) || 0,
+          count: parseInt(r.count) || 0,
+          avgAltitude: parseInt(r.avgAltitude) || 0
+        })));
       }
 
       // Fetch timeline data
@@ -176,10 +183,10 @@ export function XXBEvidenceDashboard() {
               COUNT(*) FILTER (WHERE callsign IS NOT NULL AND callsign != '' AND callsign != 'XXB') as "totalLeaks",
               COUNT(DISTINCT callsign) FILTER (WHERE callsign IS NOT NULL AND callsign != '' AND callsign != 'XXB') as "uniqueCallsigns",
               COUNT(DISTINCT ROUND(latitude::numeric, 2)::text || ',' || ROUND(longitude::numeric, 2)::text) as "uniqueLocations",
-              MIN(COALESCE(detected_at, timestamp))::text as "startDate",
-              MAX(COALESCE(detected_at, timestamp))::text as "endDate",
-              ROUND(AVG(COALESCE(altitude_ft, altitude_baro, 0))::numeric, 0) as "avgAltitude",
-              COUNT(*) FILTER (WHERE COALESCE(ground_speed, 0) < 30) as "hoverEvents"
+              MIN(COALESCE(detection_timestamp, created_at))::text as "startDate",
+              MAX(COALESCE(detection_timestamp, created_at))::text as "endDate",
+              ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as "avgAltitude",
+              COUNT(*) FILTER (WHERE COALESCE(speed, 0) < 30) as "hoverEvents"
             FROM live_flight_detections_rows
             WHERE UPPER(registration) = 'XXB'
           `
@@ -464,7 +471,7 @@ export function XXBEvidenceDashboard() {
                     <div className="flex items-center gap-2">
                       <MapPin className="h-4 w-4 text-cyan-400" />
                       <span className="font-mono text-sm">
-                        {cluster.lat?.toFixed(4) ?? 'N/A'}°N, {Math.abs(cluster.lon ?? 0).toFixed(4)}°W
+                        {typeof cluster.lat === 'number' ? cluster.lat.toFixed(4) : 'N/A'}°N, {typeof cluster.lon === 'number' ? Math.abs(cluster.lon).toFixed(4) : 'N/A'}°W
                       </span>
                     </div>
                     <Badge variant="outline" className="bg-cyan-500/20">

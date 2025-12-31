@@ -67,6 +67,7 @@ import { DatabaseCoverageDashboard } from "@/components/dashboard/DatabaseCovera
 import { MasterEvidenceHub } from "@/components/dashboard/MasterEvidenceHub";
 import { LegalEvidenceDashboard } from "@/components/dashboard/LegalEvidenceDashboard";
 import { FlightDataScraper } from "@/components/dashboard/FlightDataScraper";
+import { EvidenceUploader } from "@/components/dashboard/EvidenceUploader";
 
 const Index = () => {
   return (
@@ -121,6 +122,10 @@ const Index = () => {
           
           <section id="outreach">
             <OutreachHub />
+          </section>
+          
+          <section id="evidence-upload">
+            <EvidenceUploader />
           </section>
           
           <section id="chain-of-custody" className="space-y-6">

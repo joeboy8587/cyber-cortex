@@ -61,7 +61,11 @@ const AircraftMapContent: React.FC<MapContentProps> = ({ flights, threatColors, 
     markersRef.current = [];
 
     // Add new markers
-    const validFlights = flights.filter(f => f.latitude && f.longitude);
+    const validFlights = flights.filter(f => 
+      f.latitude != null && f.longitude != null && 
+      !isNaN(f.latitude) && !isNaN(f.longitude) &&
+      Math.abs(f.latitude) <= 90 && Math.abs(f.longitude) <= 180
+    );
     
     validFlights.forEach(flight => {
       const color = threatColors[flight.threat_level] || '#22c55e';

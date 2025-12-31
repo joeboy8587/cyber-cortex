@@ -1,0 +1,38 @@
+/**
+ * Safe number formatting utilities to prevent crashes on null/undefined values
+ */
+
+/**
+ * Safely format a number with toFixed, returning fallback for null/undefined/NaN
+ */
+export function safeFixed(value: number | null | undefined, digits = 2, fallback = 'N/A'): string {
+  if (value === null || value === undefined || isNaN(value)) {
+    return fallback;
+  }
+  return Number(value).toFixed(digits);
+}
+
+/**
+ * Safely format coordinates with proper null handling
+ */
+export function formatCoords(
+  lat: number | null | undefined, 
+  lon: number | null | undefined, 
+  digits = 4
+): string {
+  if (lat === null || lat === undefined || lon === null || lon === undefined || isNaN(lat) || isNaN(lon)) {
+    return 'N/A';
+  }
+  const latDir = lat >= 0 ? 'N' : 'S';
+  const lonDir = lon >= 0 ? 'E' : 'W';
+  return `${Math.abs(lat).toFixed(digits)}°${latDir}, ${Math.abs(lon).toFixed(digits)}°${lonDir}`;
+}
+
+/**
+ * Parse a value to number safely
+ */
+export function safeParseFloat(value: unknown, fallback = 0): number {
+  if (value === null || value === undefined) return fallback;
+  const parsed = parseFloat(String(value));
+  return isNaN(parsed) ? fallback : parsed;
+}

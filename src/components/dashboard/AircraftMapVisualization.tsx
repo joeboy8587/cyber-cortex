@@ -93,6 +93,9 @@ const AircraftMapVisualization: React.FC = () => {
   }, [fetchFlightData]);
 
   const filteredFlights = flights.filter(f => {
+    // Filter out flights with invalid coordinates
+    if (!f.latitude || !f.longitude || isNaN(f.latitude) || isNaN(f.longitude)) return false;
+    
     // Source filter
     if (sourceFilter === 'live' && f.data_source !== 'live_detection') return false;
     if (sourceFilter === 'surveillance' && f.data_source !== 'surveillance_feed') return false;

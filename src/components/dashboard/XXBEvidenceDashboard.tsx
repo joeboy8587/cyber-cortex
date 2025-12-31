@@ -83,17 +83,15 @@ export function XXBEvidenceDashboard() {
               callsign,
               COALESCE(latitude, 0) as latitude,
               COALESCE(longitude, 0) as longitude,
-              COALESCE(altitude_ft, altitude_baro, 0) as altitude,
-              COALESCE(ground_speed, 0) as speed,
-              COALESCE(detected_at, timestamp, now()) as timestamp,
-              operator,
-              aircraft_type
+              COALESCE(altitude, 0) as altitude,
+              COALESCE(speed, 0) as speed,
+              COALESCE(detection_timestamp, created_at, now()) as timestamp
             FROM live_flight_detections_rows
             WHERE UPPER(registration) = 'XXB'
               AND callsign IS NOT NULL 
               AND callsign != ''
               AND callsign != 'XXB'
-            ORDER BY COALESCE(detected_at, timestamp) DESC
+            ORDER BY COALESCE(detection_timestamp, created_at) DESC
             LIMIT 200
           `
         }
@@ -121,9 +119,9 @@ export function XXBEvidenceDashboard() {
               ROUND(AVG(latitude)::numeric, 4) as lat,
               ROUND(AVG(longitude)::numeric, 4) as lon,
               COUNT(*) as count,
-              MIN(COALESCE(detected_at, timestamp))::text as "firstSeen",
-              MAX(COALESCE(detected_at, timestamp))::text as "lastSeen",
-              ROUND(AVG(COALESCE(altitude_ft, altitude_baro, 0))::numeric, 0) as "avgAltitude"
+              MIN(COALESCE(detection_timestamp, created_at))::text as "firstSeen",
+              MAX(COALESCE(detection_timestamp, created_at))::text as "lastSeen",
+              ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as "avgAltitude"
             FROM live_flight_detections_rows
             WHERE UPPER(registration) = 'XXB'
               AND latitude IS NOT NULL
@@ -146,14 +144,14 @@ export function XXBEvidenceDashboard() {
           action: 'customQuery',
           query: `
             SELECT 
-              DATE(COALESCE(detected_at, timestamp))::text as date,
+              DATE(COALESCE(detection_timestamp, created_at))::text as date,
               COUNT(*) as count,
               ARRAY_AGG(DISTINCT callsign) FILTER (WHERE callsign IS NOT NULL AND callsign != '' AND callsign != 'XXB') as "leakedCallsigns",
-              ROUND(AVG(COALESCE(altitude_ft, altitude_baro, 0))::numeric, 0) as "avgAltitude",
+              ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as "avgAltitude",
               ARRAY_AGG(DISTINCT ROUND(latitude::numeric, 2)::text || '°N, ' || ROUND(longitude::numeric, 2)::text || '°W') FILTER (WHERE latitude IS NOT NULL) as locations
             FROM live_flight_detections_rows
             WHERE UPPER(registration) = 'XXB'
-            GROUP BY DATE(COALESCE(detected_at, timestamp))
+            GROUP BY DATE(COALESCE(detection_timestamp, created_at))
             ORDER BY date DESC
             LIMIT 30
           `

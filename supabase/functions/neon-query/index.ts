@@ -183,6 +183,12 @@ serve(async (req) => {
       case 'unifiedFlightQuery': {
         const timeWindow = body.timeWindow || '24 hours';
         const limitCount = body.limit || 200;
+        const includeAllHistoric = body.includeAllHistoric || false;
+        
+        // If includeAllHistoric is true, we include records even without recent timestamps
+        const timeFilter = includeAllHistoric 
+          ? `(detection_timestamp > NOW() - INTERVAL '${timeWindow}' OR detection_timestamp IS NULL)`
+          : `(detection_timestamp > NOW() - INTERVAL '${timeWindow}' OR (detection_timestamp IS NULL AND created_at > NOW() - INTERVAL '${timeWindow}'))`;
         
         result = await sql.unsafe(`
           WITH unified_flights AS (
@@ -196,7 +202,7 @@ serve(async (req) => {
               COALESCE(latitude, 0) as latitude,
               COALESCE(longitude, 0) as longitude,
               COALESCE(heading, 0) as heading,
-              detection_timestamp as event_time,
+              COALESCE(detection_timestamp, created_at, NOW()) as event_time,
               taxonomy_tag,
               COALESCE(threat_score, 0) as threat_score,
               COALESCE(flagged, false) as is_flagged,
@@ -213,7 +219,7 @@ serve(async (req) => {
               END as threat_level,
               CASE WHEN taxonomy_tag = 'xxb_military' OR registration ~ '^[0-9]{2}-[0-9]{5}$' THEN true ELSE false END as is_military
             FROM live_flight_detections_rows
-            WHERE detection_timestamp > NOW() - INTERVAL '${timeWindow}'
+            WHERE ${timeFilter}
               AND latitude IS NOT NULL AND longitude IS NOT NULL
               AND latitude != 0 AND longitude != 0
             
@@ -229,7 +235,7 @@ serve(async (req) => {
               COALESCE(location_lat::float, 0) as latitude,
               COALESCE(location_lon::float, 0) as longitude,
               0 as heading,
-              event_timestamp as event_time,
+              COALESCE(event_timestamp, created_at, NOW()) as event_time,
               event_type as taxonomy_tag,
               CASE threat_level 
                 WHEN 'CRITICAL' THEN 95 
@@ -260,6 +266,48 @@ serve(async (req) => {
           ORDER BY registration, data_source, event_time DESC
           LIMIT ${limitCount}
         `);
+        break;
+      }
+      
+      // ============== FLAGGED AIRCRAFT SPECIFIC QUERY ==============
+      case 'getFlaggedAircraftData': {
+        const registrations = body.registrations || ['N912KC','N913KC','N790FA','N788FA','N791FA','N2464D','N997SE','N743AM','N229AM','N139HP','N156HP','N74FF','N8274E'];
+        const regList = registrations.map((r: string) => `'${r.replace(/[^a-zA-Z0-9]/g, '')}'`).join(',');
+        
+        result = await sql.unsafe(`
+          SELECT 
+            registration,
+            COALESCE(detection_timestamp, created_at) as event_time,
+            altitude,
+            latitude,
+            longitude,
+            callsign,
+            taxonomy_tag,
+            threat_score,
+            flagged,
+            flagged_reasons
+          FROM live_flight_detections_rows
+          WHERE registration IN (${regList})
+          ORDER BY COALESCE(detection_timestamp, created_at) DESC NULLS LAST
+          LIMIT 200
+        `);
+        break;
+      }
+      
+      // ============== DATABASE-WIDE COUNTS FOR DASHBOARDS ==============
+      case 'getDashboardCounts': {
+        const counts = await sql`
+          SELECT 
+            (SELECT COUNT(*) FROM live_flight_detections_rows) as total_flights,
+            (SELECT COUNT(*) FROM live_flight_detections_rows WHERE flagged = true) as flagged_flights,
+            (SELECT COUNT(*) FROM flagged_aircraft_rows_rows) as flagged_aircraft,
+            (SELECT COUNT(*) FROM shell_companies) as shell_companies,
+            (SELECT COUNT(*) FROM criminal_enterprise_command_structure) as criminal_entities,
+            (SELECT COUNT(*) FROM operator_profiles_enriched) as operators,
+            (SELECT COUNT(*) FROM biometric_monitoring) as biometric_records,
+            (SELECT COUNT(DISTINCT taxonomy_tag) FROM live_flight_detections_rows WHERE taxonomy_tag IS NOT NULL) as taxonomy_categories
+        `;
+        result = counts[0] || {};
         break;
       }
 

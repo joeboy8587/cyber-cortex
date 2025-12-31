@@ -88,7 +88,8 @@ export function LiveFlightTracker() {
       await fetchFromAviationEdge();
       
       // Then get UNIFIED data from database (combines all flight tables)
-      const unifiedData = await getUnifiedFlights('24 hours', 200);
+      // Use a very long time window to include all historic data
+      const unifiedData = await getUnifiedFlights('365 days', 500);
       
       // Calculate stats from unified data
       const flightList = unifiedData || [];

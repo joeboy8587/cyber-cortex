@@ -96,11 +96,15 @@ export const CanadianMilitaryTracker = () => {
                 registration LIKE 'CF%' OR
                 callsign LIKE 'CF%' OR
                 callsign LIKE 'AC%' OR
-                callsign LIKE 'WJA%'
+                callsign LIKE 'WJA%' OR
+                callsign LIKE 'TSC%' OR
+                callsign LIKE 'SKV%' OR
+                callsign LIKE 'PDG%' OR
+                callsign ~ '^C[A-Z]{3}[0-9]'
               )
-              AND latitude BETWEEN 35.30 AND 35.70
-              AND longitude BETWEEN -119.30 AND -118.80
+              AND registration IS NOT NULL AND registration != ''
             GROUP BY registration, callsign
+            HAVING COUNT(*) >= 2
             ORDER BY detections DESC
             LIMIT 100
           `

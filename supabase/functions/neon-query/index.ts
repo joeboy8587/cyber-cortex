@@ -657,14 +657,139 @@ serve(async (req) => {
 
       case 'getMilitaryGovBehavioralAlignment': {
         try {
-          result = await sql`
-            SELECT * FROM military_gov_behavioral_alignment 
-            ORDER BY created_at DESC 
-            LIMIT 100
-          `;
-        } catch {
-          result = [];
+          // Generate alignment data on-the-fly from flight records with military/gov patterns
+          const alignments = await sql.unsafe(`
+            WITH military_gov_patterns AS (
+              SELECT 
+                CASE 
+                  WHEN callsign ~ '^(REACH|PAT|RCH|EVAC)' THEN 'Military Transport'
+                  WHEN callsign ~ '^(PHI|CAL|CARE|AIR1|LIFE)' THEN 'MEDEVAC Extension'
+                  WHEN callsign ~ '^(N[0-9]+HP|CHP)' THEN 'CHP/State Agency'
+                  WHEN registration ~ '^N[789][0-9]{2}(FA|KC)' THEN 'KCSO/Shell Network'
+                  WHEN taxonomy_tag = 'xxb_military' THEN 'Military Contract'
+                  WHEN callsign ~ '^(CBP|ICE|DHS)' THEN 'Federal Agency'
+                  ELSE 'Gov/Mil Pattern'
+                END as entity_name,
+                CASE 
+                  WHEN callsign ~ '^(REACH|PAT|RCH)' THEN 'MILITARY_CONTRACT'
+                  WHEN callsign ~ '^(PHI|CAL|CARE|AIR1|LIFE|EVAC)' THEN 'MEDEVAC_EXTENSION'
+                  WHEN callsign ~ '^(N[0-9]+HP|CHP)' THEN 'GOV_AGENCY'
+                  WHEN registration ~ '^N[789][0-9]{2}(FA|KC)' THEN 'TIER_WATCH_MILITARY_CONTRACT'
+                  WHEN callsign ~ '^(CBP|ICE|DHS)' THEN 'FEDERAL_AGENCY'
+                  ELSE 'MONITORING'
+                END as classification,
+                registration as aircraft_tail,
+                MAX(callsign) as contract_operator,
+                COUNT(*) as detection_count,
+                AVG(altitude) as avg_altitude_ft,
+                SUM(CASE WHEN altitude < 1500 AND altitude > 0 THEN 1 ELSE 0 END)::float / NULLIF(COUNT(*), 0) * 100 as low_altitude_pct,
+                SUM(CASE WHEN speed < 80 THEN 1 ELSE 0 END) as loiter_count,
+                MIN(detection_timestamp) as first_detection,
+                MAX(detection_timestamp) as last_detection
+              FROM live_flight_detections_rows
+              WHERE (
+                callsign ~ '^(REACH|PAT|RCH|EVAC|PHI|CAL|CARE|AIR1|LIFE|CHP|N[0-9]+HP|CBP|ICE|DHS)' OR
+                registration ~ '^N[789][0-9]{2}(FA|KC|AM)' OR
+                taxonomy_tag IN ('xxb_military', 'xxb_tier1_priority', 'xxb_kcso') OR
+                registration ~ '^[0-9]{2}-[0-9]{5}$'
+              )
+              AND registration IS NOT NULL AND registration != ''
+              GROUP BY 1, 2, registration
+              HAVING COUNT(*) >= 2
+            )
+            SELECT 
+              ROW_NUMBER() OVER (ORDER BY detection_count DESC) as id,
+              entity_name,
+              'MILITARY_GOV' as entity_type,
+              classification,
+              aircraft_tail,
+              LEAST(100, (detection_count::float / 100 * 20) + (COALESCE(low_altitude_pct, 0) * 0.5) + (loiter_count::float / 10 * 10)) as match_score_to_kcso,
+              CASE 
+                WHEN low_altitude_pct > 50 THEN 'CRITICAL_LOW_ALT'
+                WHEN loiter_count > 20 THEN 'LOITER_MIMIC'
+                ELSE 'SURVEILLANCE_PATTERN'
+              END as behavior_type,
+              false as spoofed_transponder,
+              contract_operator,
+              loiter_count,
+              LEAST(100, loiter_count::float / 5 * 10) as biometric_link_score,
+              CASE 
+                WHEN low_altitude_pct > 50 OR detection_count > 500 THEN 'Tier 1 Watch'
+                WHEN low_altitude_pct > 30 OR detection_count > 200 THEN 'Tier 2 Suspect'
+                ELSE 'Tier 3 Monitoring'
+              END as risk_tier,
+              ROUND(COALESCE(avg_altitude_ft, 0)::numeric, 0) as avg_altitude_ft,
+              detection_count,
+              ROUND(COALESCE(low_altitude_pct, 0)::numeric, 1) as low_altitude_pct,
+              'N912KC/N913KC' as reference_aircraft,
+              CASE 
+                WHEN classification = 'TIER_WATCH_MILITARY_CONTRACT' THEN 'HIGH - SHELL COMPANY LINKAGE'
+                WHEN classification = 'MEDEVAC_EXTENSION' THEN 'MEDIUM - DUAL USE INVESTIGATION'
+                ELSE 'MONITORING'
+              END as legal_exposure,
+              CASE 
+                WHEN low_altitude_pct > 50 THEN 'HIGH'
+                WHEN detection_count > 300 THEN 'MEDIUM'
+                ELSE 'LOW'
+              END as prosecution_priority,
+              first_detection::text,
+              last_detection::text,
+              'Auto-generated from flight pattern analysis' as intel_notes,
+              false as vertical_stack_detected,
+              NULL as paired_high_alt_asset
+            FROM military_gov_patterns
+            ORDER BY detection_count DESC
+            LIMIT 50
+          `);
+
+          const alignmentData = Array.isArray(alignments) ? alignments : [];
+          const summary = {
+            totalRecords: alignmentData.length,
+            tier1Watch: alignmentData.filter((a: any) => String(a.risk_tier)?.includes('Tier 1')).length,
+            tier2Suspect: alignmentData.filter((a: any) => String(a.risk_tier)?.includes('Tier 2')).length,
+            highMatchAlerts: alignmentData.filter((a: any) => parseFloat(a.match_score_to_kcso) >= 85).length,
+            uniqueEntities: [...new Set(alignmentData.map((a: any) => a.entity_name))].length,
+            uniqueAircraft: [...new Set(alignmentData.map((a: any) => a.aircraft_tail))].length,
+            verticalStackEvents: 0,
+            spoofedTransponders: 0,
+            medevacExtensions: alignmentData.filter((a: any) => a.classification === 'MEDEVAC_EXTENSION').length,
+            militaryContracts: alignmentData.filter((a: any) => 
+              a.classification === 'MILITARY_CONTRACT' || a.classification === 'TIER_WATCH_MILITARY_CONTRACT'
+            ).length,
+            govAgencies: alignmentData.filter((a: any) => a.classification === 'GOV_AGENCY' || a.classification === 'FEDERAL_AGENCY').length
+          };
+
+          result = { data: { alignments: alignmentData, summary } };
+        } catch (e) {
+          console.error('getMilitaryGovBehavioralAlignment error:', e);
+          result = { data: { alignments: [], summary: null, notInitialized: true } };
         }
+        break;
+      }
+
+      case 'computeMilitaryGovBehavioralAlignment': {
+        try {
+          const count = await sql`
+            SELECT COUNT(DISTINCT registration) as c
+            FROM live_flight_detections_rows
+            WHERE (
+              callsign ~ '^(REACH|PAT|RCH|EVAC|PHI|CAL|CARE|AIR1|LIFE|CHP|CBP|ICE|DHS)' OR
+              registration ~ '^N[789][0-9]{2}(FA|KC|AM)' OR
+              taxonomy_tag IN ('xxb_military', 'xxb_tier1_priority', 'xxb_kcso') OR
+              registration ~ '^[0-9]{2}-[0-9]{5}$'
+            )
+            AND registration IS NOT NULL AND registration != ''
+          `;
+          result = { data: { alignmentRecordsCreated: parseInt(count[0]?.c || '0') } };
+        } catch (e) {
+          console.error('computeMilitaryGovBehavioralAlignment error:', e);
+          result = { data: { alignmentRecordsCreated: 0 } };
+        }
+        break;
+      }
+
+      case 'createMilitaryGovBehavioralAlignmentTable': {
+        result = { data: { success: true, message: 'Derived from live_flight_detections_rows - no schema setup required' } };
         break;
       }
 
@@ -716,15 +841,18 @@ serve(async (req) => {
               WHERE registration IS NOT NULL
                 AND registration != ''
                 AND (
-                  taxonomy_tag IN ('xxb_tier2_shell', 'xxb_shell', 'xxb_kcso_shell')
-                  OR registration ~ '^N7[89][0-9]{2}FA$'
+                  taxonomy_tag IN ('xxb_tier2_shell', 'xxb_shell', 'xxb_kcso_shell', 'xxb_tier1_priority', 'xxb_kcso')
+                  OR registration ~ '^N7[89][0-9]'
                   OR registration ~ '^N[0-9]+FF$'
                   OR registration ~ '^N[0-9]+KC$'
+                  OR registration ~ '^N[0-9]+FA$'
+                  OR registration ~ '^N[0-9]+AM$'
+                  OR (altitude < 2000 AND altitude > 0)
                 )
               GROUP BY registration
-              HAVING COUNT(*) > 3
+              HAVING COUNT(*) > 2
               ORDER BY COUNT(*) DESC
-              LIMIT 50
+              LIMIT 75
             ), scored AS (
               SELECT
                 ROW_NUMBER() OVER () as id,
@@ -808,10 +936,13 @@ serve(async (req) => {
             WHERE registration IS NOT NULL
               AND registration != ''
               AND (
-                taxonomy_tag IN ('xxb_tier2_shell', 'xxb_shell', 'xxb_kcso_shell')
-                OR registration ~ '^N7[89][0-9]{2}FA$'
+                taxonomy_tag IN ('xxb_tier2_shell', 'xxb_shell', 'xxb_kcso_shell', 'xxb_tier1_priority', 'xxb_kcso')
+                OR registration ~ '^N7[89][0-9]'
                 OR registration ~ '^N[0-9]+FF$'
                 OR registration ~ '^N[0-9]+KC$'
+                OR registration ~ '^N[0-9]+FA$'
+                OR registration ~ '^N[0-9]+AM$'
+                OR (altitude < 2000 AND altitude > 0)
               )
           `;
           result = { data: { alignmentRecordsCreated: parseInt(count[0]?.c || '0') } };
@@ -847,6 +978,9 @@ serve(async (req) => {
                   OR callsign ILIKE '%MERCY%'
                   OR callsign ILIKE '%REACH%'
                   OR callsign ILIKE '%CARE%'
+                  OR callsign ILIKE '%PHI%'
+                  OR callsign ILIKE '%CAL%'
+                  OR callsign ILIKE '%AIR%'
                 ) as medical_mission_logged,
                 MIN(COALESCE(detection_timestamp, created_at)) as first_detection,
                 MAX(COALESCE(detection_timestamp, created_at)) as last_detection
@@ -854,17 +988,23 @@ serve(async (req) => {
               WHERE registration IS NOT NULL
                 AND registration != ''
                 AND (
-                  taxonomy_tag = 'xxb_medical_air'
+                  taxonomy_tag IN ('xxb_medical_air', 'xxb_tier1_priority')
                   OR registration ~ '^N[0-9]+RX$'
                   OR callsign ILIKE '%MED%'
                   OR callsign ILIKE '%LIFE%'
                   OR callsign ILIKE '%MERCY%'
                   OR callsign ILIKE '%REACH%'
+                  OR callsign ILIKE '%PHI%'
+                  OR callsign ILIKE '%CARE%'
+                  OR callsign ILIKE '%CAL%'
+                  OR callsign ILIKE '%AIR1%'
+                  OR callsign ILIKE '%EVAC%'
+                  OR callsign ~ '^N[0-9]+AM$'
                 )
               GROUP BY registration
-              HAVING COUNT(*) > 3
+              HAVING COUNT(*) > 2
               ORDER BY COUNT(*) DESC
-              LIMIT 30
+              LIMIT 50
             ), scored AS (
               SELECT
                 ROW_NUMBER() OVER () as id,
@@ -956,12 +1096,17 @@ serve(async (req) => {
             WHERE registration IS NOT NULL
               AND registration != ''
               AND (
-                taxonomy_tag = 'xxb_medical_air'
+                taxonomy_tag IN ('xxb_medical_air', 'xxb_tier1_priority')
                 OR registration ~ '^N[0-9]+RX$'
                 OR callsign ILIKE '%MED%'
                 OR callsign ILIKE '%LIFE%'
                 OR callsign ILIKE '%MERCY%'
                 OR callsign ILIKE '%REACH%'
+                OR callsign ILIKE '%PHI%'
+                OR callsign ILIKE '%CARE%'
+                OR callsign ILIKE '%CAL%'
+                OR callsign ILIKE '%AIR1%'
+                OR callsign ILIKE '%EVAC%'
               )
           `;
           result = { data: { alignmentRecordsCreated: parseInt(count[0]?.c || '0') } };

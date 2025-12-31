@@ -230,8 +230,8 @@ export function useNeonDatabase() {
   }, [queryDatabase]);
 
   // NEW: Unified flight query across all flight tables
-  const getUnifiedFlights = useCallback(async (timeWindow = '24 hours', limit = 200): Promise<UnifiedFlight[]> => {
-    return queryDatabase('unifiedFlightQuery', { timeWindow, limit });
+  const getUnifiedFlights = useCallback(async (timeWindow = '365 days', limit = 200): Promise<UnifiedFlight[]> => {
+    return queryDatabase('unifiedFlightQuery', { timeWindow, limit, includeAllHistoric: true });
   }, [queryDatabase]);
 
   // NEW: Get data source status (freshness check)

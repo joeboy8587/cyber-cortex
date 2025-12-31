@@ -246,13 +246,13 @@ serve(async (req) => {
 
       // ============== UNIFIED FLIGHT QUERY (combines all flight tables) ==============
       case 'unifiedFlightQuery': {
-        const timeWindow = body.timeWindow || '24 hours';
+        const timeWindow = body.timeWindow || '365 days';
         const limitCount = body.limit || 200;
         const includeAllHistoric = body.includeAllHistoric || false;
         
-        // If includeAllHistoric is true, we include records even without recent timestamps
+        // If includeAllHistoric is true, show all data regardless of timestamp
         const timeFilter = includeAllHistoric 
-          ? `(detection_timestamp > NOW() - INTERVAL '${timeWindow}' OR detection_timestamp IS NULL)`
+          ? `1=1`  // No time filter - show ALL data
           : `(detection_timestamp > NOW() - INTERVAL '${timeWindow}' OR (detection_timestamp IS NULL AND created_at > NOW() - INTERVAL '${timeWindow}'))`;
         
         result = await sql.unsafe(`
@@ -319,7 +319,7 @@ serve(async (req) => {
               END as threat_level,
               false as is_military
             FROM real_time_surveillance_feed
-            WHERE event_timestamp > NOW() - INTERVAL '${timeWindow}'
+            WHERE ${includeAllHistoric ? '1=1' : `event_timestamp > NOW() - INTERVAL '${timeWindow}'`}
               AND location_lat IS NOT NULL AND location_lon IS NOT NULL
           )
           SELECT DISTINCT ON (registration, data_source) 

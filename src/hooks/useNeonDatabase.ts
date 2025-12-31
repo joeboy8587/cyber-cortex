@@ -79,6 +79,10 @@ export function useNeonDatabase() {
     message.includes('Function failed to start') ||
     message.includes('Edge function returned 503') ||
     message.includes('Edge function returned 502') ||
+    message.includes('Edge function returned 500') ||
+    message.includes('Network connection lost') ||
+    message.includes('network') ||
+    message.includes('Failed to fetch') ||
     message.includes('timeout');
 
   const queryDatabase = useCallback(async (action: string, params: Record<string, unknown> = {}) => {

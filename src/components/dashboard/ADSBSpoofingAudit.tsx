@@ -296,7 +296,7 @@ export const ADSBSpoofingAudit = () => {
                     </div>
                     <div className="flex items-center gap-1">
                       <MapPin className="h-3 w-3" />
-                      {signal.coordinates.lat.toFixed(3)}°N, {Math.abs(signal.coordinates.lon).toFixed(3)}°W
+                      {signal.coordinates?.lat?.toFixed(3) ?? 'N/A'}°N, {Math.abs(signal.coordinates?.lon ?? 0).toFixed(3)}°W
                     </div>
                     <div className="flex items-center gap-1">
                       <Clock className="h-3 w-3" />

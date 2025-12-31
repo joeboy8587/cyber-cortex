@@ -420,7 +420,7 @@ export function XXBEvidenceDashboard() {
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
                     <div>
                       <span className="text-muted-foreground">Coords:</span>
-                      <span className="ml-1 font-mono">{leak.latitude.toFixed(4)}°N, {Math.abs(leak.longitude).toFixed(4)}°W</span>
+                      <span className="ml-1 font-mono">{leak.latitude?.toFixed(4) ?? 'N/A'}°N, {Math.abs(leak.longitude ?? 0).toFixed(4)}°W</span>
                     </div>
                     <div>
                       <span className="text-muted-foreground">Alt:</span>
@@ -464,7 +464,7 @@ export function XXBEvidenceDashboard() {
                     <div className="flex items-center gap-2">
                       <MapPin className="h-4 w-4 text-cyan-400" />
                       <span className="font-mono text-sm">
-                        {cluster.lat.toFixed(4)}°N, {Math.abs(cluster.lon).toFixed(4)}°W
+                        {cluster.lat?.toFixed(4) ?? 'N/A'}°N, {Math.abs(cluster.lon ?? 0).toFixed(4)}°W
                       </span>
                     </div>
                     <Badge variant="outline" className="bg-cyan-500/20">

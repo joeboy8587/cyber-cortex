@@ -322,13 +322,13 @@ export function LiveFlightTracker() {
                 <div className="mt-2 grid grid-cols-4 gap-2 text-xs">
                   <div>
                     <span className="text-muted-foreground">Alt:</span>
-                    <span className={`ml-1 font-mono ${flight.altitude < 2000 ? 'text-destructive' : ''}`}>
-                      {flight.altitude.toLocaleString()}ft
+                    <span className={`ml-1 font-mono ${(flight.altitude ?? 0) < 2000 ? 'text-destructive' : ''}`}>
+                      {(flight.altitude ?? 0).toLocaleString()}ft
                     </span>
                   </div>
                   <div>
                     <span className="text-muted-foreground">Spd:</span>
-                    <span className="ml-1 font-mono">{flight.speed}kts</span>
+                    <span className="ml-1 font-mono">{flight.speed ?? 0}kts</span>
                   </div>
                   <div>
                     <span className="text-muted-foreground">Tag:</span>

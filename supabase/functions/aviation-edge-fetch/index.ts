@@ -7,6 +7,34 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Retry helper for transient network failures
+async function fetchWithRetry(url: string, options: RequestInit = {}, maxRetries = 3): Promise<Response> {
+  let lastError: Error | null = null;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: AbortSignal.timeout(15000)
+      });
+      return response;
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      const isTransient = lastError.message.includes('connection') ||
+                          lastError.message.includes('network') ||
+                          lastError.message.includes('timeout') ||
+                          lastError.message.includes('ECONNRESET') ||
+                          lastError.message.includes('lost');
+      if (isTransient && attempt < maxRetries) {
+        console.warn(`Fetch attempt ${attempt}/${maxRetries} failed, retrying in ${200 * attempt}ms...`);
+        await new Promise(r => setTimeout(r, 200 * attempt));
+        continue;
+      }
+      throw lastError;
+    }
+  }
+  throw lastError;
+}
+
 // Priority aircraft watchlist with threat levels
 const WATCHLIST: Record<string, { tier: number; threat: string; entity: string }> = {
   'N912KC': { tier: 1, threat: 'CRITICAL', entity: 'KCSO' },
@@ -161,9 +189,8 @@ serve(async (req) => {
       let apiError = null;
       
       try {
-        const response = await fetch(url, { 
-          headers: { 'Accept': 'application/json' },
-          signal: AbortSignal.timeout(15000)
+        const response = await fetchWithRetry(url, { 
+          headers: { 'Accept': 'application/json' }
         });
         
         if (response.ok) {
@@ -403,9 +430,8 @@ serve(async (req) => {
       console.log(`Fetching nearby flights around ${centerLat}, ${centerLng}...`);
       
       try {
-        const response = await fetch(url, {
-          headers: { 'Accept': 'application/json' },
-          signal: AbortSignal.timeout(15000)
+        const response = await fetchWithRetry(url, {
+          headers: { 'Accept': 'application/json' }
         });
         
         const contentType = response.headers.get('content-type');
@@ -495,9 +521,8 @@ serve(async (req) => {
       console.log('Fetching Kern County area flights...');
       
       try {
-        const response = await fetch(url, {
-          headers: { 'Accept': 'application/json' },
-          signal: AbortSignal.timeout(15000)
+        const response = await fetchWithRetry(url, {
+          headers: { 'Accept': 'application/json' }
         });
         
         const contentType = response.headers.get('content-type');
@@ -649,10 +674,9 @@ serve(async (req) => {
     if (action === 'testConnection') {
       const url = `https://aviation-edge.com/v2/public/flights?key=${apiKey}&limit=1`;
       try {
-        const response = await fetch(url, {
-          headers: { 'Accept': 'application/json' },
-          signal: AbortSignal.timeout(10000)
-        });
+        const response = await fetchWithRetry(url, {
+          headers: { 'Accept': 'application/json' }
+        }, 2);
         
         const contentType = response.headers.get('content-type');
         if (!contentType || !contentType.includes('application/json')) {

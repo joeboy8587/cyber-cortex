@@ -1,5 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Loader2 } from 'lucide-react';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 
 interface FlightData {
   hex: string;
@@ -24,85 +26,93 @@ interface MapContentProps {
 }
 
 const AircraftMapContent: React.FC<MapContentProps> = ({ flights, threatColors, threatRadius }) => {
-  const [MapComponents, setMapComponents] = useState<any>(null);
-  const [isClient, setIsClient] = useState(false);
+  const mapRef = useRef<L.Map | null>(null);
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const markersRef = useRef<L.CircleMarker[]>([]);
 
+  // Initialize map
   useEffect(() => {
-    setIsClient(true);
-    // Dynamically import react-leaflet components
-    Promise.all([
-      import('react-leaflet'),
-      import('leaflet/dist/leaflet.css')
-    ]).then(([reactLeaflet]) => {
-      setMapComponents(reactLeaflet);
+    if (!mapContainerRef.current || mapRef.current) return;
+
+    mapRef.current = L.map(mapContainerRef.current, {
+      center: [35.4, -119.0],
+      zoom: 6,
     });
+
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      attribution: '&copy; <a href="https://carto.com/">CARTO</a>'
+    }).addTo(mapRef.current);
+
+    return () => {
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+      }
+    };
   }, []);
 
-  if (!isClient || !MapComponents) {
-    return (
-      <div className="h-full w-full flex items-center justify-center bg-muted/20">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
+  // Update markers when flights change
+  useEffect(() => {
+    if (!mapRef.current) return;
 
-  const { MapContainer, TileLayer, CircleMarker, Popup } = MapComponents;
+    // Clear existing markers
+    markersRef.current.forEach(marker => marker.remove());
+    markersRef.current = [];
+
+    // Add new markers
+    const validFlights = flights.filter(f => f.latitude && f.longitude);
+    
+    validFlights.forEach(flight => {
+      const color = threatColors[flight.threat_level] || '#22c55e';
+      const radius = threatRadius[flight.threat_level] || 6;
+
+      const marker = L.circleMarker([flight.latitude, flight.longitude], {
+        radius,
+        fillColor: color,
+        fillOpacity: 0.8,
+        color: flight.is_flagged ? '#fff' : color,
+        weight: flight.is_flagged ? 2 : 1
+      });
+
+      const popupContent = `
+        <div style="min-width: 200px; font-size: 14px;">
+          <div style="font-weight: bold; font-size: 16px; display: flex; align-items: center; gap: 8px;">
+            ${flight.registration || flight.hex}
+            ${flight.is_flagged ? '<span style="font-size: 12px; padding: 2px 6px; background: #ef4444; color: white; border-radius: 4px;">FLAGGED</span>' : ''}
+          </div>
+          <div style="color: #666; margin-top: 4px;">Callsign: ${flight.callsign || 'N/A'}</div>
+          <div style="color: #666;">Altitude: ${flight.altitude?.toFixed(0) || 'N/A'} ft</div>
+          <div style="color: #666;">Speed: ${flight.speed?.toFixed(0) || 'N/A'} kts</div>
+          <div style="color: #666;">Heading: ${flight.heading?.toFixed(0) || 'N/A'}°</div>
+          <div style="color: #666;">
+            Threat: <span style="color: ${color}; font-weight: bold;">
+              ${(flight.threat_level || 'normal').toUpperCase()}
+            </span>
+            ${flight.threat_score > 0 ? ` (${flight.threat_score})` : ''}
+          </div>
+          ${flight.taxonomy_tag ? `<div style="color: #666;">Tag: ${flight.taxonomy_tag}</div>` : ''}
+          ${flight.flagged_reasons ? `<div style="color: #ef4444; font-size: 12px; margin-top: 4px;">${flight.flagged_reasons}</div>` : ''}
+        </div>
+      `;
+
+      marker.bindPopup(popupContent);
+      marker.addTo(mapRef.current!);
+      markersRef.current.push(marker);
+    });
+
+    // Fit bounds if we have flights
+    if (validFlights.length > 0) {
+      const bounds = L.latLngBounds(validFlights.map(f => [f.latitude, f.longitude] as [number, number]));
+      mapRef.current.fitBounds(bounds, { padding: [50, 50], maxZoom: 8 });
+    }
+  }, [flights, threatColors, threatRadius]);
 
   return (
-    <MapContainer
-      center={[35.4, -119.0]}
-      zoom={6}
+    <div 
+      ref={mapContainerRef} 
       style={{ height: '100%', width: '100%' }}
       className="z-0"
-    >
-      <TileLayer
-        attribution='&copy; <a href="https://carto.com/">CARTO</a>'
-        url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-      />
-      
-      {flights.map((flight, idx) => (
-        <CircleMarker
-          key={`${flight.registration}-${idx}`}
-          center={[flight.latitude, flight.longitude]}
-          radius={threatRadius[flight.threat_level] || 6}
-          fillColor={threatColors[flight.threat_level] || '#22c55e'}
-          fillOpacity={0.8}
-          color={flight.is_flagged ? '#fff' : (threatColors[flight.threat_level] || '#22c55e')}
-          weight={flight.is_flagged ? 2 : 1}
-        >
-          <Popup>
-            <div className="text-sm space-y-1 min-w-[200px]">
-              <div className="font-bold text-base flex items-center gap-2">
-                {flight.registration || flight.hex}
-                {flight.is_flagged && (
-                  <span className="text-xs px-1.5 py-0.5 bg-red-500 text-white rounded">
-                    FLAGGED
-                  </span>
-                )}
-              </div>
-              <div className="text-gray-600">Callsign: {flight.callsign || 'N/A'}</div>
-              <div className="text-gray-600">Altitude: {flight.altitude?.toFixed(0) || 'N/A'} ft</div>
-              <div className="text-gray-600">Speed: {flight.speed?.toFixed(0) || 'N/A'} kts</div>
-              <div className="text-gray-600">Heading: {flight.heading?.toFixed(0) || 'N/A'}°</div>
-              <div className="text-gray-600">
-                Threat: <span style={{ color: threatColors[flight.threat_level] || '#22c55e' }}>
-                  {(flight.threat_level || 'normal').toUpperCase()}
-                </span>
-                {flight.threat_score > 0 && ` (${flight.threat_score})`}
-              </div>
-              {flight.taxonomy_tag && (
-                <div className="text-gray-600">Tag: {flight.taxonomy_tag}</div>
-              )}
-              {flight.flagged_reasons && (
-                <div className="text-red-600 text-xs mt-1">
-                  {flight.flagged_reasons}
-                </div>
-              )}
-            </div>
-          </Popup>
-        </CircleMarker>
-      ))}
-    </MapContainer>
+    />
   );
 };
 

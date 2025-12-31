@@ -251,11 +251,12 @@ export function NotionAutoWatcher() {
           data: escalationEvents.map(e => ({
             id: e.event_id,
             registration: e.registration,
-            detected_at: e.timestamp,
-            altitude_ft: e.altitude,
-            detection_zone: e.zone,
-            event_classification: e.event_type,
-            notes: e.description
+            detection_timestamp: e.timestamp,
+            created_at: e.timestamp,
+            altitude: e.altitude,
+            taxonomy_tag: e.event_type,
+            flagged: true,
+            flagged_reasons: e.description
           }))
         }
       });

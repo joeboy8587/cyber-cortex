@@ -160,7 +160,54 @@ serve(async (req) => {
         const placeholders = columns.map((_, i) => `$${i + 1}`).join(', ');
         const columnList = columns.map(c => `"${c.replace(/[^a-zA-Z0-9_]/g, '')}"`).join(', ');
         
-        result = await sql.unsafe(`INSERT INTO ${table} (${columnList}) VALUES (${placeholders}) ON CONFLICT DO NOTHING RETURNING *`, values as postgres.ParameterOrJSON<never>[]);
+        result = await sql.unsafe(
+          `INSERT INTO ${table} (${columnList}) VALUES (${placeholders}) ON CONFLICT DO NOTHING RETURNING *`,
+          values as postgres.ParameterOrJSON<never>[]
+        );
+        break;
+      }
+
+      case 'batchInsert': {
+        const allowedTables = ['aircraft_registry_enriched', 'operator_profiles_enriched', 'flagged_aircraft_rows_rows', 
+          'criminal_enterprise_command_structure', 'live_flight_detections_rows', 'biometric_monitoring', 
+          'ocr_aircraft_holding_patterns', 'daily_event_imports', 'josiah_reflections_rows', 'pattern_recognition_enriched'];
+
+        if (!table || !allowedTables.includes(table)) throw new Error(`Batch insert not allowed for table: ${table}`);
+        if (!Array.isArray(data) || data.length === 0) throw new Error('Data array is required');
+
+        const columns = Object.keys(data[0] || {});
+        if (columns.length === 0) throw new Error('Data rows must have at least one column');
+
+        // Ensure all rows share the same columns (stable insert shape)
+        for (const row of data) {
+          const rowCols = Object.keys(row || {});
+          if (rowCols.length !== columns.length || !columns.every(c => rowCols.includes(c))) {
+            throw new Error('All rows in batchInsert must have identical columns');
+          }
+        }
+
+        const safeColumns = columns.map(c => `"${c.replace(/[^a-zA-Z0-9_]/g, '')}"`);
+        const columnList = safeColumns.join(', ');
+
+        // Flatten values and build placeholders matrix
+        const values: (string | number | boolean | null)[] = [];
+        const rowsPlaceholders: string[] = [];
+
+        data.forEach((row, rowIndex) => {
+          const rowPlaceholders: string[] = [];
+          columns.forEach((col, colIndex) => {
+            values.push((row as any)[col] ?? null);
+            rowPlaceholders.push(`$${rowIndex * columns.length + colIndex + 1}`);
+          });
+          rowsPlaceholders.push(`(${rowPlaceholders.join(', ')})`);
+        });
+
+        const inserted = await sql.unsafe(
+          `INSERT INTO ${table} (${columnList}) VALUES ${rowsPlaceholders.join(', ')} ON CONFLICT DO NOTHING`,
+          values as postgres.ParameterOrJSON<never>[]
+        );
+
+        result = { data: { inserted: Array.isArray(inserted) ? inserted.length : data.length } };
         break;
       }
 
@@ -443,80 +490,102 @@ serve(async (req) => {
         break;
       }
 
-      // ============== BEHAVIORAL ALIGNMENT (Shell Companies) ==============
+      // ============== BEHAVIORAL ALIGNMENT (Shell-linked aircraft derived from flight detections) ==============
       case 'getBehavioralAlignment': {
         try {
-          // Build alignment data from shell_companies and flight detections
-          const alignments = await sql`
-            WITH shell_flight_data AS (
-              SELECT 
-                sc.company_name as entity_name,
-                sc.entity_type,
-                sc.state_of_incorporation as aircraft_tail,
-                sc.tier,
-                sc.shell_probability as match_score,
-                sc.controlled_aircraft,
-                sc.legal_exposure,
-                sc.created_at as first_detection,
-                sc.updated_at as last_detection
-              FROM shell_companies sc
-              WHERE sc.shell_probability > 0.5
-              ORDER BY sc.shell_probability DESC
+          const alignments = await sql.unsafe(`
+            WITH candidates AS (
+              SELECT
+                registration as aircraft_tail,
+                COUNT(*) as detection_count,
+                ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as avg_altitude_ft,
+                ROUND(
+                  (SUM(CASE WHEN altitude < 1500 AND altitude > 0 THEN 1 ELSE 0 END)::float / NULLIF(COUNT(*), 0)) * 100
+                ::numeric, 1) as low_altitude_pct,
+                SUM(CASE WHEN COALESCE(speed, 0) < 80 THEN 1 ELSE 0 END) as loiter_count,
+                MIN(COALESCE(detection_timestamp, created_at)) as first_detection,
+                MAX(COALESCE(detection_timestamp, created_at)) as last_detection
+              FROM live_flight_detections_rows
+              WHERE registration IS NOT NULL
+                AND registration != ''
+                AND (
+                  taxonomy_tag IN ('xxb_tier2_shell', 'xxb_shell', 'xxb_kcso_shell')
+                  OR registration ~ '^N7[89][0-9]{2}FA$'
+                  OR registration ~ '^N[0-9]+FF$'
+                  OR registration ~ '^N[0-9]+KC$'
+                )
+              GROUP BY registration
+              HAVING COUNT(*) > 3
+              ORDER BY COUNT(*) DESC
               LIMIT 50
+            ), scored AS (
+              SELECT
+                ROW_NUMBER() OVER () as id,
+                aircraft_tail,
+                -- Heuristic score to prevent empty dashboards; not meant as a legal conclusion
+                LEAST(100, 40 + (low_altitude_pct * 0.6) + LEAST(loiter_count, 50)) as match_score_to_kcso,
+                detection_count,
+                avg_altitude_ft,
+                low_altitude_pct,
+                loiter_count,
+                first_detection,
+                last_detection
+              FROM candidates
             )
-            SELECT 
-              ROW_NUMBER() OVER () as id,
-              entity_name,
-              entity_type,
+            SELECT
+              id,
+              aircraft_tail as entity_name,
+              'SHELL_COMPANY' as entity_type,
               aircraft_tail,
-              COALESCE(match_score * 100, 0) as match_score_to_kcso,
-              CASE 
-                WHEN match_score > 0.85 THEN 'LOITER_MIMIC'
-                WHEN match_score > 0.7 THEN 'ALTITUDE_ECHO'
-                WHEN match_score > 0.5 THEN 'PERSISTENT_PRESENCE'
+              ROUND(match_score_to_kcso::numeric, 1) as match_score_to_kcso,
+              CASE
+                WHEN low_altitude_pct >= 60 OR loiter_count >= 20 THEN 'LOITER_MIMIC'
+                WHEN low_altitude_pct >= 30 THEN 'ALTITUDE_ECHO'
+                WHEN detection_count >= 25 THEN 'PERSISTENT_PRESENCE'
                 ELSE 'STANDARD'
               END as behavior_type,
-              true as confirmed_flight_overlap,
+              false as confirmed_flight_overlap,
               25 as geofence_radius_km,
-              COALESCE(match_score * 80, 0) as biometric_link_score,
-              CASE WHEN tier = 1 THEN 'Tier 1 Probationary' ELSE 'Tier 2 Watch' END as risk_tier,
-              2500 as avg_altitude_ft,
-              5 as loiter_count,
-              10 as detection_count,
-              35.0 as low_altitude_pct,
-              'N912KC' as reference_aircraft,
-              legal_exposure::text as legal_exposure,
-              CASE WHEN tier = 1 THEN 'HIGH' ELSE 'MEDIUM' END as prosecution_priority,
+              ROUND(LEAST(100, match_score_to_kcso * 0.7)::numeric, 1) as biometric_link_score,
+              CASE
+                WHEN match_score_to_kcso >= 85 THEN 'Tier 1 Probationary'
+                WHEN match_score_to_kcso >= 70 THEN 'Tier 2 Watch'
+                ELSE 'Monitoring'
+              END as risk_tier,
+              avg_altitude_ft,
+              loiter_count,
+              detection_count,
+              low_altitude_pct,
+              'N912KC/N913KC' as reference_aircraft,
+              'RICO' as legal_exposure,
+              CASE
+                WHEN match_score_to_kcso >= 85 THEN 'HIGH'
+                WHEN match_score_to_kcso >= 70 THEN 'MEDIUM'
+                ELSE 'LOW'
+              END as prosecution_priority,
               first_detection::text,
               last_detection::text
-            FROM shell_flight_data
-          `;
-          
-          const summaryData = await sql`
-            SELECT 
-              COUNT(*) as total_records,
-              COUNT(*) FILTER (WHERE tier = 1) as tier1_count,
-              COUNT(*) FILTER (WHERE tier = 2) as tier2_count,
-              COUNT(*) FILTER (WHERE shell_probability > 0.85) as high_match,
-              COUNT(DISTINCT company_name) as unique_entities,
-              COUNT(DISTINCT state_of_incorporation) as unique_aircraft
-            FROM shell_companies
-            WHERE shell_probability > 0.5
-          `;
-          
-          result = {
-            data: {
-              alignments: alignments || [],
-              summary: {
-                totalRecords: parseInt(summaryData[0]?.total_records || '0'),
-                tier1Probationary: parseInt(summaryData[0]?.tier1_count || '0'),
-                tier2Watch: parseInt(summaryData[0]?.tier2_count || '0'),
-                highMatchAlerts: parseInt(summaryData[0]?.high_match || '0'),
-                uniqueEntities: parseInt(summaryData[0]?.unique_entities || '0'),
-                uniqueAircraft: parseInt(summaryData[0]?.unique_aircraft || '0')
-              }
-            }
+            FROM scored
+            ORDER BY match_score_to_kcso DESC, detection_count DESC
+          `);
+
+          const summary = Array.isArray(alignments) ? {
+            totalRecords: alignments.length,
+            tier1Probationary: alignments.filter((a: any) => Number(a.match_score_to_kcso) >= 85).length,
+            tier2Watch: alignments.filter((a: any) => Number(a.match_score_to_kcso) >= 70 && Number(a.match_score_to_kcso) < 85).length,
+            highMatchAlerts: alignments.filter((a: any) => Number(a.match_score_to_kcso) >= 85).length,
+            uniqueEntities: new Set(alignments.map((a: any) => a.entity_name)).size,
+            uniqueAircraft: new Set(alignments.map((a: any) => a.aircraft_tail)).size,
+          } : {
+            totalRecords: 0,
+            tier1Probationary: 0,
+            tier2Watch: 0,
+            highMatchAlerts: 0,
+            uniqueEntities: 0,
+            uniqueAircraft: 0,
           };
+
+          result = { data: { alignments: alignments || [], summary } };
         } catch (e) {
           console.error('getBehavioralAlignment error:', e);
           result = { data: { alignments: [], summary: null } };
@@ -525,9 +594,19 @@ serve(async (req) => {
       }
 
       case 'computeBehavioralAlignment': {
-        // Trigger computation - in reality this would do complex analysis
         try {
-          const count = await sql`SELECT COUNT(*) as c FROM shell_companies WHERE shell_probability > 0.5`;
+          const count = await sql`
+            SELECT COUNT(DISTINCT registration) as c
+            FROM live_flight_detections_rows
+            WHERE registration IS NOT NULL
+              AND registration != ''
+              AND (
+                taxonomy_tag IN ('xxb_tier2_shell', 'xxb_shell', 'xxb_kcso_shell')
+                OR registration ~ '^N7[89][0-9]{2}FA$'
+                OR registration ~ '^N[0-9]+FF$'
+                OR registration ~ '^N[0-9]+KC$'
+              )
+          `;
           result = { data: { alignmentRecordsCreated: parseInt(count[0]?.c || '0') } };
         } catch {
           result = { data: { alignmentRecordsCreated: 0 } };
@@ -536,80 +615,125 @@ serve(async (req) => {
       }
 
       case 'createBehavioralAlignmentTable': {
-        // Schema already exists via shell_companies
-        result = { data: { success: true, message: 'Using shell_companies table' } };
+        // Derived dashboard; no schema setup required.
+        result = { data: { success: true, message: 'Derived from live_flight_detections_rows' } };
         break;
       }
 
-      // ============== MEDICAL BEHAVIORAL ALIGNMENT ==============
+      // ============== MEDICAL BEHAVIORAL ALIGNMENT (Derived from flight detections) ==============
       case 'getMedicalBehavioralAlignment': {
         try {
-          // Build from operator_profiles_enriched + flight data
-          const alignments = await sql`
-            WITH medical_ops AS (
-              SELECT 
-                op.operator_name as entity_name,
-                'MEDICAL_OPERATOR' as entity_type,
-                op.primary_aircraft as aircraft_tail,
-                op.tier,
-                COALESCE(op.threat_score, 0) as match_score,
-                op.legal_exposure,
-                op.first_seen as first_detection,
-                op.last_seen as last_detection
-              FROM operator_profiles_enriched op
-              WHERE op.operator_name ILIKE '%medical%' 
-                 OR op.operator_name ILIKE '%air amb%'
-                 OR op.operator_name ILIKE '%medevac%'
-                 OR op.operator_name ILIKE '%life flight%'
+          const alignments = await sql.unsafe(`
+            WITH candidates AS (
+              SELECT
+                registration as aircraft_tail,
+                COALESCE(NULLIF(MAX(callsign), ''), 'Unknown') as operator_name,
+                COUNT(*) as detection_count,
+                ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as avg_altitude_ft,
+                ROUND(
+                  (SUM(CASE WHEN altitude < 1500 AND altitude > 0 THEN 1 ELSE 0 END)::float / NULLIF(COUNT(*), 0)) * 100
+                ::numeric, 1) as low_altitude_pct,
+                SUM(CASE WHEN COALESCE(speed, 0) < 80 THEN 1 ELSE 0 END) as loiter_count,
+                BOOL_OR(
+                  callsign ILIKE '%MED%'
+                  OR callsign ILIKE '%LIFE%'
+                  OR callsign ILIKE '%MERCY%'
+                  OR callsign ILIKE '%REACH%'
+                  OR callsign ILIKE '%CARE%'
+                ) as medical_mission_logged,
+                MIN(COALESCE(detection_timestamp, created_at)) as first_detection,
+                MAX(COALESCE(detection_timestamp, created_at)) as last_detection
+              FROM live_flight_detections_rows
+              WHERE registration IS NOT NULL
+                AND registration != ''
+                AND (
+                  taxonomy_tag = 'xxb_medical_air'
+                  OR registration ~ '^N[0-9]+RX$'
+                  OR callsign ILIKE '%MED%'
+                  OR callsign ILIKE '%LIFE%'
+                  OR callsign ILIKE '%MERCY%'
+                  OR callsign ILIKE '%REACH%'
+                )
+              GROUP BY registration
+              HAVING COUNT(*) > 3
+              ORDER BY COUNT(*) DESC
               LIMIT 30
+            ), scored AS (
+              SELECT
+                ROW_NUMBER() OVER () as id,
+                operator_name,
+                aircraft_tail,
+                detection_count,
+                avg_altitude_ft,
+                low_altitude_pct,
+                loiter_count,
+                medical_mission_logged,
+                first_detection,
+                last_detection,
+                LEAST(100, 35 + (low_altitude_pct * 0.6) + LEAST(loiter_count, 50)) as match_score_to_kcso
+              FROM candidates
             )
-            SELECT 
-              ROW_NUMBER() OVER () as id,
-              entity_name,
-              entity_type,
+            SELECT
+              id,
+              operator_name,
+              'MEDICAL_OPERATOR' as operator_type,
               aircraft_tail,
-              COALESCE(match_score * 100, 50) as match_score_to_kcso,
-              'MEDICAL_MISUSE' as behavior_type,
-              true as confirmed_flight_overlap,
-              15 as geofence_radius_km,
-              COALESCE(match_score * 60, 30) as biometric_link_score,
-              CASE WHEN tier = 1 THEN 'Tier 1 Fraud' ELSE 'Tier 2 Suspect' END as risk_tier,
-              3000 as avg_altitude_ft,
-              3 as loiter_count,
-              8 as detection_count,
-              25.0 as low_altitude_pct,
-              'N912KC' as reference_aircraft,
-              legal_exposure::text as legal_exposure,
-              CASE WHEN tier = 1 THEN 'HIGH' ELSE 'MEDIUM' END as prosecution_priority,
+              ROUND(match_score_to_kcso::numeric, 1) as match_score_to_kcso,
+              CASE
+                WHEN NOT medical_mission_logged AND match_score_to_kcso >= 85 THEN 'MEDEVAC_FRAUD'
+                WHEN NOT medical_mission_logged THEN 'NO_MEDICAL_MISSION'
+                WHEN low_altitude_pct >= 60 OR loiter_count >= 20 THEN 'SURVEILLANCE_PATTERN'
+                WHEN low_altitude_pct >= 30 THEN 'ALTITUDE_ECHO'
+                ELSE 'STANDARD'
+              END as behavior_type,
+              medical_mission_logged,
+              loiter_count,
+              ROUND(LEAST(100, match_score_to_kcso * 0.6)::numeric, 1) as biometric_link_score,
+              CASE
+                WHEN match_score_to_kcso >= 85 THEN 'Tier 1 Fraud Watch'
+                WHEN match_score_to_kcso >= 70 THEN 'Tier 2 Suspect'
+                ELSE 'Monitoring'
+              END as risk_tier,
+              avg_altitude_ft,
+              detection_count,
+              low_altitude_pct,
+              'N912KC/N913KC' as reference_aircraft,
+              'False Claims Act / Geneva' as legal_exposure,
+              CASE
+                WHEN match_score_to_kcso >= 85 THEN 'HIGH'
+                WHEN match_score_to_kcso >= 70 THEN 'MEDIUM'
+                ELSE 'LOW'
+              END as prosecution_priority,
               first_detection::text,
               last_detection::text,
-              false as medical_mission_logged
-            FROM medical_ops
-          `;
-          
-          const summaryData = await sql`
-            SELECT 
-              COUNT(*) as total_records,
-              COUNT(*) FILTER (WHERE tier = 1) as tier1_count,
-              COUNT(*) FILTER (WHERE tier = 2) as tier2_count
-            FROM operator_profiles_enriched
-            WHERE operator_name ILIKE '%medical%' 
-               OR operator_name ILIKE '%air amb%'
-               OR operator_name ILIKE '%medevac%'
-          `;
-          
-          result = {
-            data: {
-              alignments: alignments || [],
-              summary: {
-                totalRecords: parseInt(summaryData[0]?.total_records || '0'),
-                tier1Fraud: parseInt(summaryData[0]?.tier1_count || '0'),
-                tier2Suspect: parseInt(summaryData[0]?.tier2_count || '0'),
-                highMatchAlerts: 0,
-                uniqueOperators: parseInt(summaryData[0]?.total_records || '0')
-              }
-            }
+              CASE
+                WHEN NOT medical_mission_logged AND match_score_to_kcso >= 85 THEN 'High surveillance similarity without matching medical mission callsign patterns.'
+                WHEN NOT medical_mission_logged THEN 'No medical mission identifier detected in callsign for repeated low-altitude/loiter behavior.'
+                ELSE ''
+              END as fraud_indicators
+            FROM scored
+            ORDER BY match_score_to_kcso DESC, detection_count DESC
+          `);
+
+          const summary = Array.isArray(alignments) ? {
+            totalRecords: alignments.length,
+            tier1FraudWatch: alignments.filter((a: any) => String(a.risk_tier).includes('Tier 1')).length,
+            tier2Suspect: alignments.filter((a: any) => String(a.risk_tier).includes('Tier 2')).length,
+            highMatchAlerts: alignments.filter((a: any) => Number(a.match_score_to_kcso) >= 85).length,
+            uniqueOperators: new Set(alignments.map((a: any) => a.operator_name)).size,
+            uniqueAircraft: new Set(alignments.map((a: any) => a.aircraft_tail)).size,
+            zeroMedicalMissions: alignments.filter((a: any) => a.medical_mission_logged === false).length,
+          } : {
+            totalRecords: 0,
+            tier1FraudWatch: 0,
+            tier2Suspect: 0,
+            highMatchAlerts: 0,
+            uniqueOperators: 0,
+            uniqueAircraft: 0,
+            zeroMedicalMissions: 0,
           };
+
+          result = { data: { alignments: alignments || [], summary } };
         } catch (e) {
           console.error('getMedicalBehavioralAlignment error:', e);
           result = { data: { alignments: [], summary: null } };
@@ -620,8 +744,18 @@ serve(async (req) => {
       case 'computeMedicalBehavioralAlignment': {
         try {
           const count = await sql`
-            SELECT COUNT(*) as c FROM operator_profiles_enriched 
-            WHERE operator_name ILIKE '%medical%' OR operator_name ILIKE '%air amb%'
+            SELECT COUNT(DISTINCT registration) as c
+            FROM live_flight_detections_rows
+            WHERE registration IS NOT NULL
+              AND registration != ''
+              AND (
+                taxonomy_tag = 'xxb_medical_air'
+                OR registration ~ '^N[0-9]+RX$'
+                OR callsign ILIKE '%MED%'
+                OR callsign ILIKE '%LIFE%'
+                OR callsign ILIKE '%MERCY%'
+                OR callsign ILIKE '%REACH%'
+              )
           `;
           result = { data: { alignmentRecordsCreated: parseInt(count[0]?.c || '0') } };
         } catch {
@@ -631,7 +765,7 @@ serve(async (req) => {
       }
 
       case 'createMedicalBehavioralAlignmentTable': {
-        result = { data: { success: true, message: 'Using operator_profiles_enriched table' } };
+        result = { data: { success: true, message: 'Derived from live_flight_detections_rows' } };
         break;
       }
 
@@ -643,8 +777,8 @@ serve(async (req) => {
               COALESCE(registration, hex) as registration,
               COUNT(*) as detection_count,
               COALESCE(AVG(threat_score), 0) as avg_threat_score,
-              MIN(detection_timestamp) as first_seen,
-              MAX(detection_timestamp) as last_seen
+              MIN(COALESCE(detection_timestamp, created_at)) as first_seen,
+              MAX(COALESCE(detection_timestamp, created_at)) as last_seen
             FROM live_flight_detections_rows
             WHERE registration IS NOT NULL OR hex IS NOT NULL
             GROUP BY COALESCE(registration, hex)

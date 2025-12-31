@@ -65,6 +65,64 @@ function extractRecordFromSection(section: string, nNumber: string): FAARegistry
     nNumber: nNumber.toUpperCase().replace(/^N/, 'N')
   };
   
+  // First pass: Try to extract from inline formats like "Aircraft: MANUFACTURER | MODEL"
+  // Handle "Aircraft: PILATUS AIRCRAFT LTD | PC-12/47E" format
+  const aircraftMatch = section.match(/Aircraft:\s*([^|]+)\s*\|\s*([^|]+)/i);
+  if (aircraftMatch) {
+    record.aircraftManufacturer = aircraftMatch[1].trim();
+    record.aircraftModel = aircraftMatch[2].trim();
+  }
+  
+  // Handle "S/N: 1283" format
+  const snMatch = section.match(/S\/N:\s*([^\s|,]+)/i);
+  if (snMatch) {
+    record.serialNumber = snMatch[1].trim();
+  }
+  
+  // Handle "Owner: SHORELINE ASSETS LLC" format
+  const ownerMatch = section.match(/Owner:\s*([^|]+?)(?:\s*\||$)/im);
+  if (ownerMatch && !record.registrantName) {
+    record.registrantName = ownerMatch[1].trim();
+  }
+  
+  // Handle "Location: MEDFORD | State | OREGON" format
+  const locationMatch = section.match(/Location:\s*([^|]+)\s*\|\s*State\s*\|\s*([^|,]+)/i);
+  if (locationMatch) {
+    record.registrantCity = locationMatch[1].trim();
+    record.registrantState = locationMatch[2].trim();
+  }
+  
+  // Handle engine "P&W CANADA | Classification" and "PT6A-67P | Category"
+  const engineMfrMatch = section.match(/(?:Engine|Aircraft):\s*\|\s*([^|]+)\s*\|\s*Classification/i);
+  if (engineMfrMatch) {
+    record.engineManufacturer = engineMfrMatch[1].trim();
+  }
+  // Alternative engine manufacturer detection
+  if (!record.engineManufacturer) {
+    const pwMatch = section.match(/P&W\s+CANADA|PRATT\s*&?\s*WHITNEY/i);
+    if (pwMatch) {
+      record.engineManufacturer = pwMatch[0];
+    }
+  }
+  
+  // Engine model like PT6A-67P
+  const engineModelMatch = section.match(/(PT6[A-Z]?-[\w]+)/i);
+  if (engineModelMatch) {
+    record.engineModel = engineModelMatch[1];
+  }
+  
+  // Handle "Expiration Date | 03/31/2028" format
+  const expMatch = section.match(/Expiration\s*Date\s*\|\s*(\d{1,2}\/\d{1,2}\/\d{4})/i);
+  if (expMatch) {
+    record.expirationDate = expMatch[1];
+  }
+  
+  // Handle "Status | Valid" or "Status: Valid"
+  const statusMatch = section.match(/Status\s*[|:]\s*(\w+)/i);
+  if (statusMatch) {
+    record.status = statusMatch[1];
+  }
+  
   const lines = section.split('\n');
   
   for (const line of lines) {

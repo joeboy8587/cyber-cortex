@@ -174,7 +174,14 @@ serve(async (req) => {
               flights = data;
               apiSuccess = true;
             } else if (data.error) {
-              apiError = data.error;
+              // Handle "No Record Found" gracefully - treat as empty results
+              if (data.error === 'No Record Found') {
+                console.log('Aviation Edge returned no records - treating as empty result');
+                flights = [];
+                apiSuccess = true;
+              } else {
+                apiError = data.error;
+              }
             }
           } else {
             apiError = 'API returned non-JSON response (likely invalid API key or quota exceeded)';
@@ -390,12 +397,23 @@ serve(async (req) => {
       console.log(`Fetching nearby flights around ${centerLat}, ${centerLng}...`);
       
       const response = await fetch(url);
-      const flights = await response.json();
+      const data = await response.json();
       
-      if (flights.error) {
+      // Handle "No Record Found" gracefully
+      const flights = data.error === 'No Record Found' ? [] : (Array.isArray(data) ? data : []);
+      
+      if (data.error && data.error !== 'No Record Found') {
+        console.warn('Aviation Edge API error:', data.error);
+        // Return empty results instead of error
         return new Response(
-          JSON.stringify({ error: flights.error }),
-          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          JSON.stringify({ 
+            success: true,
+            flights: [],
+            count: 0,
+            flagged: 0,
+            apiMessage: data.error
+          }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
 
@@ -439,12 +457,24 @@ serve(async (req) => {
       console.log('Fetching Kern County area flights...');
       
       const response = await fetch(url);
-      const flights = await response.json();
+      const data = await response.json();
       
-      if (flights.error) {
+      // Handle "No Record Found" gracefully
+      const flights = data.error === 'No Record Found' ? [] : (Array.isArray(data) ? data : []);
+      
+      if (data.error && data.error !== 'No Record Found') {
+        console.warn('Kern County fetch - API returned:', data.error);
+        // Return empty results instead of error
         return new Response(
-          JSON.stringify({ error: flights.error }),
-          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          JSON.stringify({ 
+            success: true,
+            flights: [],
+            count: 0,
+            flagged: 0,
+            bounds: kernBounds,
+            apiMessage: data.error
+          }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
 

@@ -396,53 +396,85 @@ serve(async (req) => {
       
       console.log(`Fetching nearby flights around ${centerLat}, ${centerLng}...`);
       
-      const response = await fetch(url);
-      const data = await response.json();
-      
-      // Handle "No Record Found" gracefully
-      const flights = data.error === 'No Record Found' ? [] : (Array.isArray(data) ? data : []);
-      
-      if (data.error && data.error !== 'No Record Found') {
-        console.warn('Aviation Edge API error:', data.error);
-        // Return empty results instead of error
+      try {
+        const response = await fetch(url, {
+          headers: { 'Accept': 'application/json' },
+          signal: AbortSignal.timeout(15000)
+        });
+        
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+          console.warn('Aviation Edge returned non-JSON for nearby:', contentType);
+          return new Response(
+            JSON.stringify({ 
+              success: true,
+              flights: [],
+              count: 0,
+              flagged: 0,
+              apiMessage: 'API returned non-JSON response'
+            }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+        
+        const data = await response.json();
+        
+        // Handle "No Record Found" gracefully
+        const flights = data.error === 'No Record Found' ? [] : (Array.isArray(data) ? data : []);
+        
+        if (data.error && data.error !== 'No Record Found') {
+          console.warn('Aviation Edge API error:', data.error);
+          return new Response(
+            JSON.stringify({ 
+              success: true,
+              flights: [],
+              count: 0,
+              flagged: 0,
+              apiMessage: data.error
+            }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+
+        // Classify nearby flights
+        const classified = (Array.isArray(flights) ? flights : []).map((f: any) => {
+          const registration = f.aircraft?.regNumber || '';
+          const callsign = f.flight?.iataNumber || '';
+          const altitude = f.geography?.altitude || 0;
+          const classification = classifyAircraft(registration, callsign, altitude);
+          
+          return {
+            registration,
+            callsign,
+            altitude,
+            latitude: f.geography?.latitude,
+            longitude: f.geography?.longitude,
+            ...classification
+          };
+        });
+
+        return new Response(
+          JSON.stringify({ 
+            success: true,
+            flights: classified,
+            count: classified.length,
+            flagged: classified.filter(f => f.flagged).length
+          }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      } catch (fetchErr) {
+        console.error('Nearby fetch error:', fetchErr);
         return new Response(
           JSON.stringify({ 
             success: true,
             flights: [],
             count: 0,
             flagged: 0,
-            apiMessage: data.error
+            apiMessage: fetchErr instanceof Error ? fetchErr.message : 'Fetch failed'
           }),
           { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
-
-      // Classify nearby flights
-      const classified = (Array.isArray(flights) ? flights : []).map((f: any) => {
-        const registration = f.aircraft?.regNumber || '';
-        const callsign = f.flight?.iataNumber || '';
-        const altitude = f.geography?.altitude || 0;
-        const classification = classifyAircraft(registration, callsign, altitude);
-        
-        return {
-          registration,
-          callsign,
-          altitude,
-          latitude: f.geography?.latitude,
-          longitude: f.geography?.longitude,
-          ...classification
-        };
-      });
-
-      return new Response(
-        JSON.stringify({ 
-          success: true,
-          flights: classified,
-          count: classified.length,
-          flagged: classified.filter(f => f.flagged).length
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
     }
 
     // Focused area tracking (Bakersfield/Kern County)
@@ -456,15 +488,70 @@ serve(async (req) => {
       
       console.log('Fetching Kern County area flights...');
       
-      const response = await fetch(url);
-      const data = await response.json();
-      
-      // Handle "No Record Found" gracefully
-      const flights = data.error === 'No Record Found' ? [] : (Array.isArray(data) ? data : []);
-      
-      if (data.error && data.error !== 'No Record Found') {
-        console.warn('Kern County fetch - API returned:', data.error);
-        // Return empty results instead of error
+      try {
+        const response = await fetch(url, {
+          headers: { 'Accept': 'application/json' },
+          signal: AbortSignal.timeout(15000)
+        });
+        
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+          console.warn('Kern County fetch - non-JSON response:', contentType);
+          return new Response(
+            JSON.stringify({ 
+              success: true,
+              flights: [],
+              count: 0,
+              flagged: 0,
+              bounds: kernBounds,
+              apiMessage: 'API returned non-JSON response'
+            }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+        
+        const data = await response.json();
+        
+        // Handle "No Record Found" gracefully
+        const flights = data.error === 'No Record Found' ? [] : (Array.isArray(data) ? data : []);
+        
+        if (data.error && data.error !== 'No Record Found') {
+          console.warn('Kern County fetch - API returned:', data.error);
+          return new Response(
+            JSON.stringify({ 
+              success: true,
+              flights: [],
+              count: 0,
+              flagged: 0,
+              bounds: kernBounds,
+              apiMessage: data.error
+            }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+
+        const classified = (Array.isArray(flights) ? flights : []).map((f: any) => {
+          const registration = f.aircraft?.regNumber || '';
+          const callsign = f.flight?.iataNumber || '';
+          const altitude = f.geography?.altitude || 0;
+          return {
+            ...f,
+            ...classifyAircraft(registration, callsign, altitude)
+          };
+        });
+
+        return new Response(
+          JSON.stringify({ 
+            success: true,
+            flights: classified,
+            count: classified.length,
+            flagged: classified.filter(f => f.flagged).length,
+            bounds: kernBounds
+          }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      } catch (fetchErr) {
+        console.error('Kern County fetch error:', fetchErr);
         return new Response(
           JSON.stringify({ 
             success: true,
@@ -472,48 +559,54 @@ serve(async (req) => {
             count: 0,
             flagged: 0,
             bounds: kernBounds,
-            apiMessage: data.error
+            apiMessage: fetchErr instanceof Error ? fetchErr.message : 'Fetch failed'
           }),
           { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
-
-      const classified = (Array.isArray(flights) ? flights : []).map((f: any) => {
-        const registration = f.aircraft?.regNumber || '';
-        const callsign = f.flight?.iataNumber || '';
-        const altitude = f.geography?.altitude || 0;
-        return {
-          ...f,
-          ...classifyAircraft(registration, callsign, altitude)
-        };
-      });
-
-      return new Response(
-        JSON.stringify({ 
-          success: true,
-          flights: classified,
-          count: classified.length,
-          flagged: classified.filter(f => f.flagged).length,
-          bounds: kernBounds
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
     }
 
     // Test API connection
     if (action === 'testConnection') {
       const url = `https://aviation-edge.com/v2/public/flights?key=${apiKey}&limit=1`;
-      const response = await fetch(url);
-      const data = await response.json();
-      
-      return new Response(
-        JSON.stringify({ 
-          connected: !data.error,
-          status: response.status,
-          message: data.error || 'API connection successful'
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      try {
+        const response = await fetch(url, {
+          headers: { 'Accept': 'application/json' },
+          signal: AbortSignal.timeout(10000)
+        });
+        
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+          return new Response(
+            JSON.stringify({ 
+              connected: false,
+              status: response.status,
+              message: 'API returned non-JSON response (check API key)'
+            }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+        
+        const data = await response.json();
+        
+        return new Response(
+          JSON.stringify({ 
+            connected: !data.error,
+            status: response.status,
+            message: data.error || 'API connection successful'
+          }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      } catch (err) {
+        return new Response(
+          JSON.stringify({ 
+            connected: false,
+            status: 0,
+            message: err instanceof Error ? err.message : 'Connection failed'
+          }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
     }
 
     // Get watchlist status

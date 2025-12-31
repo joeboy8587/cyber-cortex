@@ -97,6 +97,7 @@ export const AircraftAlertSystem = () => {
     try {
       const watchlistRegs = WATCHLIST.map(w => `'${w.registration}'`).join(',');
       
+      // First try recent 24-hour data
       const { data, error } = await supabase.functions.invoke('neon-query', {
         body: {
           action: 'customQuery',
@@ -120,7 +121,31 @@ export const AircraftAlertSystem = () => {
 
       if (error) throw new Error(error.message);
 
-      const detections = data?.data || [];
+      let detections = data?.data || [];
+      
+      // If no recent data, get historical data with most recent detections
+      if (detections.length === 0) {
+        const { data: historicalData } = await supabase.functions.invoke('neon-query', {
+          body: {
+            action: 'customQuery',
+            query: `
+              SELECT 
+                registration,
+                detection_timestamp,
+                altitude,
+                latitude,
+                longitude,
+                callsign,
+                NOW() - detection_timestamp as time_since
+              FROM live_flight_detections_rows
+              WHERE registration IN (${watchlistRegs})
+              ORDER BY detection_timestamp DESC
+              LIMIT 100
+            `
+          }
+        });
+        detections = historicalData?.data || [];
+      }
       
       // Get total watchlist detections ever
       const { data: totalData } = await supabase.functions.invoke('neon-query', {
@@ -154,8 +179,13 @@ export const AircraftAlertSystem = () => {
         };
       });
 
-      // Check for new critical alerts
-      const newCriticalAlerts = activeAlerts.filter(a => 
+      // Check for new critical alerts (only for recent detections within 1 hour)
+      const recentAlerts = activeAlerts.filter(a => {
+        const timestamp = new Date(a.timestamp);
+        return (Date.now() - timestamp.getTime()) < 3600000; // 1 hour in ms
+      });
+      
+      const newCriticalAlerts = recentAlerts.filter(a => 
         a.threat_level === 'CRITICAL' && 
         !alerts.find(existing => existing.id === a.id)
       );
@@ -275,10 +305,15 @@ export const AircraftAlertSystem = () => {
 
       {/* Active Alerts */}
       <ScrollArea className="h-64">
-        {alerts.length === 0 ? (
+        {loading ? (
+          <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+            <RefreshCw className="h-8 w-8 mb-2 animate-spin text-primary" />
+            <p className="text-sm">Scanning flight database...</p>
+          </div>
+        ) : alerts.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
             <Bell className="h-8 w-8 mb-2 opacity-50" />
-            <p className="text-sm">No watchlist aircraft detected in last 24 hours</p>
+            <p className="text-sm">No watchlist aircraft in database</p>
           </div>
         ) : (
           <div className="space-y-2">

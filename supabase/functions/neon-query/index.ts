@@ -1,13 +1,37 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
 
-const VERSION = "2.2.0";
+const VERSION = "2.3.0";
 console.log(`neon-query v${VERSION} booting...`);
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
+
+// Helper to create connection with retry logic
+async function createConnection(databaseUrl: string, attempt = 1): Promise<ReturnType<typeof postgres>> {
+  const maxAttempts = 3;
+  try {
+    const sql = postgres(databaseUrl, {
+      ssl: 'require',
+      max: 1,
+      idle_timeout: 20,
+      connect_timeout: 30,
+      fetch_types: false,
+    });
+    // Test connection
+    await sql`SELECT 1`;
+    return sql;
+  } catch (error) {
+    console.error(`Connection attempt ${attempt} failed:`, error);
+    if (attempt < maxAttempts) {
+      await new Promise(r => setTimeout(r, 500 * attempt));
+      return createConnection(databaseUrl, attempt + 1);
+    }
+    throw error;
+  }
+}
 
 serve(async (req) => {
   console.log(`neon-query v${VERSION} handling request`);
@@ -60,13 +84,7 @@ serve(async (req) => {
       );
     }
     
-    sql = postgres(databaseUrl, {
-      ssl: 'require',
-      max: 1,
-      idle_timeout: 10,
-      connect_timeout: 15,
-      fetch_types: false,
-    });
+    sql = await createConnection(databaseUrl);
 
     let result;
 

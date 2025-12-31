@@ -79,12 +79,17 @@ export const AlaskaAirlinesDashboard = () => {
               MAX(detection_timestamp) as last_seen
             FROM live_flight_detections_rows
             WHERE 
-              callsign LIKE 'ASA%' OR 
-              callsign LIKE 'QXE%' OR 
-              callsign LIKE 'SKW%' OR
-              registration LIKE 'N4%' OR
-              registration LIKE 'N6%'
+              (callsign LIKE 'ASA%' OR 
+               callsign LIKE 'QXE%' OR 
+               callsign LIKE 'SKW%' OR
+               callsign LIKE 'AAL%' OR
+               callsign LIKE 'UAL%' OR
+               callsign LIKE 'DAL%' OR
+               callsign LIKE 'SWA%' OR
+               callsign LIKE 'FFT%')
+              AND registration IS NOT NULL AND registration != ''
             GROUP BY registration, callsign
+            HAVING COUNT(*) >= 2
             ORDER BY detections DESC
             LIMIT 100
           `

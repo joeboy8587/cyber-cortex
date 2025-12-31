@@ -1,12 +1,17 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
 
+const VERSION = "2.2.0";
+console.log(`neon-query v${VERSION} booting...`);
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
 serve(async (req) => {
+  console.log(`neon-query v${VERSION} handling request`);
+  
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
@@ -39,6 +44,14 @@ serve(async (req) => {
     }
     
     const { action, table, limit = 100, offset = 0, query, data, where } = body;
+
+    // Health check - no DB needed
+    if (action === 'ping') {
+      return new Response(
+        JSON.stringify({ status: 'ok', version: VERSION, timestamp: new Date().toISOString() }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
     if (!action || typeof action !== 'string') {
       return new Response(
@@ -166,6 +179,138 @@ serve(async (req) => {
         break;
       }
 
+      // ============== UNIFIED FLIGHT QUERY (combines all flight tables) ==============
+      case 'unifiedFlightQuery': {
+        const timeWindow = body.timeWindow || '24 hours';
+        const limitCount = body.limit || 200;
+        
+        result = await sql.unsafe(`
+          WITH unified_flights AS (
+            -- Primary: live_flight_detections_rows (3.74M records, actively updated)
+            SELECT 
+              COALESCE(icao_code, '') as hex,
+              COALESCE(registration, '') as registration,
+              COALESCE(callsign, '') as callsign,
+              COALESCE(altitude, 0) as altitude,
+              COALESCE(speed, 0) as speed,
+              COALESCE(latitude, 0) as latitude,
+              COALESCE(longitude, 0) as longitude,
+              COALESCE(heading, 0) as heading,
+              detection_timestamp as event_time,
+              taxonomy_tag,
+              COALESCE(threat_score, 0) as threat_score,
+              COALESCE(flagged, false) as is_flagged,
+              flagged_reasons,
+              'live_detection' as data_source,
+              CASE 
+                WHEN taxonomy_tag IN ('xxb_tier1_priority', 'xxb_kcso', 'xxb_kcso_shell') THEN 'critical'
+                WHEN taxonomy_tag IN ('xxb_tier2_shell', 'xxb_shell') THEN 'high'
+                WHEN taxonomy_tag = 'xxb_military' THEN 'high'
+                WHEN taxonomy_tag = 'xxb_medical_air' THEN 'medium'
+                WHEN taxonomy_tag = 'xxb_low_alt_suspicious' THEN 'medium'
+                WHEN altitude < 1500 AND altitude > 0 THEN 'medium'
+                ELSE 'normal'
+              END as threat_level,
+              CASE WHEN taxonomy_tag = 'xxb_military' OR registration ~ '^[0-9]{2}-[0-9]{5}$' THEN true ELSE false END as is_military
+            FROM live_flight_detections_rows
+            WHERE detection_timestamp > NOW() - INTERVAL '${timeWindow}'
+              AND latitude IS NOT NULL AND longitude IS NOT NULL
+              AND latitude != 0 AND longitude != 0
+            
+            UNION ALL
+            
+            -- Secondary: real_time_surveillance_feed (13K curated events with biometric correlation)
+            SELECT 
+              '' as hex,
+              COALESCE(aircraft_id, '') as registration,
+              '' as callsign,
+              COALESCE(altitude_ft, 0)::int as altitude,
+              0 as speed,
+              COALESCE(location_lat::float, 0) as latitude,
+              COALESCE(location_lon::float, 0) as longitude,
+              0 as heading,
+              event_timestamp as event_time,
+              event_type as taxonomy_tag,
+              CASE threat_level 
+                WHEN 'CRITICAL' THEN 95 
+                WHEN 'HIGH' THEN 75 
+                WHEN 'ELEVATED' THEN 50
+                ELSE 25 
+              END as threat_score,
+              COALESCE(biometric_impact, false) as is_flagged,
+              NULL as flagged_reasons,
+              'surveillance_feed' as data_source,
+              CASE 
+                WHEN threat_level = 'CRITICAL' THEN 'critical'
+                WHEN threat_level = 'HIGH' THEN 'high'
+                WHEN threat_level = 'ELEVATED' THEN 'medium'
+                ELSE 'normal'
+              END as threat_level,
+              false as is_military
+            FROM real_time_surveillance_feed
+            WHERE event_timestamp > NOW() - INTERVAL '${timeWindow}'
+              AND location_lat IS NOT NULL AND location_lon IS NOT NULL
+          )
+          SELECT DISTINCT ON (registration, data_source) 
+            hex, registration, callsign, altitude, speed, latitude, longitude, heading,
+            event_time, taxonomy_tag, threat_score, is_flagged, flagged_reasons,
+            data_source, threat_level, is_military
+          FROM unified_flights
+          WHERE registration != ''
+          ORDER BY registration, data_source, event_time DESC
+          LIMIT ${limitCount}
+        `);
+        break;
+      }
+
+      // ============== DATA SOURCE STATUS ==============
+      case 'getDataSourceStatus': {
+        const liveCount = await sql`
+          SELECT 
+            COUNT(*) as total,
+            MAX(detection_timestamp) as last_update,
+            COUNT(CASE WHEN detection_timestamp > NOW() - INTERVAL '1 hour' THEN 1 END) as recent
+          FROM live_flight_detections_rows
+        `;
+        
+        const surveillanceCount = await sql`
+          SELECT 
+            COUNT(*) as total,
+            MAX(event_timestamp) as last_update,
+            COUNT(CASE WHEN event_timestamp > NOW() - INTERVAL '1 hour' THEN 1 END) as recent
+          FROM real_time_surveillance_feed
+        `;
+        
+        const biometricCount = await sql`
+          SELECT 
+            COUNT(*) as total,
+            MAX(measurement_timestamp) as last_update,
+            COUNT(CASE WHEN measurement_timestamp > NOW() - INTERVAL '1 hour' THEN 1 END) as recent
+          FROM biometric_monitoring
+        `;
+        
+        result = {
+          live_detections: {
+            total: parseInt(liveCount[0]?.total || '0'),
+            lastUpdate: liveCount[0]?.last_update,
+            recentCount: parseInt(liveCount[0]?.recent || '0')
+          },
+          surveillance_feed: {
+            total: parseInt(surveillanceCount[0]?.total || '0'),
+            lastUpdate: surveillanceCount[0]?.last_update,
+            recentCount: parseInt(surveillanceCount[0]?.recent || '0')
+          },
+          biometrics: {
+            total: parseInt(biometricCount[0]?.total || '0'),
+            lastUpdate: biometricCount[0]?.last_update,
+            recentCount: parseInt(biometricCount[0]?.recent || '0')
+          },
+          timestamp: new Date().toISOString()
+        };
+        break;
+      }
+
+      // ============== EXISTING ACTIONS ==============
       case 'getLegalAnalysisStats': {
         const flightStats = await sql`SELECT COUNT(*) as total FROM live_flight_detections_rows`;
         const flaggedStats = await sql`SELECT COUNT(*) as total FROM flagged_aircraft_rows_rows`;
@@ -179,7 +324,16 @@ serve(async (req) => {
       }
 
       case 'getFederalCaseConvergence': {
-        result = { convergence: [], summary: { totalCases: 0 } };
+        try {
+          const caseData = await sql`
+            SELECT * FROM federal_case_convergence 
+            ORDER BY created_at DESC 
+            LIMIT 50
+          `;
+          result = { convergence: caseData, summary: { totalCases: caseData.length } };
+        } catch {
+          result = { convergence: [], summary: { totalCases: 0 } };
+        }
         break;
       }
 
@@ -226,7 +380,18 @@ serve(async (req) => {
       }
 
       case 'taxonomyStats': {
-        result = { total: 0, categories: [] };
+        try {
+          const stats = await sql`
+            SELECT taxonomy_tag, COUNT(*) as count 
+            FROM live_flight_detections_rows 
+            WHERE taxonomy_tag IS NOT NULL 
+            GROUP BY taxonomy_tag 
+            ORDER BY count DESC
+          `;
+          result = { total: stats.length, categories: stats };
+        } catch {
+          result = { total: 0, categories: [] };
+        }
         break;
       }
 

@@ -1,28 +1,11 @@
 import { useEffect, useState, useCallback } from "react";
 import { CyberPanel } from "@/components/ui/cyber-panel";
-import { Plane, RefreshCw, AlertTriangle, Shield, Radio, Eye, Wifi, WifiOff } from "lucide-react";
+import { Plane, RefreshCw, AlertTriangle, Shield, Radio, Eye, Wifi, WifiOff, Database, Satellite } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
+import { useNeonDatabase, UnifiedFlight } from "@/hooks/useNeonDatabase";
 import { toast } from "sonner";
-
-interface LiveFlight {
-  hex: string;
-  registration: string;
-  callsign: string;
-  altitude: number;
-  speed: number;
-  latitude: number;
-  longitude: number;
-  detection_timestamp: string;
-  taxonomy_tag?: string;
-  threat_level: 'critical' | 'high' | 'medium' | 'low' | 'normal';
-  is_military: boolean;
-  is_flagged: boolean;
-  threat_score?: number;
-  tier_level?: number;
-  flagged_reasons?: string;
-}
 
 interface FlightStats {
   total_active: number;
@@ -34,10 +17,14 @@ interface FlightStats {
   medical_count?: number;
   avg_altitude?: number;
   max_threat?: number;
+  live_api_count?: number;
+  db_cache_count?: number;
+  surveillance_count?: number;
 }
 
 export function LiveFlightTracker() {
-  const [flights, setFlights] = useState<LiveFlight[]>([]);
+  const { getUnifiedFlights, connectionStatus, isLoading: dbLoading } = useNeonDatabase();
+  const [flights, setFlights] = useState<UnifiedFlight[]>([]);
   const [stats, setStats] = useState<FlightStats>({
     total_active: 0,
     flagged_count: 0,
@@ -47,12 +34,16 @@ export function LiveFlightTracker() {
     shell_count: 0,
     medical_count: 0,
     avg_altitude: 0,
-    max_threat: 0
+    max_threat: 0,
+    live_api_count: 0,
+    db_cache_count: 0,
+    surveillance_count: 0
   });
   const [loading, setLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [apiConnected, setApiConnected] = useState<boolean | null>(null);
+  const [dataSource, setDataSource] = useState<'all' | 'live' | 'surveillance'>('all');
 
   // Fetch live flights from Aviation Edge API
   const fetchFromAviationEdge = useCallback(async () => {
@@ -71,7 +62,6 @@ export function LiveFlightTracker() {
       if (data?.error) {
         console.error('Aviation Edge API error:', data.error);
         setApiConnected(false);
-        toast.error(`API Error: ${data.error}`);
         return null;
       }
 
@@ -82,7 +72,7 @@ export function LiveFlightTracker() {
         toast.success(`Imported ${data.inserted} live flights from Aviation Edge`);
       }
       
-      return data?.flights || [];
+      return data;
     } catch (err) {
       console.error('Aviation Edge exception:', err);
       setApiConnected(false);
@@ -95,124 +85,64 @@ export function LiveFlightTracker() {
     
     try {
       // First try to fetch fresh data from Aviation Edge
-      const apiResult = await fetchFromAviationEdge();
+      await fetchFromAviationEdge();
       
-      // Log enhanced stats if available
-      if (apiResult?.stats) {
-        console.log('Aviation Edge enhanced stats:', apiResult.stats);
+      // Then get UNIFIED data from database (combines all flight tables)
+      const unifiedData = await getUnifiedFlights('24 hours', 200);
+      
+      // Calculate stats from unified data
+      const flightList = unifiedData || [];
+      
+      const calculatedStats: FlightStats = {
+        total_active: flightList.length,
+        flagged_count: flightList.filter((f: UnifiedFlight) => f.is_flagged).length,
+        military_count: flightList.filter((f: UnifiedFlight) => f.is_military).length,
+        low_altitude_count: flightList.filter((f: UnifiedFlight) => f.altitude < 1500 && f.altitude > 0).length,
+        kcso_related: flightList.filter((f: UnifiedFlight) => 
+          f.taxonomy_tag?.includes('kcso') || f.threat_level === 'critical'
+        ).length,
+        shell_count: flightList.filter((f: UnifiedFlight) => f.taxonomy_tag?.includes('shell')).length,
+        medical_count: flightList.filter((f: UnifiedFlight) => f.taxonomy_tag?.includes('medical')).length,
+        avg_altitude: flightList.length > 0 
+          ? Math.round(flightList.reduce((sum: number, f: UnifiedFlight) => sum + f.altitude, 0) / flightList.length)
+          : 0,
+        max_threat: Math.max(...flightList.map((f: UnifiedFlight) => f.threat_score), 0),
+        live_api_count: flightList.filter((f: UnifiedFlight) => f.data_source === 'live_detection').length,
+        surveillance_count: flightList.filter((f: UnifiedFlight) => f.data_source === 'surveillance_feed').length,
+        db_cache_count: flightList.length
+      };
+
+      // Filter based on selected data source
+      let filteredFlights = flightList;
+      if (dataSource === 'live') {
+        filteredFlights = flightList.filter((f: UnifiedFlight) => f.data_source === 'live_detection');
+      } else if (dataSource === 'surveillance') {
+        filteredFlights = flightList.filter((f: UnifiedFlight) => f.data_source === 'surveillance_feed');
       }
-      
-      // Then get data from database (includes fresh + historical)
-      const { data: flightData } = await supabase.functions.invoke("neon-query", {
-        body: {
-          action: "customQuery",
-          query: `
-            WITH recent_flights AS (
-              SELECT 
-                icao_code as hex, registration, callsign, altitude, speed, 
-                latitude, longitude, heading, vertical_rate,
-                detection_timestamp, taxonomy_tag, threat_score, tier_level,
-                flagged, flagged_reasons,
-                CASE 
-                  WHEN taxonomy_tag IN ('xxb_tier1_priority', 'xxb_kcso', 'xxb_kcso_shell') THEN 'critical'
-                  WHEN taxonomy_tag IN ('xxb_tier2_shell', 'xxb_shell') THEN 'high'
-                  WHEN taxonomy_tag = 'xxb_military' THEN 'high'
-                  WHEN taxonomy_tag = 'xxb_medical_air' THEN 'medium'
-                  WHEN taxonomy_tag = 'xxb_low_alt_suspicious' THEN 'medium'
-                  WHEN altitude < 1500 AND altitude > 0 THEN 'medium'
-                  ELSE 'normal'
-                END as threat_level,
-                CASE 
-                  WHEN taxonomy_tag = 'xxb_military' OR registration ~ '^[0-9]{2}-[0-9]{5}$' THEN true 
-                  ELSE false 
-                END as is_military,
-                COALESCE(flagged, false) as is_flagged
-              FROM live_flight_detections_rows
-              WHERE detection_timestamp > NOW() - INTERVAL '1 hour'
-              ORDER BY detection_timestamp DESC
-              LIMIT 150
-            )
-            SELECT * FROM recent_flights ORDER BY 
-              COALESCE(threat_score, 0) DESC,
-              CASE threat_level 
-                WHEN 'critical' THEN 1 
-                WHEN 'high' THEN 2 
-                WHEN 'medium' THEN 3 
-                ELSE 4 
-              END,
-              detection_timestamp DESC
-          `
-        }
+
+      // Sort by threat level and time
+      filteredFlights.sort((a: UnifiedFlight, b: UnifiedFlight) => {
+        const threatOrder = { critical: 0, high: 1, medium: 2, normal: 3 };
+        const aOrder = threatOrder[a.threat_level] ?? 4;
+        const bOrder = threatOrder[b.threat_level] ?? 4;
+        if (aOrder !== bOrder) return aOrder - bOrder;
+        return new Date(b.event_time).getTime() - new Date(a.event_time).getTime();
       });
 
-      // Get aggregate stats with enhanced taxonomy
-      const { data: statsData } = await supabase.functions.invoke("neon-query", {
-        body: {
-          action: "customQuery",
-          query: `
-            SELECT 
-              COUNT(*) as total_active,
-              COUNT(CASE WHEN flagged = true THEN 1 END) as flagged_count,
-              COUNT(CASE WHEN taxonomy_tag = 'xxb_military' OR registration ~ '^[0-9]{2}-[0-9]{5}$' THEN 1 END) as military_count,
-              COUNT(CASE WHEN altitude < 1500 AND altitude > 0 THEN 1 END) as low_altitude_count,
-              COUNT(CASE WHEN taxonomy_tag IN ('xxb_tier1_priority', 'xxb_kcso_shell') THEN 1 END) as kcso_related,
-              COUNT(CASE WHEN taxonomy_tag = 'xxb_tier2_shell' THEN 1 END) as shell_count,
-              COUNT(CASE WHEN taxonomy_tag = 'xxb_medical_air' THEN 1 END) as medical_count,
-              AVG(altitude) as avg_altitude,
-              MAX(threat_score) as max_threat
-            FROM live_flight_detections_rows
-            WHERE detection_timestamp > NOW() - INTERVAL '1 hour'
-          `
-        }
-      });
-
-      const flightList: LiveFlight[] = (flightData?.data || []).map((f: Record<string, unknown>) => ({
-        hex: String(f.hex || ''),
-        registration: String(f.registration || 'N/A'),
-        callsign: String(f.callsign || 'N/A'),
-        altitude: Number(f.altitude) || 0,
-        speed: Number(f.speed) || 0,
-        latitude: Number(f.latitude) || 0,
-        longitude: Number(f.longitude) || 0,
-        detection_timestamp: String(f.detection_timestamp || ''),
-        taxonomy_tag: f.taxonomy_tag ? String(f.taxonomy_tag) : undefined,
-        threat_level: (f.threat_level || 'normal') as LiveFlight['threat_level'],
-        is_military: Boolean(f.is_military),
-        is_flagged: Boolean(f.is_flagged),
-        threat_score: Number(f.threat_score) || 0,
-        tier_level: Number(f.tier_level) || 5,
-        flagged_reasons: f.flagged_reasons ? String(f.flagged_reasons) : undefined
-      }));
-
-      setFlights(flightList);
-      
-      if (statsData?.data?.[0]) {
-        const s = statsData.data[0];
-        setStats({
-          total_active: parseInt(s.total_active) || 0,
-          flagged_count: parseInt(s.flagged_count) || 0,
-          military_count: parseInt(s.military_count) || 0,
-          low_altitude_count: parseInt(s.low_altitude_count) || 0,
-          kcso_related: parseInt(s.kcso_related) || 0,
-          shell_count: parseInt(s.shell_count) || 0,
-          medical_count: parseInt(s.medical_count) || 0,
-          avg_altitude: Math.round(parseFloat(s.avg_altitude) || 0),
-          max_threat: parseInt(s.max_threat) || 0
-        });
-      }
-      
+      setFlights(filteredFlights);
+      setStats(calculatedStats);
       setLastUpdate(new Date());
     } catch (error) {
       console.error("Failed to fetch live flights:", error);
+      toast.error("Failed to fetch flight data");
     } finally {
       setLoading(false);
     }
-  }, [fetchFromAviationEdge]);
+  }, [fetchFromAviationEdge, getUnifiedFlights, dataSource]);
 
   useEffect(() => {
     fetchLiveFlights();
     
-    // Auto-refresh every 60 seconds if enabled
     const interval = autoRefresh ? setInterval(fetchLiveFlights, 60000) : null;
     
     return () => {
@@ -233,9 +163,16 @@ export function LiveFlightTracker() {
     }
   };
 
+  const getSourceIcon = (source: string) => {
+    if (source === 'live_detection') {
+      return <Radio className="w-3 h-3 text-green-500" />;
+    }
+    return <Satellite className="w-3 h-3 text-orange-500" />;
+  };
+
   return (
     <CyberPanel
-      title="LIVE FLIGHT TRACKER"
+      title="UNIFIED FLIGHT TRACKER"
       icon={<Radio className="w-5 h-5 text-primary animate-pulse" />}
     >
       <div className="p-4 space-y-4">
@@ -250,42 +187,83 @@ export function LiveFlightTracker() {
               <Radio className={`w-4 h-4 mr-1 ${autoRefresh ? 'animate-pulse' : ''}`} />
               {autoRefresh ? 'LIVE' : 'PAUSED'}
             </Button>
-            <Button size="sm" variant="outline" onClick={fetchLiveFlights} disabled={loading}>
+            <Button size="sm" variant="outline" onClick={fetchLiveFlights} disabled={loading || dbLoading}>
               <RefreshCw className={`w-4 h-4 mr-1 ${loading ? 'animate-spin' : ''}`} />
               Refresh
             </Button>
+            
+            {/* Data source filter */}
+            <div className="flex items-center gap-1 ml-2">
+              <Button
+                size="sm"
+                variant={dataSource === 'all' ? 'default' : 'ghost'}
+                onClick={() => setDataSource('all')}
+                className="h-7 text-xs"
+              >
+                All
+              </Button>
+              <Button
+                size="sm"
+                variant={dataSource === 'live' ? 'default' : 'ghost'}
+                onClick={() => setDataSource('live')}
+                className="h-7 text-xs gap-1"
+              >
+                <Radio className="w-3 h-3" />
+                Live
+              </Button>
+              <Button
+                size="sm"
+                variant={dataSource === 'surveillance' ? 'default' : 'ghost'}
+                onClick={() => setDataSource('surveillance')}
+                className="h-7 text-xs gap-1"
+              >
+                <Satellite className="w-3 h-3" />
+                Curated
+              </Button>
+            </div>
+          </div>
+          
+          <div className="flex items-center gap-2">
             {apiConnected !== null && (
-              <Badge variant={apiConnected ? "default" : "destructive"} className="gap-1">
+              <Badge variant={apiConnected ? "default" : "secondary"} className="gap-1">
                 {apiConnected ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
-                {apiConnected ? 'API Connected' : 'API Offline'}
+                {apiConnected ? 'API Live' : 'API Offline'}
               </Badge>
             )}
+            <Badge variant={connectionStatus === 'connected' ? 'outline' : 'destructive'} className="gap-1">
+              <Database className="w-3 h-3" />
+              {connectionStatus === 'connected' ? 'DB OK' : 'DB Error'}
+            </Badge>
+            <span className="text-xs text-muted-foreground">
+              {lastUpdate.toLocaleTimeString()}
+            </span>
           </div>
-          <span className="text-xs text-muted-foreground">
-            Last update: {lastUpdate.toLocaleTimeString()}
-          </span>
         </div>
 
         {/* Stats Grid */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-          <div className="bg-card/50 border border-primary/30 rounded-lg p-3 text-center">
-            <div className="text-2xl font-mono font-bold text-primary">{stats.total_active}</div>
-            <div className="text-xs text-muted-foreground">Active (24h)</div>
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
+          <div className="bg-card/50 border border-primary/30 rounded-lg p-2 text-center">
+            <div className="text-xl font-mono font-bold text-primary">{stats.total_active}</div>
+            <div className="text-xs text-muted-foreground">Total</div>
           </div>
-          <div className="bg-card/50 border border-destructive/30 rounded-lg p-3 text-center">
-            <div className="text-2xl font-mono font-bold text-destructive">{stats.flagged_count}</div>
+          <div className="bg-card/50 border border-green-500/30 rounded-lg p-2 text-center">
+            <div className="text-xl font-mono font-bold text-green-500">{stats.live_api_count}</div>
+            <div className="text-xs text-muted-foreground">Live API</div>
+          </div>
+          <div className="bg-card/50 border border-orange-500/30 rounded-lg p-2 text-center">
+            <div className="text-xl font-mono font-bold text-orange-500">{stats.surveillance_count}</div>
+            <div className="text-xs text-muted-foreground">Curated</div>
+          </div>
+          <div className="bg-card/50 border border-destructive/30 rounded-lg p-2 text-center">
+            <div className="text-xl font-mono font-bold text-destructive">{stats.flagged_count}</div>
             <div className="text-xs text-muted-foreground">Flagged</div>
           </div>
-          <div className="bg-card/50 border border-warning/30 rounded-lg p-3 text-center">
-            <div className="text-2xl font-mono font-bold text-warning">{stats.military_count}</div>
+          <div className="bg-card/50 border border-warning/30 rounded-lg p-2 text-center">
+            <div className="text-xl font-mono font-bold text-warning">{stats.military_count}</div>
             <div className="text-xs text-muted-foreground">Military</div>
           </div>
-          <div className="bg-card/50 border border-orange-500/30 rounded-lg p-3 text-center">
-            <div className="text-2xl font-mono font-bold text-orange-500">{stats.low_altitude_count}</div>
-            <div className="text-xs text-muted-foreground">Low Alt</div>
-          </div>
-          <div className="bg-card/50 border border-destructive/30 rounded-lg p-3 text-center">
-            <div className="text-2xl font-mono font-bold text-destructive">{stats.kcso_related}</div>
+          <div className="bg-card/50 border border-destructive/30 rounded-lg p-2 text-center">
+            <div className="text-xl font-mono font-bold text-destructive">{stats.kcso_related}</div>
             <div className="text-xs text-muted-foreground">KCSO</div>
           </div>
         </div>
@@ -295,16 +273,16 @@ export function LiveFlightTracker() {
           {loading ? (
             <div className="text-center py-8 text-muted-foreground">
               <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2" />
-              Loading live flights...
+              Loading unified flight data...
             </div>
           ) : flights.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
-              No flights detected in the last 24 hours
+              No flights detected in selected data source
             </div>
           ) : (
             flights.slice(0, 25).map((flight, idx) => (
               <div
-                key={`${flight.hex}-${idx}`}
+                key={`${flight.registration}-${flight.data_source}-${idx}`}
                 className={`p-3 rounded-lg border transition-all ${
                   flight.threat_level === 'critical'
                     ? 'bg-destructive/10 border-destructive/50 animate-pulse'
@@ -317,11 +295,15 @@ export function LiveFlightTracker() {
               >
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <div className="flex items-center gap-2">
+                    {getSourceIcon(flight.data_source)}
                     <Plane className={`w-4 h-4 ${flight.is_military ? 'text-warning' : 'text-primary'}`} />
-                    <span className="font-mono text-sm font-bold">{flight.registration}</span>
-                    <span className="text-xs text-muted-foreground">{flight.callsign}</span>
+                    <span className="font-mono text-sm font-bold">{flight.registration || 'N/A'}</span>
+                    <span className="text-xs text-muted-foreground">{flight.callsign || ''}</span>
                   </div>
                   <div className="flex items-center gap-2">
+                    <Badge variant="outline" className="text-xs">
+                      {flight.data_source === 'live_detection' ? 'LIVE' : 'CURATED'}
+                    </Badge>
                     {flight.is_military && (
                       <Badge variant="outline" className="text-warning border-warning">
                         <Shield className="w-3 h-3 mr-1" />
@@ -353,7 +335,7 @@ export function LiveFlightTracker() {
                     <span className="ml-1 font-mono text-primary">{flight.taxonomy_tag || 'none'}</span>
                   </div>
                   <div className="text-right text-muted-foreground">
-                    {new Date(flight.detection_timestamp).toLocaleTimeString()}
+                    {new Date(flight.event_time).toLocaleTimeString()}
                   </div>
                 </div>
               </div>
@@ -362,15 +344,25 @@ export function LiveFlightTracker() {
         </div>
 
         {/* Legend */}
-        <div className="flex items-center gap-4 text-xs text-muted-foreground border-t border-border pt-3">
+        <div className="flex items-center gap-4 text-xs text-muted-foreground border-t border-border pt-3 flex-wrap">
           <div className="flex items-center gap-1">
             <Eye className="w-3 h-3" />
-            <span>Threat Levels:</span>
+            <span>Sources:</span>
           </div>
-          <Badge variant="destructive" className="text-xs">CRITICAL</Badge>
-          <Badge className="bg-orange-500 text-white text-xs">HIGH</Badge>
-          <Badge className="bg-yellow-500 text-black text-xs">MEDIUM</Badge>
-          <Badge variant="outline" className="text-xs">NORMAL</Badge>
+          <div className="flex items-center gap-1">
+            <Radio className="w-3 h-3 text-green-500" />
+            Live API
+          </div>
+          <div className="flex items-center gap-1">
+            <Satellite className="w-3 h-3 text-orange-500" />
+            Curated Feed
+          </div>
+          <div className="flex items-center gap-2 ml-auto">
+            <Badge variant="destructive" className="text-xs">CRITICAL</Badge>
+            <Badge className="bg-orange-500 text-white text-xs">HIGH</Badge>
+            <Badge className="bg-yellow-500 text-black text-xs">MEDIUM</Badge>
+            <Badge variant="outline" className="text-xs">NORMAL</Badge>
+          </div>
         </div>
       </div>
     </CyberPanel>

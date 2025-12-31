@@ -2,8 +2,8 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { RefreshCw, Plane, AlertTriangle, Shield, Target } from 'lucide-react';
-import { supabase } from '@/integrations/supabase/client';
+import { RefreshCw, Plane, AlertTriangle, Shield, Target, Radio, Satellite } from 'lucide-react';
+import { useNeonDatabase, UnifiedFlight } from '@/hooks/useNeonDatabase';
 import AircraftMapContent from './AircraftMapContent';
 
 interface FlightData {
@@ -20,6 +20,7 @@ interface FlightData {
   taxonomy_tag: string;
   is_flagged: boolean;
   flagged_reasons: string;
+  data_source?: string;
 }
 
 const threatColors = {
@@ -27,6 +28,11 @@ const threatColors = {
   high: '#f97316',
   medium: '#eab308',
   normal: '#22c55e'
+};
+
+const sourceColors = {
+  live_detection: '#22c55e',
+  surveillance_feed: '#f97316'
 };
 
 const threatRadius = {
@@ -38,54 +44,39 @@ const threatRadius = {
 
 
 const AircraftMapVisualization: React.FC = () => {
+  const { getUnifiedFlights, connectionStatus, isLoading: dbLoading } = useNeonDatabase();
   const [flights, setFlights] = useState<FlightData[]>([]);
   const [loading, setLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [filter, setFilter] = useState<'all' | 'flagged' | 'critical'>('all');
+  const [sourceFilter, setSourceFilter] = useState<'all' | 'live' | 'surveillance'>('all');
 
   const fetchFlightData = useCallback(async () => {
     setLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke('neon-query', {
-        body: {
-          action: 'customQuery',
-          query: `
-            SELECT DISTINCT ON (registration)
-              icao_code as hex,
-              registration,
-              callsign,
-              altitude,
-              speed,
-              latitude,
-              longitude,
-              heading,
-              threat_score,
-              taxonomy_tag,
-              flagged as is_flagged,
-              flagged_reasons,
-              CASE 
-                WHEN taxonomy_tag IN ('xxb_tier1_priority', 'xxb_kcso', 'xxb_kcso_shell') THEN 'critical'
-                WHEN taxonomy_tag IN ('xxb_tier2_shell', 'xxb_shell') THEN 'high'
-                WHEN taxonomy_tag = 'xxb_military' THEN 'high'
-                WHEN taxonomy_tag = 'xxb_medical_air' THEN 'medium'
-                WHEN taxonomy_tag = 'xxb_low_alt_suspicious' THEN 'medium'
-                WHEN altitude < 1500 AND altitude > 0 THEN 'medium'
-                ELSE 'normal'
-              END as threat_level
-            FROM live_flight_detections_rows
-            WHERE latitude IS NOT NULL 
-              AND longitude IS NOT NULL
-              AND latitude != 0
-              AND longitude != 0
-            ORDER BY registration, detection_timestamp DESC
-            LIMIT 500
-          `
-        }
-      });
-
-      if (error) throw error;
+      // Use unified query that combines all flight tables
+      const unifiedData = await getUnifiedFlights('24 hours', 500);
       
-      const flightData = data?.data || [];
+      // Transform to FlightData format
+      const flightData: FlightData[] = (unifiedData || [])
+        .filter((f: UnifiedFlight) => f.latitude && f.longitude && f.latitude !== 0 && f.longitude !== 0)
+        .map((f: UnifiedFlight) => ({
+          hex: f.hex || '',
+          registration: f.registration || 'N/A',
+          callsign: f.callsign || '',
+          altitude: f.altitude || 0,
+          speed: f.speed || 0,
+          latitude: f.latitude,
+          longitude: f.longitude,
+          heading: f.heading || 0,
+          threat_level: f.threat_level,
+          threat_score: f.threat_score || 0,
+          taxonomy_tag: f.taxonomy_tag || '',
+          is_flagged: f.is_flagged || false,
+          flagged_reasons: f.flagged_reasons || '',
+          data_source: f.data_source
+        }));
+
       setFlights(flightData);
       setLastUpdate(new Date());
     } catch (err) {
@@ -93,7 +84,7 @@ const AircraftMapVisualization: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [getUnifiedFlights]);
 
   useEffect(() => {
     fetchFlightData();
@@ -102,6 +93,11 @@ const AircraftMapVisualization: React.FC = () => {
   }, [fetchFlightData]);
 
   const filteredFlights = flights.filter(f => {
+    // Source filter
+    if (sourceFilter === 'live' && f.data_source !== 'live_detection') return false;
+    if (sourceFilter === 'surveillance' && f.data_source !== 'surveillance_feed') return false;
+    
+    // Threat filter
     if (filter === 'flagged') return f.is_flagged || f.threat_level === 'critical' || f.threat_level === 'high';
     if (filter === 'critical') return f.threat_level === 'critical';
     return true;
@@ -112,7 +108,9 @@ const AircraftMapVisualization: React.FC = () => {
     critical: flights.filter(f => f.threat_level === 'critical').length,
     high: flights.filter(f => f.threat_level === 'high').length,
     medium: flights.filter(f => f.threat_level === 'medium').length,
-    flagged: flights.filter(f => f.is_flagged).length
+    flagged: flights.filter(f => f.is_flagged).length,
+    liveCount: flights.filter(f => f.data_source === 'live_detection').length,
+    surveillanceCount: flights.filter(f => f.data_source === 'surveillance_feed').length
   };
 
   return (
@@ -141,6 +139,37 @@ const AircraftMapVisualization: React.FC = () => {
         
         {/* Stats bar */}
         <div className="flex flex-wrap gap-2 mt-2">
+          {/* Source filters */}
+          <div className="flex items-center gap-1 border-r border-border pr-2 mr-1">
+            <Button
+              variant={sourceFilter === 'all' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => setSourceFilter('all')}
+              className="h-7 text-xs"
+            >
+              All Sources
+            </Button>
+            <Button
+              variant={sourceFilter === 'live' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => setSourceFilter('live')}
+              className="h-7 text-xs gap-1"
+            >
+              <Radio className="h-3 w-3 text-green-500" />
+              Live ({stats.liveCount})
+            </Button>
+            <Button
+              variant={sourceFilter === 'surveillance' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => setSourceFilter('surveillance')}
+              className="h-7 text-xs gap-1"
+            >
+              <Satellite className="h-3 w-3 text-orange-500" />
+              Curated ({stats.surveillanceCount})
+            </Button>
+          </div>
+
+          {/* Threat filters */}
           <Button
             variant={filter === 'all' ? 'default' : 'outline'}
             size="sm"

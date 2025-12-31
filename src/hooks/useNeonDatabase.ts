@@ -38,9 +38,48 @@ export interface DataStreamInfo {
   description: string;
 }
 
+export interface DataSourceStatus {
+  live_detections: { total: number; lastUpdate: string | null; recentCount: number };
+  surveillance_feed: { total: number; lastUpdate: string | null; recentCount: number };
+  biometrics: { total: number; lastUpdate: string | null; recentCount: number };
+  timestamp: string;
+}
+
+export interface UnifiedFlight {
+  hex: string;
+  registration: string;
+  callsign: string;
+  altitude: number;
+  speed: number;
+  latitude: number;
+  longitude: number;
+  heading: number;
+  event_time: string;
+  taxonomy_tag: string | null;
+  threat_score: number;
+  is_flagged: boolean;
+  flagged_reasons: string | null;
+  data_source: 'live_detection' | 'surveillance_feed';
+  threat_level: 'critical' | 'high' | 'medium' | 'normal';
+  is_military: boolean;
+}
+
+const MAX_RETRIES = 3;
+const RETRY_DELAYS = [1000, 2000, 4000]; // Exponential backoff
+
 export function useNeonDatabase() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'disconnected' | 'unknown'>('unknown');
+
+  const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+  const isRetryableError = (message: string) =>
+    message.includes('BOOT_ERROR') ||
+    message.includes('Function failed to start') ||
+    message.includes('Edge function returned 503') ||
+    message.includes('Edge function returned 502') ||
+    message.includes('timeout');
 
   const queryDatabase = useCallback(async (action: string, params: Record<string, unknown> = {}) => {
     if (!action || typeof action !== 'string' || action.trim().length === 0) {
@@ -54,9 +93,17 @@ export function useNeonDatabase() {
         case 'getTables':
         case 'getTableData':
         case 'getTableSchema':
+        case 'unifiedFlightQuery':
           return [];
         case 'getStats':
           return { tableCount: 0, totalRecords: 0 } satisfies DatabaseStats;
+        case 'getDataSourceStatus':
+          return {
+            live_detections: { total: 0, lastUpdate: null, recentCount: 0 },
+            surveillance_feed: { total: 0, lastUpdate: null, recentCount: 0 },
+            biometrics: { total: 0, lastUpdate: null, recentCount: 0 },
+            timestamp: new Date().toISOString()
+          } satisfies DataSourceStatus;
         case 'customQuery':
           return [];
         default:
@@ -64,46 +111,97 @@ export function useNeonDatabase() {
       }
     };
 
-    const isBootError = (message: string) =>
-      message.includes('BOOT_ERROR') ||
-      message.includes('Function failed to start') ||
-      message.includes('Edge function returned 503');
-
     setIsLoading(true);
     setError(null);
 
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      try {
+        const { data, error: fnError } = await supabase.functions.invoke('neon-query', {
+          body: { action, ...params },
+        });
+
+        if (fnError) {
+          const msg = fnError.message || 'Database function error';
+          
+          if (isRetryableError(msg) && attempt < MAX_RETRIES - 1) {
+            console.warn(`Attempt ${attempt + 1} failed with retryable error, retrying in ${RETRY_DELAYS[attempt]}ms...`);
+            await sleep(RETRY_DELAYS[attempt]);
+            lastError = new Error(msg);
+            continue;
+          }
+          
+          // Non-retryable or final attempt
+          if (isRetryableError(msg)) {
+            setError(msg);
+            setConnectionStatus('disconnected');
+            return fallbackFor();
+          }
+          throw new Error(msg);
+        }
+
+        if (data?.error) {
+          const msg = String(data.error);
+          
+          if (isRetryableError(msg) && attempt < MAX_RETRIES - 1) {
+            console.warn(`Attempt ${attempt + 1} data error, retrying...`);
+            await sleep(RETRY_DELAYS[attempt]);
+            lastError = new Error(msg);
+            continue;
+          }
+          
+          if (isRetryableError(msg)) {
+            setError(msg);
+            setConnectionStatus('disconnected');
+            return fallbackFor();
+          }
+          throw new Error(msg);
+        }
+
+        // Success!
+        setConnectionStatus('connected');
+        setIsLoading(false);
+        return data?.data ?? data;
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error('Database query failed');
+        
+        if (isRetryableError(lastError.message) && attempt < MAX_RETRIES - 1) {
+          console.warn(`Attempt ${attempt + 1} exception, retrying...`);
+          await sleep(RETRY_DELAYS[attempt]);
+          continue;
+        }
+        
+        setError(lastError.message);
+        setConnectionStatus('disconnected');
+        throw lastError;
+      }
+    }
+
+    // All retries exhausted
+    setIsLoading(false);
+    if (lastError) {
+      setError(lastError.message);
+      setConnectionStatus('disconnected');
+    }
+    return fallbackFor();
+  }, []);
+
+  // Health check
+  const ping = useCallback(async (): Promise<{ status: string; version: string; timestamp: string } | null> => {
     try {
-      const { data, error: fnError } = await supabase.functions.invoke('neon-query', {
-        body: { action, ...params },
+      const { data, error } = await supabase.functions.invoke('neon-query', {
+        body: { action: 'ping' },
       });
-
-      if (fnError) {
-        const msg = fnError.message || 'Database function error';
-        // Keep UI alive when the backend function is temporarily unavailable.
-        if (isBootError(msg)) {
-          setError(msg);
-          return fallbackFor();
-        }
-        throw new Error(msg);
+      if (error || data?.error) {
+        setConnectionStatus('disconnected');
+        return null;
       }
-
-      if (data?.error) {
-        const msg = String(data.error);
-        if (isBootError(msg)) {
-          setError(msg);
-          return fallbackFor();
-        }
-        throw new Error(msg);
-      }
-
-      return data?.data;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Database query failed';
-      setError(message);
-      // If we already detected a boot error above, we returned fallbacks.
-      throw err;
-    } finally {
-      setIsLoading(false);
+      setConnectionStatus('connected');
+      return data;
+    } catch {
+      setConnectionStatus('disconnected');
+      return null;
     }
   }, []);
 
@@ -127,17 +225,25 @@ export function useNeonDatabase() {
     return queryDatabase('customQuery', { query });
   }, [queryDatabase]);
 
+  // NEW: Unified flight query across all flight tables
+  const getUnifiedFlights = useCallback(async (timeWindow = '24 hours', limit = 200): Promise<UnifiedFlight[]> => {
+    return queryDatabase('unifiedFlightQuery', { timeWindow, limit });
+  }, [queryDatabase]);
+
+  // NEW: Get data source status (freshness check)
+  const getDataSourceStatus = useCallback(async (): Promise<DataSourceStatus> => {
+    return queryDatabase('getDataSourceStatus');
+  }, [queryDatabase]);
+
   // Get top tables by record count for threat matrix (uses actual existing tables)
   const getThreatMatrix = useCallback(async (): Promise<ThreatData[]> => {
     try {
-      // Query top tables by row count - this works regardless of table names
       const tables = await getTables();
       
       if (!tables || tables.length === 0) {
         return [];
       }
 
-      // Convert top tables into threat data format
       return tables.slice(0, 10).map((table: TableInfo, i: number) => {
         const rowCount = Number(table.row_count) || 0;
         return {
@@ -164,7 +270,6 @@ export function useNeonDatabase() {
         return [];
       }
 
-      // Group tables into logical streams based on naming patterns
       const streamPatterns = [
         { pattern: /flight|adsb|aircraft|plane/i, name: 'Aircraft Tracking', description: 'Flight data streams' },
         { pattern: /bio|heart|hrv|stress|medical/i, name: 'Biometric Data', description: 'Medical-grade monitoring' },
@@ -191,7 +296,6 @@ export function useNeonDatabase() {
         }
       }
 
-      // Add remaining tables as "Other"
       const remaining = tables.filter(t => !usedTables.has(t.tablename));
       if (remaining.length > 0) {
         results.push({
@@ -208,7 +312,7 @@ export function useNeonDatabase() {
     }
   }, [getTables]);
 
-  // Get recent events for timeline (based on actual table data)
+  // Get recent events for timeline
   const getRecentEvents = useCallback(async (): Promise<TimelineEvent[]> => {
     try {
       const tables = await getTables();
@@ -217,13 +321,12 @@ export function useNeonDatabase() {
         return [];
       }
 
-      // Create timeline events from top tables
       const types: TimelineEvent['type'][] = ['aircraft', 'biometric', 'evidence', 'acoustic'];
       const now = new Date();
       
       return tables.slice(0, 10).map((table: TableInfo, i: number) => {
         const rowCount = Number(table.row_count) || 0;
-        const eventDate = new Date(now.getTime() - i * 3600000); // Each event 1 hour apart
+        const eventDate = new Date(now.getTime() - i * 3600000);
         
         return {
           id: i + 1,
@@ -242,11 +345,15 @@ export function useNeonDatabase() {
   return {
     isLoading,
     error,
+    connectionStatus,
+    ping,
     getTables,
     getTableData,
     getTableSchema,
     getStats,
     customQuery,
+    getUnifiedFlights,
+    getDataSourceStatus,
     getThreatMatrix,
     getDataStreamCounts,
     getRecentEvents,

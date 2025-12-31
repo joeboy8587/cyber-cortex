@@ -57,6 +57,7 @@ import { DeepCorrelationEngine } from "@/components/dashboard/DeepCorrelationEng
 import { OperatorEnrichmentPanel } from "@/components/dashboard/OperatorEnrichmentPanel";
 import { DirectAircraftCorrelation } from "@/components/dashboard/DirectAircraftCorrelation";
 import { AircraftAlertSystem } from "@/components/dashboard/AircraftAlertSystem";
+import AircraftMapVisualization from "@/components/dashboard/AircraftMapVisualization";
 import { LegalNarrativeGenerator } from "@/components/dashboard/LegalNarrativeGenerator";
 import { LegalIntakeStrategy } from "@/components/dashboard/LegalIntakeStrategy";
 import { MultimodalEnrichmentPanel } from "@/components/dashboard/MultimodalEnrichmentPanel";
@@ -152,6 +153,7 @@ const Index = () => {
           </section>
           
           <section id="fleet-tracking" className="space-y-6">
+            <AircraftMapVisualization />
             <LiveFlightTracker />
             <FleetTrackingLedger />
           </section>

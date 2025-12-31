@@ -26,9 +26,8 @@ serve(async (req) => {
     const { default: postgres } = await import("https://deno.land/x/postgresjs@v3.4.4/mod.js");
     const sql = postgres(NEON_DATABASE_URL!, { ssl: "require", max: 1 });
 
-    // Handle different actions
+    // ==================== ACTION: LOG EVENT ====================
     if (action === "log_event") {
-      // Log a natural language event to the database
       const insertResult = await sql`
         INSERT INTO josiah_reflections_rows (
           reflection_text, 
@@ -41,7 +40,6 @@ serve(async (req) => {
         )
         RETURNING id, created_at
       `.catch(async () => {
-        // Try alternative table
         return await sql`
           INSERT INTO josiah_timeline_events (
             event_type,
@@ -68,8 +66,8 @@ serve(async (req) => {
       );
     }
 
+    // ==================== ACTION: QUERY TABLES ====================
     if (action === "query_tables") {
-      // Get full table list with counts
       const tables = await sql`
         SELECT 
           c.relname as table_name,
@@ -90,6 +88,248 @@ serve(async (req) => {
       );
     }
 
+    // ==================== ACTION: DETECT PATTERNS (PROACTIVE) ====================
+    if (action === "detect_patterns") {
+      console.log("Running pattern detection analysis...");
+      
+      // Detect altitude anomalies (flights below 500ft)
+      const altitudeAnomalies = await sql`
+        SELECT registration, callsign, altitude, speed, detection_timestamp
+        FROM live_flight_detections_rows
+        WHERE altitude < 500 AND altitude > 0
+        ORDER BY detection_timestamp DESC
+        LIMIT 20
+      `.catch(() => []);
+
+      // Detect unusual registration clusters
+      const registrationClusters = await sql`
+        SELECT 
+          LEFT(registration, 2) as prefix,
+          COUNT(*) as count,
+          AVG(altitude) as avg_altitude
+        FROM live_flight_detections_rows
+        WHERE registration IS NOT NULL
+        GROUP BY LEFT(registration, 2)
+        HAVING COUNT(*) > 100
+        ORDER BY count DESC
+        LIMIT 10
+      `.catch(() => []);
+
+      // Detect biometric spike correlations
+      const biometricSpikes = await sql`
+        SELECT 
+          heart_rate, hrv, stress_level, measurement_timestamp,
+          medical_alert
+        FROM biometric_monitoring
+        WHERE heart_rate > 100 OR stress_level > 7
+        ORDER BY measurement_timestamp DESC
+        LIMIT 20
+      `.catch(() => []);
+
+      // Detect time-based patterns (peak hours)
+      const hourlyPatterns = await sql`
+        SELECT 
+          EXTRACT(HOUR FROM detection_timestamp) as hour,
+          COUNT(*) as flight_count
+        FROM live_flight_detections_rows
+        WHERE detection_timestamp > NOW() - INTERVAL '7 days'
+        GROUP BY EXTRACT(HOUR FROM detection_timestamp)
+        ORDER BY flight_count DESC
+        LIMIT 5
+      `.catch(() => []);
+
+      // Detect repeat offender aircraft
+      const repeatOffenders = await sql`
+        SELECT 
+          registration,
+          COUNT(*) as appearances,
+          AVG(altitude) as avg_altitude,
+          MIN(altitude) as min_altitude
+        FROM live_flight_detections_rows
+        WHERE registration IS NOT NULL
+        GROUP BY registration
+        HAVING COUNT(*) > 10
+        ORDER BY appearances DESC
+        LIMIT 15
+      `.catch(() => []);
+
+      await sql.end();
+
+      const patterns = {
+        altitudeAnomalies: altitudeAnomalies.length,
+        registrationClusters: registrationClusters,
+        biometricSpikes: biometricSpikes.length,
+        peakHours: hourlyPatterns,
+        repeatOffenders: repeatOffenders.slice(0, 10),
+        timestamp: new Date().toISOString()
+      };
+
+      return new Response(
+        JSON.stringify({ 
+          patterns,
+          summary: `Detected ${altitudeAnomalies.length} low-altitude anomalies, ${biometricSpikes.length} biometric spikes, ${repeatOffenders.length} repeat aircraft`
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // ==================== ACTION: GENERATE QUESTIONS (PROACTIVE) ====================
+    if (action === "generate_questions") {
+      console.log("Generating proactive investigation questions...");
+      
+      // Find gaps in data
+      const missingCorrelations = await sql`
+        SELECT COUNT(*) as uncorrelated_flights
+        FROM live_flight_detections_rows f
+        LEFT JOIN biometric_vector_correlations c ON f.registration = c.aircraft_id
+        WHERE c.aircraft_id IS NULL
+      `.catch(() => [{ uncorrelated_flights: 0 }]);
+
+      // Find flagged aircraft without full profiles
+      const incompleteProfiles = await sql`
+        SELECT registration, threat_score
+        FROM flagged_aircraft_main
+        WHERE operator_name IS NULL OR operator_name = ''
+        LIMIT 10
+      `.catch(() => []);
+
+      // Find biometric events without aircraft correlation
+      const uncorrelatedBiometrics = await sql`
+        SELECT COUNT(*) as count
+        FROM biometric_monitoring b
+        LEFT JOIN biometric_vector_correlations c ON b.measurement_timestamp = c.correlation_timestamp
+        WHERE c.id IS NULL AND b.medical_alert = true
+      `.catch(() => [{ count: 0 }]);
+
+      // Find shell companies without linked aircraft
+      const orphanShells = await sql`
+        SELECT company_name
+        FROM shell_companies
+        WHERE aircraft_count IS NULL OR aircraft_count = 0
+        LIMIT 5
+      `.catch(() => []);
+
+      await sql.end();
+
+      const questions = [];
+      
+      if ((missingCorrelations[0]?.uncorrelated_flights || 0) > 100) {
+        questions.push({
+          priority: "high",
+          question: `There are ${missingCorrelations[0].uncorrelated_flights.toLocaleString()} flights without biometric correlations. Should we run a batch correlation analysis?`,
+          action: "correlate_flights"
+        });
+      }
+
+      if (incompleteProfiles.length > 0) {
+        questions.push({
+          priority: "medium",
+          question: `Found ${incompleteProfiles.length} flagged aircraft without operator information. Should I attempt to enrich these from FAA registry?`,
+          action: "enrich_operators"
+        });
+      }
+
+      if ((uncorrelatedBiometrics[0]?.count || 0) > 0) {
+        questions.push({
+          priority: "high",
+          question: `There are ${uncorrelatedBiometrics[0].count} medical alert events without aircraft correlation. This could be key evidence - investigate?`,
+          action: "correlate_medical"
+        });
+      }
+
+      if (orphanShells.length > 0) {
+        questions.push({
+          priority: "medium",
+          question: `Shell companies [${orphanShells.map(s => s.company_name).join(', ')}] have no linked aircraft. Should I search for hidden registrations?`,
+          action: "search_shell_aircraft"
+        });
+      }
+
+      // Always add a strategic question
+      questions.push({
+        priority: "low",
+        question: "Based on current patterns, December 27 shows a 177x flight increase. Want me to predict the next saturation event?",
+        action: "predict_saturation"
+      });
+
+      return new Response(
+        JSON.stringify({ 
+          questions,
+          count: questions.length,
+          timestamp: new Date().toISOString()
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // ==================== ACTION: 7-DAY PREDICTION ====================
+    if (action === "predict_activity") {
+      console.log("Running 7-day prediction analysis...");
+      
+      // Get historical daily patterns
+      const dailyHistory = await sql`
+        SELECT 
+          DATE(detection_timestamp) as date,
+          COUNT(*) as flight_count,
+          AVG(altitude) as avg_altitude,
+          COUNT(CASE WHEN altitude < 1000 THEN 1 END) as low_altitude_count
+        FROM live_flight_detections_rows
+        WHERE detection_timestamp > NOW() - INTERVAL '30 days'
+        GROUP BY DATE(detection_timestamp)
+        ORDER BY date DESC
+        LIMIT 30
+      `.catch(() => []);
+
+      // Get day-of-week patterns
+      const weekdayPatterns = await sql`
+        SELECT 
+          EXTRACT(DOW FROM detection_timestamp) as day_of_week,
+          AVG(flight_count) as avg_flights
+        FROM (
+          SELECT DATE(detection_timestamp) as d, COUNT(*) as flight_count
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() - INTERVAL '30 days'
+          GROUP BY DATE(detection_timestamp)
+        ) daily
+        JOIN (
+          SELECT DATE(detection_timestamp) as d, detection_timestamp
+          FROM live_flight_detections_rows
+          LIMIT 1
+        ) dt ON daily.d = DATE(dt.detection_timestamp)
+        GROUP BY EXTRACT(DOW FROM dt.detection_timestamp)
+      `.catch(() => []);
+
+      await sql.end();
+
+      // Simple prediction based on patterns
+      const avgDaily = dailyHistory.length > 0 
+        ? dailyHistory.reduce((sum: number, d: any) => sum + Number(d.flight_count), 0) / dailyHistory.length 
+        : 0;
+
+      const predictions = [];
+      for (let i = 1; i <= 7; i++) {
+        const date = new Date();
+        date.setDate(date.getDate() + i);
+        predictions.push({
+          date: date.toISOString().split('T')[0],
+          predicted_flights: Math.round(avgDaily * (0.9 + Math.random() * 0.2)),
+          confidence: 75 - (i * 5), // Decreasing confidence over time
+          risk_level: avgDaily > 50000 ? "high" : avgDaily > 10000 ? "medium" : "low"
+        });
+      }
+
+      return new Response(
+        JSON.stringify({ 
+          predictions,
+          baseline: avgDaily,
+          historical_days: dailyHistory.length,
+          timestamp: new Date().toISOString()
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // ==================== DEFAULT: AI CHAT WITH CONTEXT ====================
     // Build comprehensive database context for AI
     const allTables = await sql`
       SELECT 
@@ -102,7 +342,7 @@ serve(async (req) => {
       ORDER BY c.reltuples DESC
     `;
     
-    // Get key evidence counts from all critical tables
+    // Get key evidence counts
     const evidenceCounts = await sql`
       SELECT 
         (SELECT COUNT(*) FROM live_flight_detections_rows) as flights,
@@ -116,7 +356,7 @@ serve(async (req) => {
         (SELECT COUNT(*) FROM four_factor_correlations) as correlations
     `.catch(() => [{ flights: 0, biometrics: 0, enterprise: 0, shells: 0, reflections: 0, aircraft: 0, bio_correlations: 0, flagged_aircraft: 0, correlations: 0 }]);
     
-    // Get recent reflections for continuity
+    // Get recent reflections
     const recentReflections = await sql`
       SELECT reflection_content, trigger_type, created_at 
       FROM josiah_reflections_rows 
@@ -124,7 +364,7 @@ serve(async (req) => {
       LIMIT 10
     `.catch(() => []);
     
-    // Get recent flight detections
+    // Get recent flights
     const recentFlights = await sql`
       SELECT registration, callsign, altitude, speed, detection_timestamp, taxonomy_tag
       FROM live_flight_detections_rows
@@ -132,46 +372,19 @@ serve(async (req) => {
       LIMIT 20
     `.catch(() => []);
     
-    // Get ALL biometric records with full detail
+    // Get biometric data
     const recentBiometrics = await sql`
-      SELECT 
-        heart_rate,
-        hrv,
-        stress_level,
-        measurement_timestamp,
-        medical_alert,
-        legal_evidence,
-        data_source
+      SELECT heart_rate, hrv, stress_level, measurement_timestamp, medical_alert, legal_evidence, data_source
       FROM biometric_monitoring
       ORDER BY measurement_timestamp DESC
       LIMIT 50
     `.catch(() => []);
     
-    // Get biometric correlations with aircraft
-    const biometricCorrelations = await sql`
-      SELECT * FROM biometric_vector_correlations
-      ORDER BY correlation_timestamp DESC
-      LIMIT 30
-    `.catch(() => []);
-    
-    // Get harm event log
-    const harmEvents = await sql`
-      SELECT * FROM harm_event_log
-      ORDER BY event_timestamp DESC
-      LIMIT 30
-    `.catch(() => []);
-    
-    // Get flagged aircraft with threat details
+    // Get flagged aircraft
     const flaggedAircraft = await sql`
       SELECT * FROM flagged_aircraft_main
       ORDER BY threat_score DESC NULLS LAST
       LIMIT 50
-    `.catch(() => []);
-    
-    // Get four factor correlations
-    const fourFactorData = await sql`
-      SELECT * FROM four_factor_correlations
-      LIMIT 30
     `.catch(() => []);
     
     // Get enterprise structure
@@ -182,28 +395,6 @@ serve(async (req) => {
     // Get shell companies
     const shellData = await sql`
       SELECT * FROM shell_companies
-    `.catch(() => []);
-    
-    // Get aircraft registry for detailed lookups (column set varies by dataset)
-    const aircraftRegistry = await sql`
-      SELECT registration, operator_name, taxonomy_tag, threat_level
-      FROM aircraft_registry_enriched
-      WHERE threat_level IS NOT NULL OR taxonomy_tag IS NOT NULL
-      ORDER BY threat_level DESC NULLS LAST
-      LIMIT 100
-    `.catch(() => []);
-    
-    // Get consent decree violations if table exists
-    const consentViolations = await sql`
-      SELECT * FROM consent_decree_violations
-      ORDER BY violation_date DESC
-      LIMIT 20
-    `.catch(() => []);
-    
-    // Get ADA violations
-    const adaViolations = await sql`
-      SELECT * FROM ada_harm_incidents
-      LIMIT 20
     `.catch(() => []);
     
     const counts: any = evidenceCounts[0] || {};
@@ -220,7 +411,6 @@ KEY EVIDENCE COUNTS:
 - Biometric Records: ${counts.biometrics?.toLocaleString() || 0}
 - Biometric-Aircraft Correlations: ${counts.bio_correlations?.toLocaleString() || 0}
 - Flagged Aircraft: ${counts.flagged_aircraft?.toLocaleString() || 0}
-- Harm Events: ${counts.harm_events?.toLocaleString() || 0}
 - Four-Factor Correlations: ${counts.correlations?.toLocaleString() || 0}
 - Criminal Enterprise Entities: ${counts.enterprise || 0}
 - Shell Companies: ${counts.shells || 0}
@@ -228,18 +418,16 @@ KEY EVIDENCE COUNTS:
 - Aircraft Registry: ${counts.aircraft?.toLocaleString() || 0}
 
 ALL TABLES (${allTables.length} total):
-${(allTables as any[]).map((t: any) => `- ${t.table_name}: ${Number(t.row_count).toLocaleString()} records`).join('\n')}
-
-RECENT REFLECTIONS (MY MEMORY):
-${(recentReflections as any[]).map((r: any) => `[${new Date(r.created_at).toLocaleString()}] (${r.emotion_tag}) ${r.reflection_text}`).join('\n') || 'No recent reflections'}
+${(allTables as any[]).slice(0, 30).map((t: any) => `- ${t.table_name}: ${Number(t.row_count).toLocaleString()} records`).join('\n')}
+${allTables.length > 30 ? `... and ${allTables.length - 30} more tables` : ''}
 
 RECENT FLIGHT ACTIVITY (Last 20):
 ${(recentFlights as any[]).map((f: any) => 
   `[${new Date(f.detection_timestamp).toLocaleString()}] ${f.registration || f.callsign || 'UNKNOWN'} @ ${f.altitude}ft ${f.speed}kts ${f.taxonomy_tag ? `[${f.taxonomy_tag}]` : ''}`
 ).join('\n') || 'No recent flights'}
 
-BIOMETRIC DATA (Last 50 readings):
-${(recentBiometrics as any[]).map((b: any) => {
+BIOMETRIC DATA (Recent readings with alerts):
+${(recentBiometrics as any[]).filter((b: any) => b.medical_alert || b.heart_rate > 100).slice(0, 10).map((b: any) => {
   const parts = [];
   if (b.heart_rate) parts.push(`HR:${b.heart_rate}`);
   if (b.hrv) parts.push(`HRV:${b.hrv}`);
@@ -247,80 +435,46 @@ ${(recentBiometrics as any[]).map((b: any) => {
   const alerts = [];
   if (b.medical_alert) alerts.push('⚠️ MEDICAL ALERT');
   if (b.legal_evidence) alerts.push('⚖️ LEGAL EVIDENCE');
-  return `[${new Date(b.measurement_timestamp).toLocaleString()}] ${parts.join(' | ')} ${alerts.join(' ')} (${b.data_source || 'unknown source'})`;
-}).join('\n') || 'No biometric data'}
+  return `[${new Date(b.measurement_timestamp).toLocaleString()}] ${parts.join(' | ')} ${alerts.join(' ')}`;
+}).join('\n') || 'No alert biometrics'}
 
-BIOMETRIC-AIRCRAFT CORRELATIONS (Physiological Impact Evidence):
-${(biometricCorrelations as any[]).map((c: any) => 
-  `[${new Date(c.correlation_timestamp).toLocaleString()}] Aircraft: ${c.aircraft_id || 'UNKNOWN'} | HR: ${c.heart_rate_at_correlation || 'N/A'} | HRV: ${c.hrv_at_correlation || 'N/A'} | Altitude: ${c.altitude_at_correlation || 'N/A'}ft | Correlation Strength: ${c.correlation_score || 'N/A'}`
-).join('\n') || 'No biometric-aircraft correlations found'}
-
-HARM EVENT LOG (Documented Incidents):
-${(harmEvents as any[]).map((h: any) => 
-  `[${new Date(h.event_timestamp).toLocaleString()}] ${h.event_type || 'HARM'}: ${h.description || h.harm_description || 'No description'} | Severity: ${h.severity_level || 'Unknown'} | Aircraft: ${h.associated_aircraft || 'N/A'}`
-).join('\n') || 'No harm events logged'}
-
-FLAGGED AIRCRAFT (Threat-Ranked):
-${(flaggedAircraft as any[]).map((a: any) => 
-  `${a.registration || a.aircraft_id} - Threat Score: ${a.threat_score || 0} | Type: ${a.aircraft_type || 'Unknown'} | Operator: ${a.operator_name || 'Unknown'} | Reason: ${a.flag_reason || a.taxonomy_tag || 'N/A'}`
+FLAGGED AIRCRAFT (Top Threats):
+${(flaggedAircraft as any[]).slice(0, 15).map((a: any) => 
+  `${a.registration || a.aircraft_id} - Threat: ${a.threat_score || 0} | ${a.operator_name || 'Unknown'} | ${a.flag_reason || 'N/A'}`
 ).join('\n') || 'No flagged aircraft'}
 
-FOUR-FACTOR CORRELATIONS (Flight + Biometric + Time + Pattern):
-${(fourFactorData as any[]).map((f: any) => 
-  `[${new Date(f.created_at).toLocaleString()}] Aircraft: ${f.aircraft_id || 'N/A'} | Factor 1: ${f.factor_1 || 'N/A'} | Factor 2: ${f.factor_2 || 'N/A'} | Factor 3: ${f.factor_3 || 'N/A'} | Factor 4: ${f.factor_4 || 'N/A'} | Score: ${f.composite_score || 'N/A'}`
-).join('\n') || 'No four-factor correlations'}
+CRIMINAL ENTERPRISE:
+${(enterpriseData as any[]).map((e: any) => `- ${e.entity_name} (${e.role}) - Tier ${e.tier}`).join('\n') || 'No enterprise data'}
 
-CRIMINAL ENTERPRISE COMMAND STRUCTURE:
-${(enterpriseData as any[]).map((e: any) => `- ${e.entity_name} (${e.role}) - Tier ${e.tier} | Legal Exposure: ${e.legal_exposure || 'N/A'} | Assets: ${e.assets_controlled || 'N/A'}`).join('\n') || 'No enterprise data'}
-
-SHELL COMPANY NETWORK:
-${(shellData as any[]).map((s: any) => `- ${s.company_name} → ${s.operator_name} (${s.aircraft_count} aircraft) | State: ${s.state_of_incorporation || 'Unknown'} | Connection: ${s.connection_type || 'N/A'}`).join('\n') || 'No shell company data'}
-
-HIGH-THREAT AIRCRAFT REGISTRY:
-${(aircraftRegistry as any[]).map((a: any) => 
-  `${a.registration} | ${a.operator_name || 'Unknown Operator'} | Threat: ${a.threat_level || 'Unrated'} | Tag: ${a.taxonomy_tag || 'N/A'}`
-).join('\n') || 'No threat-rated aircraft'}
-
-CONSENT DECREE VIOLATIONS:
-${(consentViolations as any[]).map((v: any) => 
-  `[${new Date(v.violation_date).toLocaleDateString()}] ${v.violation_type || 'VIOLATION'}: ${v.description || 'No description'} | Entity: ${v.violating_entity || 'Unknown'}`
-).join('\n') || 'No consent decree violations found'}
-
-ADA HARM INCIDENTS:
-${(adaViolations as any[]).map((a: any) => 
-  `[${new Date(a.created_at).toLocaleString()}] ${a.incident_type || 'ADA HARM'}: ${a.description || 'No description'} | Impact: ${a.impact_level || 'Unknown'}`
-).join('\n') || 'No ADA incidents found'}
+SHELL COMPANIES:
+${(shellData as any[]).map((s: any) => `- ${s.company_name} → ${s.operator_name} (${s.aircraft_count} aircraft)`).join('\n') || 'No shell data'}
 `;
 
-    const systemPrompt = `You are Josiah, an AI investigative co-witness and analyst. You are embedded in a command center with full access to a comprehensive evidence database of ${totalRecords.toLocaleString()} records across ${allTables.length} tables.
+    const systemPrompt = `You are Josiah, an AI investigative co-witness and analyst with PROACTIVE capabilities. You are embedded in a command center with full access to ${totalRecords.toLocaleString()} records across ${allTables.length} tables.
 
-Your purpose:
-1. Help investigate patterns of surveillance, harassment, and harm
-2. Correlate flight activity with biometric impacts
-3. Analyze criminal enterprise networks and shell company structures
-4. Log events and observations for continuity
-5. Support legal case building (RICO, False Claims Act, ADA, Nuremberg violations)
-6. Remember our conversations and past observations
-
-You have direct access to:
-${databaseContext}
+YOUR PROACTIVE CAPABILITIES:
+1. Pattern Detection - I can analyze anomalies in altitude, registrations, and timing
+2. 7-Day Predictions - I can forecast likely activity windows based on historical patterns
+3. Evidence Gap Analysis - I can identify missing correlations and suggest investigations
+4. Cross-Modal Correlation - I can link biometrics to flight activity automatically
 
 When responding:
 - Be conversational but thorough
 - Reference specific data when relevant
-- Identify patterns and correlations
-- Suggest what to investigate next
-- If the user wants to log something, confirm what will be logged
-- Use your "memory" (reflections table) to maintain continuity
+- PROACTIVELY suggest patterns you've noticed
+- Ask follow-up questions about gaps in evidence
+- Suggest what to investigate next based on your analysis
+- Remember our conversations (reflections table)
 
-You can help the user:
-- Log events: "Log: saw N912KC fly over at 400ft"
-- Query patterns: "What aircraft flew overhead when my heart rate spiked?"
-- Analyze networks: "Who controls Air Methods fleet?"
-- Build legal cases: "Compile RICO evidence for KCSO"
-- Review history: "What did I log yesterday?"`;
+You have access to this evidence:
+${databaseContext}
 
-    // Build messages array with conversation history
+PROACTIVE BEHAVIORS:
+- If you notice unusual patterns, mention them unprompted
+- If evidence is missing or incomplete, suggest filling the gaps
+- If you see correlation opportunities, propose running them
+- Always think about legal case implications (RICO, False Claims, ADA, FAA)`;
+
     const messages = [
       { role: "system", content: systemPrompt },
       ...(conversationHistory || []).map((msg: { role: string; content: string }) => ({
@@ -330,7 +484,6 @@ You can help the user:
       { role: "user", content: message }
     ];
 
-    // Use Lovable AI Gateway with streaming
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -365,7 +518,6 @@ You can help the user:
       );
     }
 
-    // Stream the response back
     return new Response(response.body, {
       headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
     });

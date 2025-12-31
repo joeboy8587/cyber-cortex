@@ -80,15 +80,15 @@ export function MilitaryGovBehavioralAlignment() {
 
       if (error) {
         console.error('Fetch error:', error);
-        setInitialized(false);
+        // Try fallback query from existing flight data
+        await fetchFallbackAlignments();
         return;
       }
 
       const result = data?.data;
       if (!result || result.notInitialized) {
-        setInitialized(false);
-        setAlignments([]);
-        setSummary(null);
+        // Try fallback query from existing flight data
+        await fetchFallbackAlignments();
       } else {
         setInitialized(true);
         setAlignments(result.alignments || []);
@@ -96,12 +96,143 @@ export function MilitaryGovBehavioralAlignment() {
       }
     } catch (err) {
       console.error('Error fetching military/gov alignments:', err);
-      setInitialized(false);
-      toast.error('Failed to fetch military/government alignment data');
+      await fetchFallbackAlignments();
     } finally {
       setLoading(false);
     }
   }, []);
+
+  // Generate alignment data on-the-fly from existing flight records
+  const fetchFallbackAlignments = async () => {
+    try {
+      const { data, error } = await supabase.functions.invoke('neon-query', {
+        body: {
+          action: 'customQuery',
+          query: `
+            WITH military_gov_patterns AS (
+              SELECT 
+                CASE 
+                  WHEN callsign ~ '^(REACH|PAT|RCH|EVAC)' THEN 'Military Transport'
+                  WHEN callsign ~ '^(PHI|CAL|CARE|AIR1|LIFE)' THEN 'MEDEVAC Extension'
+                  WHEN callsign ~ '^(N[0-9]+HP|CHP)' THEN 'CHP/State Agency'
+                  WHEN registration ~ '^N[789][0-9]{2}(FA|KC)' THEN 'KCSO/Shell Network'
+                  WHEN taxonomy_tag = 'xxb_military' THEN 'Military Contract'
+                  ELSE 'Unclassified'
+                END as entity_name,
+                CASE 
+                  WHEN callsign ~ '^(REACH|PAT|RCH)' THEN 'MILITARY_CONTRACT'
+                  WHEN callsign ~ '^(PHI|CAL|CARE|AIR1|LIFE|EVAC)' THEN 'MEDEVAC_EXTENSION'
+                  WHEN callsign ~ '^(N[0-9]+HP|CHP)' THEN 'GOV_AGENCY'
+                  WHEN registration ~ '^N[789][0-9]{2}(FA|KC)' THEN 'TIER_WATCH_MILITARY_CONTRACT'
+                  ELSE 'MONITORING'
+                END as classification,
+                registration as aircraft_tail,
+                MAX(callsign) as contract_operator,
+                COUNT(*) as detection_count,
+                AVG(altitude) as avg_altitude_ft,
+                SUM(CASE WHEN altitude < 1500 AND altitude > 0 THEN 1 ELSE 0 END)::float / NULLIF(COUNT(*), 0) * 100 as low_altitude_pct,
+                SUM(CASE WHEN speed < 80 THEN 1 ELSE 0 END) as loiter_count,
+                MIN(detection_timestamp) as first_detection,
+                MAX(detection_timestamp) as last_detection
+              FROM live_flight_detections_rows
+              WHERE (
+                callsign ~ '^(REACH|PAT|RCH|EVAC|PHI|CAL|CARE|AIR1|LIFE|CHP|N[0-9]+HP)' OR
+                registration ~ '^N[789][0-9]{2}(FA|KC|AM)' OR
+                taxonomy_tag IN ('xxb_military', 'xxb_tier1_priority', 'xxb_kcso')
+              )
+              AND registration IS NOT NULL AND registration != ''
+              GROUP BY 1, 2, registration
+              HAVING COUNT(*) >= 5
+            )
+            SELECT 
+              ROW_NUMBER() OVER (ORDER BY detection_count DESC) as id,
+              entity_name,
+              'MILITARY_GOV' as entity_type,
+              classification,
+              aircraft_tail,
+              LEAST(100, (detection_count::float / 100 * 20) + (COALESCE(low_altitude_pct, 0) * 0.5) + (loiter_count::float / 10 * 10)) as match_score_to_kcso,
+              CASE 
+                WHEN low_altitude_pct > 50 THEN 'CRITICAL_LOW_ALT'
+                WHEN loiter_count > 20 THEN 'LOITER_MIMIC'
+                ELSE 'SURVEILLANCE_PATTERN'
+              END as behavior_type,
+              false as spoofed_transponder,
+              contract_operator,
+              loiter_count,
+              LEAST(100, loiter_count::float / 5 * 10) as biometric_link_score,
+              CASE 
+                WHEN low_altitude_pct > 50 OR detection_count > 500 THEN 'Tier 1 Watch'
+                WHEN low_altitude_pct > 30 OR detection_count > 200 THEN 'Tier 2 Suspect'
+                ELSE 'Tier 3 Monitoring'
+              END as risk_tier,
+              avg_altitude_ft,
+              detection_count,
+              low_altitude_pct,
+              'N912KC/N913KC' as reference_aircraft,
+              CASE 
+                WHEN classification = 'TIER_WATCH_MILITARY_CONTRACT' THEN 'HIGH - SHELL COMPANY LINKAGE'
+                WHEN classification = 'MEDEVAC_EXTENSION' THEN 'MEDIUM - DUAL USE INVESTIGATION'
+                ELSE 'MONITORING'
+              END as legal_exposure,
+              CASE 
+                WHEN low_altitude_pct > 50 THEN 'HIGH'
+                WHEN detection_count > 300 THEN 'MEDIUM'
+                ELSE 'LOW'
+              END as prosecution_priority,
+              first_detection,
+              last_detection,
+              'Auto-generated from flight pattern analysis' as intel_notes,
+              false as vertical_stack_detected,
+              NULL as paired_high_alt_asset
+            FROM military_gov_patterns
+            ORDER BY detection_count DESC
+            LIMIT 50
+          `
+        }
+      });
+
+      if (error) {
+        console.error('Fallback query error:', error);
+        setInitialized(false);
+        return;
+      }
+
+      const alignmentData = data?.data || [];
+      if (alignmentData.length > 0) {
+        setInitialized(true);
+        setAlignments(alignmentData);
+        
+        // Calculate summary
+        const tier1Count = alignmentData.filter((a: any) => a.risk_tier?.includes('Tier 1')).length;
+        const tier2Count = alignmentData.filter((a: any) => a.risk_tier?.includes('Tier 2')).length;
+        const highMatchCount = alignmentData.filter((a: any) => parseFloat(a.match_score_to_kcso) >= 85).length;
+        const medevacCount = alignmentData.filter((a: any) => a.classification === 'MEDEVAC_EXTENSION').length;
+        const militaryCount = alignmentData.filter((a: any) => 
+          a.classification === 'MILITARY_CONTRACT' || a.classification === 'TIER_WATCH_MILITARY_CONTRACT'
+        ).length;
+        const govCount = alignmentData.filter((a: any) => a.classification === 'GOV_AGENCY').length;
+        
+        setSummary({
+          totalRecords: alignmentData.length,
+          tier1Watch: tier1Count,
+          tier2Suspect: tier2Count,
+          highMatchAlerts: highMatchCount,
+          verticalStackEvents: 0,
+          spoofedTransponders: 0,
+          medevacExtensions: medevacCount,
+          militaryContracts: militaryCount,
+          govAgencies: govCount,
+          uniqueEntities: [...new Set(alignmentData.map((a: any) => a.entity_name))].length,
+          uniqueAircraft: [...new Set(alignmentData.map((a: any) => a.aircraft_tail))].length
+        });
+      } else {
+        setInitialized(false);
+      }
+    } catch (err) {
+      console.error('Fallback alignments error:', err);
+      setInitialized(false);
+    }
+  };
 
   const initializeSchema = async () => {
     setLoading(true);

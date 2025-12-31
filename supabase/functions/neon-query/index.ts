@@ -1162,6 +1162,264 @@ serve(async (req) => {
         break;
       }
 
+      // ============== FLIGHT SATURATION ANALYSIS ==============
+      case 'analyzeSaturation': {
+        const { analysisType } = body;
+        
+        try {
+          switch (analysisType) {
+            case 'daily': {
+              // Get daily flight counts for the last 60 days
+              const dailyData = await sql`
+                SELECT 
+                  DATE(COALESCE(detection_timestamp, created_at)) as date,
+                  COUNT(*) as flight_count,
+                  COUNT(DISTINCT COALESCE(registration, hex)) as unique_aircraft,
+                  COUNT(*) FILTER (WHERE altitude::numeric < 1000) as low_altitude_count,
+                  COUNT(*) FILTER (WHERE flagged = true) as flagged_count,
+                  COALESCE(AVG(altitude::numeric), 0) as avg_altitude
+                FROM live_flight_detections_rows
+                WHERE COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '60 days'
+                GROUP BY DATE(COALESCE(detection_timestamp, created_at))
+                ORDER BY date DESC
+              `;
+              result = { data: dailyData };
+              break;
+            }
+            
+            case 'anomalies': {
+              // Detect anomalies - days with flight counts significantly above baseline
+              const anomalies = await sql`
+                WITH daily_counts AS (
+                  SELECT 
+                    DATE(COALESCE(detection_timestamp, created_at)) as date,
+                    COUNT(*) as flight_count
+                  FROM live_flight_detections_rows
+                  WHERE COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '90 days'
+                  GROUP BY DATE(COALESCE(detection_timestamp, created_at))
+                ),
+                baseline AS (
+                  SELECT 
+                    AVG(flight_count) as avg_count,
+                    STDDEV(flight_count) as stddev_count
+                  FROM daily_counts
+                ),
+                anomaly_days AS (
+                  SELECT 
+                    d.date,
+                    d.flight_count,
+                    b.avg_count as baseline_avg,
+                    CASE WHEN b.avg_count > 0 THEN d.flight_count::float / b.avg_count ELSE 0 END as multiplier
+                  FROM daily_counts d, baseline b
+                  WHERE d.flight_count > (b.avg_count + 2 * COALESCE(b.stddev_count, 0))
+                  ORDER BY multiplier DESC
+                  LIMIT 10
+                )
+                SELECT * FROM anomaly_days
+              `;
+              
+              // Get top aircraft for each anomaly day
+              const enrichedAnomalies = [];
+              for (const anomaly of anomalies) {
+                const topAircraft = await sql`
+                  SELECT 
+                    COALESCE(registration, hex) as registration,
+                    COUNT(*) as count
+                  FROM live_flight_detections_rows
+                  WHERE DATE(COALESCE(detection_timestamp, created_at)) = ${anomaly.date}
+                  GROUP BY COALESCE(registration, hex)
+                  ORDER BY COUNT(*) DESC
+                  LIMIT 5
+                `;
+                enrichedAnomalies.push({
+                  ...anomaly,
+                  top_aircraft: topAircraft
+                });
+              }
+              
+              result = { anomalies: enrichedAnomalies };
+              break;
+            }
+            
+            case 'predict': {
+              // Predict next saturation event based on historical patterns
+              const patterns = await sql`
+                WITH daily_counts AS (
+                  SELECT 
+                    DATE(COALESCE(detection_timestamp, created_at)) as date,
+                    EXTRACT(DOW FROM COALESCE(detection_timestamp, created_at)) as day_of_week,
+                    COUNT(*) as flight_count
+                  FROM live_flight_detections_rows
+                  WHERE COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '90 days'
+                  GROUP BY DATE(COALESCE(detection_timestamp, created_at)), EXTRACT(DOW FROM COALESCE(detection_timestamp, created_at))
+                ),
+                dow_patterns AS (
+                  SELECT 
+                    day_of_week,
+                    AVG(flight_count) as avg_count,
+                    MAX(flight_count) as max_count,
+                    COUNT(*) as sample_size
+                  FROM daily_counts
+                  GROUP BY day_of_week
+                  ORDER BY avg_count DESC
+                ),
+                high_activity_days AS (
+                  SELECT * FROM dow_patterns WHERE avg_count > (SELECT AVG(avg_count) FROM dow_patterns)
+                )
+                SELECT 
+                  day_of_week,
+                  avg_count,
+                  max_count,
+                  sample_size,
+                  CASE day_of_week
+                    WHEN 0 THEN 'Sunday'
+                    WHEN 1 THEN 'Monday'
+                    WHEN 2 THEN 'Tuesday'
+                    WHEN 3 THEN 'Wednesday'
+                    WHEN 4 THEN 'Thursday'
+                    WHEN 5 THEN 'Friday'
+                    WHEN 6 THEN 'Saturday'
+                  END as day_name
+                FROM high_activity_days
+              `;
+              
+              // Find next occurrence of high activity day
+              const predictions = [];
+              const today = new Date();
+              for (const pattern of patterns.slice(0, 3)) {
+                const daysUntil = (parseInt(pattern.day_of_week) - today.getDay() + 7) % 7 || 7;
+                const predictedDate = new Date(today);
+                predictedDate.setDate(today.getDate() + daysUntil);
+                
+                predictions.push({
+                  predicted_date: predictedDate.toISOString().split('T')[0],
+                  probability: Math.min(0.9, pattern.avg_count / pattern.max_count + 0.2),
+                  factors: [
+                    `${pattern.day_name} shows ${pattern.avg_count.toFixed(0)} avg flights`,
+                    `Historical max: ${pattern.max_count} flights`,
+                    `Based on ${pattern.sample_size} weeks of data`
+                  ],
+                  historical_pattern: `${pattern.day_name}s average ${pattern.avg_count.toFixed(0)} flights`
+                });
+              }
+              
+              result = { predictions };
+              break;
+            }
+            
+            case 'quality': {
+              // Find data quality issues
+              const nullSpeed = await sql`
+                SELECT COUNT(*) as count 
+                FROM live_flight_detections_rows 
+                WHERE speed IS NULL OR speed = ''
+              `;
+              
+              const istrationRegs = await sql`
+                SELECT 
+                  registration,
+                  COUNT(*) as count,
+                  MIN(COALESCE(detection_timestamp, created_at))::text as first_seen,
+                  MAX(COALESCE(detection_timestamp, created_at))::text as last_seen
+                FROM live_flight_detections_rows
+                WHERE registration ILIKE '%ISTRATION%' 
+                   OR registration = 'ISTRATION'
+                   OR LENGTH(registration) < 3
+                GROUP BY registration
+                ORDER BY count DESC
+              `;
+              
+              const nullAltitude = await sql`
+                SELECT COUNT(*) as count 
+                FROM live_flight_detections_rows 
+                WHERE altitude IS NULL OR altitude = ''
+              `;
+              
+              const issues = [
+                {
+                  issue_type: 'Null Speed Values',
+                  count: parseInt(nullSpeed[0]?.count || '0'),
+                  examples: [],
+                  recommendation: 'Speed data is critical for detecting loitering patterns. Consider enriching from ADS-B sources.'
+                },
+                {
+                  issue_type: 'Null/Invalid Altitude',
+                  count: parseInt(nullAltitude[0]?.count || '0'),
+                  examples: [],
+                  recommendation: 'Altitude data needed for low-altitude surveillance detection.'
+                },
+                {
+                  issue_type: 'Corrupted Registrations',
+                  count: istrationRegs.reduce((sum: number, r: any) => sum + parseInt(r.count), 0),
+                  examples: istrationRegs.slice(0, 5).map((r: any) => r.registration),
+                  recommendation: 'Cross-reference with aircraft_registry_enriched to resolve corrupted registrations.'
+                }
+              ];
+              
+              result = { 
+                issues: issues.filter(i => i.count > 0), 
+                corrupted: istrationRegs 
+              };
+              break;
+            }
+            
+            case 'dec27': {
+              // Deep dive on December 27th
+              const dec27Stats = await sql`
+                SELECT 
+                  COUNT(*) as total_flights,
+                  COUNT(DISTINCT COALESCE(registration, hex)) as unique_aircraft,
+                  COUNT(*) FILTER (WHERE altitude::numeric < 1000) as low_altitude_count,
+                  COUNT(*) FILTER (WHERE flagged = true) as flagged_count,
+                  AVG(altitude::numeric) as avg_altitude
+                FROM live_flight_detections_rows
+                WHERE DATE(COALESCE(detection_timestamp, created_at)) = '2024-12-27'
+              `;
+              
+              const topAircraft = await sql`
+                SELECT 
+                  COALESCE(registration, hex) as registration,
+                  COUNT(*) as count,
+                  bool_or(flagged) as flagged,
+                  AVG(altitude::numeric) as avg_altitude,
+                  MIN(COALESCE(detection_timestamp, created_at)) as first_detection,
+                  MAX(COALESCE(detection_timestamp, created_at)) as last_detection
+                FROM live_flight_detections_rows
+                WHERE DATE(COALESCE(detection_timestamp, created_at)) = '2024-12-27'
+                GROUP BY COALESCE(registration, hex)
+                ORDER BY COUNT(*) DESC
+                LIMIT 20
+              `;
+              
+              // Check for biometric correlations
+              const biometricCorr = await sql`
+                SELECT COUNT(*) as count
+                FROM biometric_monitoring
+                WHERE DATE(created_at) = '2024-12-27'
+              `;
+              
+              result = {
+                totalFlights: parseInt(dec27Stats[0]?.total_flights || '0'),
+                uniqueAircraft: parseInt(dec27Stats[0]?.unique_aircraft || '0'),
+                lowAltitudeCount: parseInt(dec27Stats[0]?.low_altitude_count || '0'),
+                flaggedCount: parseInt(dec27Stats[0]?.flagged_count || '0'),
+                avgAltitude: parseFloat(dec27Stats[0]?.avg_altitude || '0'),
+                topAircraft,
+                biometricCorrelations: parseInt(biometricCorr[0]?.count || '0')
+              };
+              break;
+            }
+            
+            default:
+              result = { error: 'Unknown analysisType' };
+          }
+        } catch (e) {
+          console.error('analyzeSaturation error:', e);
+          result = { error: e instanceof Error ? e.message : 'Analysis failed' };
+        }
+        break;
+      }
+
       default:
         throw new Error(`Unknown action: ${action}`);
     }

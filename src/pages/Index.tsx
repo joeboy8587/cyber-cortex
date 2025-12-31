@@ -68,6 +68,7 @@ import { MasterEvidenceHub } from "@/components/dashboard/MasterEvidenceHub";
 import { LegalEvidenceDashboard } from "@/components/dashboard/LegalEvidenceDashboard";
 import { FlightDataScraper } from "@/components/dashboard/FlightDataScraper";
 import { EvidenceUploader } from "@/components/dashboard/EvidenceUploader";
+import { FlightSaturationAnalyzer } from "@/components/dashboard/FlightSaturationAnalyzer";
 
 const Index = () => {
   return (
@@ -146,6 +147,7 @@ const Index = () => {
           </section>
           
           <section id="pattern-analysis" className="space-y-6">
+            <FlightSaturationAnalyzer />
             <DeepPatternAnalyzer />
             <PatternCoordinationAnalysis />
           </section>

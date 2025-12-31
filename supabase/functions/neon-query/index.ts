@@ -1,13 +1,26 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
 
-const VERSION = "2.4.0";
+const VERSION = "2.5.0";
 console.log(`neon-query v${VERSION} booting...`);
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
+
+// Critical: Top-level error handler to ensure CORS is always returned
+function safeErrorResponse(error: unknown, status = 500): Response {
+  console.error('Safe error response:', error);
+  return new Response(
+    JSON.stringify({ 
+      error: error instanceof Error ? error.message : 'Unknown error',
+      version: VERSION 
+    }),
+    { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+  );
+}
 
 // Helper to create connection with robust retry logic
 async function createConnection(databaseUrl: string, attempt = 1): Promise<ReturnType<typeof postgres>> {
@@ -76,38 +89,40 @@ async function executeWithRetry<T>(
 }
 
 serve(async (req) => {
-  console.log(`neon-query v${VERSION} handling request`);
-  
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
-
-  const databaseUrl = Deno.env.get('NEON_DATABASE_URL');
-  
-  if (!databaseUrl) {
-    console.error('NEON_DATABASE_URL is not configured');
-    return new Response(
-      JSON.stringify({ error: 'Database connection not configured' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
-  }
-
-  let sql: ReturnType<typeof postgres> | null = null;
-  
+  // Outer try-catch to ALWAYS return CORS headers, even on catastrophic failures
   try {
-    let body: Record<string, any> = {};
-    try {
-      const text = await req.text();
-      if (text && text.trim()) {
-        body = JSON.parse(text);
-      }
-    } catch (parseError) {
-      console.error('JSON parse error:', parseError);
+    console.log(`neon-query v${VERSION} handling request: ${req.method}`);
+    
+    if (req.method === 'OPTIONS') {
+      return new Response(null, { headers: corsHeaders });
+    }
+
+    const databaseUrl = Deno.env.get('NEON_DATABASE_URL');
+    
+    if (!databaseUrl) {
+      console.error('NEON_DATABASE_URL is not configured');
       return new Response(
-        JSON.stringify({ error: 'Invalid JSON in request body' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        JSON.stringify({ error: 'Database connection not configured' }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+
+    let sql: ReturnType<typeof postgres> | null = null;
+    
+    try {
+      let body: Record<string, any> = {};
+      try {
+        const text = await req.text();
+        if (text && text.trim()) {
+          body = JSON.parse(text);
+        }
+      } catch (parseError) {
+        console.error('JSON parse error:', parseError);
+        return new Response(
+          JSON.stringify({ error: 'Invalid JSON in request body' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
     
     const { action, table, limit = 100, offset = 0, query, data, where } = body;
 
@@ -880,14 +895,18 @@ serve(async (req) => {
       JSON.stringify(result),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
-  } catch (error) {
-    console.error('Neon query error:', error);
-    if (sql) {
-      try { await sql.end(); } catch {}
+    } catch (error) {
+      console.error('Neon query error:', error);
+      if (sql) {
+        try { await sql.end(); } catch {}
+      }
+      return new Response(
+        JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+  } catch (outerError) {
+    // Catastrophic error handler - always returns CORS headers
+    return safeErrorResponse(outerError);
   }
 });

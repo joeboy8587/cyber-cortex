@@ -35,10 +35,20 @@ export const KCSOSurveillanceReport = () => {
   const fetchKCSOData = useCallback(async () => {
     setLoading(true);
     try {
-      // Get KCSO aircraft detections
-      const registrationFilter = selectedAircraft === 'all' 
-        ? "registration LIKE 'N91%KC'" 
-        : `registration = '${selectedAircraft}'`;
+      // Build broader filter for KCSO aircraft
+      let registrationFilter: string;
+      if (selectedAircraft === 'all') {
+        registrationFilter = `(
+          registration IN ('N912KC', 'N913KC')
+          OR registration LIKE 'N91%KC'
+          OR registration LIKE 'N%KC'
+          OR taxonomy_tag IN ('xxb_kcso', 'xxb_tier1_priority')
+          OR callsign ILIKE '%KCSO%'
+          OR callsign ILIKE '%KERN%'
+        )`;
+      } else {
+        registrationFilter = `registration = '${selectedAircraft}'`;
+      }
 
       const { data: flightData, error: flightError } = await supabase.functions.invoke('neon-query', {
         body: {
@@ -51,6 +61,7 @@ export const KCSOSurveillanceReport = () => {
               callsign as operator
             FROM live_flight_detections_rows
             WHERE ${registrationFilter}
+            AND registration IS NOT NULL
             ORDER BY detection_timestamp DESC
             LIMIT 100
           `
@@ -68,11 +79,12 @@ export const KCSOSurveillanceReport = () => {
               COUNT(*) as total_detections,
               COUNT(DISTINCT DATE(detection_timestamp)) as unique_dates,
               ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as avg_altitude,
-              MIN(COALESCE(altitude, 9999)) as min_altitude,
+              MIN(CASE WHEN altitude > 0 THEN altitude ELSE NULL END) as min_altitude,
               MIN(detection_timestamp) as first_detection,
               MAX(detection_timestamp) as last_detection
             FROM live_flight_detections_rows
             WHERE ${registrationFilter}
+            AND registration IS NOT NULL
           `
         }
       });

@@ -48,22 +48,30 @@ export default function GenevaConventionAnalysis() {
             SELECT 
               registration,
               COUNT(*) as total_detections,
-              ROUND(AVG(altitude)::numeric, 0) as avg_altitude,
-              MIN(altitude) as min_altitude,
+              ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as avg_altitude,
+              MIN(CASE WHEN altitude > 0 THEN altitude ELSE NULL END) as min_altitude,
               SUM(CASE WHEN flagged = true THEN 1 ELSE 0 END) as flagged_count,
-              ROUND((SUM(CASE WHEN flagged = true THEN 1 ELSE 0 END)::numeric / COUNT(*)::numeric * 100), 1) as flag_rate,
-              ROUND(AVG(threat_score)::numeric, 1) as threat_score
-            FROM live_flight_detections
-            WHERE LOWER(registration) LIKE '%ht%' 
-               OR LOWER(registration) LIKE '%ff%'
-               OR LOWER(registration) LIKE '%hp%'
-               OR LOWER(registration) LIKE 'n916%'
-               OR LOWER(registration) LIKE 'n74%'
-               OR LOWER(registration) LIKE 'n156%'
+              ROUND((SUM(CASE WHEN flagged = true THEN 1 ELSE 0 END)::numeric / NULLIF(COUNT(*), 0)::numeric * 100), 1) as flag_rate,
+              ROUND(AVG(COALESCE(threat_score, 0))::numeric, 1) as threat_score
+            FROM live_flight_detections_rows
+            WHERE (
+              registration ILIKE '%HT%' 
+              OR registration ILIKE '%FF%'
+              OR registration ILIKE '%HP%'
+              OR registration ILIKE 'N916%'
+              OR registration ILIKE 'N74%'
+              OR registration ILIKE 'N156%'
+              OR callsign ILIKE '%MED%'
+              OR callsign ILIKE '%LIFE%'
+              OR callsign ILIKE '%PHI%'
+              OR callsign ILIKE '%MERCY%'
+              OR taxonomy_tag = 'xxb_medical_air'
+            )
+            AND registration IS NOT NULL
             GROUP BY registration
-            HAVING COUNT(*) > 5
+            HAVING COUNT(*) > 2
             ORDER BY COUNT(*) DESC
-            LIMIT 10
+            LIMIT 20
           `
         }
       });
@@ -88,8 +96,8 @@ export default function GenevaConventionAnalysis() {
               END as altitude_band,
               COUNT(*) as detection_count,
               COUNT(DISTINCT registration) as unique_aircraft
-            FROM live_flight_detections
-            WHERE altitude < 2000
+            FROM live_flight_detections_rows
+            WHERE altitude > 0 AND altitude < 2000
             GROUP BY 
               CASE 
                 WHEN altitude < 500 THEN 'Below 500ft (Extremely Low)'
@@ -124,12 +132,12 @@ export default function GenevaConventionAnalysis() {
                 ELSE 'ELEVATED'
               END as severity
             FROM biometric_monitoring b
-            JOIN live_flight_detections f 
+            LEFT JOIN live_flight_detections_rows f 
               ON DATE(b.measurement_timestamp) = DATE(f.detection_timestamp)
-              AND f.altitude < 2000
-            WHERE b.related_surveillance = true
-              AND b.heart_rate > 90
+              AND f.altitude < 2000 AND f.altitude > 0
+            WHERE b.heart_rate > 90
             GROUP BY DATE(b.measurement_timestamp)
+            HAVING COUNT(DISTINCT f.registration) > 0
             ORDER BY MAX(b.heart_rate) DESC
             LIMIT 20
           `

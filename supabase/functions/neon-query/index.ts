@@ -832,8 +832,8 @@ serve(async (req) => {
                 COUNT(*) as detection_count,
                 ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as avg_altitude_ft,
                 ROUND(
-                  (SUM(CASE WHEN altitude < 1500 AND altitude > 0 THEN 1 ELSE 0 END)::float / NULLIF(COUNT(*), 0)) * 100
-                ::numeric, 1) as low_altitude_pct,
+                  ((SUM(CASE WHEN altitude < 1500 AND altitude > 0 THEN 1 ELSE 0 END)::numeric / NULLIF(COUNT(*), 0)) * 100)
+                , 1) as low_altitude_pct,
                 SUM(CASE WHEN COALESCE(speed, 0) < 80 THEN 1 ELSE 0 END) as loiter_count,
                 MIN(COALESCE(detection_timestamp, created_at)) as first_detection,
                 MAX(COALESCE(detection_timestamp, created_at)) as last_detection
@@ -969,8 +969,8 @@ serve(async (req) => {
                 COUNT(*) as detection_count,
                 ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as avg_altitude_ft,
                 ROUND(
-                  (SUM(CASE WHEN altitude < 1500 AND altitude > 0 THEN 1 ELSE 0 END)::float / NULLIF(COUNT(*), 0)) * 100
-                ::numeric, 1) as low_altitude_pct,
+                  ((SUM(CASE WHEN altitude < 1500 AND altitude > 0 THEN 1 ELSE 0 END)::numeric / NULLIF(COUNT(*), 0)) * 100)
+                , 1) as low_altitude_pct,
                 SUM(CASE WHEN COALESCE(speed, 0) < 80 THEN 1 ELSE 0 END) as loiter_count,
                 BOOL_OR(
                   callsign ILIKE '%MED%'

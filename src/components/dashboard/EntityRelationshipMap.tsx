@@ -58,7 +58,7 @@ export const EntityRelationshipMap = () => {
         }
       });
       
-      const rows = entitiesData?.rows || [];
+      const rows = entitiesData || [];
       
       // Parse entities
       const parsedEntities: Entity[] = rows.map((r: any) => ({

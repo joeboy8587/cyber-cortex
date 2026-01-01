@@ -35,13 +35,13 @@ export const PlainLanguageSummary = () => {
             SELECT 
               COUNT(*) as total,
               COUNT(DISTINCT registration) as unique_aircraft,
-              COUNT(DISTINCT DATE(detected_at)) as days
-            FROM live_flight_detections
+              COUNT(DISTINCT DATE(detection_timestamp)) as days
+            FROM live_flight_detections_rows
           `
         }
       });
       
-      const flights = flightData?.rows?.[0];
+      const flights = flightData?.[0];
       if (flights && parseInt(flights.total) > 0) {
         newSummaries.push({
           icon: <Plane className="h-5 w-5 text-blue-400" />,
@@ -66,7 +66,7 @@ export const PlainLanguageSummary = () => {
         }
       });
       
-      const bio = bioData?.rows?.[0];
+      const bio = bioData?.[0];
       if (bio && parseInt(bio.total) > 0) {
         newSummaries.push({
           icon: <Heart className="h-5 w-5 text-red-400" />,
@@ -83,15 +83,15 @@ export const PlainLanguageSummary = () => {
           query: `
             SELECT 
               COUNT(*) as total,
-              COUNT(CASE WHEN EXTRACT(HOUR FROM detected_at) >= 19 OR EXTRACT(HOUR FROM detected_at) < 6 THEN 1 END) as night,
+              COUNT(CASE WHEN EXTRACT(HOUR FROM detection_timestamp) >= 19 OR EXTRACT(HOUR FROM detection_timestamp) < 6 THEN 1 END) as night,
               AVG(altitude) as avg_alt
-            FROM live_flight_detections 
+            FROM live_flight_detections_rows 
             WHERE registration IN ('N912KC', 'N913KC', 'N597E', 'N197E', 'N397E', 'N497E', 'N97E', 'N35438', 'N490KC')
           `
         }
       });
       
-      const kcso = kcsoData?.rows?.[0];
+      const kcso = kcsoData?.[0];
       if (kcso && parseInt(kcso.total) > 0) {
         const nightPct = ((parseInt(kcso.night) / parseInt(kcso.total)) * 100).toFixed(0);
         newSummaries.push({
@@ -110,13 +110,13 @@ export const PlainLanguageSummary = () => {
             SELECT 
               COUNT(*) as total,
               AVG(altitude) as avg_alt
-            FROM live_flight_detections 
+            FROM live_flight_detections_rows 
             WHERE registration = 'XXB' OR callsign = 'XXB'
           `
         }
       });
       
-      const xxb = xxbData?.rows?.[0];
+      const xxb = xxbData?.[0];
       if (xxb && parseInt(xxb.total) > 100000) {
         newSummaries.push({
           icon: <AlertTriangle className="h-5 w-5 text-orange-400" />,

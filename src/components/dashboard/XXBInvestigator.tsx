@@ -43,16 +43,16 @@ export const XXBInvestigator = () => {
             SELECT 
               COUNT(*) as total,
               AVG(altitude) as avg_alt,
-              COUNT(DISTINCT DATE(detected_at)) as active_days,
-              SUM(CASE WHEN EXTRACT(HOUR FROM detected_at) >= 19 OR EXTRACT(HOUR FROM detected_at) < 6 THEN 1 ELSE 0 END) as night_ops,
-              SUM(CASE WHEN EXTRACT(HOUR FROM detected_at) >= 6 AND EXTRACT(HOUR FROM detected_at) < 19 THEN 1 ELSE 0 END) as day_ops
-            FROM live_flight_detections 
+              COUNT(DISTINCT DATE(detection_timestamp)) as active_days,
+              SUM(CASE WHEN EXTRACT(HOUR FROM detection_timestamp) >= 19 OR EXTRACT(HOUR FROM detection_timestamp) < 6 THEN 1 ELSE 0 END) as night_ops,
+              SUM(CASE WHEN EXTRACT(HOUR FROM detection_timestamp) >= 6 AND EXTRACT(HOUR FROM detection_timestamp) < 19 THEN 1 ELSE 0 END) as day_ops
+            FROM live_flight_detections_rows 
             WHERE registration = 'XXB' OR callsign = 'XXB'
           `
         }
       });
       
-      const row = statsData?.rows?.[0];
+      const row = statsData?.[0];
       if (row && parseInt(row.total) > 0) {
         setHasData(true);
         
@@ -62,17 +62,17 @@ export const XXBInvestigator = () => {
             action: 'customQuery',
             query: `
               SELECT 
-                EXTRACT(HOUR FROM detected_at) as hour,
+                EXTRACT(HOUR FROM detection_timestamp) as hour,
                 COUNT(*) as count
-              FROM live_flight_detections 
+              FROM live_flight_detections_rows 
               WHERE registration = 'XXB' OR callsign = 'XXB'
-              GROUP BY EXTRACT(HOUR FROM detected_at)
+              GROUP BY EXTRACT(HOUR FROM detection_timestamp)
               ORDER BY hour
             `
           }
         });
         
-        const hourlyRows = hourlyData?.rows || [];
+        const hourlyRows = hourlyData || [];
         const pattern: HourlyPattern[] = Array.from({ length: 24 }, (_, i) => ({
           hour: i,
           count: 0,

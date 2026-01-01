@@ -72,6 +72,7 @@ import { FlightDataScraper } from "@/components/dashboard/FlightDataScraper";
 import { EvidenceUploader } from "@/components/dashboard/EvidenceUploader";
 import { FlightSaturationAnalyzer } from "@/components/dashboard/FlightSaturationAnalyzer";
 import { FireclawExtractionPanel } from "@/components/dashboard/FireclawExtractionPanel";
+import { FirecrawlTacticsModule } from "@/components/dashboard/FirecrawlTacticsModule";
 import { TruthScannerDashboard } from "@/components/dashboard/TruthScannerDashboard";
 import { PlainLanguageSummary } from "@/components/dashboard/PlainLanguageSummary";
 import { XXBInvestigator } from "@/components/dashboard/XXBInvestigator";
@@ -143,6 +144,7 @@ const Index = () => {
           </section>
           
           <section id="evidence-upload" className="space-y-6">
+            <FirecrawlTacticsModule />
             <FireclawExtractionPanel />
             <EvidenceUploader />
           </section>

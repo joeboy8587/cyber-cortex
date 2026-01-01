@@ -1547,6 +1547,99 @@ serve(async (req) => {
         break;
       }
 
+      // ============== KCSO BUDGET DATA ==============
+      case 'getKCSOBudgetData': {
+        console.log('Fetching KCSO budget history...');
+        
+        // First check if table exists
+        const tableExists = await sql`
+          SELECT EXISTS (
+            SELECT FROM information_schema.tables 
+            WHERE table_name = 'kcso_aircraft_budget_history'
+          ) as exists
+        `;
+        
+        if (!tableExists[0]?.exists) {
+          result = { data: [], message: 'Table does not exist yet' };
+          break;
+        }
+        
+        result = await sql`
+          SELECT * FROM kcso_aircraft_budget_history
+          ORDER BY year DESC, aircraft_tail_number ASC
+        `;
+        break;
+      }
+
+      case 'importKCSOBudgetData': {
+        console.log('Importing KCSO budget data...');
+        
+        if (!data || !Array.isArray(data)) {
+          throw new Error('Data array is required');
+        }
+        
+        // Create table if not exists
+        await sql`
+          CREATE TABLE IF NOT EXISTS kcso_aircraft_budget_history (
+            id SERIAL PRIMARY KEY,
+            aircraft_tail_number TEXT NOT NULL,
+            aircraft_tail_number_citation TEXT,
+            year INTEGER NOT NULL,
+            year_citation TEXT,
+            budget NUMERIC,
+            budget_citation TEXT,
+            purchases JSONB DEFAULT '[]'::jsonb,
+            spending_patterns TEXT,
+            spending_patterns_citation TEXT,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            UNIQUE(aircraft_tail_number, year)
+          )
+        `;
+        
+        // Insert data
+        let insertedCount = 0;
+        for (const record of data) {
+          try {
+            await sql`
+              INSERT INTO kcso_aircraft_budget_history (
+                aircraft_tail_number,
+                aircraft_tail_number_citation,
+                year,
+                year_citation,
+                budget,
+                budget_citation,
+                purchases,
+                spending_patterns,
+                spending_patterns_citation
+              ) VALUES (
+                ${record.aircraft_tail_number},
+                ${record.aircraft_tail_number_citation},
+                ${record.year},
+                ${record.year_citation},
+                ${record.budget},
+                ${record.budget_citation},
+                ${JSON.stringify(record.purchases)}::jsonb,
+                ${record.spending_patterns},
+                ${record.spending_patterns_citation}
+              )
+              ON CONFLICT (aircraft_tail_number, year) 
+              DO UPDATE SET
+                budget = EXCLUDED.budget,
+                budget_citation = EXCLUDED.budget_citation,
+                purchases = EXCLUDED.purchases,
+                spending_patterns = EXCLUDED.spending_patterns,
+                spending_patterns_citation = EXCLUDED.spending_patterns_citation
+            `;
+            insertedCount++;
+          } catch (insertErr) {
+            console.error('Insert error for record:', record.aircraft_tail_number, record.year, insertErr);
+          }
+        }
+        
+        result = { success: true, inserted: insertedCount, total: data.length };
+        break;
+      }
+
       default:
         throw new Error(`Unknown action: ${action}`);
     }

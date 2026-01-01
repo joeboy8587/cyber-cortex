@@ -110,6 +110,7 @@ export function HammerAnvilPatternPanel() {
       // Query Neon database for live ADS-B positions
       const { data, error } = await supabase.functions.invoke('neon-query', {
         body: {
+          action: 'customQuery',
           query: `
             SELECT 
               registration,

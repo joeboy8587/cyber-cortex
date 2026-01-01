@@ -29,6 +29,7 @@ import { FleetTrackingLedger } from "@/components/dashboard/FleetTrackingLedger"
 import { KCSOSurveillanceReport } from "@/components/dashboard/KCSOSurveillanceReport";
 import { KCSOFleetRegistry } from "@/components/dashboard/KCSOFleetRegistry";
 import { KCSOFleetCrossRef } from "@/components/dashboard/KCSOFleetCrossRef";
+import { KCSOBudgetTimeline } from "@/components/dashboard/KCSOBudgetTimeline";
 import { OCREvidencePanel } from "@/components/dashboard/OCREvidencePanel";
 import { FourFactorCorrelationEngine } from "@/components/dashboard/FourFactorCorrelationEngine";
 import { KCSODeepDiveReport } from "@/components/dashboard/KCSODeepDiveReport";
@@ -201,6 +202,7 @@ const Index = () => {
           </section>
           
           <section id="kcso-deep-dive" className="space-y-6">
+            <KCSOBudgetTimeline />
             <KCSOFleetCrossRef />
             <KCSODeepDiveReport />
           </section>

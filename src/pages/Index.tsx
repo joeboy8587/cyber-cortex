@@ -80,7 +80,10 @@ import { TruthScannerDashboard } from "@/components/dashboard/TruthScannerDashbo
 import { PlainLanguageSummary } from "@/components/dashboard/PlainLanguageSummary";
 import { XXBInvestigator } from "@/components/dashboard/XXBInvestigator";
 import { EntityRelationshipMap } from "@/components/dashboard/EntityRelationshipMap";
-
+import TROMotionGenerator from "@/components/dashboard/TROMotionGenerator";
+import FAAComplaintBuilder from "@/components/dashboard/FAAComplaintBuilder";
+import PreservationDemandSystem from "@/components/dashboard/PreservationDemandSystem";
+import DamagesCalculator from "@/components/dashboard/DamagesCalculator";
 const Index = () => {
   return (
     <div className="min-h-screen bg-background">
@@ -136,6 +139,12 @@ const Index = () => {
             <LegalIntakeStrategy />
             <LegalBriefDashboard />
             <GenevaConventionAnalysis />
+            <TROMotionGenerator />
+            <DamagesCalculator />
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+              <FAAComplaintBuilder />
+              <PreservationDemandSystem />
+            </div>
             <TROEvidenceCompiler />
             <FalseClaimsActCompiler />
             <FCACaseBuilder />

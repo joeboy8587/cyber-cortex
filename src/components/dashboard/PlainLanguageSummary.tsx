@@ -30,6 +30,7 @@ export const PlainLanguageSummary = () => {
       // Flight data summary
       const { data: flightData } = await supabase.functions.invoke('neon-query', {
         body: { 
+          action: 'customQuery',
           query: `
             SELECT 
               COUNT(*) as total,
@@ -53,6 +54,7 @@ export const PlainLanguageSummary = () => {
       // Biometric correlations
       const { data: bioData } = await supabase.functions.invoke('neon-query', {
         body: { 
+          action: 'customQuery',
           query: `
             SELECT 
               COUNT(*) as total,
@@ -77,6 +79,7 @@ export const PlainLanguageSummary = () => {
       // KCSO activity
       const { data: kcsoData } = await supabase.functions.invoke('neon-query', {
         body: { 
+          action: 'customQuery',
           query: `
             SELECT 
               COUNT(*) as total,
@@ -102,6 +105,7 @@ export const PlainLanguageSummary = () => {
       // XXB mystery
       const { data: xxbData } = await supabase.functions.invoke('neon-query', {
         body: { 
+          action: 'customQuery',
           query: `
             SELECT 
               COUNT(*) as total,

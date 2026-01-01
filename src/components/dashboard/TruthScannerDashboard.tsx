@@ -52,6 +52,7 @@ export const TruthScannerDashboard = () => {
       setScanProgress(10);
       const { data: tablesData } = await supabase.functions.invoke('neon-query', {
         body: { 
+          action: 'customQuery',
           query: `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name`
         }
       });
@@ -65,6 +66,7 @@ export const TruthScannerDashboard = () => {
       // Flight detections
       const { data: flightData } = await supabase.functions.invoke('neon-query', {
         body: { 
+          action: 'customQuery',
           query: `SELECT COUNT(*) as total, COUNT(DISTINCT registration) as unique_aircraft FROM live_flight_detections`
         }
       });
@@ -86,6 +88,7 @@ export const TruthScannerDashboard = () => {
       // XXB Mystery Signal
       const { data: xxbData } = await supabase.functions.invoke('neon-query', {
         body: { 
+          action: 'customQuery',
           query: `SELECT COUNT(*) as total, AVG(altitude) as avg_alt FROM live_flight_detections WHERE registration = 'XXB' OR callsign = 'XXB'`
         }
       });
@@ -107,6 +110,7 @@ export const TruthScannerDashboard = () => {
       // Biometric correlations
       const { data: bioData } = await supabase.functions.invoke('neon-query', {
         body: { 
+          action: 'customQuery',
           query: `SELECT COUNT(*) as total, AVG(avg_hr) as avg_hr, COUNT(CASE WHEN hr_spike THEN 1 END) as spikes FROM master_biometric_aircraft_correlations`
         }
       });
@@ -130,6 +134,7 @@ export const TruthScannerDashboard = () => {
       // KCSO specific detections
       const { data: kcsoData } = await supabase.functions.invoke('neon-query', {
         body: { 
+          action: 'customQuery',
           query: `SELECT COUNT(*) as total FROM live_flight_detections WHERE registration IN ('N912KC', 'N913KC', 'N597E', 'N197E', 'N397E', 'N497E', 'N97E', 'N35438', 'N490KC')`
         }
       });
@@ -151,6 +156,7 @@ export const TruthScannerDashboard = () => {
       // Shell companies / enterprise structure
       const { data: shellData } = await supabase.functions.invoke('neon-query', {
         body: { 
+          action: 'customQuery',
           query: `SELECT COUNT(*) as total FROM criminal_enterprise_entities WHERE entity_type ILIKE '%shell%' OR entity_type ILIKE '%company%'`
         }
       });
@@ -172,6 +178,7 @@ export const TruthScannerDashboard = () => {
       // Calculate total records
       const { data: totalData } = await supabase.functions.invoke('neon-query', {
         body: { 
+          action: 'customQuery',
           query: `SELECT SUM(n_live_tup) as total FROM pg_stat_user_tables`
         }
       });

@@ -111,7 +111,7 @@ export const TruthScannerDashboard = () => {
       const { data: bioData } = await supabase.functions.invoke('neon-query', {
         body: { 
           action: 'customQuery',
-          query: `SELECT COUNT(*) as total, AVG(avg_hr) as avg_hr, COUNT(CASE WHEN hr_spike THEN 1 END) as spikes FROM master_biometric_aircraft_correlations`
+          query: `SELECT COUNT(*) as total, AVG(heart_rate) as avg_hr, COUNT(CASE WHEN hr_spike_detected = true THEN 1 END) as spikes FROM master_biometric_aircraft_correlations`
         }
       });
       const bioCount = parseInt(bioData?.[0]?.total || '0');

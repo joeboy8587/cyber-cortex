@@ -38,6 +38,7 @@ export const XXBInvestigator = () => {
       // Get XXB overall stats
       const { data: statsData } = await supabase.functions.invoke('neon-query', {
         body: { 
+          action: 'customQuery',
           query: `
             SELECT 
               COUNT(*) as total,
@@ -58,6 +59,7 @@ export const XXBInvestigator = () => {
         // Get hourly pattern
         const { data: hourlyData } = await supabase.functions.invoke('neon-query', {
           body: { 
+            action: 'customQuery',
             query: `
               SELECT 
                 EXTRACT(HOUR FROM detected_at) as hour,

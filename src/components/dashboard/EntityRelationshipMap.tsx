@@ -42,6 +42,7 @@ export const EntityRelationshipMap = () => {
       // Get enterprise entities
       const { data: entitiesData } = await supabase.functions.invoke('neon-query', {
         body: { 
+          action: 'customQuery',
           query: `
             SELECT 
               entity_name, 

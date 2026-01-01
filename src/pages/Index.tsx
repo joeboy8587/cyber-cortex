@@ -72,6 +72,10 @@ import { FlightDataScraper } from "@/components/dashboard/FlightDataScraper";
 import { EvidenceUploader } from "@/components/dashboard/EvidenceUploader";
 import { FlightSaturationAnalyzer } from "@/components/dashboard/FlightSaturationAnalyzer";
 import { FireclawExtractionPanel } from "@/components/dashboard/FireclawExtractionPanel";
+import { TruthScannerDashboard } from "@/components/dashboard/TruthScannerDashboard";
+import { PlainLanguageSummary } from "@/components/dashboard/PlainLanguageSummary";
+import { XXBInvestigator } from "@/components/dashboard/XXBInvestigator";
+import { EntityRelationshipMap } from "@/components/dashboard/EntityRelationshipMap";
 
 const Index = () => {
   return (
@@ -79,6 +83,16 @@ const Index = () => {
       <div className="relative z-10">
         <CommandHeader />
         <main className="container py-6 space-y-6">
+          {/* TRUTH SCANNER - Top Priority */}
+          <section id="truth-scanner" className="space-y-6">
+            <TruthScannerDashboard />
+            <PlainLanguageSummary />
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+              <XXBInvestigator />
+              <EntityRelationshipMap />
+            </div>
+          </section>
+
           <section id="database-stats" className="space-y-6">
             <DatabaseStats />
             <DatabaseCoverageDashboard />

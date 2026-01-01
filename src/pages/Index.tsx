@@ -1,5 +1,6 @@
 import { CommandHeader } from "@/components/dashboard/CommandHeader";
 import { DatabaseStats } from "@/components/dashboard/DatabaseStats";
+import { NeonTableCensus } from "@/components/dashboard/NeonTableCensus";
 import { ThreatMatrix } from "@/components/dashboard/ThreatMatrix";
 import { BiometricCorrelation } from "@/components/dashboard/BiometricCorrelation";
 
@@ -95,6 +96,7 @@ const Index = () => {
           </section>
 
           <section id="database-stats" className="space-y-6">
+            <NeonTableCensus />
             <DatabaseStats />
             <DatabaseCoverageDashboard />
           </section>

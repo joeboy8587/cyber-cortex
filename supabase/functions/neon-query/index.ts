@@ -124,7 +124,7 @@ serve(async (req) => {
         );
       }
     
-    const { action, table, limit = 100, offset = 0, query, data, where } = body;
+      const { action, table, limit = 100, offset = 0, query, data, where } = body;
 
     // Health check - no DB needed
     if (action === 'ping') {

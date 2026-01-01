@@ -57,7 +57,7 @@ export const TruthScannerDashboard = () => {
         }
       });
       
-      const tables = tablesData?.rows || [];
+      const tables = tablesData || [];
       setStats(prev => ({ ...prev, totalTables: tables.length }));
       
       // Step 2: Scan key evidence tables
@@ -67,10 +67,10 @@ export const TruthScannerDashboard = () => {
       const { data: flightData } = await supabase.functions.invoke('neon-query', {
         body: { 
           action: 'customQuery',
-          query: `SELECT COUNT(*) as total, COUNT(DISTINCT registration) as unique_aircraft FROM live_flight_detections`
+          query: `SELECT COUNT(*) as total, COUNT(DISTINCT registration) as unique_aircraft FROM live_flight_detections_rows`
         }
       });
-      const flightCount = parseInt(flightData?.rows?.[0]?.total || '0');
+      const flightCount = parseInt(flightData?.[0]?.total || '0');
       setStats(prev => ({ ...prev, flightDetections: flightCount }));
       
       if (flightCount > 1000000) {
@@ -89,10 +89,10 @@ export const TruthScannerDashboard = () => {
       const { data: xxbData } = await supabase.functions.invoke('neon-query', {
         body: { 
           action: 'customQuery',
-          query: `SELECT COUNT(*) as total, AVG(altitude) as avg_alt FROM live_flight_detections WHERE registration = 'XXB' OR callsign = 'XXB'`
+          query: `SELECT COUNT(*) as total, AVG(altitude) as avg_alt FROM live_flight_detections_rows WHERE registration = 'XXB' OR callsign = 'XXB'`
         }
       });
-      const xxbCount = parseInt(xxbData?.rows?.[0]?.total || '0');
+      const xxbCount = parseInt(xxbData?.[0]?.total || '0');
       setStats(prev => ({ ...prev, xxbDetections: xxbCount }));
       
       if (xxbCount > 100000) {
@@ -114,9 +114,9 @@ export const TruthScannerDashboard = () => {
           query: `SELECT COUNT(*) as total, AVG(avg_hr) as avg_hr, COUNT(CASE WHEN hr_spike THEN 1 END) as spikes FROM master_biometric_aircraft_correlations`
         }
       });
-      const bioCount = parseInt(bioData?.rows?.[0]?.total || '0');
-      const hrSpikes = parseInt(bioData?.rows?.[0]?.spikes || '0');
-      const avgHR = parseFloat(bioData?.rows?.[0]?.avg_hr || '0');
+      const bioCount = parseInt(bioData?.[0]?.total || '0');
+      const hrSpikes = parseInt(bioData?.[0]?.spikes || '0');
+      const avgHR = parseFloat(bioData?.[0]?.avg_hr || '0');
       setStats(prev => ({ ...prev, biometricEvents: bioCount, correlations: hrSpikes }));
       
       if (hrSpikes > 100) {
@@ -135,10 +135,10 @@ export const TruthScannerDashboard = () => {
       const { data: kcsoData } = await supabase.functions.invoke('neon-query', {
         body: { 
           action: 'customQuery',
-          query: `SELECT COUNT(*) as total FROM live_flight_detections WHERE registration IN ('N912KC', 'N913KC', 'N597E', 'N197E', 'N397E', 'N497E', 'N97E', 'N35438', 'N490KC')`
+          query: `SELECT COUNT(*) as total FROM live_flight_detections_rows WHERE registration IN ('N912KC', 'N913KC', 'N597E', 'N197E', 'N397E', 'N497E', 'N97E', 'N35438', 'N490KC')`
         }
       });
-      const kcsoCount = parseInt(kcsoData?.rows?.[0]?.total || '0');
+      const kcsoCount = parseInt(kcsoData?.[0]?.total || '0');
       setStats(prev => ({ ...prev, kcsoDetections: kcsoCount }));
       
       if (kcsoCount > 10000) {
@@ -160,7 +160,7 @@ export const TruthScannerDashboard = () => {
           query: `SELECT COUNT(*) as total FROM criminal_enterprise_entities WHERE entity_type ILIKE '%shell%' OR entity_type ILIKE '%company%'`
         }
       });
-      const shellCount = parseInt(shellData?.rows?.[0]?.total || '0');
+      const shellCount = parseInt(shellData?.[0]?.total || '0');
       setStats(prev => ({ ...prev, shellCompanies: shellCount }));
       
       if (shellCount > 0) {
@@ -182,7 +182,7 @@ export const TruthScannerDashboard = () => {
           query: `SELECT SUM(n_live_tup) as total FROM pg_stat_user_tables`
         }
       });
-      const totalRecords = parseInt(totalData?.rows?.[0]?.total || '0');
+      const totalRecords = parseInt(totalData?.[0]?.total || '0');
       setStats(prev => ({ ...prev, totalRecords }));
       
       // Add summary finding

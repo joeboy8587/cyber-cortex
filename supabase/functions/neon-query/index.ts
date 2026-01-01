@@ -124,22 +124,29 @@ serve(async (req) => {
         );
       }
     
-      const { action, table, limit = 100, offset = 0, query, data, where } = body;
+      const { table, limit = 100, offset = 0, query, data, where } = body;
+      
+      // Back-compat: older clients sometimes send only { query }.
+      // If query is present, treat it as a customQuery request.
+      const actionRaw = body.action;
+      const action = (typeof actionRaw === 'string' && actionRaw.trim().length > 0)
+        ? actionRaw
+        : (typeof query === 'string' && query.trim().length > 0 ? 'customQuery' : undefined);
 
-    // Health check - no DB needed
-    if (action === 'ping') {
-      return new Response(
-        JSON.stringify({ status: 'ok', version: VERSION, timestamp: new Date().toISOString() }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+      // Health check - no DB needed
+      if (action === 'ping') {
+        return new Response(
+          JSON.stringify({ status: 'ok', version: VERSION, timestamp: new Date().toISOString() }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
 
-    if (!action || typeof action !== 'string') {
-      return new Response(
-        JSON.stringify({ error: 'Missing required field: action' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+      if (!action || typeof action !== 'string') {
+        return new Response(
+          JSON.stringify({ error: 'Missing required field: action' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
     
     sql = await createConnection(databaseUrl);
 

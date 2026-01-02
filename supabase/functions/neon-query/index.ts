@@ -22,40 +22,52 @@ function safeErrorResponse(error: unknown, status = 500): Response {
   );
 }
 
-// Helper to create connection with robust retry logic
+// Helper to create connection with robust retry logic and keepalive
 async function createConnection(databaseUrl: string, attempt = 1): Promise<ReturnType<typeof postgres>> {
   const maxAttempts = 5;
-  const baseDelay = 300;
+  const baseDelay = 500;
   
   try {
-    const sql = postgres(databaseUrl, {
-      ssl: 'require',
-      max: 3,
-      idle_timeout: 30,
-      connect_timeout: 45,
+    // Parse and enhance the connection URL for better stability
+    const url = new URL(databaseUrl);
+    url.searchParams.set('sslmode', 'require');
+    
+    const sql = postgres(url.toString(), {
+      ssl: { rejectUnauthorized: false },
+      max: 1, // Single connection for edge functions
+      idle_timeout: 10, // Shorter idle to prevent stale connections
+      connect_timeout: 30,
       fetch_types: false,
+      prepare: false, // Disable prepared statements for better compatibility
       connection: {
-        application_name: 'neon-query-edge'
+        application_name: 'neon-query-edge-v' + VERSION
+      },
+      onnotice: () => {}, // Suppress notices
+      debug: false,
+      transform: {
+        undefined: null // Convert undefined to null
       }
     });
-    // Test connection with timeout
-    const testPromise = sql`SELECT 1`;
+    
+    // Quick connection test with shorter timeout
+    const testPromise = sql`SELECT 1 as connected`;
     const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('Connection test timeout')), 10000)
+      setTimeout(() => reject(new Error('Connection test timeout after 8s')), 8000)
     );
     await Promise.race([testPromise, timeoutPromise]);
+    console.log(`Database connected successfully on attempt ${attempt}`);
     return sql;
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
     console.error(`Connection attempt ${attempt}/${maxAttempts} failed: ${errorMsg}`);
     
     if (attempt < maxAttempts) {
-      const delay = baseDelay * Math.pow(2, attempt - 1); // Exponential backoff
-      console.log(`Retrying in ${delay}ms...`);
+      const delay = baseDelay * Math.pow(1.5, attempt - 1); // Gentler exponential backoff
+      console.log(`Retrying connection in ${delay}ms...`);
       await new Promise(r => setTimeout(r, delay));
       return createConnection(databaseUrl, attempt + 1);
     }
-    throw new Error(`Failed to connect after ${maxAttempts} attempts: ${errorMsg}`);
+    throw new Error(`Database unavailable after ${maxAttempts} attempts: ${errorMsg}`);
   }
 }
 

@@ -160,21 +160,24 @@ export const AircraftAlertSystem = () => {
         return (Date.now() - timestamp.getTime()) < 3600000; // 1 hour in ms
       });
       
-      const newCriticalAlerts = recentAlerts.filter(a => 
-        a.threat_level === 'CRITICAL' && 
-        !alerts.find(existing => existing.id === a.id)
-      );
+      setAlerts(prevAlerts => {
+        const newCriticalAlerts = recentAlerts.filter(a => 
+          a.threat_level === 'CRITICAL' && 
+          !prevAlerts.find(existing => existing.id === a.id)
+        );
 
-      if (newCriticalAlerts.length > 0) {
-        playAlertSound();
-        toast({
-          title: '🚨 CRITICAL AIRCRAFT DETECTED',
-          description: `${newCriticalAlerts[0].registration} (${newCriticalAlerts[0].operator}) detected in monitoring zone`,
-          variant: 'destructive'
-        });
-      }
-
-      setAlerts(activeAlerts);
+        if (newCriticalAlerts.length > 0) {
+          playAlertSound();
+          toast({
+            title: '🚨 CRITICAL AIRCRAFT DETECTED',
+            description: `${newCriticalAlerts[0].registration} (${newCriticalAlerts[0].operator}) detected in monitoring zone`,
+            variant: 'destructive'
+          });
+        }
+        
+        return activeAlerts;
+      });
+      
       setLastCheck(new Date());
 
     } catch (err) {
@@ -182,7 +185,7 @@ export const AircraftAlertSystem = () => {
     } finally {
       setLoading(false);
     }
-  }, [alerts, playAlertSound, toast]);
+  }, [playAlertSound, toast]);
 
   const formatTimeSince = (interval: string): string => {
     // Parse PostgreSQL interval format

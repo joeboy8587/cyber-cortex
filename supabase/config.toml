@@ -72,3 +72,6 @@ verify_jwt = false
 
 [functions.firecrawl-search]
 verify_jwt = false
+
+[functions.comprehensive-evidence-scan]
+verify_jwt = false

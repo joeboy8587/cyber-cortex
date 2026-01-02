@@ -51,8 +51,15 @@ export function CriminalEnterpriseNetwork() {
   }, []);
 
   const fetchEnterpriseData = async () => {
+    // Unwrap neon-query responses which may be array or { data: [...] }
+    const unwrapRows = (payload: unknown): any[] => {
+      if (Array.isArray(payload)) return payload;
+      if (payload && typeof payload === 'object' && Array.isArray((payload as any).data)) return (payload as any).data;
+      return [];
+    };
+
     try {
-      const { data: entityData } = await supabase.functions.invoke("neon-query", {
+      const { data: entityData, error: entityError } = await supabase.functions.invoke("neon-query", {
         body: {
           action: "customQuery",
           query: `
@@ -65,8 +72,9 @@ export function CriminalEnterpriseNetwork() {
           `
         }
       });
+      if (entityError) throw entityError;
 
-      const { data: statsData } = await supabase.functions.invoke("neon-query", {
+      const { data: statsData, error: statsError } = await supabase.functions.invoke("neon-query", {
         body: {
           action: "customQuery",
           query: `
@@ -79,8 +87,9 @@ export function CriminalEnterpriseNetwork() {
           `
         }
       });
+      if (statsError) throw statsError;
 
-      const rawEntities = entityData?.data || entityData || [];
+      const rawEntities = unwrapRows(entityData);
       console.log('[CriminalEnterpriseNetwork] Raw entities:', rawEntities);
       
       if (Array.isArray(rawEntities) && rawEntities.length > 0) {
@@ -102,8 +111,8 @@ export function CriminalEnterpriseNetwork() {
           }
         });
 
-        const rawStats = statsData?.data || statsData || [];
-        const firstStat = Array.isArray(rawStats) ? rawStats[0] : null;
+        const rawStats = unwrapRows(statsData);
+        const firstStat = rawStats[0] || null;
         
         setStats({
           total: Number(firstStat?.total) || parsedEntities.length,

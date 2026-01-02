@@ -146,6 +146,23 @@ serve(async (req) => {
         const safeView = view.replace(/[^a-zA-Z0-9_]/g, "");
         console.log(`Refreshing materialized view: ${safeView}`);
         
+        // Check if view exists first
+        const viewExists = await sql`
+          SELECT EXISTS (
+            SELECT 1 FROM pg_matviews WHERE matviewname = ${safeView}
+          ) as exists
+        `;
+        
+        if (!viewExists[0]?.exists) {
+          result = { 
+            refreshed: false, 
+            view: safeView, 
+            error: "View does not exist",
+            rowCount: 0
+          };
+          break;
+        }
+        
         const startTime = Date.now();
         await sql.unsafe(`REFRESH MATERIALIZED VIEW ${safeView}`);
         const duration = Date.now() - startTime;
@@ -164,16 +181,22 @@ serve(async (req) => {
 
       case "refreshAll": {
         console.log("Refreshing all materialized views...");
-        const views = [
-          "mv_flight_stats_hourly",
-          "mv_taxonomy_summary", 
-          "mv_biometric_daily",
-          "mv_enterprise_network",
-          "mv_evidence_chain"
-        ];
+        
+        // Get list of actually existing materialized views
+        const existingViews = await sql`
+          SELECT matviewname as name FROM pg_matviews WHERE schemaname = 'public'
+        `;
+        
+        const viewNames = existingViews.map(v => v.name as string);
+        console.log(`Found ${viewNames.length} existing materialized views:`, viewNames);
+        
+        if (viewNames.length === 0) {
+          result = { refreshed: [], message: "No materialized views exist. Run createAll first." };
+          break;
+        }
         
         const results = [];
-        for (const v of views) {
+        for (const v of viewNames) {
           try {
             const startTime = Date.now();
             await sql.unsafe(`REFRESH MATERIALIZED VIEW ${v}`);

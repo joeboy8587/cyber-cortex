@@ -189,12 +189,21 @@ export function useNeonDatabase() {
         } catch (err) {
           lastError = err instanceof Error ? err : new Error('Database query failed');
 
-          if (isRetryableError(lastError.message) && attempt < MAX_RETRIES - 1) {
-            console.warn(`Attempt ${attempt + 1} exception, retrying...`);
-            await sleep(RETRY_DELAYS[attempt]);
-            continue;
+          if (isRetryableError(lastError.message)) {
+            // Retry if we still have attempts left
+            if (attempt < MAX_RETRIES - 1) {
+              console.warn(`Attempt ${attempt + 1} exception, retrying...`);
+              await sleep(RETRY_DELAYS[attempt]);
+              continue;
+            }
+
+            // Retryable but exhausted => soft-fail (avoid blank screen)
+            setError(lastError.message);
+            setConnectionStatus('disconnected');
+            return fallbackFor();
           }
 
+          // Non-retryable => bubble up so the caller can handle explicitly
           setError(lastError.message);
           setConnectionStatus('disconnected');
           throw lastError;

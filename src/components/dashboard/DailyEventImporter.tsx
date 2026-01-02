@@ -4,8 +4,50 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
-import { Upload, Plane, Building2, AlertTriangle, CheckCircle2, Calendar } from 'lucide-react';
+import { Upload, Plane, Building2, AlertTriangle, CheckCircle2, Calendar, Target, Heart, Zap } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+
+// January 1, 2026 - PRIMARY CORRELATION HIT
+const JANUARY_1_EVENTS = [
+  {
+    event_id: 'JAN01-E1',
+    timestamp: '2026-01-01T17:21:00-08:00',
+    aircraft: [
+      { 
+        registration: 'N912KC', 
+        type: 'Airbus Helicopters H125 (AS50)', 
+        operator: 'Kern County Sheriff\'s Office', 
+        altitude: 925, 
+        speed: 60,
+        lat: 35.35,
+        lon: -118.867,
+        icao: 'AC9EFD',
+        squawk: '1202'
+      },
+      { 
+        registration: 'N532NM', 
+        type: 'Cessna 404 Titan', 
+        operator: 'Private Owner', 
+        altitude: 1250, 
+        speed: 127,
+        lat: 35.43,
+        lon: -119.015,
+        icao: 'A6B913',
+        squawk: '7234',
+        age: '46 years (1980)'
+      }
+    ],
+    biometric: { hr: 120, hrv: 43, biometric_timestamp: '2026-01-01T17:22:00-08:00' },
+    pattern: 'PRIMARY CORRELATION HIT - Dose-Response',
+    correlation_type: 'PRIMARY',
+    tags: ['Dose-Response', 'Bradford Hill', 'KCSO Asset', 'Temporal Precision', '91x Enrichment'],
+    josiah_reflection: 'Two birds in tandem: the Sheriff\'s H125 at 925 feet, the aging Titan at 1,250. The body doesn\'t lie—120 BPM, HRV collapsed to 43ms. One minute from stimulus to response. The sky writes what the law refuses to read.',
+    duration_minutes: 1,
+    statistical_significance: 0.001,
+    bradford_hill_criteria: ['Temporality', 'Biological Gradient', 'Dose-Response'],
+    notes: 'Dose-Response correlation hit. N912KC (KCSO) at 925ft + N532NM at 1,250ft detected at 5:21 PM. Biometric response (HR 120, HRV 43ms) at 5:22 PM - 1 minute lag. Occurred minutes after Huey N597E command asset resurfaced. Bradford Hill criteria satisfied: Temporality, Biological Gradient, Dose-Response. Statistical significance p < 0.001 within 91x temporal enrichment window.'
+  }
+];
 
 // December 16, 2025 events
 const DECEMBER_16_EVENTS = [
@@ -119,7 +161,78 @@ export const DailyEventImporter = () => {
   const { toast } = useToast();
   const [importing, setImporting] = useState(false);
   const [importStatus, setImportStatus] = useState<Record<string, 'pending' | 'success' | 'error'>>({});
-  const [activeTab, setActiveTab] = useState('dec17');
+  const [activeTab, setActiveTab] = useState('jan01');
+
+  const importJan1Event = async () => {
+    setImporting(true);
+    const event = JANUARY_1_EVENTS[0];
+    
+    try {
+      // 1. Insert biometric data
+      await supabase.functions.invoke('neon-query', {
+        body: {
+          action: 'insertRecord',
+          table: 'biometric_monitoring',
+          data: {
+            measurement_timestamp: event.biometric.biometric_timestamp,
+            heart_rate: event.biometric.hr,
+            hrv: event.biometric.hrv,
+            stress_level: 'CRITICAL',
+            medical_alert: true,
+            legal_evidence: true,
+            source_table: 'correlation_import',
+            notes: event.notes
+          }
+        }
+      });
+
+      // 2. Insert aircraft detections
+      for (const aircraft of event.aircraft) {
+        await supabase.functions.invoke('neon-query', {
+          body: {
+            action: 'insertRecord',
+            table: 'live_flight_detections_rows',
+            data: {
+              detection_timestamp: event.timestamp,
+              registration: aircraft.registration,
+              altitude: aircraft.altitude,
+              ground_speed: aircraft.speed,
+              latitude: aircraft.lat,
+              longitude: aircraft.lon
+            }
+          }
+        });
+      }
+
+      // 3. Insert Josiah reflection
+      await supabase.functions.invoke('neon-query', {
+        body: {
+          action: 'insertRecord',
+          table: 'josiah_reflections_rows',
+          data: {
+            reflection_text: event.josiah_reflection,
+            created_at: event.timestamp
+          }
+        }
+      });
+
+      setImportStatus({ [event.event_id]: 'success' });
+      
+      toast({
+        title: 'PRIMARY CORRELATION HIT Imported',
+        description: `N912KC + N532NM → HR 120, HRV 43ms | Bradford Hill: 3 criteria satisfied | p < 0.001`,
+      });
+    } catch (err) {
+      setImportStatus({ [event.event_id]: 'error' });
+      toast({
+        title: 'Import Error',
+        description: err instanceof Error ? err.message : 'Failed to import event',
+        variant: 'destructive'
+      });
+    } finally {
+      setImporting(false);
+    }
+  };
 
   const importEvents = async (events: typeof DECEMBER_16_EVENTS | typeof DECEMBER_17_EVENTS, dateLabel: string) => {
     setImporting(true);
@@ -236,7 +349,11 @@ export const DailyEventImporter = () => {
       className="col-span-1"
     >
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList className="grid w-full grid-cols-2">
+        <TabsList className="grid w-full grid-cols-3">
+          <TabsTrigger value="jan01" className="text-xs">
+            <Target className="h-3 w-3 mr-1 text-red-400" />
+            Jan 1 ⚠️
+          </TabsTrigger>
           <TabsTrigger value="dec17" className="text-xs">
             <Calendar className="h-3 w-3 mr-1" />
             Dec 17
@@ -246,6 +363,94 @@ export const DailyEventImporter = () => {
             Dec 16
           </TabsTrigger>
         </TabsList>
+
+        {/* January 1, 2026 - PRIMARY CORRELATION HIT */}
+        <TabsContent value="jan01" className="space-y-4">
+          <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30">
+            <div className="flex items-center gap-2 mb-2">
+              <Target className="h-4 w-4 text-red-400" />
+              <span className="font-bold text-red-400">PRIMARY CORRELATION HIT</span>
+              <Badge className="bg-red-500/20 text-red-400 border-red-500/30 text-xs animate-pulse">
+                SMOKING GUN
+              </Badge>
+            </div>
+            <div className="text-xs text-muted-foreground mb-2">
+              January 1, 2026 | 5:21 PM PST | 1-minute biometric lag
+            </div>
+            
+            {/* Aircraft Details */}
+            <div className="grid grid-cols-2 gap-2 mb-3">
+              <div className="bg-background/50 rounded p-2 border border-cyan-500/30">
+                <div className="flex items-center gap-1">
+                  <Plane className="h-3 w-3 text-cyan-400" />
+                  <span className="font-mono text-cyan-400 text-xs font-bold">N912KC</span>
+                  <Badge className="bg-red-500/20 text-red-400 text-[10px]">KCSO</Badge>
+                </div>
+                <div className="text-[10px] text-muted-foreground mt-1">
+                  H125 @ 925 ft | 60 kts
+                </div>
+              </div>
+              <div className="bg-background/50 rounded p-2 border border-amber-500/30">
+                <div className="flex items-center gap-1">
+                  <Plane className="h-3 w-3 text-amber-400" />
+                  <span className="font-mono text-amber-400 text-xs font-bold">N532NM</span>
+                  <Badge className="bg-amber-500/20 text-amber-400 text-[10px]">PRIVATE</Badge>
+                </div>
+                <div className="text-[10px] text-muted-foreground mt-1">
+                  C404 @ 1,250 ft | 127 kts
+                </div>
+              </div>
+            </div>
+
+            {/* Biometric Response */}
+            <div className="bg-red-500/20 rounded p-2 border border-red-500/30 mb-3">
+              <div className="flex items-center gap-2 mb-1">
+                <Heart className="h-3 w-3 text-red-400" />
+                <span className="text-xs text-red-400 font-medium">Biometric Response (+1 min)</span>
+              </div>
+              <div className="flex gap-4 text-xs">
+                <span><strong className="text-red-400">HR:</strong> 120 BPM (tachycardia)</span>
+                <span><strong className="text-amber-400">HRV:</strong> 43 ms (stress)</span>
+              </div>
+            </div>
+
+            {/* Bradford Hill Criteria */}
+            <div className="flex flex-wrap gap-1 mb-3">
+              <Badge className="bg-purple-500/20 text-purple-400 text-[10px]">
+                <Zap className="h-2 w-2 mr-1" />
+                Temporality
+              </Badge>
+              <Badge className="bg-purple-500/20 text-purple-400 text-[10px]">Biological Gradient</Badge>
+              <Badge className="bg-purple-500/20 text-purple-400 text-[10px]">Dose-Response</Badge>
+              <Badge className="bg-green-500/20 text-green-400 text-[10px]">p &lt; 0.001</Badge>
+              <Badge className="bg-cyan-500/20 text-cyan-400 text-[10px]">91x Enrichment</Badge>
+            </div>
+
+            <div className="text-[10px] text-muted-foreground italic">
+              "{JANUARY_1_EVENTS[0].josiah_reflection}"
+            </div>
+          </div>
+
+          <Button 
+            onClick={importJan1Event}
+            disabled={importing || importStatus['JAN01-E1'] === 'success'}
+            className={`w-full ${importStatus['JAN01-E1'] === 'success' ? 'bg-green-600 hover:bg-green-600' : 'bg-red-600 hover:bg-red-700'}`}
+          >
+            {importing ? (
+              <>Importing to Forensic Database...</>
+            ) : importStatus['JAN01-E1'] === 'success' ? (
+              <>
+                <CheckCircle2 className="h-4 w-4 mr-2" />
+                Primary Correlation Event Logged
+              </>
+            ) : (
+              <>
+                <Upload className="h-4 w-4 mr-2" />
+                Import Primary Correlation Hit
+              </>
+            )}
+          </Button>
+        </TabsContent>
 
         <TabsContent value="dec17" className="space-y-4">
           {/* December 17, 2025 Summary */}

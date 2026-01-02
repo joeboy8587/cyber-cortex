@@ -38,10 +38,17 @@ interface BiometricCorrelation {
 export default function GenevaConventionAnalysis() {
   const [activeTab, setActiveTab] = useState('overview');
 
+  const unwrapRows = (payload: unknown): any[] => {
+    // neon-query may return either an array directly, or { data: [...] }
+    if (Array.isArray(payload)) return payload;
+    if (payload && typeof payload === 'object' && Array.isArray((payload as any).data)) return (payload as any).data;
+    return [];
+  };
+
   const { data: medicalAircraft, isLoading: loadingAircraft } = useQuery({
     queryKey: ['geneva-medical-aircraft'],
     queryFn: async () => {
-      const { data } = await supabase.functions.invoke('neon-query', {
+      const { data, error } = await supabase.functions.invoke('neon-query', {
         body: {
           action: 'customQuery',
           query: `
@@ -75,14 +82,15 @@ export default function GenevaConventionAnalysis() {
           `
         }
       });
-      return data?.data || [];
+      if (error) throw error;
+      return unwrapRows(data);
     }
   });
 
   const { data: lowAltitudeStats } = useQuery({
     queryKey: ['geneva-low-altitude'],
     queryFn: async () => {
-      const { data } = await supabase.functions.invoke('neon-query', {
+      const { data, error } = await supabase.functions.invoke('neon-query', {
         body: {
           action: 'customQuery',
           query: `
@@ -110,14 +118,15 @@ export default function GenevaConventionAnalysis() {
           `
         }
       });
-      return data?.data || [];
+      if (error) throw error;
+      return unwrapRows(data);
     }
   });
 
   const { data: biometricCorrelations } = useQuery({
     queryKey: ['geneva-biometric-correlations'],
     queryFn: async () => {
-      const { data } = await supabase.functions.invoke('neon-query', {
+      const { data, error } = await supabase.functions.invoke('neon-query', {
         body: {
           action: 'customQuery',
           query: `
@@ -143,14 +152,15 @@ export default function GenevaConventionAnalysis() {
           `
         }
       });
-      return data?.data || [];
+      if (error) throw error;
+      return unwrapRows(data);
     }
   });
 
   const { data: flaggedAircraftCount } = useQuery({
     queryKey: ['geneva-flagged-count'],
     queryFn: async () => {
-      const { data } = await supabase.functions.invoke('neon-query', {
+      const { data, error } = await supabase.functions.invoke('neon-query', {
         body: {
           action: 'customQuery',
           query: `
@@ -159,9 +169,11 @@ export default function GenevaConventionAnalysis() {
           `
         }
       });
-      return data?.data?.[0]?.total_patterns || 0;
+      if (error) throw error;
+      return unwrapRows(data)?.[0]?.total_patterns || 0;
     }
   });
+
 
   const genevaViolations = [
     {

@@ -34,8 +34,14 @@ export function PhysicianVerifiedECGs() {
   }, []);
 
   const fetchECGData = async () => {
+    const unwrapRows = (payload: unknown): any[] => {
+      if (Array.isArray(payload)) return payload;
+      if (payload && typeof payload === 'object' && Array.isArray((payload as any).data)) return (payload as any).data;
+      return [];
+    };
+
     try {
-      const { data: ecgData } = await supabase.functions.invoke("neon-query", {
+      const { data: ecgData, error: ecgError } = await supabase.functions.invoke("neon-query", {
         body: {
           action: "customQuery",
           query: `
@@ -48,8 +54,9 @@ export function PhysicianVerifiedECGs() {
           `
         }
       });
+      if (ecgError) throw ecgError;
 
-      const { data: statsData } = await supabase.functions.invoke("neon-query", {
+      const { data: statsData, error: statsError } = await supabase.functions.invoke("neon-query", {
         body: {
           action: "customQuery",
           query: `
@@ -62,17 +69,19 @@ export function PhysicianVerifiedECGs() {
           `
         }
       });
+      if (statsError) throw statsError;
 
-      if (ecgData?.data) {
-        setEcgs(ecgData.data);
-      }
+      const ecgRows = unwrapRows(ecgData) as ECGRecord[];
+      const statsRows = unwrapRows(statsData);
 
-      if (statsData?.data?.[0]) {
+      setEcgs(ecgRows);
+
+      if (statsRows?.[0]) {
         setStats({
-          total: Number(statsData.data[0].total) || 0,
-          abnormal: Number(statsData.data[0].abnormal) || 0,
-          avgHeartRate: Number(statsData.data[0].avg_hr) || 0,
-          physicians: Number(statsData.data[0].physicians) || 0
+          total: Number(statsRows[0].total) || 0,
+          abnormal: Number(statsRows[0].abnormal) || 0,
+          avgHeartRate: Number(statsRows[0].avg_hr) || 0,
+          physicians: Number(statsRows[0].physicians) || 0
         });
       }
     } catch (error) {

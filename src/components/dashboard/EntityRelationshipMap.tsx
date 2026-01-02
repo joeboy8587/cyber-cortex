@@ -39,7 +39,7 @@ export const EntityRelationshipMap = () => {
 
   const loadEntityData = async () => {
     try {
-      // Get enterprise entities
+      // Get enterprise entities from command structure table
       const { data: entitiesData } = await supabase.functions.invoke('neon-query', {
         body: { 
           action: 'customQuery',
@@ -48,10 +48,12 @@ export const EntityRelationshipMap = () => {
               entity_name, 
               entity_type, 
               tier,
-              role_in_network,
-              controlled_assets,
-              legal_exposure_rating
-            FROM criminal_enterprise_entities 
+              role,
+              assets_controlled,
+              legal_exposure,
+              evidence_count,
+              prosecution_priority
+            FROM criminal_enterprise_command_structure 
             ORDER BY tier, entity_name
             LIMIT 50
           `
@@ -65,7 +67,7 @@ export const EntityRelationshipMap = () => {
         name: r.entity_name || 'Unknown',
         type: r.entity_type || 'Unknown',
         tier: parseInt(r.tier) || 0,
-        role: r.role_in_network,
+        role: r.role,
         connections: []
       }));
       

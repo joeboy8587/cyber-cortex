@@ -94,6 +94,7 @@ export function EvidenceUploader() {
         if (content.toLowerCase().includes('fraud')) tags.push('Fraud');
         if (content.toLowerCase().includes('evidence')) tags.push('Evidence');
 
+        // Insert into local Supabase table (for local reference)
         const { error } = await supabase
           .from('evidence_documents')
           .insert({
@@ -107,6 +108,39 @@ export function EvidenceUploader() {
           });
 
         if (error) throw error;
+
+        // ALSO mirror to Neon evidence_documents table for cross-case correlation
+        try {
+          await supabase.functions.invoke('neon-query', {
+            body: {
+              action: 'customQuery',
+              query: `
+                INSERT INTO evidence_documents (
+                  document_id, document_type, file_name, file_type, file_size_bytes,
+                  sha256_hash, upload_timestamp, content_summary, tags, processing_status, classification, admissible
+                ) VALUES (
+                  '${sha256.slice(0, 32)}',
+                  'evidence',
+                  '${file.name.replace(/'/g, "''")}',
+                  '${file.name.endsWith('.md') ? 'markdown' : 'text'}',
+                  ${file.size},
+                  '${sha256}',
+                  NOW(),
+                  '${title.replace(/'/g, "''")}',
+                  ARRAY[${tags.map(t => `'${t}'`).join(',') || "''"}]::text[],
+                  'indexed',
+                  'legal_evidence',
+                  true
+                )
+                ON CONFLICT (sha256_hash) DO NOTHING
+              `
+            }
+          });
+          console.log(`Mirrored ${file.name} to Neon evidence_documents`);
+        } catch (neonErr) {
+          console.warn('Neon mirror optional, continuing:', neonErr);
+        }
+
         successCount++;
       } catch (err) {
         toast({

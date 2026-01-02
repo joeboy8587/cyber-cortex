@@ -86,6 +86,7 @@ import FAAComplaintBuilder from "@/components/dashboard/FAAComplaintBuilder";
 import PreservationDemandSystem from "@/components/dashboard/PreservationDemandSystem";
 import DamagesCalculator from "@/components/dashboard/DamagesCalculator";
 import { ComprehensiveEvidenceScan } from "@/components/dashboard/ComprehensiveEvidenceScan";
+import F24RadarUploader from "@/components/dashboard/F24RadarUploader";
 
 const Index = () => {
   return (
@@ -119,6 +120,7 @@ const Index = () => {
           </section>
 
           <section id="command-center" className="space-y-6">
+            <F24RadarUploader />
             <GlobalAISearch />
             <JosiahChatInterface />
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">

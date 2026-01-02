@@ -189,74 +189,44 @@ export function BiometricCorrelation() {
       setBiometricSources(sourceResults);
       const totalBio = sourceResults.reduce((sum, s) => sum + s.record_count, 0);
 
-      // Fetch live correlations with time window join - use only biometric_monitoring which has correct columns
+      // Fetch live correlations with simplified join query - removed non-existent operator column
       const { data: corrData, error: corrError } = await supabase.functions.invoke("neon-query", {
         body: {
           action: "customQuery",
           query: `
-            WITH bio_events AS (
-              SELECT 
-                id::text as biometric_id,
-                measurement_timestamp as bio_timestamp,
-                heart_rate,
-                hrv,
-                stress_level,
-                CASE 
-                  WHEN heart_rate > 100 AND COALESCE(hrv, 100) < 40 THEN 'Elevated HR, Low HRV, Tachycardia'
-                  WHEN heart_rate > 100 THEN 'Elevated HR, Tachycardia'
-                  WHEN COALESCE(hrv, 100) < 40 THEN 'Low HRV, Stress Response'
-                  ELSE NULL
-                END as harm_indicators,
-                'biometric_monitoring' as source
-              FROM biometric_monitoring
-              WHERE measurement_timestamp IS NOT NULL
-                AND measurement_timestamp > NOW() - INTERVAL '${lookbackDays} days'
-                AND heart_rate IS NOT NULL
-                AND heart_rate >= 40 AND heart_rate <= 220
-            ),
-            flight_events AS (
-              SELECT 
-                registration,
-                callsign,
-                COALESCE(altitude, 0) as altitude,
-                operator,
-                detection_timestamp as flight_timestamp
-              FROM live_flight_detections_rows
-              WHERE detection_timestamp IS NOT NULL
-                AND detection_timestamp > NOW() - INTERVAL '${lookbackDays} days'
-                AND registration IS NOT NULL
-            ),
-            correlations AS (
-              SELECT 
-                b.biometric_id,
-                b.bio_timestamp as biometric_timestamp,
-                b.heart_rate,
-                b.hrv,
-                b.stress_level,
-                b.harm_indicators,
-                f.registration as aircraft_id,
-                f.callsign,
-                f.altitude,
-                f.operator,
-                ROUND(EXTRACT(EPOCH FROM (f.flight_timestamp - b.bio_timestamp)) / 60.0, 1) as time_diff_minutes,
-                CASE 
-                  WHEN ABS(EXTRACT(EPOCH FROM (f.flight_timestamp - b.bio_timestamp))) <= 60 THEN 80
-                  WHEN ABS(EXTRACT(EPOCH FROM (f.flight_timestamp - b.bio_timestamp))) <= 120 THEN 75
-                  WHEN ABS(EXTRACT(EPOCH FROM (f.flight_timestamp - b.bio_timestamp))) <= 180 THEN 70
-                  WHEN ABS(EXTRACT(EPOCH FROM (f.flight_timestamp - b.bio_timestamp))) <= 300 THEN 65
-                  ELSE 50
-                END as correlation_strength,
-                b.source as source_table
-              FROM bio_events b
-              CROSS JOIN LATERAL (
-                SELECT * FROM flight_events f
-                WHERE ABS(EXTRACT(EPOCH FROM (f.flight_timestamp - b.bio_timestamp))) <= ${timeWindow * 60}
-                ORDER BY ABS(EXTRACT(EPOCH FROM (f.flight_timestamp - b.bio_timestamp)))
-                LIMIT 10
-              ) f
-            )
-            SELECT * FROM correlations
-            ORDER BY correlation_strength DESC, ABS(time_diff_minutes) ASC
+            SELECT 
+              b.id::text as biometric_id,
+              b.measurement_timestamp as biometric_timestamp,
+              b.heart_rate,
+              b.hrv,
+              b.stress_level::text as stress_level,
+              CASE 
+                WHEN b.heart_rate > 100 AND COALESCE(b.hrv, 100) < 40 THEN 'Elevated HR, Low HRV, Tachycardia'
+                WHEN b.heart_rate > 100 THEN 'Elevated HR, Tachycardia'
+                WHEN COALESCE(b.hrv, 100) < 40 THEN 'Low HRV, Stress Response'
+                ELSE NULL
+              END as harm_indicators,
+              f.registration as aircraft_id,
+              f.callsign,
+              f.altitude,
+              NULL as operator,
+              ROUND(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp)) / 60.0, 1) as time_diff_minutes,
+              CASE 
+                WHEN ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= 60 THEN 80
+                WHEN ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= 120 THEN 75
+                WHEN ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= 180 THEN 70
+                WHEN ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= 300 THEN 65
+                ELSE 50
+              END as correlation_strength,
+              'biometric_monitoring' as source_table
+            FROM biometric_monitoring b
+            JOIN live_flight_detections_rows f 
+              ON ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= ${timeWindow * 60}
+            WHERE b.measurement_timestamp IS NOT NULL
+              AND b.heart_rate IS NOT NULL
+              AND b.heart_rate >= 40 AND b.heart_rate <= 220
+              AND f.registration IS NOT NULL
+            ORDER BY correlation_strength DESC, ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) ASC
             LIMIT 500
           `
         }

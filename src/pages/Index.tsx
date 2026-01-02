@@ -87,6 +87,7 @@ import PreservationDemandSystem from "@/components/dashboard/PreservationDemandS
 import DamagesCalculator from "@/components/dashboard/DamagesCalculator";
 import { ComprehensiveEvidenceScan } from "@/components/dashboard/ComprehensiveEvidenceScan";
 import F24RadarUploader from "@/components/dashboard/F24RadarUploader";
+import { DataIntegrityPanel } from "@/components/dashboard/DataIntegrityPanel";
 
 const Index = () => {
   return (
@@ -238,7 +239,8 @@ const Index = () => {
             <MilitaryGovBehavioralAlignment />
           </section>
           
-          <section id="data-quality">
+          <section id="data-quality" className="space-y-6">
+            <DataIntegrityPanel />
             <DataQualityAudit />
           </section>
           

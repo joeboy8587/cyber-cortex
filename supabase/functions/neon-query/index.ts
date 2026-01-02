@@ -24,8 +24,8 @@ function safeErrorResponse(error: unknown, status = 500): Response {
 
 // Helper to create connection with robust retry logic and keepalive
 async function createConnection(databaseUrl: string, attempt = 1): Promise<ReturnType<typeof postgres>> {
-  const maxAttempts = 5;
-  const baseDelay = 500;
+  const maxAttempts = 3; // Reduced retries for faster failover
+  const baseDelay = 300;
   
   try {
     // Parse and enhance the connection URL for better stability
@@ -35,8 +35,8 @@ async function createConnection(databaseUrl: string, attempt = 1): Promise<Retur
     const sql = postgres(url.toString(), {
       ssl: { rejectUnauthorized: false },
       max: 1, // Single connection for edge functions
-      idle_timeout: 10, // Shorter idle to prevent stale connections
-      connect_timeout: 30,
+      idle_timeout: 5, // Very short idle to prevent stale connections
+      connect_timeout: 15, // Faster timeout
       fetch_types: false,
       prepare: false, // Disable prepared statements for better compatibility
       connection: {
@@ -52,7 +52,7 @@ async function createConnection(databaseUrl: string, attempt = 1): Promise<Retur
     // Quick connection test with shorter timeout
     const testPromise = sql`SELECT 1 as connected`;
     const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('Connection test timeout after 8s')), 8000)
+      setTimeout(() => reject(new Error('Connection test timeout after 5s')), 5000)
     );
     await Promise.race([testPromise, timeoutPromise]);
     console.log(`Database connected successfully on attempt ${attempt}`);
@@ -62,12 +62,25 @@ async function createConnection(databaseUrl: string, attempt = 1): Promise<Retur
     console.error(`Connection attempt ${attempt}/${maxAttempts} failed: ${errorMsg}`);
     
     if (attempt < maxAttempts) {
-      const delay = baseDelay * Math.pow(1.5, attempt - 1); // Gentler exponential backoff
+      const delay = baseDelay * attempt; // Linear backoff for speed
       console.log(`Retrying connection in ${delay}ms...`);
       await new Promise(r => setTimeout(r, delay));
       return createConnection(databaseUrl, attempt + 1);
     }
     throw new Error(`Database unavailable after ${maxAttempts} attempts: ${errorMsg}`);
+  }
+}
+
+// Safe cleanup function for connections
+async function safeCloseConnection(sql: ReturnType<typeof postgres> | null): Promise<void> {
+  if (!sql) return;
+  try {
+    await Promise.race([
+      sql.end({ timeout: 2 }),
+      new Promise(resolve => setTimeout(resolve, 2000))
+    ]);
+  } catch (e) {
+    console.warn('Connection cleanup warning:', e);
   }
 }
 
@@ -1670,7 +1683,7 @@ serve(async (req) => {
         throw new Error(`Unknown action: ${action}`);
     }
 
-    await sql.end();
+    await safeCloseConnection(sql);
 
     return new Response(
       JSON.stringify(result),
@@ -1678,9 +1691,7 @@ serve(async (req) => {
     );
     } catch (error) {
       console.error('Neon query error:', error);
-      if (sql) {
-        try { await sql.end(); } catch {}
-      }
+      await safeCloseConnection(sql);
       return new Response(
         JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

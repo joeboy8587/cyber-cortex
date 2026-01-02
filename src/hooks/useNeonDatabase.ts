@@ -75,6 +75,11 @@ export function useNeonDatabase() {
   // Prevent request stampedes (many components calling the same action at once)
   const inFlightRef = useRef(new Map<string, Promise<unknown>>());
 
+  // Tiny in-memory cache to avoid excessive polling hammering the backend.
+  // This keeps functionality the same (data still refreshes), but prevents rapid reboots/cold-start stampedes.
+  const cacheRef = useRef(new Map<string, { at: number; value: unknown }>());
+  const CACHE_TTL_MS = 5000;
+
   const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
   const isRetryableError = (message: string) =>
@@ -96,6 +101,11 @@ export function useNeonDatabase() {
     }
 
     const key = `${action}:${JSON.stringify(params)}`;
+
+    // Serve very recent results from cache (helps with multiple panels polling on short intervals)
+    const cached = cacheRef.current.get(key);
+    if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.value as any;
+
     const existing = inFlightRef.current.get(key);
     if (existing) return existing as any;
 
@@ -172,8 +182,10 @@ export function useNeonDatabase() {
           }
 
           // Success!
+          const value = data?.data ?? data;
+          cacheRef.current.set(key, { at: Date.now(), value });
           setConnectionStatus('connected');
-          return data?.data ?? data;
+          return value;
         } catch (err) {
           lastError = err instanceof Error ? err : new Error('Database query failed');
 

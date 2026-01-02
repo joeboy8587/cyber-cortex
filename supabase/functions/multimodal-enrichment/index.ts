@@ -20,7 +20,7 @@ const ENRICHMENT_SOURCES = {
   flight_sources: [
     'aircraft_detections', 'aircraft_detections_enriched', 'flight_data', 
     'flight_events', 'flight_surveillance', 'flight_surveillance_analysis',
-    'live_airspace_observations', 'live_flight_detections', 'flight_tracking_evidence'
+    'live_airspace_observations', 'live_flight_detections_rows', 'flight_tracking_evidence'
   ],
   biometric_sources: [
     'biometric_data', 'biometric_data_rows', 'biometric_events', 'biometric_evidence',

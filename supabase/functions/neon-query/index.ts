@@ -63,7 +63,7 @@ async function createConnection(databaseUrl: string, attempt = 1): Promise<Retur
 async function executeWithRetry<T>(
   sql: ReturnType<typeof postgres>,
   queryFn: () => Promise<T>,
-  maxRetries = 2
+  maxRetries = 3
 ): Promise<T> {
   let lastError: Error | null = null;
   
@@ -72,14 +72,21 @@ async function executeWithRetry<T>(
       return await queryFn();
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
-      const isTransient = lastError.message.includes('connection') || 
-                          lastError.message.includes('network') ||
-                          lastError.message.includes('timeout') ||
-                          lastError.message.includes('ECONNRESET');
+      const errorLower = lastError.message.toLowerCase();
+      const isTransient = errorLower.includes('connection') || 
+                          errorLower.includes('network') ||
+                          errorLower.includes('timeout') ||
+                          errorLower.includes('econnreset') ||
+                          errorLower.includes('lost') ||
+                          errorLower.includes('closed') ||
+                          errorLower.includes('terminated') ||
+                          errorLower.includes('reset') ||
+                          errorLower.includes('socket');
       
       if (isTransient && attempt < maxRetries) {
-        console.warn(`Query attempt ${attempt} failed (transient), retrying: ${lastError.message}`);
-        await new Promise(r => setTimeout(r, 200 * attempt));
+        const delay = 300 * attempt;
+        console.warn(`Query attempt ${attempt}/${maxRetries} failed (transient: ${lastError.message}), retrying in ${delay}ms...`);
+        await new Promise(r => setTimeout(r, delay));
         continue;
       }
       throw lastError;

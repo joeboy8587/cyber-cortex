@@ -348,9 +348,9 @@ serve(async (req) => {
         // Get the date range of evidence
         const ranges = [];
         
-        // Check various timestamp tables
+        // Check various timestamp tables - use active tables only
         const timestampQueries = [
-          { table: 'live_flight_detections', column: 'last_seen' },
+          { table: 'live_flight_detections_rows', column: 'detection_timestamp' },
           { table: 'josiah_timeline', column: 'timestamp' },
           { table: 'biometric_monitoring', column: 'timestamp' },
           { table: 'forensic_log_catalog', column: 'created_at' }

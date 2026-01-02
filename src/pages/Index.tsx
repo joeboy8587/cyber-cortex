@@ -68,6 +68,7 @@ import AircraftMapVisualization from "@/components/dashboard/AircraftMapVisualiz
 import { LegalNarrativeGenerator } from "@/components/dashboard/LegalNarrativeGenerator";
 import { LegalIntakeStrategy } from "@/components/dashboard/LegalIntakeStrategy";
 import { MultimodalEnrichmentPanel } from "@/components/dashboard/MultimodalEnrichmentPanel";
+import { ManualBiometricLogger } from "@/components/dashboard/ManualBiometricLogger";
 import { DatabaseCoverageDashboard } from "@/components/dashboard/DatabaseCoverageDashboard";
 import { MasterEvidenceHub } from "@/components/dashboard/MasterEvidenceHub";
 import { LegalEvidenceDashboard } from "@/components/dashboard/LegalEvidenceDashboard";
@@ -122,6 +123,10 @@ const Index = () => {
           <section id="threat-matrix" className="grid grid-cols-1 xl:grid-cols-2 gap-6">
             <ThreatMatrix />
             <BiometricCorrelation />
+          </section>
+
+          <section id="biometric-logging">
+            <ManualBiometricLogger />
           </section>
 
           <section id="direct-correlations">

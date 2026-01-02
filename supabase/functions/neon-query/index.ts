@@ -1679,6 +1679,252 @@ serve(async (req) => {
         break;
       }
 
+      // ============== PROVENANCE AUDIT - DATA INTEGRITY SYSTEM ==============
+      case 'provenanceAudit': {
+        console.log('Running provenance audit...');
+        
+        // Find injection batches - records created in suspicious time windows
+        const injectionBatches = await sql`
+          SELECT 
+            DATE_TRUNC('minute', created_at) as injection_time,
+            COUNT(*) as record_count,
+            COUNT(DISTINCT callsign) as unique_callsigns,
+            COUNT(*) FILTER (WHERE taxonomy_tag LIKE 'xxb%') as xxb_count,
+            MIN(detection_timestamp) as earliest_detection,
+            MAX(detection_timestamp) as latest_detection
+          FROM live_flight_detections_rows
+          GROUP BY DATE_TRUNC('minute', created_at)
+          HAVING COUNT(*) > 10000
+          ORDER BY record_count DESC
+          LIMIT 20
+        `;
+        
+        // Check for biometric correlation gaps
+        const biometricGaps = await sql`
+          WITH xxb_records AS (
+            SELECT 
+              DATE(detection_timestamp) as flight_date,
+              COUNT(*) as xxb_count
+            FROM live_flight_detections_rows
+            WHERE taxonomy_tag LIKE 'xxb%'
+            GROUP BY DATE(detection_timestamp)
+          ),
+          bio_records AS (
+            SELECT 
+              DATE(created_at) as bio_date,
+              COUNT(*) as bio_count
+            FROM biometric_monitoring
+            GROUP BY DATE(created_at)
+          )
+          SELECT 
+            x.flight_date,
+            x.xxb_count,
+            COALESCE(b.bio_count, 0) as bio_count,
+            CASE WHEN COALESCE(b.bio_count, 0) = 0 THEN true ELSE false END as orphan_xxb
+          FROM xxb_records x
+          LEFT JOIN bio_records b ON x.flight_date = b.bio_date
+          ORDER BY x.flight_date DESC
+          LIMIT 60
+        `;
+        
+        // Count records by data_provenance status
+        const provenanceStats = await sql`
+          SELECT 
+            COALESCE(data_provenance, 'UNAUDITED') as provenance_status,
+            COUNT(*) as record_count
+          FROM live_flight_detections_rows
+          GROUP BY data_provenance
+          ORDER BY record_count DESC
+        `;
+        
+        // Dec 27 specific analysis
+        const dec27Analysis = await sql`
+          SELECT 
+            DATE_TRUNC('hour', created_at) as created_hour,
+            COUNT(*) as records,
+            COUNT(*) FILTER (WHERE taxonomy_tag LIKE 'xxb%') as xxb_records,
+            COUNT(DISTINCT callsign) as unique_callsigns
+          FROM live_flight_detections_rows
+          WHERE DATE(created_at) = '2025-12-27'
+          GROUP BY DATE_TRUNC('hour', created_at)
+          ORDER BY created_hour
+        `;
+        
+        result = {
+          data: {
+            injectionBatches: injectionBatches || [],
+            biometricGaps: biometricGaps || [],
+            provenanceStats: provenanceStats || [],
+            dec27Analysis: dec27Analysis || [],
+            summary: {
+              totalInjectionBatches: injectionBatches?.length || 0,
+              largestBatch: parseInt(injectionBatches[0]?.record_count || '0'),
+              orphanXXBDays: biometricGaps?.filter((g: any) => g.orphan_xxb)?.length || 0,
+              dec27TotalRecords: dec27Analysis?.reduce((sum: number, r: any) => sum + parseInt(r.records || '0'), 0) || 0
+            }
+          }
+        };
+        break;
+      }
+
+      case 'sealSyntheticData': {
+        console.log('Sealing synthetic data batch...');
+        const { injectionTimestamp, sealLabel } = body;
+        
+        if (!injectionTimestamp) {
+          throw new Error('injectionTimestamp is required');
+        }
+        
+        const label = sealLabel || 'SYNTHETIC_DATA_GLITCH';
+        
+        // First ensure data_provenance column exists
+        await sql`
+          ALTER TABLE live_flight_detections_rows 
+          ADD COLUMN IF NOT EXISTS data_provenance TEXT DEFAULT 'LIVE_INGESTION'
+        `;
+        
+        // Seal the records from the injection timestamp window (±5 minutes)
+        const sealed = await sql`
+          UPDATE live_flight_detections_rows
+          SET data_provenance = ${label}
+          WHERE created_at BETWEEN 
+            ${injectionTimestamp}::timestamp - INTERVAL '5 minutes' 
+            AND ${injectionTimestamp}::timestamp + INTERVAL '5 minutes'
+          AND (data_provenance IS NULL OR data_provenance != ${label})
+          RETURNING id
+        `;
+        
+        const sealedCount = Array.isArray(sealed) ? sealed.length : 0;
+        console.log(`Sealed ${sealedCount} records with provenance: ${label}`);
+        
+        result = {
+          data: {
+            success: true,
+            sealedCount,
+            label,
+            timestamp: injectionTimestamp
+          }
+        };
+        break;
+      }
+
+      case 'getValidatedXXB': {
+        console.log('Fetching biometric-validated XXB records...');
+        const limitCount = body.limit || 100;
+        
+        // Only return XXB records that have corresponding biometric data within ±30 minutes
+        const validatedRecords = await sql.unsafe(`
+          SELECT DISTINCT ON (f.id)
+            f.id,
+            f.registration,
+            f.callsign,
+            f.altitude,
+            f.speed,
+            f.latitude,
+            f.longitude,
+            f.detection_timestamp,
+            f.taxonomy_tag,
+            f.threat_score,
+            b.id as biometric_correlation_id,
+            b.heart_rate,
+            b.stress_level,
+            ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.created_at))) / 60 as time_delta_minutes,
+            'BIOMETRIC_VALIDATED' as validation_status
+          FROM live_flight_detections_rows f
+          INNER JOIN biometric_monitoring b ON 
+            ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.created_at))) < 1800
+          WHERE f.taxonomy_tag LIKE 'xxb%'
+            AND f.data_provenance IS DISTINCT FROM 'SYNTHETIC_DATA_GLITCH'
+            AND f.latitude IS NOT NULL
+            AND f.longitude IS NOT NULL
+          ORDER BY f.id, ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.created_at)))
+          LIMIT ${limitCount}
+        `);
+        
+        // Also get summary stats
+        const stats = await sql`
+          SELECT 
+            COUNT(*) FILTER (WHERE taxonomy_tag LIKE 'xxb%') as total_xxb,
+            COUNT(*) FILTER (WHERE taxonomy_tag LIKE 'xxb%' AND data_provenance = 'SYNTHETIC_DATA_GLITCH') as synthetic_xxb,
+            COUNT(*) FILTER (WHERE taxonomy_tag LIKE 'xxb%' AND (data_provenance IS NULL OR data_provenance != 'SYNTHETIC_DATA_GLITCH')) as valid_xxb
+          FROM live_flight_detections_rows
+        `;
+        
+        result = {
+          data: {
+            records: validatedRecords || [],
+            stats: {
+              totalXXB: parseInt(stats[0]?.total_xxb || '0'),
+              syntheticXXB: parseInt(stats[0]?.synthetic_xxb || '0'),
+              validXXB: parseInt(stats[0]?.valid_xxb || '0')
+            }
+          }
+        };
+        break;
+      }
+
+      case 'disableAutoTagger': {
+        console.log('Checking for auto-tagger functions...');
+        
+        // Check if classify_xxb function exists
+        const functions = await sql`
+          SELECT routine_name, routine_type
+          FROM information_schema.routines
+          WHERE routine_schema = 'public'
+          AND routine_name LIKE '%xxb%' OR routine_name LIKE '%classify%'
+        `;
+        
+        // Check for related triggers
+        const triggers = await sql`
+          SELECT trigger_name, event_object_table, action_statement
+          FROM information_schema.triggers
+          WHERE trigger_schema = 'public'
+        `;
+        
+        result = {
+          data: {
+            functions: functions || [],
+            triggers: triggers || [],
+            message: 'No automated classify_xxb trigger found in database. XXB tagging occurs during data ingestion via aviation-edge-fetch.'
+          }
+        };
+        break;
+      }
+
+      case 'getDataProvenanceBreakdown': {
+        console.log('Getting data provenance breakdown...');
+        
+        const breakdown = await sql`
+          SELECT 
+            COALESCE(data_provenance, 'UNAUDITED') as provenance,
+            DATE(created_at) as created_date,
+            COUNT(*) as record_count,
+            COUNT(*) FILTER (WHERE taxonomy_tag LIKE 'xxb%') as xxb_count,
+            COUNT(DISTINCT registration) as unique_aircraft
+          FROM live_flight_detections_rows
+          GROUP BY data_provenance, DATE(created_at)
+          ORDER BY created_date DESC, record_count DESC
+          LIMIT 100
+        `;
+        
+        const totals = await sql`
+          SELECT 
+            COALESCE(data_provenance, 'UNAUDITED') as provenance,
+            COUNT(*) as total_records
+          FROM live_flight_detections_rows
+          GROUP BY data_provenance
+          ORDER BY total_records DESC
+        `;
+        
+        result = {
+          data: {
+            dailyBreakdown: breakdown || [],
+            totals: totals || []
+          }
+        };
+        break;
+      }
+
       default:
         throw new Error(`Unknown action: ${action}`);
     }

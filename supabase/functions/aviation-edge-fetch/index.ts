@@ -389,16 +389,35 @@ serve(async (req) => {
             
             try {
               // DEDUPLICATION: Check if this aircraft was already inserted in the last 5 minutes
-              const regKey = flight.registration || flight.hex || 'UNKNOWN';
-              const existingFlight = await sql`
-                SELECT id FROM live_flight_detections_rows 
-                WHERE (registration = ${regKey} OR icao_code = ${flight.hex || 'NONE'})
-                  AND detection_timestamp > NOW() - INTERVAL '5 minutes'
-                LIMIT 1
-              `;
+              // For masked aircraft (no registration), use hex + callsign + position proximity
+              const hasRegistration = flight.registration && flight.registration !== 'N/A' && !flight.registration.startsWith('XXB');
+              const hexCode = flight.hex || 'UNKNOWN';
+              const callsign = flight.callsign || '';
+              
+              let existingFlight;
+              if (hasRegistration) {
+                // Standard dedup by registration
+                existingFlight = await sql`
+                  SELECT id FROM live_flight_detections_rows 
+                  WHERE registration = ${flight.registration}
+                    AND detection_timestamp > NOW() - INTERVAL '5 minutes'
+                  LIMIT 1
+                `;
+              } else {
+                // Masked aircraft: dedup by hex + callsign + position (within ~0.5 degree)
+                existingFlight = await sql`
+                  SELECT id FROM live_flight_detections_rows 
+                  WHERE icao_code = ${hexCode}
+                    AND (callsign = ${callsign} OR (callsign IS NULL AND ${callsign} = ''))
+                    AND ABS(latitude - ${flight.latitude}) < 0.5
+                    AND ABS(longitude - ${flight.longitude}) < 0.5
+                    AND detection_timestamp > NOW() - INTERVAL '5 minutes'
+                  LIMIT 1
+                `;
+              }
               
               if (existingFlight.length > 0) {
-                console.log(`Skipping duplicate: ${regKey} (already inserted within 5 min)`);
+                console.log(`Skipping duplicate: ${hasRegistration ? flight.registration : hexCode} (already inserted within 5 min)`);
                 continue;
               }
               
@@ -653,16 +672,35 @@ serve(async (req) => {
               
               try {
                 // DEDUPLICATION: Check if this aircraft was already inserted in the last 5 minutes
-                const regKey = flight.registration || flight.hex || 'UNKNOWN';
-                const existingFlight = await sql`
-                  SELECT id FROM live_flight_detections_rows 
-                  WHERE (registration = ${regKey} OR icao_code = ${flight.hex || 'NONE'})
-                    AND detection_timestamp > NOW() - INTERVAL '5 minutes'
-                  LIMIT 1
-                `;
+                // For masked aircraft (no registration), use hex + callsign + position proximity
+                const hasRegistration = flight.registration && flight.registration !== 'N/A' && !flight.registration.startsWith('XXB');
+                const hexCode = flight.hex || 'UNKNOWN';
+                const callsign = flight.callsign || '';
+                
+                let existingFlight;
+                if (hasRegistration) {
+                  // Standard dedup by registration
+                  existingFlight = await sql`
+                    SELECT id FROM live_flight_detections_rows 
+                    WHERE registration = ${flight.registration}
+                      AND detection_timestamp > NOW() - INTERVAL '5 minutes'
+                    LIMIT 1
+                  `;
+                } else {
+                  // Masked aircraft: dedup by hex + callsign + position (within ~0.5 degree)
+                  existingFlight = await sql`
+                    SELECT id FROM live_flight_detections_rows 
+                    WHERE icao_code = ${hexCode}
+                      AND (callsign = ${callsign} OR (callsign IS NULL AND ${callsign} = ''))
+                      AND ABS(latitude - ${flight.latitude}) < 0.5
+                      AND ABS(longitude - ${flight.longitude}) < 0.5
+                      AND detection_timestamp > NOW() - INTERVAL '5 minutes'
+                    LIMIT 1
+                  `;
+                }
                 
                 if (existingFlight.length > 0) {
-                  console.log(`Skipping duplicate: ${regKey} (already inserted within 5 min)`);
+                  console.log(`Skipping duplicate: ${hasRegistration ? flight.registration : hexCode} (already inserted within 5 min)`);
                   continue;
                 }
                 

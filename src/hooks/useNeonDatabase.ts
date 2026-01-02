@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 
 export interface TableInfo {
@@ -72,6 +72,9 @@ export function useNeonDatabase() {
   const [error, setError] = useState<string | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<'connected' | 'disconnected' | 'unknown'>('unknown');
 
+  // Prevent request stampedes (many components calling the same action at once)
+  const inFlightRef = useRef(new Map<string, Promise<unknown>>());
+
   const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
   const isRetryableError = (message: string) =>
@@ -91,6 +94,10 @@ export function useNeonDatabase() {
       setError(err.message);
       throw err;
     }
+
+    const key = `${action}:${JSON.stringify(params)}`;
+    const existing = inFlightRef.current.get(key);
+    if (existing) return existing as any;
 
     const fallbackFor = () => {
       switch (action) {
@@ -115,80 +122,86 @@ export function useNeonDatabase() {
       }
     };
 
-    setIsLoading(true);
-    setError(null);
+    const run = (async () => {
+      setIsLoading(true);
+      setError(null);
 
-    let lastError: Error | null = null;
+      let lastError: Error | null = null;
 
-    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-      try {
-        const { data, error: fnError } = await supabase.functions.invoke('neon-query', {
-          body: { action, ...params },
-        });
+      for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        try {
+          const { data, error: fnError } = await supabase.functions.invoke('neon-query', {
+            body: { action, ...params },
+          });
 
-        if (fnError) {
-          const msg = fnError.message || 'Database function error';
-          
-          if (isRetryableError(msg) && attempt < MAX_RETRIES - 1) {
-            console.warn(`Attempt ${attempt + 1} failed with retryable error, retrying in ${RETRY_DELAYS[attempt]}ms...`);
+          if (fnError) {
+            const msg = fnError.message || 'Database function error';
+
+            if (isRetryableError(msg) && attempt < MAX_RETRIES - 1) {
+              console.warn(`Attempt ${attempt + 1} failed with retryable error, retrying in ${RETRY_DELAYS[attempt]}ms...`);
+              await sleep(RETRY_DELAYS[attempt]);
+              lastError = new Error(msg);
+              continue;
+            }
+
+            // Retryable but exhausted => soft-fail (avoid blank screen)
+            if (isRetryableError(msg)) {
+              setError(msg);
+              setConnectionStatus('disconnected');
+              return fallbackFor();
+            }
+            throw new Error(msg);
+          }
+
+          if (data?.error) {
+            const msg = String(data.error);
+
+            if (isRetryableError(msg) && attempt < MAX_RETRIES - 1) {
+              console.warn(`Attempt ${attempt + 1} data error, retrying...`);
+              await sleep(RETRY_DELAYS[attempt]);
+              lastError = new Error(msg);
+              continue;
+            }
+
+            if (isRetryableError(msg)) {
+              setError(msg);
+              setConnectionStatus('disconnected');
+              return fallbackFor();
+            }
+            throw new Error(msg);
+          }
+
+          // Success!
+          setConnectionStatus('connected');
+          return data?.data ?? data;
+        } catch (err) {
+          lastError = err instanceof Error ? err : new Error('Database query failed');
+
+          if (isRetryableError(lastError.message) && attempt < MAX_RETRIES - 1) {
+            console.warn(`Attempt ${attempt + 1} exception, retrying...`);
             await sleep(RETRY_DELAYS[attempt]);
-            lastError = new Error(msg);
             continue;
           }
-          
-          // Non-retryable or final attempt
-          if (isRetryableError(msg)) {
-            setError(msg);
-            setConnectionStatus('disconnected');
-            return fallbackFor();
-          }
-          throw new Error(msg);
-        }
 
-        if (data?.error) {
-          const msg = String(data.error);
-          
-          if (isRetryableError(msg) && attempt < MAX_RETRIES - 1) {
-            console.warn(`Attempt ${attempt + 1} data error, retrying...`);
-            await sleep(RETRY_DELAYS[attempt]);
-            lastError = new Error(msg);
-            continue;
-          }
-          
-          if (isRetryableError(msg)) {
-            setError(msg);
-            setConnectionStatus('disconnected');
-            return fallbackFor();
-          }
-          throw new Error(msg);
+          setError(lastError.message);
+          setConnectionStatus('disconnected');
+          throw lastError;
         }
+      }
 
-        // Success!
-        setConnectionStatus('connected');
-        setIsLoading(false);
-        return data?.data ?? data;
-      } catch (err) {
-        lastError = err instanceof Error ? err : new Error('Database query failed');
-        
-        if (isRetryableError(lastError.message) && attempt < MAX_RETRIES - 1) {
-          console.warn(`Attempt ${attempt + 1} exception, retrying...`);
-          await sleep(RETRY_DELAYS[attempt]);
-          continue;
-        }
-        
+      // All retries exhausted
+      if (lastError) {
         setError(lastError.message);
         setConnectionStatus('disconnected');
-        throw lastError;
       }
-    }
+      return fallbackFor();
+    })().finally(() => {
+      inFlightRef.current.delete(key);
+      setIsLoading(false);
+    });
 
-    // All retries exhausted
-    setIsLoading(false);
-    if (lastError) {
-      setError(lastError.message);
-      setConnectionStatus('disconnected');
-    }
-    return fallbackFor();
+    inFlightRef.current.set(key, run);
+    return run as any;
   }, []);
 
   // Health check

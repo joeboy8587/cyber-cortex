@@ -388,6 +388,20 @@ serve(async (req) => {
             flight.longitude = correctedLongitude;
             
             try {
+              // DEDUPLICATION: Check if this aircraft was already inserted in the last 5 minutes
+              const regKey = flight.registration || flight.hex || 'UNKNOWN';
+              const existingFlight = await sql`
+                SELECT id FROM live_flight_detections_rows 
+                WHERE (registration = ${regKey} OR icao_code = ${flight.hex || 'NONE'})
+                  AND detection_timestamp > NOW() - INTERVAL '5 minutes'
+                LIMIT 1
+              `;
+              
+              if (existingFlight.length > 0) {
+                console.log(`Skipping duplicate: ${regKey} (already inserted within 5 min)`);
+                continue;
+              }
+              
               const flightId = crypto.randomUUID();
               
               await sql`
@@ -638,6 +652,20 @@ serve(async (req) => {
               }
               
               try {
+                // DEDUPLICATION: Check if this aircraft was already inserted in the last 5 minutes
+                const regKey = flight.registration || flight.hex || 'UNKNOWN';
+                const existingFlight = await sql`
+                  SELECT id FROM live_flight_detections_rows 
+                  WHERE (registration = ${regKey} OR icao_code = ${flight.hex || 'NONE'})
+                    AND detection_timestamp > NOW() - INTERVAL '5 minutes'
+                  LIMIT 1
+                `;
+                
+                if (existingFlight.length > 0) {
+                  console.log(`Skipping duplicate: ${regKey} (already inserted within 5 min)`);
+                  continue;
+                }
+                
                 const flightId = crypto.randomUUID();
                 
                 await sql`

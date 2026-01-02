@@ -85,13 +85,20 @@ import TROMotionGenerator from "@/components/dashboard/TROMotionGenerator";
 import FAAComplaintBuilder from "@/components/dashboard/FAAComplaintBuilder";
 import PreservationDemandSystem from "@/components/dashboard/PreservationDemandSystem";
 import DamagesCalculator from "@/components/dashboard/DamagesCalculator";
+import { ComprehensiveEvidenceScan } from "@/components/dashboard/ComprehensiveEvidenceScan";
+
 const Index = () => {
   return (
     <div className="min-h-screen bg-background">
       <div className="relative z-10">
         <CommandHeader />
         <main className="container py-6 space-y-6">
-          {/* TRUTH SCANNER - Top Priority */}
+          {/* COMPREHENSIVE EVIDENCE SCAN - Top Priority */}
+          <section id="comprehensive-scan" className="space-y-6">
+            <ComprehensiveEvidenceScan />
+          </section>
+
+          {/* TRUTH SCANNER */}
           <section id="truth-scanner" className="space-y-6">
             <TruthScannerDashboard />
             <PlainLanguageSummary />

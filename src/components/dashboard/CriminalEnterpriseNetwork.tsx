@@ -80,18 +80,18 @@ export function CriminalEnterpriseNetwork() {
         }
       });
 
-      if (entityData?.data) {
-        // Parse arrays that may come as strings from the database
-        const parsedEntities = entityData.data.map((e: any) => ({
+      const rawEntities = entityData?.data || entityData || [];
+      console.log('[CriminalEnterpriseNetwork] Raw entities:', rawEntities);
+      
+      if (Array.isArray(rawEntities) && rawEntities.length > 0) {
+        // Parse arrays that may come as PostgreSQL array strings from the database
+        const parsedEntities = rawEntities.map((e: any) => ({
           ...e,
-          assets_controlled: Array.isArray(e.assets_controlled) 
-            ? e.assets_controlled 
-            : (typeof e.assets_controlled === 'string' ? JSON.parse(e.assets_controlled || '[]') : []),
-          legal_exposure: Array.isArray(e.legal_exposure) 
-            ? e.legal_exposure 
-            : (typeof e.legal_exposure === 'string' ? JSON.parse(e.legal_exposure || '[]') : [])
+          assets_controlled: safeParseArray(e.assets_controlled),
+          legal_exposure: safeParseArray(e.legal_exposure)
         }));
         
+        console.log('[CriminalEnterpriseNetwork] Parsed entities:', parsedEntities);
         setEntities(parsedEntities);
         
         // Count total controlled aircraft
@@ -102,17 +102,21 @@ export function CriminalEnterpriseNetwork() {
           }
         });
 
-        setStats(prev => ({
-          ...prev,
-          total: Number(statsData?.data?.[0]?.total) || 0,
-          tier1: Number(statsData?.data?.[0]?.tier1) || 0,
-          tier2: Number(statsData?.data?.[0]?.tier2) || 0,
-          shellCompanies: Number(statsData?.data?.[0]?.shells) || 0,
+        const rawStats = statsData?.data || statsData || [];
+        const firstStat = Array.isArray(rawStats) ? rawStats[0] : null;
+        
+        setStats({
+          total: Number(firstStat?.total) || parsedEntities.length,
+          tier1: Number(firstStat?.tier1) || parsedEntities.filter((e: any) => e.tier === 1).length,
+          tier2: Number(firstStat?.tier2) || parsedEntities.filter((e: any) => e.tier === 2).length,
+          shellCompanies: Number(firstStat?.shells) || parsedEntities.filter((e: any) => e.entity_type === 'SHELL_COMPANY').length,
           aircraftControlled: aircraftCount
-        }));
+        });
+      } else {
+        console.warn('[CriminalEnterpriseNetwork] No entity data returned');
       }
     } catch (error) {
-      console.error("Error fetching enterprise data:", error);
+      console.error("[CriminalEnterpriseNetwork] Error fetching enterprise data:", error);
     } finally {
       setLoading(false);
     }

@@ -104,6 +104,140 @@ export type Database = {
         }
         Relationships: []
       }
+      correlation_job_status: {
+        Row: {
+          completed_at: string | null
+          created_at: string | null
+          error_message: string | null
+          job_id: string
+          job_type: string
+          last_cursor: string | null
+          linked_records: number | null
+          processed_records: number | null
+          started_at: string | null
+          status: string | null
+          target_table: string | null
+          total_records: number | null
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string | null
+          error_message?: string | null
+          job_id?: string
+          job_type: string
+          last_cursor?: string | null
+          linked_records?: number | null
+          processed_records?: number | null
+          started_at?: string | null
+          status?: string | null
+          target_table?: string | null
+          total_records?: number | null
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string | null
+          error_message?: string | null
+          job_id?: string
+          job_type?: string
+          last_cursor?: string | null
+          linked_records?: number | null
+          processed_records?: number | null
+          started_at?: string | null
+          status?: string | null
+          target_table?: string | null
+          total_records?: number | null
+        }
+        Relationships: []
+      }
+      entity_registry: {
+        Row: {
+          aliases: string[] | null
+          canonical_identifier: string
+          created_at: string | null
+          entity_id: string
+          entity_type: Database["public"]["Enums"]["entity_type"]
+          first_seen: string | null
+          last_seen: string | null
+          linked_forensic_events: string[] | null
+          metadata: Json | null
+          source_tables: Json | null
+          threat_classification: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          aliases?: string[] | null
+          canonical_identifier: string
+          created_at?: string | null
+          entity_id?: string
+          entity_type: Database["public"]["Enums"]["entity_type"]
+          first_seen?: string | null
+          last_seen?: string | null
+          linked_forensic_events?: string[] | null
+          metadata?: Json | null
+          source_tables?: Json | null
+          threat_classification?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          aliases?: string[] | null
+          canonical_identifier?: string
+          created_at?: string | null
+          entity_id?: string
+          entity_type?: Database["public"]["Enums"]["entity_type"]
+          first_seen?: string | null
+          last_seen?: string | null
+          linked_forensic_events?: string[] | null
+          metadata?: Json | null
+          source_tables?: Json | null
+          threat_classification?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      evidence_chain_links: {
+        Row: {
+          forensic_event_id: string | null
+          link_confidence: number | null
+          link_hash: string | null
+          link_id: string
+          link_type: Database["public"]["Enums"]["link_type"]
+          linked_at: string | null
+          linked_by: string | null
+          source_id: string
+          source_table: string
+        }
+        Insert: {
+          forensic_event_id?: string | null
+          link_confidence?: number | null
+          link_hash?: string | null
+          link_id?: string
+          link_type: Database["public"]["Enums"]["link_type"]
+          linked_at?: string | null
+          linked_by?: string | null
+          source_id: string
+          source_table: string
+        }
+        Update: {
+          forensic_event_id?: string | null
+          link_confidence?: number | null
+          link_hash?: string | null
+          link_id?: string
+          link_type?: Database["public"]["Enums"]["link_type"]
+          linked_at?: string | null
+          linked_by?: string | null
+          source_id?: string
+          source_table?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "evidence_chain_links_forensic_event_id_fkey"
+            columns: ["forensic_event_id"]
+            isOneToOne: false
+            referencedRelation: "master_forensic_events"
+            referencedColumns: ["forensic_event_id"]
+          },
+        ]
+      }
       evidence_documents: {
         Row: {
           content: string
@@ -185,6 +319,70 @@ export type Database = {
         }
         Relationships: []
       }
+      master_forensic_events: {
+        Row: {
+          bradford_hill_score: number | null
+          chain_of_custody_hash: string | null
+          confidence_score: number | null
+          created_at: string | null
+          event_timestamp: string
+          event_type: Database["public"]["Enums"]["forensic_event_type"]
+          factor_count: number | null
+          forensic_event_id: string
+          geo_lat: number | null
+          geo_lng: number | null
+          is_physical_verified: boolean | null
+          linked_records: Json | null
+          primary_entity_id: string | null
+          primary_entity_type: Database["public"]["Enums"]["entity_type"] | null
+          summary: string | null
+          temporal_cluster_id: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          bradford_hill_score?: number | null
+          chain_of_custody_hash?: string | null
+          confidence_score?: number | null
+          created_at?: string | null
+          event_timestamp: string
+          event_type: Database["public"]["Enums"]["forensic_event_type"]
+          factor_count?: number | null
+          forensic_event_id?: string
+          geo_lat?: number | null
+          geo_lng?: number | null
+          is_physical_verified?: boolean | null
+          linked_records?: Json | null
+          primary_entity_id?: string | null
+          primary_entity_type?:
+            | Database["public"]["Enums"]["entity_type"]
+            | null
+          summary?: string | null
+          temporal_cluster_id?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          bradford_hill_score?: number | null
+          chain_of_custody_hash?: string | null
+          confidence_score?: number | null
+          created_at?: string | null
+          event_timestamp?: string
+          event_type?: Database["public"]["Enums"]["forensic_event_type"]
+          factor_count?: number | null
+          forensic_event_id?: string
+          geo_lat?: number | null
+          geo_lng?: number | null
+          is_physical_verified?: boolean | null
+          linked_records?: Json | null
+          primary_entity_id?: string | null
+          primary_entity_type?:
+            | Database["public"]["Enums"]["entity_type"]
+            | null
+          summary?: string | null
+          temporal_cluster_id?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -193,7 +391,28 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
-      [_ in never]: never
+      entity_type:
+        | "aircraft"
+        | "operator"
+        | "agency"
+        | "shell_company"
+        | "contractor"
+        | "individual"
+      forensic_event_type:
+        | "flight"
+        | "biometric"
+        | "witness"
+        | "ocr"
+        | "legal"
+        | "alert"
+        | "multi_factor"
+      link_type:
+        | "temporal"
+        | "causal"
+        | "witness"
+        | "documentary"
+        | "biometric"
+        | "spatial"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -320,6 +539,32 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      entity_type: [
+        "aircraft",
+        "operator",
+        "agency",
+        "shell_company",
+        "contractor",
+        "individual",
+      ],
+      forensic_event_type: [
+        "flight",
+        "biometric",
+        "witness",
+        "ocr",
+        "legal",
+        "alert",
+        "multi_factor",
+      ],
+      link_type: [
+        "temporal",
+        "causal",
+        "witness",
+        "documentary",
+        "biometric",
+        "spatial",
+      ],
+    },
   },
 } as const

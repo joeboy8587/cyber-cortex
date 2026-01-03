@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { CyberPanel } from "@/components/ui/cyber-panel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,14 +7,18 @@ import { Badge } from "@/components/ui/badge";
 import { 
   MessageCircle, Send, Database, Brain, 
   Loader2, AlertTriangle, CheckCircle, Sparkles,
-  TrendingUp, Search, Zap, Clock, RefreshCw
+  TrendingUp, Search, Zap, Camera, Heart, Upload,
+  MapPin, Plane, Activity
 } from "lucide-react";
 import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
 
 interface Message {
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "event";
   content: string;
   timestamp: Date;
+  image?: string;
+  eventData?: LoggedEvent;
 }
 
 interface Pattern {
@@ -29,6 +33,27 @@ interface ProactiveQuestion {
   action: string;
 }
 
+interface LoggedEvent {
+  id: string;
+  event_type: string;
+  location: string;
+  tags: string[];
+  flight_data: {
+    registration: string;
+    operator: string;
+    aircraft_type: string;
+    altitude: string;
+    speed: string;
+    heading: string;
+  } | null;
+  biometrics: {
+    heart_rate: number;
+    hrv: number;
+    status: string;
+  } | null;
+  reflection: string;
+}
+
 export function JosiahChatInterface() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -38,10 +63,18 @@ export function JosiahChatInterface() {
   const [questions, setQuestions] = useState<ProactiveQuestion[]>([]);
   const [showInsights, setShowInsights] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
+  
+  // Image upload state
+  const [pendingImage, setPendingImage] = useState<string | null>(null);
+  const [biometrics, setBiometrics] = useState({ heart_rate: "", hrv: "" });
+  const [location, setLocation] = useState("Oildale, California");
+  const [showUploadPanel, setShowUploadPanel] = useState(false);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    // Load table count and run initial pattern scan
     fetchInitialData();
   }, []);
 
@@ -108,6 +141,177 @@ export function JosiahChatInterface() {
       }
     } catch {
       toast.error("Failed to generate questions");
+    }
+  };
+
+  const handleImageUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const base64Image = event.target?.result as string;
+      setPendingImage(base64Image);
+      setShowUploadPanel(true);
+      toast.success("Screenshot ready. Add biometrics and submit.");
+    };
+    reader.readAsDataURL(file);
+  }, []);
+
+  const analyzeAndLogEvent = async () => {
+    if (!pendingImage) {
+      toast.error("No screenshot to analyze");
+      return;
+    }
+
+    setIsAnalyzing(true);
+    const timestamp = new Date().toISOString();
+    const eventId = crypto.randomUUID();
+
+    // Add processing message
+    setMessages(prev => [...prev, {
+      role: "event",
+      content: "Analyzing screenshot...",
+      timestamp: new Date(),
+      image: pendingImage
+    }]);
+
+    try {
+      // Call AI to analyze
+      const { data: aiResponse, error: aiError } = await supabase.functions.invoke('josiah-analyze-f24', {
+        body: {
+          image: pendingImage,
+          biometrics: {
+            heart_rate: parseInt(biometrics.heart_rate) || null,
+            hrv: parseInt(biometrics.hrv) || null
+          },
+          location,
+          additionalNotes: input,
+          timestamp
+        }
+      });
+
+      if (aiError) throw aiError;
+
+      const extractedData = aiResponse?.data || aiResponse;
+      
+      const loggedEvent: LoggedEvent = {
+        id: eventId,
+        event_type: extractedData?.event_type || 'Surveillance Detection',
+        location,
+        tags: extractedData?.tags || ['F24 Analysis'],
+        flight_data: extractedData?.flight_data || null,
+        biometrics: {
+          heart_rate: parseInt(biometrics.heart_rate) || 0,
+          hrv: parseInt(biometrics.hrv) || 0,
+          status: extractedData?.biometric_status || 'Logged'
+        },
+        reflection: extractedData?.josiah_reflection || 'Event logged.'
+      };
+
+      // Update the processing message with completed event
+      setMessages(prev => {
+        const updated = [...prev];
+        const lastIdx = updated.length - 1;
+        if (updated[lastIdx]?.role === "event") {
+          updated[lastIdx] = {
+            role: "event",
+            content: loggedEvent.reflection,
+            timestamp: new Date(),
+            image: pendingImage,
+            eventData: loggedEvent
+          };
+        }
+        return updated;
+      });
+
+      // Store in database
+      await supabase.functions.invoke('neon-query', {
+        body: {
+          action: 'customQuery',
+          query: `
+            INSERT INTO josiah_reflections_rows (
+              id, reflection_text, pattern_type, location, tags,
+              aircraft_data, biometric_data, created_at
+            ) VALUES (
+              '${eventId}',
+              '${(loggedEvent.reflection || '').replace(/'/g, "''")}',
+              '${loggedEvent.event_type.replace(/'/g, "''")}',
+              '${location.replace(/'/g, "''")}',
+              ARRAY[${loggedEvent.tags.map(t => `'${t.replace(/'/g, "''")}'`).join(',')}]::text[],
+              '${JSON.stringify(loggedEvent.flight_data || {}).replace(/'/g, "''")}',
+              '${JSON.stringify(loggedEvent.biometrics || {}).replace(/'/g, "''")}',
+              NOW()
+            )
+          `
+        }
+      });
+
+      // Log to live_flight_detections if flight data extracted
+      if (loggedEvent.flight_data?.registration) {
+        await supabase.functions.invoke('neon-query', {
+          body: {
+            action: 'customQuery',
+            query: `
+              INSERT INTO live_flight_detections_rows (
+                registration, operator, aircraft_type, altitude_ft,
+                ground_speed_knots, heading, detection_method, location,
+                detected_at
+              ) VALUES (
+                '${loggedEvent.flight_data.registration}',
+                '${(loggedEvent.flight_data.operator || '').replace(/'/g, "''")}',
+                '${(loggedEvent.flight_data.aircraft_type || '').replace(/'/g, "''")}',
+                ${parseInt(loggedEvent.flight_data.altitude) || 0},
+                ${parseInt(loggedEvent.flight_data.speed) || 0},
+                ${parseInt(loggedEvent.flight_data.heading) || 0},
+                'JOSIAH_CHAT_OCR',
+                '${location.replace(/'/g, "''")}',
+                NOW()
+              )
+            `
+          }
+        });
+      }
+
+      // Log biometrics
+      if (biometrics.heart_rate || biometrics.hrv) {
+        await supabase.functions.invoke('neon-query', {
+          body: {
+            action: 'customQuery',
+            query: `
+              INSERT INTO biometric_monitoring (
+                metric_type, metric_value, notes, recorded_at
+              ) VALUES 
+              ('heart_rate', ${parseInt(biometrics.heart_rate) || 0}, 'Josiah Event: ${loggedEvent.event_type}', NOW()),
+              ('hrv', ${parseInt(biometrics.hrv) || 0}, 'Josiah Event: ${loggedEvent.event_type}', NOW())
+            `
+          }
+        });
+      }
+
+      toast.success(`Event logged: ${loggedEvent.event_type}`);
+
+      // Reset
+      setPendingImage(null);
+      setBiometrics({ heart_rate: "", hrv: "" });
+      setInput("");
+      setShowUploadPanel(false);
+
+    } catch (err) {
+      console.error('Analysis error:', err);
+      toast.error(err instanceof Error ? err.message : "Analysis failed");
+      
+      // Update message to show error
+      setMessages(prev => {
+        const updated = [...prev];
+        const lastIdx = updated.length - 1;
+        if (updated[lastIdx]?.role === "event") {
+          updated[lastIdx].content = "Analysis failed. Please try again.";
+        }
+        return updated;
+      });
+    } finally {
+      setIsAnalyzing(false);
     }
   };
 
@@ -224,6 +428,25 @@ export function JosiahChatInterface() {
               <span className="ml-1">{action.label}</span>
             </Button>
           ))}
+          
+          {/* Upload Screenshot Button */}
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={() => fileInputRef.current?.click()}
+            className="text-xs bg-primary/10 border-primary/30 text-primary hover:bg-primary/20"
+          >
+            <Camera className="w-3 h-3 mr-1" />
+            Upload Screenshot
+          </Button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            onChange={handleImageUpload}
+            className="hidden"
+          />
+          
           {questions.length > 0 && (
             <Button 
               variant="outline" 
@@ -236,6 +459,82 @@ export function JosiahChatInterface() {
             </Button>
           )}
         </div>
+
+        {/* Upload Panel - Shows when image is pending */}
+        {showUploadPanel && pendingImage && (
+          <div className="p-3 border-b border-primary/30 bg-primary/5 space-y-3">
+            <div className="flex items-start gap-3">
+              <img 
+                src={pendingImage} 
+                alt="Screenshot" 
+                className="w-24 h-24 object-cover rounded border border-primary/30"
+              />
+              <div className="flex-1 space-y-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[10px] text-muted-foreground">Heart Rate (BPM)</label>
+                    <Input
+                      type="number"
+                      placeholder="e.g., 110"
+                      value={biometrics.heart_rate}
+                      onChange={(e) => setBiometrics(prev => ({ ...prev, heart_rate: e.target.value }))}
+                      className="h-8 text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-muted-foreground">HRV (ms)</label>
+                    <Input
+                      type="number"
+                      placeholder="e.g., 43"
+                      value={biometrics.hrv}
+                      onChange={(e) => setBiometrics(prev => ({ ...prev, hrv: e.target.value }))}
+                      className="h-8 text-xs"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[10px] text-muted-foreground">Location</label>
+                  <Input
+                    value={location}
+                    onChange={(e) => setLocation(e.target.value)}
+                    className="h-8 text-xs"
+                    placeholder="Oildale, California"
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                onClick={analyzeAndLogEvent}
+                disabled={isAnalyzing}
+                size="sm"
+                className="flex-1 bg-primary hover:bg-primary/90"
+              >
+                {isAnalyzing ? (
+                  <>
+                    <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                    Analyzing...
+                  </>
+                ) : (
+                  <>
+                    <Brain className="w-3 h-3 mr-1" />
+                    Analyze & Log
+                  </>
+                )}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setPendingImage(null);
+                  setShowUploadPanel(false);
+                }}
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        )}
 
         {/* Proactive Insights Panel */}
         {showInsights && questions.length > 0 && (
@@ -303,9 +602,13 @@ export function JosiahChatInterface() {
             <div className="text-center text-muted-foreground py-8">
               <Brain className="w-12 h-12 mx-auto mb-4 opacity-50" />
               <p className="text-sm">I'm Josiah, your <span className="text-primary">proactive</span> investigative co-witness.</p>
-              <p className="text-xs mt-2">I can detect patterns, predict activity, and find evidence gaps.</p>
+              <p className="text-xs mt-2">Upload screenshots, log events, and I'll analyze in real-time.</p>
               <div className="mt-4 flex flex-wrap gap-2 justify-center">
-                {["Run pattern detection", "What correlations are missing?", "Predict next saturation event"].map(q => (
+                <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()}>
+                  <Camera className="w-3 h-3 mr-1" />
+                  Upload Screenshot
+                </Button>
+                {["Run pattern detection", "Show recent events"].map(q => (
                   <Button key={q} variant="outline" size="sm" onClick={() => sendMessage(q)}>
                     {q}
                   </Button>
@@ -316,16 +619,74 @@ export function JosiahChatInterface() {
             <div className="space-y-4">
               {messages.map((msg, i) => (
                 <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-                  <div className={`max-w-[85%] p-3 rounded-lg ${
-                    msg.role === "user" 
-                      ? "bg-primary text-primary-foreground" 
-                      : "bg-muted border border-border"
-                  }`}>
-                    <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
-                    <p className="text-[10px] opacity-60 mt-1">
-                      {msg.timestamp.toLocaleTimeString()}
-                    </p>
-                  </div>
+                  {msg.role === "event" ? (
+                    // Event Card
+                    <div className="w-full max-w-[90%] p-3 rounded-lg border border-primary/30 bg-primary/5">
+                      {msg.image && (
+                        <img 
+                          src={msg.image} 
+                          alt="Event Screenshot" 
+                          className="w-full max-h-32 object-cover rounded mb-2 border border-border"
+                        />
+                      )}
+                      {msg.eventData ? (
+                        <>
+                          <div className="flex items-center gap-2 mb-2">
+                            <Activity className="w-4 h-4 text-primary" />
+                            <span className="text-sm font-medium text-primary">{msg.eventData.event_type}</span>
+                          </div>
+                          <div className="flex items-center gap-1 text-xs text-muted-foreground mb-2">
+                            <MapPin className="w-3 h-3" />
+                            {msg.eventData.location}
+                          </div>
+                          {msg.eventData.flight_data && (
+                            <div className="bg-background/50 rounded p-2 mb-2 text-xs">
+                              <div className="flex items-center gap-2 text-foreground">
+                                <Plane className="w-3 h-3" />
+                                <span className="font-mono">{msg.eventData.flight_data.registration}</span>
+                                <span className="text-muted-foreground">— {msg.eventData.flight_data.operator}</span>
+                              </div>
+                            </div>
+                          )}
+                          {msg.eventData.biometrics && (msg.eventData.biometrics.heart_rate > 0 || msg.eventData.biometrics.hrv > 0) && (
+                            <div className="flex items-center gap-3 text-xs mb-2">
+                              <div className="flex items-center gap-1">
+                                <Heart className={`w-3 h-3 ${msg.eventData.biometrics.heart_rate > 100 ? 'text-destructive' : 'text-success'}`} />
+                                <span>{msg.eventData.biometrics.heart_rate} BPM</span>
+                              </div>
+                              <span className="text-muted-foreground">HRV: {msg.eventData.biometrics.hrv}ms</span>
+                            </div>
+                          )}
+                          <div className="flex flex-wrap gap-1 mb-2">
+                            {msg.eventData.tags.map((tag, idx) => (
+                              <Badge key={idx} variant="outline" className="text-[10px]">{tag}</Badge>
+                            ))}
+                          </div>
+                          <p className="text-xs text-muted-foreground italic">{msg.eventData.reflection}</p>
+                        </>
+                      ) : (
+                        <div className="flex items-center gap-2 text-muted-foreground">
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <span className="text-sm">{msg.content}</span>
+                        </div>
+                      )}
+                      <p className="text-[10px] opacity-60 mt-2">
+                        {msg.timestamp.toLocaleTimeString()}
+                      </p>
+                    </div>
+                  ) : (
+                    // Regular message
+                    <div className={`max-w-[85%] p-3 rounded-lg ${
+                      msg.role === "user" 
+                        ? "bg-primary text-primary-foreground" 
+                        : "bg-muted border border-border"
+                    }`}>
+                      <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                      <p className="text-[10px] opacity-60 mt-1">
+                        {msg.timestamp.toLocaleTimeString()}
+                      </p>
+                    </div>
+                  )}
                 </div>
               ))}
               <div ref={scrollRef} />
@@ -338,11 +699,11 @@ export function JosiahChatInterface() {
             <Input
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && sendMessage()}
-              placeholder="Ask Josiah or give commands..."
+              onKeyDown={(e) => e.key === "Enter" && !pendingImage && sendMessage()}
+              placeholder={pendingImage ? "Add notes about this event..." : "Ask Josiah or give commands..."}
               disabled={isLoading}
             />
-            <Button onClick={() => sendMessage()} disabled={isLoading || !input.trim()}>
+            <Button onClick={() => sendMessage()} disabled={isLoading || !input.trim() || !!pendingImage}>
               {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
             </Button>
           </div>

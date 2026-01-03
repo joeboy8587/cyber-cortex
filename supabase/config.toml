@@ -48,6 +48,9 @@ verify_jwt = false
 [functions.josiah-analyze-f24]
 verify_jwt = false
 
+[functions.forensic-linker]
+verify_jwt = false
+
 [api]
 enabled = true
 port = 54321

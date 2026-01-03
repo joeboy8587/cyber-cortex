@@ -88,6 +88,7 @@ import DamagesCalculator from "@/components/dashboard/DamagesCalculator";
 import { ComprehensiveEvidenceScan } from "@/components/dashboard/ComprehensiveEvidenceScan";
 import F24RadarUploader from "@/components/dashboard/F24RadarUploader";
 import { DataIntegrityPanel } from "@/components/dashboard/DataIntegrityPanel";
+import { ForensicLinkageHub } from "@/components/dashboard/ForensicLinkageHub";
 
 const Index = () => {
   return (
@@ -114,6 +115,11 @@ const Index = () => {
             <NeonTableCensus />
             <DatabaseStats />
             <DatabaseCoverageDashboard />
+          </section>
+
+          {/* FORENSIC LINKAGE HUB - New Central Correlation System */}
+          <section id="forensic-linkage" className="space-y-6">
+            <ForensicLinkageHub />
           </section>
 
           <section id="master-evidence">

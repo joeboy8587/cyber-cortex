@@ -7,6 +7,123 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Initialize forensic tables in Neon
+async function initializeForensicTables(sql: ReturnType<typeof postgres>) {
+  console.log('[forensic-linker] Checking/creating forensic tables in Neon...');
+  
+  // Create entity_type enum if not exists
+  await sql`
+    DO $$ BEGIN
+      CREATE TYPE entity_type AS ENUM ('aircraft', 'operator', 'agency', 'shell_company', 'contractor', 'individual');
+    EXCEPTION
+      WHEN duplicate_object THEN null;
+    END $$;
+  `;
+
+  // Create forensic_event_type enum if not exists
+  await sql`
+    DO $$ BEGIN
+      CREATE TYPE forensic_event_type AS ENUM ('flight', 'biometric', 'witness', 'ocr', 'legal', 'alert', 'multi_factor');
+    EXCEPTION
+      WHEN duplicate_object THEN null;
+    END $$;
+  `;
+
+  // Create link_type enum if not exists
+  await sql`
+    DO $$ BEGIN
+      CREATE TYPE link_type AS ENUM ('temporal', 'causal', 'witness', 'documentary', 'biometric', 'spatial');
+    EXCEPTION
+      WHEN duplicate_object THEN null;
+    END $$;
+  `;
+
+  // Create master_forensic_events table
+  await sql`
+    CREATE TABLE IF NOT EXISTS master_forensic_events (
+      forensic_event_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      event_timestamp TIMESTAMPTZ NOT NULL,
+      event_type forensic_event_type NOT NULL,
+      primary_entity_type entity_type,
+      primary_entity_id TEXT,
+      geo_lat DOUBLE PRECISION,
+      geo_lng DOUBLE PRECISION,
+      confidence_score INTEGER DEFAULT 50,
+      bradford_hill_score NUMERIC,
+      chain_of_custody_hash TEXT,
+      linked_records JSONB DEFAULT '[]'::jsonb,
+      temporal_cluster_id UUID,
+      is_physical_verified BOOLEAN DEFAULT false,
+      factor_count INTEGER DEFAULT 1,
+      summary TEXT,
+      created_at TIMESTAMPTZ DEFAULT now(),
+      updated_at TIMESTAMPTZ DEFAULT now()
+    )
+  `;
+
+  // Create entity_registry table
+  await sql`
+    CREATE TABLE IF NOT EXISTS entity_registry (
+      entity_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      entity_type entity_type NOT NULL,
+      canonical_identifier TEXT NOT NULL,
+      aliases TEXT[] DEFAULT '{}',
+      source_tables JSONB DEFAULT '[]'::jsonb,
+      first_seen TIMESTAMPTZ,
+      last_seen TIMESTAMPTZ,
+      threat_classification TEXT,
+      linked_forensic_events UUID[] DEFAULT '{}',
+      metadata JSONB DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ DEFAULT now(),
+      updated_at TIMESTAMPTZ DEFAULT now(),
+      UNIQUE(entity_type, canonical_identifier)
+    )
+  `;
+
+  // Create evidence_chain_links table
+  await sql`
+    CREATE TABLE IF NOT EXISTS evidence_chain_links (
+      link_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      forensic_event_id UUID REFERENCES master_forensic_events(forensic_event_id),
+      source_table TEXT NOT NULL,
+      source_id TEXT NOT NULL,
+      link_type link_type NOT NULL,
+      link_confidence INTEGER DEFAULT 50,
+      link_hash TEXT,
+      linked_by TEXT DEFAULT 'system',
+      linked_at TIMESTAMPTZ DEFAULT now()
+    )
+  `;
+
+  // Create correlation_job_status table
+  await sql`
+    CREATE TABLE IF NOT EXISTS correlation_job_status (
+      job_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      job_type TEXT NOT NULL,
+      target_table TEXT,
+      status TEXT DEFAULT 'pending',
+      total_records INTEGER,
+      processed_records INTEGER DEFAULT 0,
+      linked_records INTEGER DEFAULT 0,
+      error_message TEXT,
+      last_cursor TEXT,
+      started_at TIMESTAMPTZ,
+      completed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT now()
+    )
+  `;
+
+  // Create indexes for performance
+  await sql`CREATE INDEX IF NOT EXISTS idx_mfe_event_timestamp ON master_forensic_events(event_timestamp)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_mfe_event_type ON master_forensic_events(event_type)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_mfe_primary_entity ON master_forensic_events(primary_entity_type, primary_entity_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_ecl_forensic_event ON evidence_chain_links(forensic_event_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_ecl_source ON evidence_chain_links(source_table, source_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_er_canonical ON entity_registry(entity_type, canonical_identifier)`;
+  
+  console.log('[forensic-linker] Forensic tables initialized successfully');
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -25,6 +142,11 @@ serve(async (req) => {
   try {
     const { action, ...params } = await req.json();
     console.log(`[forensic-linker] Action: ${action}`, params);
+
+    // Initialize tables on first call or explicit request
+    if (action === 'initTables' || action === 'getStats') {
+      await initializeForensicTables(sql);
+    }
 
     let result;
 

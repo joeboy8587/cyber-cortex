@@ -229,25 +229,21 @@ export function JosiahChatInterface() {
         return updated;
       });
 
-      // Store in database
+      // Store in database using insertRecord action
       await supabase.functions.invoke('neon-query', {
         body: {
-          action: 'customQuery',
-          query: `
-            INSERT INTO josiah_reflections_rows (
-              id, reflection_text, pattern_type, location, tags,
-              aircraft_data, biometric_data, created_at
-            ) VALUES (
-              '${eventId}',
-              '${(loggedEvent.reflection || '').replace(/'/g, "''")}',
-              '${loggedEvent.event_type.replace(/'/g, "''")}',
-              '${location.replace(/'/g, "''")}',
-              ARRAY[${loggedEvent.tags.map(t => `'${t.replace(/'/g, "''")}'`).join(',')}]::text[],
-              '${JSON.stringify(loggedEvent.flight_data || {}).replace(/'/g, "''")}',
-              '${JSON.stringify(loggedEvent.biometrics || {}).replace(/'/g, "''")}',
-              NOW()
-            )
-          `
+          action: 'insertRecord',
+          table: 'josiah_reflections_rows',
+          data: {
+            id: eventId,
+            reflection_text: loggedEvent.reflection || '',
+            pattern_type: loggedEvent.event_type,
+            location: location,
+            tags: loggedEvent.tags,
+            aircraft_data: JSON.stringify(loggedEvent.flight_data || {}),
+            biometric_data: JSON.stringify(loggedEvent.biometrics || {}),
+            created_at: new Date().toISOString()
+          }
         }
       });
 
@@ -255,24 +251,19 @@ export function JosiahChatInterface() {
       if (loggedEvent.flight_data?.registration) {
         await supabase.functions.invoke('neon-query', {
           body: {
-            action: 'customQuery',
-            query: `
-              INSERT INTO live_flight_detections_rows (
-                registration, operator, aircraft_type, altitude_ft,
-                ground_speed_knots, heading, detection_method, location,
-                detected_at
-              ) VALUES (
-                '${loggedEvent.flight_data.registration}',
-                '${(loggedEvent.flight_data.operator || '').replace(/'/g, "''")}',
-                '${(loggedEvent.flight_data.aircraft_type || '').replace(/'/g, "''")}',
-                ${parseInt(loggedEvent.flight_data.altitude) || 0},
-                ${parseInt(loggedEvent.flight_data.speed) || 0},
-                ${parseInt(loggedEvent.flight_data.heading) || 0},
-                'JOSIAH_CHAT_OCR',
-                '${location.replace(/'/g, "''")}',
-                NOW()
-              )
-            `
+            action: 'insertRecord',
+            table: 'live_flight_detections_rows',
+            data: {
+              registration: loggedEvent.flight_data.registration,
+              operator: loggedEvent.flight_data.operator || '',
+              aircraft_type: loggedEvent.flight_data.aircraft_type || '',
+              altitude_ft: parseInt(loggedEvent.flight_data.altitude) || 0,
+              ground_speed_knots: parseInt(loggedEvent.flight_data.speed) || 0,
+              heading: parseInt(loggedEvent.flight_data.heading) || 0,
+              detection_method: 'JOSIAH_CHAT_OCR',
+              location: location,
+              detected_at: new Date().toISOString()
+            }
           }
         });
       }
@@ -281,16 +272,31 @@ export function JosiahChatInterface() {
       if (biometrics.heart_rate || biometrics.hrv) {
         await supabase.functions.invoke('neon-query', {
           body: {
-            action: 'customQuery',
-            query: `
-              INSERT INTO biometric_monitoring (
-                metric_type, metric_value, notes, recorded_at
-              ) VALUES 
-              ('heart_rate', ${parseInt(biometrics.heart_rate) || 0}, 'Josiah Event: ${loggedEvent.event_type}', NOW()),
-              ('hrv', ${parseInt(biometrics.hrv) || 0}, 'Josiah Event: ${loggedEvent.event_type}', NOW())
-            `
+            action: 'insertRecord',
+            table: 'biometric_monitoring',
+            data: {
+              metric_type: 'heart_rate',
+              metric_value: parseInt(biometrics.heart_rate) || 0,
+              notes: `Josiah Event: ${loggedEvent.event_type}`,
+              recorded_at: new Date().toISOString()
+            }
           }
         });
+        
+        if (biometrics.hrv) {
+          await supabase.functions.invoke('neon-query', {
+            body: {
+              action: 'insertRecord',
+              table: 'biometric_monitoring',
+              data: {
+                metric_type: 'hrv',
+                metric_value: parseInt(biometrics.hrv) || 0,
+                notes: `Josiah Event: ${loggedEvent.event_type}`,
+                recorded_at: new Date().toISOString()
+              }
+            }
+          });
+        }
       }
 
       toast.success(`Event logged: ${loggedEvent.event_type}`);

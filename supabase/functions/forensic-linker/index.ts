@@ -192,8 +192,7 @@ serve(async (req) => {
       try {
         const neon = await getNeonClient();
         
-        // Get flights from Neon - use flexible column names
-        // NOTE: "timestamp" can be a column name in some schemas; quote it to avoid parser/keyword issues.
+        // Get flights from Neon - using actual column names from schema
         const flightsResult = await neon.queryObject<{
           id: string;
           aircraft_id: string;
@@ -201,17 +200,15 @@ serve(async (req) => {
           longitude: number;
           altitude: number;
           detected_at: string;
-          operator: string;
         }>(`
           SELECT id,
-                 COALESCE(n_number, registration, callsign, hex_code, 'UNKNOWN') as aircraft_id,
-                 COALESCE(latitude, lat, 0) as latitude,
-                 COALESCE(longitude, lng, lon, 0) as longitude,
-                 COALESCE(altitude, alt, 0) as altitude,
-                 COALESCE(detected_at, "timestamp", created_at, now()) as detected_at,
-                 COALESCE(operator, airline, 'Unknown') as operator
+                 COALESCE(registration, callsign, icao_code, icao24, 'UNKNOWN') as aircraft_id,
+                 COALESCE(latitude, 0) as latitude,
+                 COALESCE(longitude, 0) as longitude,
+                 COALESCE(altitude, 0) as altitude,
+                 COALESCE(detection_timestamp, created_at, now()) as detected_at
           FROM live_flight_detections_rows
-          ORDER BY COALESCE(detected_at, "timestamp", created_at) DESC NULLS LAST
+          ORDER BY COALESCE(detection_timestamp, created_at) DESC NULLS LAST
           LIMIT ${batchSize}
         `);
 
@@ -300,12 +297,12 @@ serve(async (req) => {
           stress_level: number;
           event_timestamp: string;
         }>(`
-          SELECT id, 
-                 COALESCE(heart_rate, hr_avg, 0) as heart_rate,
+          SELECT id::text, 
+                 COALESCE(heart_rate, 0) as heart_rate,
                  COALESCE(stress_level, 0) as stress_level,
-                 COALESCE(measurement_timestamp, event_timestamp, created_at) as event_timestamp
+                 COALESCE(measurement_timestamp, created_at, now()) as event_timestamp
           FROM biometric_monitoring 
-          ORDER BY COALESCE(measurement_timestamp, event_timestamp, created_at) DESC 
+          ORDER BY COALESCE(measurement_timestamp, created_at) DESC 
           LIMIT ${batchSize}
         `);
 
@@ -389,7 +386,7 @@ serve(async (req) => {
           created_at: string;
         }>(`
           SELECT id, 
-                 COALESCE(reflection_text, content, '') as content,
+                 COALESCE(reflection_content, '') as content,
                  COALESCE(created_at, now()) as created_at
           FROM josiah_reflections_rows 
           ORDER BY created_at DESC 

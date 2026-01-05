@@ -192,21 +192,25 @@ serve(async (req) => {
       try {
         const neon = await getNeonClient();
         
-        // Get flights from Neon
+        // Get flights from Neon - use flexible column names
         const flightsResult = await neon.queryObject<{
           id: string;
-          tail_number: string;
+          aircraft_id: string;
           latitude: number;
           longitude: number;
           altitude: number;
           detected_at: string;
           operator: string;
         }>(`
-          SELECT id, tail_number, latitude, longitude, altitude, 
-                 COALESCE(detected_at, created_at) as detected_at,
-                 COALESCE(operator, 'Unknown') as operator
+          SELECT id, 
+                 COALESCE(n_number, registration, callsign, hex_code, 'UNKNOWN') as aircraft_id,
+                 COALESCE(latitude, lat, 0) as latitude, 
+                 COALESCE(longitude, lng, lon, 0) as longitude, 
+                 COALESCE(altitude, alt, 0) as altitude, 
+                 COALESCE(detected_at, timestamp, created_at, now()) as detected_at,
+                 COALESCE(operator, airline, 'Unknown') as operator
           FROM live_flight_detections_rows 
-          ORDER BY detected_at DESC 
+          ORDER BY COALESCE(detected_at, timestamp, created_at) DESC NULLS LAST
           LIMIT ${batchSize}
         `);
 
@@ -224,12 +228,12 @@ serve(async (req) => {
             .insert({
               event_timestamp: flight.detected_at,
               event_type: "flight",
-              primary_entity_id: flight.tail_number,
+              primary_entity_id: flight.aircraft_id,
               primary_entity_type: "aircraft",
               geo_lat: flight.latitude,
               geo_lng: flight.longitude,
               confidence_score: 85,
-              summary: `Flight ${flight.tail_number} detected at ${flight.altitude}ft`,
+              summary: `Flight ${flight.aircraft_id} detected at ${flight.altitude}ft`,
               linked_records: [{ table: "live_flight_detections_rows", id: flight.id }],
             })
             .select("forensic_event_id")

@@ -343,8 +343,11 @@ serve(async (req) => {
       // ============== KERN COUNTY OPTIMIZED QUERY ==============
       case 'getKernCountyFlights': {
         const limitCount = body.limit || 100;
+        const includeSynthetic = body.includeSynthetic || false;
         // Kern County bounds: lat 34.8-35.8, lon -119.5 to -117.5
-        result = await sql`
+        const syntheticFilter = includeSynthetic ? '' : `AND (data_provenance IS NULL OR data_provenance != 'SYNTHETIC_DATA_GLITCH')`;
+        
+        result = await sql.unsafe(`
           SELECT 
             COALESCE(icao_code, '') as hex,
             COALESCE(registration, '') as registration,
@@ -374,9 +377,10 @@ serve(async (req) => {
           WHERE latitude BETWEEN 34.8 AND 35.8
             AND longitude BETWEEN -119.5 AND -117.5
             AND latitude IS NOT NULL AND longitude IS NOT NULL
+            ${syntheticFilter}
           ORDER BY detection_timestamp DESC NULLS LAST
           LIMIT ${limitCount}
-        `;
+        `);
         break;
       }
 
@@ -385,11 +389,15 @@ serve(async (req) => {
         const timeWindow = body.timeWindow || '30 days';
         const limitCount = body.limit || 200;
         const kernCountyOnly = body.kernCountyOnly || false;
+        const includeSynthetic = body.includeSynthetic || false;
         
         // Simplified and faster query - focus on recent data with Kern County option
         const geoFilter = kernCountyOnly 
           ? `AND latitude BETWEEN 34.5 AND 36.0 AND longitude BETWEEN -120.0 AND -117.0`
           : '';
+        
+        // Filter out synthetic XXB data by default
+        const syntheticFilter = includeSynthetic ? '' : `AND (data_provenance IS NULL OR data_provenance != 'SYNTHETIC_DATA_GLITCH')`;
         
         result = await sql.unsafe(`
           SELECT 
@@ -422,6 +430,7 @@ serve(async (req) => {
             AND latitude IS NOT NULL AND longitude IS NOT NULL
             AND latitude != 0 AND longitude != 0
             ${geoFilter}
+            ${syntheticFilter}
           ORDER BY detection_timestamp DESC
           LIMIT ${limitCount}
         `);
@@ -432,6 +441,8 @@ serve(async (req) => {
       case 'getFlaggedAircraftData': {
         const registrations = body.registrations || ['N912KC','N913KC','N790FA','N788FA','N791FA','N2464D','N997SE','N743AM','N229AM','N139HP','N156HP','N74FF','N8274E'];
         const regList = registrations.map((r: string) => `'${r.replace(/[^a-zA-Z0-9]/g, '')}'`).join(',');
+        const includeSynthetic = body.includeSynthetic || false;
+        const syntheticFilter = includeSynthetic ? '' : `AND (data_provenance IS NULL OR data_provenance != 'SYNTHETIC_DATA_GLITCH')`;
         
         result = await sql.unsafe(`
           SELECT 
@@ -447,6 +458,7 @@ serve(async (req) => {
             flagged_reasons
           FROM live_flight_detections_rows
           WHERE registration IN (${regList})
+            ${syntheticFilter}
           ORDER BY COALESCE(detection_timestamp, created_at) DESC NULLS LAST
           LIMIT 200
         `);

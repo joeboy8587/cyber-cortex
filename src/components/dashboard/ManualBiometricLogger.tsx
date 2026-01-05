@@ -140,6 +140,63 @@ export const ManualBiometricLogger = () => {
         setRecentEntries(prev => [newEntry, ...prev].slice(0, 10));
       }
 
+      // Auto-correlate with ADSB data within 5-minute window
+      try {
+        const correlationQuery = `
+          WITH biometric_event AS (
+            SELECT '${timestamp}'::timestamptz as event_time, ${hr} as heart_rate
+          ),
+          nearby_flights AS (
+            SELECT 
+              f.id as flight_id,
+              f.registration,
+              f.operator,
+              f.aircraft_type,
+              COALESCE(f.altitude_ft, f.altitude) as altitude,
+              COALESCE(f.detection_timestamp, f.detected_at, f.created_at) as flight_time,
+              EXTRACT(EPOCH FROM (COALESCE(f.detection_timestamp, f.detected_at, f.created_at) - '${timestamp}'::timestamptz))/60 as time_diff_minutes
+            FROM live_flight_detections_rows f
+            WHERE COALESCE(f.detection_timestamp, f.detected_at, f.created_at) 
+              BETWEEN '${timestamp}'::timestamptz - INTERVAL '5 minutes' 
+              AND '${timestamp}'::timestamptz + INTERVAL '5 minutes'
+          )
+          SELECT * FROM nearby_flights ORDER BY ABS(time_diff_minutes) LIMIT 10
+        `;
+        
+        const { data: correlationData } = await supabase.functions.invoke('neon-query', {
+          body: { action: 'custom', query: correlationQuery }
+        });
+
+        const flights = correlationData?.rows || correlationData || [];
+        if (flights.length > 0) {
+          toast.success(`Found ${flights.length} aircraft within 5-minute window`, {
+            description: flights.slice(0, 3).map((f: any) => f.registration).join(', ')
+          });
+
+          // Store correlation in master_forensic_events if available
+          const correlationInsert = `
+            INSERT INTO master_forensic_events (
+              event_timestamp, event_type, primary_entity_type, summary, 
+              linked_records, confidence_score, factor_count
+            ) VALUES (
+              '${timestamp}',
+              'biometric',
+              'aircraft',
+              'Manual biometric entry (HR: ${hr} BPM) correlated with ${flights.length} aircraft',
+              '${JSON.stringify({ biometric_id: insertedRow?.id, flights: flights.slice(0, 5) }).replace(/'/g, "''")}',
+              ${Math.min(95, 50 + flights.length * 10)},
+              2
+            )
+            ON CONFLICT DO NOTHING
+          `;
+          await supabase.functions.invoke('neon-query', {
+            body: { action: 'custom', query: correlationInsert }
+          }).catch(() => {}); // Silent fail if table doesn't exist
+        }
+      } catch (corrErr) {
+        console.log('Correlation check skipped:', corrErr);
+      }
+
       toast.success('Biometric data logged successfully', {
         description: `HR: ${hr} BPM | Stress: ${stressLevel}`
       });

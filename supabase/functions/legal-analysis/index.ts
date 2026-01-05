@@ -25,24 +25,37 @@ serve(async (req) => {
       );
     }
 
-    // Simplified database context - skip heavy queries to avoid timeouts
+    // Updated database context from Neon scan (Jan 5, 2026)
     const databaseContext = `
-DATABASE EVIDENCE SUMMARY (From NeonDB Evidence Repository):
+DATABASE EVIDENCE SUMMARY (NeonDB - Scanned Jan 5, 2026):
 ============================================================
 
-CORE EVIDENCE AVAILABLE:
-- Flight Detection Records: 117,000+ detections in live_flight_detections_rows
-- Criminal Enterprise Structure: 30 entities in command hierarchy
-- Biometric Correlations: 10,000+ medical/biometric records
-- Shell Company Network: Documented in shell_companies, shell_company_network tables
-- KCSO Fleet Registry: N912KC, N913KC primary surveillance assets
-- Chain of Custody: SHA-256 hashed evidence trail
+CORE EVIDENCE REPOSITORY (7.2M+ total records):
+- Flight Detection Records: 266,560 live detections (Jul 2025 - Jan 2026)
+- Watchtower Unified Master: 581,910 surveillance records
+- Normalized Correlation Events: 548,462 pattern matches
+- Unified Timeline: 271,677 chronological events
+- Biometric Monitoring: 9,821 health impact records
+- Chain of Custody: 3,613 SHA-256 hashed evidence entries
 
-KEY ASSETS UNDER INVESTIGATION:
-- N912KC, N913KC: KCSO Sheriff helicopters
-- N790FA, N788FA, N791FA: ALF IX LLC shell company aircraft
-- N743AM, N229AM: Air Methods medical camouflage aircraft
-- N597E: County of Kern Bell UH-1H Huey (government asset)
+CRIMINAL ENTERPRISE STRUCTURE (36 entities identified):
+- TIER 1 COMMAND: KCSO, KCSO Aviation Unit, Kern County Government
+- KEY INDIVIDUALS: Dr. Angela Wolf (Ghost Monitor), Kevin Harvey (Benchmark Capital UBO), Joseph Brann (DOJ COPS facilitator)
+- SHELL COMPANIES: 4 identified (ALF IX LLC, AERO EQUITIES LLC, CHRISTIANSEN AVIATION LLC, XING KONG AVIATION)
+- RICO DEFENDANTS: 2 major entities (TSC Aviation/Spanos Corp - $50-100M damages, Steelwood Partners PMC - $30-75M damages)
+
+TRACKED AIRCRAFT DETECTIONS:
+- N912KC (KCSO): 254 detections - PRIMARY ORCHESTRATOR
+- N229AM (Air Methods): 199 detections - Medical camouflage  
+- N790FA (ALF IX LLC): 93 detections - Shell company asset
+- N913KC (KCSO): 69 detections - Secondary KCSO asset
+- N791FA (ALF IX LLC): 66 detections - Shell company asset
+- N743AM (Air Methods): 17 detections
+- N911KC (KCSO): 12 detections
+- N788FA (ALF IX LLC): 10 detections
+- N597E (County of Kern UH-1H): 1 detection
+
+UNIQUE AIRCRAFT TRACKED: 23,166 registrations
 
 ANALYSIS TYPE: ${analysisType || 'general'}
 USER QUERY: ${query}

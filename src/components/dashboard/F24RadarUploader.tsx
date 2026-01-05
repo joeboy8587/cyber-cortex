@@ -55,12 +55,18 @@ interface WatchtowerEvent {
   status: 'processing' | 'complete' | 'error';
 }
 
+interface UploadedScreenshot {
+  id: string;
+  dataUrl: string;
+  filename: string;
+}
+
 const F24RadarUploader: React.FC = () => {
   const { toast } = useToast();
   const [uploading, setUploading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [events, setEvents] = useState<WatchtowerEvent[]>([]);
-  const [currentImage, setCurrentImage] = useState<string | null>(null);
+  const [uploadedScreenshots, setUploadedScreenshots] = useState<UploadedScreenshot[]>([]);
   const [manualBiometrics, setManualBiometrics] = useState({
     heart_rate: '',
     hrv: ''
@@ -108,147 +114,180 @@ const F24RadarUploader: React.FC = () => {
   };
 
   const handleImageUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
 
     setUploading(true);
     
     try {
-      // Convert to base64 for display and AI analysis
-      const reader = new FileReader();
-      reader.onload = async (event) => {
-        const base64Image = event.target?.result as string;
-        setCurrentImage(base64Image);
-        setUploading(false);
-        
-        toast({
-          title: "Screenshot Uploaded",
-          description: "Ready for AI analysis. Add biometrics and click Analyze.",
+      const newScreenshots: UploadedScreenshot[] = [];
+      
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = (event) => resolve(event.target?.result as string);
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
         });
-      };
-      reader.readAsDataURL(file);
+        
+        newScreenshots.push({
+          id: crypto.randomUUID(),
+          dataUrl: base64,
+          filename: file.name
+        });
+      }
+      
+      setUploadedScreenshots(prev => [...prev, ...newScreenshots]);
+      setUploading(false);
+      
+      toast({
+        title: `${newScreenshots.length} Screenshot(s) Uploaded`,
+        description: "Ready for AI analysis. Add biometrics and click Analyze.",
+      });
     } catch (err) {
       console.error('Upload error:', err);
       setUploading(false);
       toast({
         title: "Upload Failed",
-        description: "Could not process the screenshot",
+        description: "Could not process the screenshot(s)",
         variant: "destructive"
       });
     }
   }, [toast]);
 
-  const analyzeScreenshot = async () => {
-    if (!currentImage) {
+  const removeScreenshot = (id: string) => {
+    setUploadedScreenshots(prev => prev.filter(s => s.id !== id));
+  };
+
+  const analyzeScreenshots = async () => {
+    if (uploadedScreenshots.length === 0) {
       toast({
-        title: "No Screenshot",
-        description: "Please upload an F24 radar screenshot first",
+        title: "No Screenshots",
+        description: "Please upload F24 radar screenshot(s) first",
         variant: "destructive"
       });
       return;
     }
 
     setAnalyzing(true);
-    const eventId = crypto.randomUUID();
-    const timestamp = new Date().toISOString();
+    const baseTimestamp = new Date();
+    const processedEvents: WatchtowerEvent[] = [];
 
-    // Add processing event immediately
-    const processingEvent: WatchtowerEvent = {
-      id: eventId,
-      timestamp,
-      event_type: 'Processing...',
+    // Add processing events for all screenshots
+    const processingEvents = uploadedScreenshots.map((screenshot, idx) => ({
+      id: screenshot.id,
+      timestamp: new Date(baseTimestamp.getTime() + idx * 1000).toISOString(),
+      event_type: `Processing (${idx + 1}/${uploadedScreenshots.length})...`,
       location,
       tags: ['Processing'],
       flight_data: null,
       biometrics: null,
-      josiah_reflection: 'Analyzing screenshot...',
-      screenshot_url: currentImage,
-      status: 'processing'
-    };
-    setEvents(prev => [processingEvent, ...prev]);
+      josiah_reflection: `Analyzing screenshot ${idx + 1}...`,
+      screenshot_url: screenshot.dataUrl,
+      status: 'processing' as const
+    }));
+    setEvents(prev => [...processingEvents, ...prev]);
 
     try {
-      // Call AI to analyze the screenshot
-      const { data: aiResponse, error: aiError } = await supabase.functions.invoke('josiah-analyze-f24', {
-        body: {
-          image: currentImage,
-          biometrics: {
-            heart_rate: parseInt(manualBiometrics.heart_rate) || null,
-            hrv: parseInt(manualBiometrics.hrv) || null
-          },
-          location,
-          additionalNotes,
-          timestamp
-        }
-      });
+      // Process each screenshot
+      for (let i = 0; i < uploadedScreenshots.length; i++) {
+        const screenshot = uploadedScreenshots[i];
+        const timestamp = new Date(baseTimestamp.getTime() + i * 1000).toISOString();
 
-      if (aiError) throw aiError;
-
-      const extractedData = aiResponse?.data || aiResponse;
-      
-      // Create the complete event
-      const completeEvent: WatchtowerEvent = {
-        id: eventId,
-        timestamp,
-        event_type: extractedData?.event_type || 'Surveillance Detection',
-        location,
-        tags: extractedData?.tags || ['F24 Analysis', 'Watchtower'],
-        flight_data: extractedData?.flight_data || null,
-        biometrics: {
-          heart_rate: parseInt(manualBiometrics.heart_rate) || 0,
-          hrv: parseInt(manualBiometrics.hrv) || 0,
-          status: extractedData?.biometric_status || 'Logged',
-          interpretation: extractedData?.biometric_interpretation || ''
-        },
-        josiah_reflection: extractedData?.josiah_reflection || 'Analysis complete.',
-        screenshot_url: currentImage,
-        status: 'complete'
-      };
-
-      // Update the event in state
-      setEvents(prev => prev.map(e => e.id === eventId ? completeEvent : e));
-
-      // Store in Neon for persistence using insertRecord action
-      await supabase.functions.invoke('neon-query', {
-        body: {
-          action: 'insertRecord',
-          table: 'josiah_reflections_rows',
-          data: {
-            id: eventId,
-            reflection_text: completeEvent.josiah_reflection || '',
-            pattern_type: completeEvent.event_type,
-            location: location,
-            tags: completeEvent.tags,
-            aircraft_data: JSON.stringify(completeEvent.flight_data || {}),
-            biometric_data: JSON.stringify(completeEvent.biometrics || {}),
-            screenshot_url: currentImage?.slice(0, 200) || '',
-            created_at: new Date().toISOString()
-          }
-        }
-      });
-
-      // Also log to live_flight_detections if flight data extracted
-      if (completeEvent.flight_data?.registration) {
-        await supabase.functions.invoke('neon-query', {
-          body: {
-            action: 'insertRecord',
-            table: 'live_flight_detections_rows',
-            data: {
-              registration: completeEvent.flight_data.registration,
-              operator: completeEvent.flight_data.operator || '',
-              aircraft_type: completeEvent.flight_data.aircraft_type || '',
-              altitude_ft: parseInt(completeEvent.flight_data.altitude) || 0,
-              ground_speed_knots: parseInt(completeEvent.flight_data.speed) || 0,
-              heading: parseInt(completeEvent.flight_data.heading) || 0,
-              detection_method: 'F24_SCREENSHOT_OCR',
-              location: location,
-              detected_at: new Date().toISOString()
+        try {
+          // Call AI to analyze the screenshot
+          const { data: aiResponse, error: aiError } = await supabase.functions.invoke('josiah-analyze-f24', {
+            body: {
+              image: screenshot.dataUrl,
+              biometrics: {
+                heart_rate: parseInt(manualBiometrics.heart_rate) || null,
+                hrv: parseInt(manualBiometrics.hrv) || null
+              },
+              location,
+              additionalNotes: `${additionalNotes} [Screenshot ${i + 1} of ${uploadedScreenshots.length}]`,
+              timestamp
             }
+          });
+
+          if (aiError) throw aiError;
+
+          const extractedData = aiResponse?.data || aiResponse;
+          
+          // Create the complete event
+          const completeEvent: WatchtowerEvent = {
+            id: screenshot.id,
+            timestamp,
+            event_type: extractedData?.event_type || 'Surveillance Detection',
+            location,
+            tags: extractedData?.tags || ['F24 Analysis', 'Watchtower', `Batch ${i + 1}`],
+            flight_data: extractedData?.flight_data || null,
+            biometrics: {
+              heart_rate: parseInt(manualBiometrics.heart_rate) || 0,
+              hrv: parseInt(manualBiometrics.hrv) || 0,
+              status: extractedData?.biometric_status || 'Logged',
+              interpretation: extractedData?.biometric_interpretation || ''
+            },
+            josiah_reflection: extractedData?.josiah_reflection || 'Analysis complete.',
+            screenshot_url: screenshot.dataUrl,
+            status: 'complete'
+          };
+
+          processedEvents.push(completeEvent);
+
+          // Update the event in state
+          setEvents(prev => prev.map(e => e.id === screenshot.id ? completeEvent : e));
+
+          // Store in Neon for persistence
+          await supabase.functions.invoke('neon-query', {
+            body: {
+              action: 'insertRecord',
+              table: 'josiah_reflections_rows',
+              data: {
+                id: screenshot.id,
+                reflection_text: completeEvent.josiah_reflection || '',
+                pattern_type: completeEvent.event_type,
+                location: location,
+                tags: completeEvent.tags,
+                aircraft_data: JSON.stringify(completeEvent.flight_data || {}),
+                biometric_data: JSON.stringify(completeEvent.biometrics || {}),
+                screenshot_url: screenshot.dataUrl?.slice(0, 200) || '',
+                created_at: timestamp
+              }
+            }
+          });
+
+          // Also log to live_flight_detections if flight data extracted
+          if (completeEvent.flight_data?.registration) {
+            await supabase.functions.invoke('neon-query', {
+              body: {
+                action: 'insertRecord',
+                table: 'live_flight_detections_rows',
+                data: {
+                  registration: completeEvent.flight_data.registration,
+                  operator: completeEvent.flight_data.operator || '',
+                  aircraft_type: completeEvent.flight_data.aircraft_type || '',
+                  altitude_ft: parseInt(completeEvent.flight_data.altitude) || 0,
+                  ground_speed_knots: parseInt(completeEvent.flight_data.speed) || 0,
+                  heading: parseInt(completeEvent.flight_data.heading) || 0,
+                  detection_method: 'F24_SCREENSHOT_OCR',
+                  location: location,
+                  detected_at: timestamp
+                }
+              }
+            });
           }
-        });
+        } catch (err) {
+          console.error(`Analysis error for screenshot ${i + 1}:`, err);
+          setEvents(prev => prev.map(e => 
+            e.id === screenshot.id 
+              ? { ...e, status: 'error' as const, josiah_reflection: 'Analysis failed.' }
+              : e
+          ));
+        }
       }
 
-      // Log biometrics if provided
+      // Log biometrics once for the batch
       if (manualBiometrics.heart_rate || manualBiometrics.hrv) {
         await supabase.functions.invoke('neon-query', {
           body: {
@@ -257,51 +296,29 @@ const F24RadarUploader: React.FC = () => {
             data: {
               metric_type: 'heart_rate',
               metric_value: parseInt(manualBiometrics.heart_rate) || 0,
-              notes: `F24 Event: ${completeEvent.event_type}`,
-              recorded_at: new Date().toISOString()
+              notes: `F24 Batch Analysis: ${processedEvents.length} screenshots`,
+              recorded_at: baseTimestamp.toISOString()
             }
           }
         });
-        
-        if (manualBiometrics.hrv) {
-          await supabase.functions.invoke('neon-query', {
-            body: {
-              action: 'insertRecord',
-              table: 'biometric_monitoring',
-              data: {
-                metric_type: 'hrv',
-                metric_value: parseInt(manualBiometrics.hrv) || 0,
-                notes: `F24 Event: ${completeEvent.event_type}`,
-                recorded_at: new Date().toISOString()
-              }
-            }
-          });
-        }
       }
 
+      const successCount = processedEvents.filter(e => e.status === 'complete').length;
       toast({
-        title: "Analysis Complete",
-        description: `Event logged: ${completeEvent.event_type}`,
+        title: "Batch Analysis Complete",
+        description: `${successCount}/${uploadedScreenshots.length} screenshots analyzed successfully`,
       });
 
       // Reset form
-      setCurrentImage(null);
+      setUploadedScreenshots([]);
       setManualBiometrics({ heart_rate: '', hrv: '' });
       setAdditionalNotes('');
 
     } catch (err) {
-      console.error('Analysis error:', err);
-      
-      // Update event to error state
-      setEvents(prev => prev.map(e => 
-        e.id === eventId 
-          ? { ...e, status: 'error' as const, josiah_reflection: 'Analysis failed. Please try again.' }
-          : e
-      ));
-
+      console.error('Batch analysis error:', err);
       toast({
         title: "Analysis Failed",
-        description: err instanceof Error ? err.message : "Could not analyze screenshot",
+        description: err instanceof Error ? err.message : "Could not analyze screenshots",
         variant: "destructive"
       });
     } finally {
@@ -330,6 +347,7 @@ const F24RadarUploader: React.FC = () => {
             <input
               type="file"
               accept="image/*"
+              multiple
               onChange={handleImageUpload}
               className="hidden"
               id="f24-upload"
@@ -339,17 +357,43 @@ const F24RadarUploader: React.FC = () => {
               htmlFor="f24-upload" 
               className="cursor-pointer flex flex-col items-center gap-3"
             >
-              {currentImage ? (
-                <img 
-                  src={currentImage} 
-                  alt="F24 Screenshot" 
-                  className="max-h-48 rounded-lg border border-cyan-500/30"
-                />
+              {uploadedScreenshots.length > 0 ? (
+                <div className="space-y-2 w-full">
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                    {uploadedScreenshots.map((screenshot, idx) => (
+                      <div key={screenshot.id} className="relative group">
+                        <img 
+                          src={screenshot.dataUrl} 
+                          alt={`F24 Screenshot ${idx + 1}`} 
+                          className="h-20 w-full object-cover rounded border border-cyan-500/30"
+                        />
+                        <button
+                          onClick={(e) => {
+                            e.preventDefault();
+                            removeScreenshot(screenshot.id);
+                          }}
+                          className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-5 h-5 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          ×
+                        </button>
+                        <span className="absolute bottom-0 left-0 right-0 bg-black/60 text-[10px] text-cyan-400 text-center truncate px-1">
+                          {screenshot.filename}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-cyan-400/70 text-xs">
+                    {uploadedScreenshots.length} screenshot(s) ready • Click to add more
+                  </p>
+                </div>
               ) : (
                 <>
                   <Camera className="h-12 w-12 text-cyan-400/50" />
                   <span className="text-cyan-400/70 text-sm">
-                    {uploading ? 'Processing...' : 'Upload FlightRadar24 Screenshot'}
+                    {uploading ? 'Processing...' : 'Upload FlightRadar24 Screenshot(s)'}
+                  </span>
+                  <span className="text-cyan-400/50 text-xs">
+                    Multiple files supported
                   </span>
                 </>
               )}
@@ -404,19 +448,19 @@ const F24RadarUploader: React.FC = () => {
 
           {/* Analyze Button */}
           <Button
-            onClick={analyzeScreenshot}
-            disabled={!currentImage || analyzing}
+            onClick={analyzeScreenshots}
+            disabled={uploadedScreenshots.length === 0 || analyzing}
             className="w-full bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500"
           >
             {analyzing ? (
               <>
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Josiah Analyzing...
+                Analyzing {uploadedScreenshots.length} screenshot(s)...
               </>
             ) : (
               <>
                 <Brain className="h-4 w-4 mr-2" />
-                Analyze & Log Event
+                Analyze {uploadedScreenshots.length > 0 ? `${uploadedScreenshots.length} Screenshot(s)` : '& Log Event'}
               </>
             )}
           </Button>

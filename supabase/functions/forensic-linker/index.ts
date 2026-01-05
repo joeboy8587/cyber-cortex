@@ -193,6 +193,7 @@ serve(async (req) => {
         const neon = await getNeonClient();
         
         // Get flights from Neon - use flexible column names
+        // NOTE: "timestamp" can be a column name in some schemas; quote it to avoid parser/keyword issues.
         const flightsResult = await neon.queryObject<{
           id: string;
           aircraft_id: string;
@@ -202,15 +203,15 @@ serve(async (req) => {
           detected_at: string;
           operator: string;
         }>(`
-          SELECT id, 
+          SELECT id,
                  COALESCE(n_number, registration, callsign, hex_code, 'UNKNOWN') as aircraft_id,
-                 COALESCE(latitude, lat, 0) as latitude, 
-                 COALESCE(longitude, lng, lon, 0) as longitude, 
-                 COALESCE(altitude, alt, 0) as altitude, 
-                 COALESCE(detected_at, timestamp, created_at, now()) as detected_at,
+                 COALESCE(latitude, lat, 0) as latitude,
+                 COALESCE(longitude, lng, lon, 0) as longitude,
+                 COALESCE(altitude, alt, 0) as altitude,
+                 COALESCE(detected_at, "timestamp", created_at, now()) as detected_at,
                  COALESCE(operator, airline, 'Unknown') as operator
-          FROM live_flight_detections_rows 
-          ORDER BY COALESCE(detected_at, timestamp, created_at) DESC NULLS LAST
+          FROM live_flight_detections_rows
+          ORDER BY COALESCE(detected_at, "timestamp", created_at) DESC NULLS LAST
           LIMIT ${batchSize}
         `);
 

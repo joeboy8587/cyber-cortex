@@ -383,7 +383,14 @@ Example conversions:
       }
 
       const sqlGenResult = await sqlGenResponse.json();
-      const generatedSQL = sqlGenResult.choices?.[0]?.message?.content?.trim() || "";
+      let generatedSQL = sqlGenResult.choices?.[0]?.message?.content?.trim() || "";
+      
+      // Strip markdown code fences if present (```sql ... ``` or ``` ... ```)
+      generatedSQL = generatedSQL
+        .replace(/^```sql\s*/i, '')
+        .replace(/^```\s*/i, '')
+        .replace(/\s*```$/i, '')
+        .trim();
       
       console.log("Generated SQL:", generatedSQL);
 

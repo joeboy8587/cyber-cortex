@@ -309,6 +309,12 @@ serve(async (req) => {
           
           const classification = classifyAircraft(registration, callsign, altitudeFeet);
           
+          // Use OpenSky's actual timestamp (UNIX seconds) - prefer time_position, fallback to last_contact
+          const openskyTimestamp = f.time_position || f.last_contact;
+          const detectedAt = openskyTimestamp 
+            ? new Date(openskyTimestamp * 1000).toISOString()
+            : now;
+          
           return {
             hex: f.icao24?.toUpperCase() || '',
             registration: registration || callsign || f.icao24?.toUpperCase() || 'UNKNOWN',
@@ -321,7 +327,7 @@ serve(async (req) => {
             vertical_rate: Math.round((f.vertical_rate || 0) * 3.28084 / 60), // m/s to ft/min
             squawk: f.squawk || '',
             origin_country: f.origin_country || '',
-            detected_at: now,
+            detected_at: detectedAt,
             ...classification
           };
         });

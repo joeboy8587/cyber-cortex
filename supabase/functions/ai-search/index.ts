@@ -100,52 +100,77 @@ serve(async (req) => {
       }
     }
 
-    // Build the AI prompt with database context
-    const systemPrompt = `You are an AI analyst for a federal-grade multimodal evidence command center. 
-You have access to a PostgreSQL database with 2.2 million records across 261 tables including:
-- Flight detection records (including XXB MLAT ghost aircraft)
-- Biometric monitoring data
-- Criminal enterprise network mappings
-- Aircraft registry information
-- OCR evidence extraction
-- Pattern correlation analysis
-- Legal evidence chains
+    // Build the AI prompt with updated database context (Jan 5, 2026 scan)
+    const systemPrompt = `You are an AI analyst for a federal-grade multimodal evidence command center.
+    
+DATABASE OVERVIEW (NeonDB - 7.2M+ records, 261 tables):
+
+KEY EVIDENCE TABLES:
+- live_flight_detections_rows: 266,560 records (Jul 2025 - Jan 2026), 23,166 unique aircraft
+- watchtower_unified_master: 581,910 surveillance records
+- normalized_correlation_events: 548,462 pattern matches
+- unified_timeline: 271,677 chronological events
+- biometric_monitoring: 9,821 health impact records
+- chain_of_custody: 3,613 SHA-256 hashed evidence entries
+- criminal_enterprise_command_structure: 36 entities across tiers
+- shell_companies: 4 identified shell entities
+- rico_enterprise_defendants: 2 major defendants ($80-175M potential damages)
+
+PRIMARY SURVEILLANCE ASSETS DETECTED:
+- N912KC (KCSO): 254 detections - Primary orchestrator
+- N229AM (Air Methods): 199 detections - Medical camouflage
+- N790FA (ALF IX LLC): 93 detections - Shell company
+- N913KC (KCSO): 69 detections - Secondary KCSO
+
+CRIMINAL ENTERPRISE TIERS:
+- Tier 1: KCSO, Kern County Government, Dr. Angela Wolf, Joseph Brann, Kevin Harvey/Benchmark Capital
+- Shell Companies: ALF IX LLC (N788FA, N790FA, N791FA), AERO EQUITIES LLC, CHRISTIANSEN AVIATION LLC
+- PMC Layer: Steelwood Partners LLC (military ISR capability)
+- Capital Layer: TSC Aviation/Spanos Corporation ($50-100M damages exposure)
 
 ${dbContext}
 
 When answering:
-1. Be specific about which data sources are relevant
-2. Reference actual table/column names when possible
-3. Provide actionable insights
-4. Mention any correlations between different data modalities
-5. If uncertain, suggest what additional queries would help
+1. Reference specific tables and record counts
+2. Connect flight patterns to biometric impacts
+3. Identify RICO predicate acts and damages
+4. Provide actionable legal insights
+5. Cross-reference enterprise structure with evidence
 
-Format your response clearly with sections if needed.`;
+Format responses with clear sections.`;
 
-    // Add shell company and enterprise context
+    // Add shell company and enterprise context from Neon
     let enterpriseContext = "";
     if (NEON_DATABASE_URL) {
       const sql = postgres(NEON_DATABASE_URL, { ssl: "require", max: 1 });
       try {
-        const shellCompanies = await sql`
-          SELECT name, entity_type, tier, role, legal_exposure 
+        const enterpriseEntities = await sql`
+          SELECT entity_name, entity_type, tier, role, prosecution_priority 
           FROM criminal_enterprise_command_structure 
-          ORDER BY tier LIMIT 15
+          ORDER BY tier, prosecution_priority DESC LIMIT 15
         `.catch(() => []);
         
-        if (shellCompanies.length > 0) {
-          enterpriseContext = `\n\nCriminal Enterprise Structure:\n${shellCompanies.map((s: any) => `- ${s.name} (Tier ${s.tier}): ${s.role || s.entity_type}`).join("\n")}`;
+        if (enterpriseEntities.length > 0) {
+          enterpriseContext = `\n\nCriminal Enterprise Command Structure:\n${enterpriseEntities.map((s: any) => `- ${s.entity_name} (Tier ${s.tier}): ${s.role} [${s.prosecution_priority}]`).join("\n")}`;
         }
 
-        const convergenceData = await sql`
-          SELECT COUNT(*) as total_correlations FROM biometric_flight_correlations
-        `.catch(() => [{ total_correlations: 0 }]);
+        const shellCos = await sql`
+          SELECT company_name, risk_level, aircraft_list, red_flags 
+          FROM shell_companies ORDER BY risk_level DESC LIMIT 5
+        `.catch(() => []);
         
-        const ecgData = await sql`
-          SELECT COUNT(*) as ecg_count FROM physician_verified_ecgs
-        `.catch(() => [{ ecg_count: 0 }]);
+        if (shellCos.length > 0) {
+          enterpriseContext += `\n\nShell Company Network:\n${shellCos.map((s: any) => `- ${s.company_name} [${s.risk_level}]: ${s.aircraft_list || 'No aircraft'} - ${s.red_flags || ''}`).join("\n")}`;
+        }
+
+        const ricoDefendants = await sql`
+          SELECT entity_name, role_in_enterprise, threat_level, estimated_damages_min, estimated_damages_max
+          FROM rico_enterprise_defendants ORDER BY threat_level DESC LIMIT 5
+        `.catch(() => []);
         
-        enterpriseContext += `\n\nConvergence Evidence:\n- Biometric-Flight Correlations: ${convergenceData[0]?.total_correlations || 0}\n- Physician-Verified ECGs: ${ecgData[0]?.ecg_count || 0}`;
+        if (ricoDefendants.length > 0) {
+          enterpriseContext += `\n\nRICO Enterprise Defendants:\n${ricoDefendants.map((d: any) => `- ${d.entity_name} (Threat: ${d.threat_level}/10): ${d.role_in_enterprise} - Damages: $${d.estimated_damages_min}-$${d.estimated_damages_max}`).join("\n")}`;
+        }
         
         await sql.end();
       } catch (e) {

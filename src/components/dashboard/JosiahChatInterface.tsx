@@ -4,11 +4,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { 
   MessageCircle, Send, Database, Brain, 
   Loader2, AlertTriangle, CheckCircle, Sparkles,
   TrendingUp, Search, Zap, Camera, Heart, Upload,
-  MapPin, Plane, Activity
+  MapPin, Plane, Activity, TerminalSquare, MessageSquare
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -63,6 +64,9 @@ export function JosiahChatInterface() {
   const [questions, setQuestions] = useState<ProactiveQuestion[]>([]);
   const [showInsights, setShowInsights] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
+  const [queryMode, setQueryMode] = useState<'chat' | 'query'>('chat');
+  const [queryResults, setQueryResults] = useState<any[] | null>(null);
+  const [lastQuery, setLastQuery] = useState<string>("");
   
   // Image upload state
   const [pendingImage, setPendingImage] = useState<string | null>(null);
@@ -322,7 +326,46 @@ export function JosiahChatInterface() {
     setInput("");
     setMessages(prev => [...prev, { role: "user", content: userMessage, timestamp: new Date() }]);
     setIsLoading(true);
+    setQueryResults(null);
 
+    // Check if this is a query mode request
+    if (queryMode === 'query') {
+      try {
+        const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/josiah-chat`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ 
+            action: "natural_query",
+            message: userMessage
+          })
+        });
+
+        const data = await response.json();
+        
+        if (data.error) {
+          setMessages(prev => [...prev, { 
+            role: "assistant", 
+            content: `❌ Query Error: ${data.error}\n\n${data.details || ''}\n\nGenerated SQL: \`${data.generatedSQL || 'N/A'}\``, 
+            timestamp: new Date() 
+          }]);
+        } else {
+          setQueryResults(data.results);
+          setLastQuery(data.query);
+          setMessages(prev => [...prev, { 
+            role: "assistant", 
+            content: `✅ Found ${data.rowCount} records\n\n**Query:** \`${data.query}\`\n\n*Results displayed below*`, 
+            timestamp: new Date() 
+          }]);
+        }
+      } catch (err) {
+        toast.error((err as Error).message);
+      } finally {
+        setIsLoading(false);
+      }
+      return;
+    }
+
+    // Regular chat mode
     let assistantContent = "";
     
     try {
@@ -384,6 +427,14 @@ export function JosiahChatInterface() {
     { label: "7-Day Forecast", icon: <TrendingUp className="w-3 h-3" />, action: () => sendMessage("Generate a 7-day activity prediction based on historical patterns") },
   ];
 
+  const queryExamples = [
+    "Show low altitude flights under 500ft",
+    "Find high heart rate events above 100 BPM",
+    "List flagged aircraft with highest threat scores",
+    "Show shell companies with most aircraft",
+    "Recent biometric alerts with medical flags",
+  ];
+
   return (
     <CyberPanel
       title="Josiah AI Co-Witness"
@@ -409,56 +460,133 @@ export function JosiahChatInterface() {
       }
     >
       <div className="flex flex-col h-[600px]">
-        {/* Quick Actions Bar */}
-        <div className="p-2 border-b border-border flex flex-wrap gap-2">
-          {quickActions.map((action) => (
-            <Button 
-              key={action.label}
-              variant="outline" 
-              size="sm" 
-              onClick={action.action}
-              disabled={isScanning}
-              className="text-xs"
+        {/* Mode Toggle */}
+        <div className="p-2 border-b border-border flex items-center gap-2">
+          <div className="flex bg-muted rounded-lg p-1">
+            <Button
+              variant={queryMode === 'chat' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => { setQueryMode('chat'); setQueryResults(null); }}
+              className="text-xs h-7"
             >
-              {isScanning && action.label === "Pattern Scan" ? (
-                <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-              ) : (
-                action.icon
+              <MessageSquare className="w-3 h-3 mr-1" />
+              Chat
+            </Button>
+            <Button
+              variant={queryMode === 'query' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => setQueryMode('query')}
+              className="text-xs h-7"
+            >
+              <TerminalSquare className="w-3 h-3 mr-1" />
+              Query DB
+            </Button>
+          </div>
+          
+          {queryMode === 'chat' && (
+            <>
+              {quickActions.map((action) => (
+                <Button 
+                  key={action.label}
+                  variant="outline" 
+                  size="sm" 
+                  onClick={action.action}
+                  disabled={isScanning}
+                  className="text-xs"
+                >
+                  {isScanning && action.label === "Pattern Scan" ? (
+                    <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                  ) : (
+                    action.icon
+                  )}
+                  <span className="ml-1">{action.label}</span>
+                </Button>
+              ))}
+              
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={() => fileInputRef.current?.click()}
+                className="text-xs bg-primary/10 border-primary/30 text-primary hover:bg-primary/20"
+              >
+                <Camera className="w-3 h-3 mr-1" />
+                Upload Screenshot
+              </Button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleImageUpload}
+                className="hidden"
+              />
+              
+              {questions.length > 0 && (
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={() => setShowInsights(!showInsights)}
+                  className="text-xs bg-accent/20 text-accent border-accent/50"
+                >
+                  <Sparkles className="w-3 h-3 mr-1" />
+                  {questions.length} Questions
+                </Button>
               )}
-              <span className="ml-1">{action.label}</span>
-            </Button>
-          ))}
-          
-          {/* Upload Screenshot Button */}
-          <Button 
-            variant="outline" 
-            size="sm" 
-            onClick={() => fileInputRef.current?.click()}
-            className="text-xs bg-primary/10 border-primary/30 text-primary hover:bg-primary/20"
-          >
-            <Camera className="w-3 h-3 mr-1" />
-            Upload Screenshot
-          </Button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            onChange={handleImageUpload}
-            className="hidden"
-          />
-          
-          {questions.length > 0 && (
-            <Button 
-              variant="outline" 
-              size="sm" 
-              onClick={() => setShowInsights(!showInsights)}
-              className="text-xs bg-accent/20 text-accent border-accent/50"
-            >
-              <Sparkles className="w-3 h-3 mr-1" />
-              {questions.length} Questions
-            </Button>
+            </>
           )}
         </div>
+
+        {/* Query Examples - Shows in query mode */}
+        {queryMode === 'query' && !queryResults && (
+          <div className="p-3 border-b border-border bg-muted/30">
+            <p className="text-xs text-muted-foreground mb-2">Try asking in natural language:</p>
+            <div className="flex flex-wrap gap-1">
+              {queryExamples.map((example, idx) => (
+                <Button
+                  key={idx}
+                  variant="outline"
+                  size="sm"
+                  className="text-xs h-6"
+                  onClick={() => setInput(example)}
+                >
+                  {example}
+                </Button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Query Results Table */}
+        {queryMode === 'query' && queryResults && queryResults.length > 0 && (
+          <div className="border-b border-border max-h-64 overflow-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  {Object.keys(queryResults[0]).map((key) => (
+                    <TableHead key={key} className="text-xs py-2 px-3">{key}</TableHead>
+                  ))}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {queryResults.slice(0, 50).map((row, rowIdx) => (
+                  <TableRow key={rowIdx}>
+                    {Object.values(row).map((value: any, colIdx) => (
+                      <TableCell key={colIdx} className="text-xs py-1 px-3 max-w-[200px] truncate">
+                        {value === null ? <span className="text-muted-foreground">null</span> : 
+                         typeof value === 'object' ? JSON.stringify(value) : 
+                         String(value)}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            {queryResults.length > 50 && (
+              <p className="text-xs text-muted-foreground p-2 text-center">
+                Showing 50 of {queryResults.length} results
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Upload Panel - Shows when image is pending */}
         {showUploadPanel && pendingImage && (
@@ -700,7 +828,13 @@ export function JosiahChatInterface() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && !pendingImage && sendMessage()}
-              placeholder={pendingImage ? "Add notes about this event..." : "Ask Josiah or give commands..."}
+              placeholder={
+                pendingImage 
+                  ? "Add notes about this event..." 
+                  : queryMode === 'query' 
+                    ? "Ask in natural language: 'show flights below 500ft'..." 
+                    : "Ask Josiah or give commands..."
+              }
               disabled={isLoading}
             />
             <Button onClick={() => sendMessage()} disabled={isLoading || !input.trim() || !!pendingImage}>

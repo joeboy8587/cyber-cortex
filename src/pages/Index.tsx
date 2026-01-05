@@ -41,8 +41,6 @@ import { MilitaryAircraftPanel } from "@/components/dashboard/MilitaryAircraftPa
 import { DailyEventImporter } from "@/components/dashboard/DailyEventImporter";
 import { NotionAutoWatcher } from "@/components/dashboard/NotionAutoWatcher";
 import { NotionGapAnalyzer } from "@/components/dashboard/NotionGapAnalyzer";
-import { XXBTaxonomyPanel } from "@/components/dashboard/XXBTaxonomyPanel";
-import { XXBEvidenceDashboard } from "@/components/dashboard/XXBEvidenceDashboard";
 import { GlobalAISearch } from "@/components/dashboard/GlobalAISearch";
 import { WatchtowerAlertsHub } from "@/components/dashboard/WatchtowerAlertsHub";
 import { MaterializedViewsPanel } from "@/components/dashboard/MaterializedViewsPanel";
@@ -79,7 +77,7 @@ import { FireclawExtractionPanel } from "@/components/dashboard/FireclawExtracti
 import { FirecrawlTacticsModule } from "@/components/dashboard/FirecrawlTacticsModule";
 import { TruthScannerDashboard } from "@/components/dashboard/TruthScannerDashboard";
 import { PlainLanguageSummary } from "@/components/dashboard/PlainLanguageSummary";
-import { XXBInvestigator } from "@/components/dashboard/XXBInvestigator";
+
 import { EntityRelationshipMap } from "@/components/dashboard/EntityRelationshipMap";
 import TROMotionGenerator from "@/components/dashboard/TROMotionGenerator";
 import FAAComplaintBuilder from "@/components/dashboard/FAAComplaintBuilder";
@@ -105,10 +103,7 @@ const Index = () => {
           <section id="truth-scanner" className="space-y-6">
             <TruthScannerDashboard />
             <PlainLanguageSummary />
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-              <XXBInvestigator />
-              <EntityRelationshipMap />
-            </div>
+            <EntityRelationshipMap />
           </section>
 
           <section id="database-stats" className="space-y-6">
@@ -288,10 +283,8 @@ const Index = () => {
             <SafetyMonitoringPanel />
           </section>
           
-          <section id="xxb-evidence" className="space-y-6">
-            <XXBEvidenceDashboard />
+          <section id="operator-enrichment" className="space-y-6">
             <OperatorEnrichmentPanel />
-            <XXBTaxonomyPanel />
           </section>
           
           <section id="defense-panels" className="grid grid-cols-1 xl:grid-cols-2 gap-6">

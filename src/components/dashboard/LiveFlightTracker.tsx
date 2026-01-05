@@ -45,28 +45,28 @@ export function LiveFlightTracker() {
   const [apiConnected, setApiConnected] = useState<boolean | null>(null);
   const [dataSource, setDataSource] = useState<'all' | 'live' | 'surveillance'>('all');
 
-  // Fetch live flights from Aviation Edge API - focused on Kern County
-  const fetchFromAviationEdge = useCallback(async () => {
+  // Fetch live flights from OpenSky Network API (FREE) - focused on Kern County
+  const fetchFromOpenSky = useCallback(async () => {
     try {
-      console.log('Fetching from Aviation Edge API (Kern County focus)...');
-      const { data, error } = await supabase.functions.invoke("aviation-edge-fetch", {
+      console.log('Fetching from OpenSky Network (Kern County focus)...');
+      const { data, error } = await supabase.functions.invoke("opensky-fetch", {
         body: { action: "fetchKernCounty" }
       });
 
       if (error) {
-        console.error('Aviation Edge fetch error:', error);
+        console.error('OpenSky fetch error:', error);
         setApiConnected(false);
         return null;
       }
 
-      if (data?.error) {
-        console.error('Aviation Edge API error:', data.error);
+      if (data?.error && !data?.success) {
+        console.error('OpenSky API error:', data.error);
         setApiConnected(false);
         return null;
       }
 
       setApiConnected(true);
-      console.log(`Aviation Edge returned ${data?.count || 0} flights, inserted ${data?.inserted || 0}`);
+      console.log(`OpenSky returned ${data?.count || 0} flights, inserted ${data?.inserted || 0}`);
       
       if (data?.inserted > 0) {
         toast.success(`Imported ${data.inserted} live flights from Kern County`);
@@ -75,7 +75,7 @@ export function LiveFlightTracker() {
       // Return the flights directly from API response for immediate display
       return data?.flights || [];
     } catch (err) {
-      console.error('Aviation Edge exception:', err);
+      console.error('OpenSky exception:', err);
       setApiConnected(false);
       return null;
     }
@@ -85,8 +85,8 @@ export function LiveFlightTracker() {
     setLoading(true);
     
     try {
-      // First fetch fresh data from Aviation Edge - this now stores to DB too
-      const liveApiFlights = await fetchFromAviationEdge();
+      // Fetch fresh data from OpenSky Network (FREE API) - this also stores to DB
+      const liveApiFlights = await fetchFromOpenSky();
       
       // Also get recent data from database (Kern County focused, last 7 days)
       let dbFlights: UnifiedFlight[] = [];
@@ -178,7 +178,7 @@ export function LiveFlightTracker() {
     } finally {
       setLoading(false);
     }
-  }, [fetchFromAviationEdge, dataSource]);
+  }, [fetchFromOpenSky, dataSource]);
 
   useEffect(() => {
     fetchLiveFlights();
@@ -267,7 +267,7 @@ export function LiveFlightTracker() {
             {apiConnected !== null && (
               <Badge variant={apiConnected ? "default" : "secondary"} className="gap-1">
                 {apiConnected ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
-                {apiConnected ? 'API Live' : 'API Offline'}
+                {apiConnected ? 'OpenSky' : 'API Offline'}
               </Badge>
             )}
             <Badge variant={connectionStatus === 'connected' ? 'outline' : 'destructive'} className="gap-1">

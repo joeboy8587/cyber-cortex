@@ -229,74 +229,62 @@ export function JosiahChatInterface() {
         return updated;
       });
 
-      // Store in database using insertRecord action
+      // Store in database using insertRecord action - using correct column names
       await supabase.functions.invoke('neon-query', {
         body: {
           action: 'insertRecord',
           table: 'josiah_reflections_rows',
           data: {
             id: eventId,
-            reflection_text: loggedEvent.reflection || '',
-            pattern_type: loggedEvent.event_type,
-            location: location,
-            tags: loggedEvent.tags,
-            aircraft_data: JSON.stringify(loggedEvent.flight_data || {}),
-            biometric_data: JSON.stringify(loggedEvent.biometrics || {}),
+            reflection_content: loggedEvent.reflection || '',
+            trigger_type: loggedEvent.event_type,
+            source: 'JOSIAH_CHAT_OCR',
+            aircraft_correlation: loggedEvent.flight_data?.registration || null,
+            biometric_correlation: biometrics.heart_rate ? `HR:${biometrics.heart_rate} HRV:${biometrics.hrv}` : null,
+            heart_rate: parseInt(biometrics.heart_rate) || null,
+            pattern_classification: loggedEvent.tags?.[0] || null,
             created_at: new Date().toISOString()
           }
         }
       });
 
-      // Log to live_flight_detections if flight data extracted
+      // Log to live_flight_detections if flight data extracted - using correct column names
       if (loggedEvent.flight_data?.registration) {
         await supabase.functions.invoke('neon-query', {
           body: {
             action: 'insertRecord',
             table: 'live_flight_detections_rows',
             data: {
+              id: `ocr_${eventId}`,
               registration: loggedEvent.flight_data.registration,
-              operator: loggedEvent.flight_data.operator || '',
-              aircraft_type: loggedEvent.flight_data.aircraft_type || '',
-              altitude_ft: parseInt(loggedEvent.flight_data.altitude) || 0,
-              ground_speed_knots: parseInt(loggedEvent.flight_data.speed) || 0,
-              heading: parseInt(loggedEvent.flight_data.heading) || 0,
-              detection_method: 'JOSIAH_CHAT_OCR',
-              location: location,
-              detected_at: new Date().toISOString()
+              callsign: (loggedEvent.flight_data as any)?.callsign || null,
+              altitude: parseFloat(loggedEvent.flight_data.altitude) || null,
+              speed: parseFloat(loggedEvent.flight_data.speed) || null,
+              heading: parseFloat(loggedEvent.flight_data.heading) || null,
+              flagged_reasons: `OCR detected at ${location}`,
+              detection_timestamp: new Date().toISOString(),
+              created_at: new Date().toISOString()
             }
           }
         });
       }
 
-      // Log biometrics
+      // Log biometrics using correct column names
       if (biometrics.heart_rate || biometrics.hrv) {
         await supabase.functions.invoke('neon-query', {
           body: {
             action: 'insertRecord',
             table: 'biometric_monitoring',
             data: {
-              metric_type: 'heart_rate',
-              metric_value: parseInt(biometrics.heart_rate) || 0,
-              notes: `Josiah Event: ${loggedEvent.event_type}`,
-              recorded_at: new Date().toISOString()
+              heart_rate: parseInt(biometrics.heart_rate) || null,
+              hrv: parseFloat(biometrics.hrv) || null,
+              notes: `Josiah Event: ${loggedEvent.event_type} at ${location}`,
+              stress_cause: loggedEvent.event_type,
+              related_surveillance: true,
+              measurement_timestamp: new Date().toISOString()
             }
           }
         });
-        
-        if (biometrics.hrv) {
-          await supabase.functions.invoke('neon-query', {
-            body: {
-              action: 'insertRecord',
-              table: 'biometric_monitoring',
-              data: {
-                metric_type: 'hrv',
-                metric_value: parseInt(biometrics.hrv) || 0,
-                notes: `Josiah Event: ${loggedEvent.event_type}`,
-                recorded_at: new Date().toISOString()
-              }
-            }
-          });
-        }
       }
 
       toast.success(`Event logged: ${loggedEvent.event_type}`);

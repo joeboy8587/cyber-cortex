@@ -329,6 +329,108 @@ serve(async (req) => {
       );
     }
 
+    // ==================== ACTION: NATURAL LANGUAGE QUERY ====================
+    if (action === "natural_query") {
+      console.log("Processing natural language query:", message);
+      
+      // First, use AI to convert natural language to SQL
+      const sqlGenResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${LOVABLE_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "google/gemini-2.5-flash",
+          messages: [
+            { 
+              role: "system", 
+              content: `You are a SQL query generator for a PostgreSQL database. Convert natural language questions into safe, read-only SQL queries.
+
+AVAILABLE TABLES:
+- live_flight_detections_rows: registration, callsign, altitude, speed, latitude, longitude, detection_timestamp, taxonomy_tag, operator, aircraft_type
+- biometric_monitoring: heart_rate, hrv, stress_level, measurement_timestamp, medical_alert, legal_evidence, data_source
+- flagged_aircraft_main: registration, threat_score, operator_name, flag_reason, first_detected
+- criminal_enterprise_command_structure: entity_name, role, tier, connected_aircraft
+- shell_companies: company_name, operator_name, aircraft_count, linked_registrations
+- aircraft_registry_enriched: n_number, registrant_name, aircraft_model, aircraft_manufacturer
+- josiah_reflections_rows: reflection_content, trigger_type, created_at
+- biometric_vector_correlations: aircraft_id, correlation_strength, correlation_timestamp
+- four_factor_correlations: event_timestamp, factor_count, confidence_score
+
+RULES:
+1. ONLY generate SELECT statements - no INSERT, UPDATE, DELETE, DROP, etc.
+2. Always use LIMIT (max 100 rows)
+3. Use table aliases for readability
+4. If unsure about a column, use * with LIMIT 10
+5. Return ONLY the SQL query, no explanations
+
+Example conversions:
+- "show me low altitude flights" → SELECT registration, callsign, altitude, detection_timestamp FROM live_flight_detections_rows WHERE altitude < 500 ORDER BY detection_timestamp DESC LIMIT 50
+- "find high heart rate events" → SELECT heart_rate, measurement_timestamp, medical_alert FROM biometric_monitoring WHERE heart_rate > 100 ORDER BY measurement_timestamp DESC LIMIT 50
+- "what shell companies have the most aircraft" → SELECT company_name, operator_name, aircraft_count FROM shell_companies ORDER BY aircraft_count DESC LIMIT 20` 
+            },
+            { role: "user", content: message }
+          ],
+        }),
+      });
+
+      if (!sqlGenResponse.ok) {
+        return new Response(
+          JSON.stringify({ error: "Failed to generate SQL query" }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const sqlGenResult = await sqlGenResponse.json();
+      const generatedSQL = sqlGenResult.choices?.[0]?.message?.content?.trim() || "";
+      
+      console.log("Generated SQL:", generatedSQL);
+
+      // Validate the query is read-only
+      const lowerSQL = generatedSQL.toLowerCase();
+      if (lowerSQL.includes('insert') || lowerSQL.includes('update') || 
+          lowerSQL.includes('delete') || lowerSQL.includes('drop') || 
+          lowerSQL.includes('truncate') || lowerSQL.includes('alter')) {
+        return new Response(
+          JSON.stringify({ 
+            error: "Query validation failed - only SELECT queries allowed",
+            generatedSQL 
+          }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // Execute the query
+      try {
+        const result = await sql.unsafe(generatedSQL);
+        await sql.end();
+        
+        return new Response(
+          JSON.stringify({ 
+            success: true,
+            query: generatedSQL,
+            results: result,
+            rowCount: result.length,
+            message: `Found ${result.length} records`
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      } catch (queryErr) {
+        console.error("Query execution error:", queryErr);
+        await sql.end();
+        
+        return new Response(
+          JSON.stringify({ 
+            error: "Query execution failed",
+            details: (queryErr as Error).message,
+            generatedSQL
+          }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
+
     // ==================== DEFAULT: AI CHAT WITH CONTEXT ====================
     // Build comprehensive database context for AI
     const allTables = await sql`

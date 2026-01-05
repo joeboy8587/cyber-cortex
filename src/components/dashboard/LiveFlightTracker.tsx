@@ -23,8 +23,9 @@ interface FlightStats {
 }
 
 export function LiveFlightTracker() {
-  const { getUnifiedFlights, connectionStatus, isLoading: dbLoading } = useNeonDatabase();
+  const { isLoading: dbLoading } = useNeonDatabase();
   const [flights, setFlights] = useState<UnifiedFlight[]>([]);
+  const [dbConnected, setDbConnected] = useState<boolean | null>(null);
   const [stats, setStats] = useState<FlightStats>({
     total_active: 0,
     flagged_count: 0,
@@ -96,9 +97,13 @@ export function LiveFlightTracker() {
         });
         if (!error && data) {
           dbFlights = Array.isArray(data) ? data : [];
+          setDbConnected(true);
+        } else {
+          setDbConnected(false);
         }
       } catch (dbErr) {
         console.warn('DB fetch error, using API data only:', dbErr);
+        setDbConnected(false);
       }
       
       // Merge: prefer live API data, fallback to DB data
@@ -270,9 +275,9 @@ export function LiveFlightTracker() {
                 {apiConnected ? 'OpenSky' : 'API Offline'}
               </Badge>
             )}
-            <Badge variant={connectionStatus === 'connected' ? 'outline' : 'destructive'} className="gap-1">
+            <Badge variant={dbConnected ? 'outline' : 'destructive'} className="gap-1">
               <Database className="w-3 h-3" />
-              {connectionStatus === 'connected' ? 'DB OK' : 'DB Error'}
+              {dbConnected ? 'DB OK' : dbConnected === false ? 'DB Error' : 'DB...'}
             </Badge>
             <span className="text-xs text-muted-foreground">
               {lastUpdate.toLocaleTimeString()}

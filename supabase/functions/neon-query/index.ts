@@ -625,8 +625,8 @@ serve(async (req) => {
         const biometricCount = await sql`
           SELECT 
             COUNT(*) as total,
-            MAX(measurement_timestamp) as last_update,
-            COUNT(CASE WHEN measurement_timestamp > NOW() - INTERVAL '30 days' THEN 1 END) as recent
+            MAX(COALESCE(measurement_timestamp, event_timestamp, created_at)) as last_update,
+            COUNT(CASE WHEN COALESCE(measurement_timestamp, event_timestamp, created_at) > NOW() - INTERVAL '30 days' THEN 1 END) as recent
           FROM biometric_monitoring
         `;
         
@@ -699,7 +699,7 @@ serve(async (req) => {
           `;
           
           const biometricStats = await sql`
-            SELECT COUNT(*) as total, ROUND(AVG(NULLIF(hr_avg, 0))::numeric, 0) as avg_hr
+            SELECT COUNT(*) as total, ROUND(COALESCE(AVG(NULLIF(COALESCE(hr_avg, 0), 0)), 0)::numeric, 0) as avg_hr
             FROM biometric_monitoring
           `;
           
@@ -719,12 +719,12 @@ serve(async (req) => {
             ),
             biometric_days AS (
               SELECT 
-                DATE(event_timestamp) as event_date,
+                DATE(COALESCE(event_timestamp, measurement_timestamp, created_at)) as event_date,
                 COUNT(*) as bio_count,
-                AVG(hr_avg) as avg_hr
+                COALESCE(AVG(NULLIF(hr_avg, 0)), 0) as avg_hr
               FROM biometric_monitoring
-              WHERE hr_avg > 90
-              GROUP BY DATE(event_timestamp)
+              WHERE COALESCE(hr_avg, 0) > 90
+              GROUP BY DATE(COALESCE(event_timestamp, measurement_timestamp, created_at))
             ),
             convergence AS (
               SELECT 
@@ -1711,10 +1711,10 @@ serve(async (req) => {
           ),
           bio_records AS (
             SELECT 
-              DATE(created_at) as bio_date,
+              DATE(COALESCE(event_timestamp, measurement_timestamp, created_at)) as bio_date,
               COUNT(*) as bio_count
             FROM biometric_monitoring
-            GROUP BY DATE(created_at)
+            GROUP BY DATE(COALESCE(event_timestamp, measurement_timestamp, created_at))
           )
           SELECT 
             x.flight_date,
@@ -1812,54 +1812,74 @@ serve(async (req) => {
         console.log('Fetching biometric-validated XXB records...');
         const limitCount = body.limit || 100;
         
-        // Only return XXB records that have corresponding biometric data within ±30 minutes
-        const validatedRecords = await sql.unsafe(`
-          SELECT DISTINCT ON (f.id)
-            f.id,
-            f.registration,
-            f.callsign,
-            f.altitude,
-            f.speed,
-            f.latitude,
-            f.longitude,
-            f.detection_timestamp,
-            f.taxonomy_tag,
-            f.threat_score,
-            b.id as biometric_correlation_id,
-            b.heart_rate,
-            b.stress_level,
-            ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.created_at))) / 60 as time_delta_minutes,
-            'BIOMETRIC_VALIDATED' as validation_status
-          FROM live_flight_detections_rows f
-          INNER JOIN biometric_monitoring b ON 
-            ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.created_at))) < 1800
-          WHERE f.taxonomy_tag LIKE 'xxb%'
-            AND f.data_provenance IS DISTINCT FROM 'SYNTHETIC_DATA_GLITCH'
-            AND f.latitude IS NOT NULL
-            AND f.longitude IS NOT NULL
-          ORDER BY f.id, ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.created_at)))
-          LIMIT ${limitCount}
-        `);
-        
-        // Also get summary stats
-        const stats = await sql`
-          SELECT 
-            COUNT(*) FILTER (WHERE taxonomy_tag LIKE 'xxb%') as total_xxb,
-            COUNT(*) FILTER (WHERE taxonomy_tag LIKE 'xxb%' AND data_provenance = 'SYNTHETIC_DATA_GLITCH') as synthetic_xxb,
-            COUNT(*) FILTER (WHERE taxonomy_tag LIKE 'xxb%' AND (data_provenance IS NULL OR data_provenance != 'SYNTHETIC_DATA_GLITCH')) as valid_xxb
-          FROM live_flight_detections_rows
-        `;
-        
-        result = {
-          data: {
-            records: validatedRecords || [],
-            stats: {
-              totalXXB: parseInt(stats[0]?.total_xxb || '0'),
-              syntheticXXB: parseInt(stats[0]?.synthetic_xxb || '0'),
-              validXXB: parseInt(stats[0]?.valid_xxb || '0')
+        try {
+          // First check what columns exist in biometric_monitoring
+          const bioColumns = await sql`
+            SELECT column_name FROM information_schema.columns 
+            WHERE table_name = 'biometric_monitoring'
+          `;
+          const bioColNames = new Set((bioColumns as any[]).map(c => c.column_name));
+          console.log('biometric_monitoring columns:', Array.from(bioColNames));
+          
+          // Build dynamic column selection based on what exists
+          const hrCol = bioColNames.has('heart_rate') ? 'b.heart_rate' : 
+                       bioColNames.has('hr_avg') ? 'b.hr_avg as heart_rate' : 'NULL as heart_rate';
+          const stressCol = bioColNames.has('stress_level') ? 'b.stress_level' : 'NULL as stress_level';
+          const bioTimeCol = bioColNames.has('measurement_timestamp') ? 'b.measurement_timestamp' : 
+                            bioColNames.has('event_timestamp') ? 'b.event_timestamp' : 'b.created_at';
+          
+          // Only return XXB records that have corresponding biometric data within ±30 minutes
+          const validatedRecords = await sql.unsafe(`
+            SELECT DISTINCT ON (f.id)
+              f.id,
+              f.registration,
+              f.callsign,
+              f.altitude,
+              f.speed,
+              f.latitude,
+              f.longitude,
+              f.detection_timestamp,
+              f.taxonomy_tag,
+              f.threat_score,
+              b.id as biometric_correlation_id,
+              ${hrCol},
+              ${stressCol},
+              ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - ${bioTimeCol}))) / 60 as time_delta_minutes,
+              'BIOMETRIC_VALIDATED' as validation_status
+            FROM live_flight_detections_rows f
+            INNER JOIN biometric_monitoring b ON 
+              ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - ${bioTimeCol}))) < 1800
+            WHERE f.taxonomy_tag LIKE 'xxb%'
+              AND f.data_provenance IS DISTINCT FROM 'SYNTHETIC_DATA_GLITCH'
+              AND f.latitude IS NOT NULL
+              AND f.longitude IS NOT NULL
+            ORDER BY f.id, ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - ${bioTimeCol})))
+            LIMIT ${limitCount}
+          `);
+          
+          // Also get summary stats
+          const stats = await sql`
+            SELECT 
+              COUNT(*) FILTER (WHERE taxonomy_tag LIKE 'xxb%') as total_xxb,
+              COUNT(*) FILTER (WHERE taxonomy_tag LIKE 'xxb%' AND data_provenance = 'SYNTHETIC_DATA_GLITCH') as synthetic_xxb,
+              COUNT(*) FILTER (WHERE taxonomy_tag LIKE 'xxb%' AND (data_provenance IS NULL OR data_provenance != 'SYNTHETIC_DATA_GLITCH')) as valid_xxb
+            FROM live_flight_detections_rows
+          `;
+          
+          result = {
+            data: {
+              records: validatedRecords || [],
+              stats: {
+                totalXXB: parseInt(stats[0]?.total_xxb || '0'),
+                syntheticXXB: parseInt(stats[0]?.synthetic_xxb || '0'),
+                validXXB: parseInt(stats[0]?.valid_xxb || '0')
+              }
             }
-          }
-        };
+          };
+        } catch (e) {
+          console.error('getValidatedXXB error:', e);
+          result = { data: { records: [], stats: { totalXXB: 0, syntheticXXB: 0, validXXB: 0 } } };
+        }
         break;
       }
 

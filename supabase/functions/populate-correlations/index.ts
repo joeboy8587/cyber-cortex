@@ -57,6 +57,8 @@ const buildUnifiedBiometricsUnion = (tableCols: Record<string, ColSet>) => {
 };
 
 serve(async (req) => {
+  console.log('populate-correlations: Received request', req.method);
+  
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
@@ -75,12 +77,14 @@ serve(async (req) => {
   
   try {
     const body = await req.json().catch(() => ({}));
-    const { action, timeWindowMinutes = 5, batchSize = 1000, day } = body as {
+    const { action, timeWindowMinutes = 5, batchSize = 500, day } = body as {
       action?: string;
       timeWindowMinutes?: number;
       batchSize?: number;
       day?: string;
     };
+
+    console.log('populate-correlations: Action:', action);
 
     if (!action || typeof action !== 'string') {
       return new Response(
@@ -92,13 +96,15 @@ serve(async (req) => {
     sql = postgres(databaseUrl, {
       ssl: 'require',
       max: 1,
-      idle_timeout: 30,
+      idle_timeout: 20,
+      connect_timeout: 10,
     });
 
     let result;
 
     switch (action) {
       case 'getCorrelationStats': {
+        console.log('getCorrelationStats: Fetching table stats...');
         // Get current correlation table stats with safe table checks
         const tableChecks = await sql`
           SELECT table_name FROM information_schema.tables 
@@ -107,11 +113,22 @@ serve(async (req) => {
                              'live_flight_detections_rows', 'biometric_monitoring', 'josiah_reflections_rows')
         `;
         const existingTables = new Set((tableChecks as unknown as Array<{table_name: string}>).map(t => t.table_name));
+        console.log('getCorrelationStats: Found tables:', Array.from(existingTables));
         
         const getCnt = async (table: string) => {
           if (!existingTables.has(table)) return 0;
-          const r = await sql!.unsafe(`SELECT COUNT(*) as cnt FROM ${table}`);
-          return Number((r as any)[0]?.cnt || 0);
+          try {
+            // Use faster approximate count for large tables
+            const r = await sql!.unsafe(`SELECT reltuples::bigint AS cnt FROM pg_class WHERE relname = $1`, [table]);
+            const approx = Number((r as any)[0]?.cnt || 0);
+            if (approx > 0) return approx;
+            // Fallback to exact count for empty/small tables
+            const exact = await sql!.unsafe(`SELECT COUNT(*) as cnt FROM ${table} LIMIT 1`);
+            return Number((exact as any)[0]?.cnt || 0);
+          } catch (e) {
+            console.error(`Error counting ${table}:`, e);
+            return 0;
+          }
         };
         
         result = {
@@ -122,6 +139,7 @@ serve(async (req) => {
           biometric_count: await getCnt('biometric_monitoring'),
           josiah_count: await getCnt('josiah_reflections_rows')
         };
+        console.log('getCorrelationStats: Complete', result);
         break;
       }
 

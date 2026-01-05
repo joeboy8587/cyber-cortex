@@ -208,26 +208,22 @@ const F24RadarUploader: React.FC = () => {
       // Update the event in state
       setEvents(prev => prev.map(e => e.id === eventId ? completeEvent : e));
 
-      // Store in Neon for persistence
+      // Store in Neon for persistence using insertRecord action
       await supabase.functions.invoke('neon-query', {
         body: {
-          action: 'customQuery',
-          query: `
-            INSERT INTO josiah_reflections_rows (
-              id, reflection_text, pattern_type, location, tags,
-              aircraft_data, biometric_data, screenshot_url, created_at
-            ) VALUES (
-              '${eventId}',
-              '${(completeEvent.josiah_reflection || '').replace(/'/g, "''")}',
-              '${completeEvent.event_type.replace(/'/g, "''")}',
-              '${location.replace(/'/g, "''")}',
-              ARRAY[${completeEvent.tags.map(t => `'${t.replace(/'/g, "''")}'`).join(',')}]::text[],
-              '${JSON.stringify(completeEvent.flight_data || {}).replace(/'/g, "''")}',
-              '${JSON.stringify(completeEvent.biometrics || {}).replace(/'/g, "''")}',
-              '${currentImage?.slice(0, 200) || ''}',
-              NOW()
-            )
-          `
+          action: 'insertRecord',
+          table: 'josiah_reflections_rows',
+          data: {
+            id: eventId,
+            reflection_text: completeEvent.josiah_reflection || '',
+            pattern_type: completeEvent.event_type,
+            location: location,
+            tags: completeEvent.tags,
+            aircraft_data: JSON.stringify(completeEvent.flight_data || {}),
+            biometric_data: JSON.stringify(completeEvent.biometrics || {}),
+            screenshot_url: currentImage?.slice(0, 200) || '',
+            created_at: new Date().toISOString()
+          }
         }
       });
 
@@ -235,24 +231,19 @@ const F24RadarUploader: React.FC = () => {
       if (completeEvent.flight_data?.registration) {
         await supabase.functions.invoke('neon-query', {
           body: {
-            action: 'customQuery',
-            query: `
-              INSERT INTO live_flight_detections_rows (
-                registration, operator, aircraft_type, altitude_ft,
-                ground_speed_knots, heading, detection_method, location,
-                detected_at
-              ) VALUES (
-                '${completeEvent.flight_data.registration}',
-                '${(completeEvent.flight_data.operator || '').replace(/'/g, "''")}',
-                '${(completeEvent.flight_data.aircraft_type || '').replace(/'/g, "''")}',
-                ${parseInt(completeEvent.flight_data.altitude) || 0},
-                ${parseInt(completeEvent.flight_data.speed) || 0},
-                ${parseInt(completeEvent.flight_data.heading) || 0},
-                'F24_SCREENSHOT_OCR',
-                '${location.replace(/'/g, "''")}',
-                NOW()
-              )
-            `
+            action: 'insertRecord',
+            table: 'live_flight_detections_rows',
+            data: {
+              registration: completeEvent.flight_data.registration,
+              operator: completeEvent.flight_data.operator || '',
+              aircraft_type: completeEvent.flight_data.aircraft_type || '',
+              altitude_ft: parseInt(completeEvent.flight_data.altitude) || 0,
+              ground_speed_knots: parseInt(completeEvent.flight_data.speed) || 0,
+              heading: parseInt(completeEvent.flight_data.heading) || 0,
+              detection_method: 'F24_SCREENSHOT_OCR',
+              location: location,
+              detected_at: new Date().toISOString()
+            }
           }
         });
       }
@@ -261,16 +252,31 @@ const F24RadarUploader: React.FC = () => {
       if (manualBiometrics.heart_rate || manualBiometrics.hrv) {
         await supabase.functions.invoke('neon-query', {
           body: {
-            action: 'customQuery',
-            query: `
-              INSERT INTO biometric_monitoring (
-                metric_type, metric_value, notes, recorded_at
-              ) VALUES 
-              ('heart_rate', ${parseInt(manualBiometrics.heart_rate) || 0}, 'F24 Event: ${completeEvent.event_type}', NOW()),
-              ('hrv', ${parseInt(manualBiometrics.hrv) || 0}, 'F24 Event: ${completeEvent.event_type}', NOW())
-            `
+            action: 'insertRecord',
+            table: 'biometric_monitoring',
+            data: {
+              metric_type: 'heart_rate',
+              metric_value: parseInt(manualBiometrics.heart_rate) || 0,
+              notes: `F24 Event: ${completeEvent.event_type}`,
+              recorded_at: new Date().toISOString()
+            }
           }
         });
+        
+        if (manualBiometrics.hrv) {
+          await supabase.functions.invoke('neon-query', {
+            body: {
+              action: 'insertRecord',
+              table: 'biometric_monitoring',
+              data: {
+                metric_type: 'hrv',
+                metric_value: parseInt(manualBiometrics.hrv) || 0,
+                notes: `F24 Event: ${completeEvent.event_type}`,
+                recorded_at: new Date().toISOString()
+              }
+            }
+          });
+        }
       }
 
       toast({

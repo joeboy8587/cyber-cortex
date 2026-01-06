@@ -39,30 +39,34 @@ export const EntityRelationshipMap = () => {
 
   const loadEntityData = async () => {
     try {
-      // Get enterprise entities from command structure table
-      const { data: entitiesData } = await supabase.functions.invoke('neon-query', {
-        body: { 
-          action: 'customQuery',
-          query: `
-            SELECT 
-              entity_name, 
-              entity_type, 
-              tier,
-              role,
-              assets_controlled,
-              legal_exposure,
-              evidence_count,
-              prosecution_priority
-            FROM criminal_enterprise_command_structure 
-            ORDER BY tier, entity_name
-            LIMIT 50
-          `
-        }
-      });
+      // Fetch both enterprise entities AND KCSO fleet in parallel
+      const [entitiesResponse, kcsoResponse] = await Promise.all([
+        supabase.functions.invoke('neon-query', {
+          body: { 
+            action: 'customQuery',
+            query: `
+              SELECT 
+                entity_name, 
+                entity_type, 
+                tier,
+                role,
+                assets_controlled,
+                legal_exposure,
+                evidence_count,
+                prosecution_priority
+              FROM criminal_enterprise_command_structure 
+              ORDER BY tier, entity_name
+              LIMIT 50
+            `
+          }
+        }),
+        supabase.from('kcso_fleet').select('tail_number, model, frequent_oildale_operation')
+      ]);
       
-      const rows = entitiesData || [];
+      const rows = entitiesResponse?.data || [];
+      const kcsoFleet = kcsoResponse?.data || [];
       
-      // Parse entities
+      // Parse entities from command structure
       const parsedEntities: Entity[] = rows.map((r: any) => ({
         name: r.entity_name || 'Unknown',
         type: r.entity_type || 'Unknown',
@@ -71,40 +75,66 @@ export const EntityRelationshipMap = () => {
         connections: []
       }));
       
+      // Add KCSO fleet aircraft as Law Enforcement entities
+      const kcsoAircraftEntities: Entity[] = kcsoFleet.map((aircraft: any) => ({
+        name: `KCSO ${aircraft.tail_number}`,
+        type: 'Law Enforcement Aircraft',
+        tier: 2, // High priority tier
+        role: aircraft.frequent_oildale_operation ? 'Oildale Operations' : 'Surveillance Asset',
+        connections: ['KCSO', 'Kern County Sheriff']
+      }));
+      
+      // Merge entities - avoid duplicates by checking if KCSO aircraft already exist
+      const existingKcsoNames = new Set(
+        parsedEntities
+          .filter(e => e.name.toLowerCase().includes('n913') || e.name.toLowerCase().includes('n912'))
+          .map(e => e.name.toLowerCase())
+      );
+      
+      const newKcsoEntities = kcsoAircraftEntities.filter(
+        e => !existingKcsoNames.has(e.name.toLowerCase())
+      );
+      
+      const allEntities = [...parsedEntities, ...newKcsoEntities];
+      
       // Calculate stats - check both name and type fields for accurate categorization
-      const shellCount = parsedEntities.filter(e => {
+      const shellCount = allEntities.filter(e => {
         const name = e.name.toLowerCase();
         const type = e.type.toLowerCase();
         return type.includes('shell') || type.includes('llc') || type.includes('company') ||
                name.includes('llc') || name.includes('holdings') || name.includes('partners');
       }).length;
       
-      const aircraftCount = parsedEntities.filter(e => {
+      const aircraftCount = allEntities.filter(e => {
         const name = e.name.toLowerCase();
         const type = e.type.toLowerCase();
-        return type.includes('aircraft') || type.includes('aviation') ||
+        // Count aviation but NOT law enforcement aircraft (those go to lawCount)
+        const isAviation = type.includes('aircraft') || type.includes('aviation') ||
                name.includes('aviation') || name.includes('air ') || name.includes('aero');
+        const isLawEnforcement = type.includes('law enforcement') || name.includes('kcso');
+        return isAviation && !isLawEnforcement;
       }).length;
       
-      const lawCount = parsedEntities.filter(e => {
+      const lawCount = allEntities.filter(e => {
         const name = e.name.toLowerCase();
         const type = e.type.toLowerCase();
         return type.includes('law') || type.includes('sheriff') || type.includes('police') ||
                type.includes('enforcement') || type.includes('agency') ||
                name.includes('kcso') || name.includes('sheriff') || name.includes('police') ||
-               name.includes('kern county') || name.includes('law enforcement');
+               name.includes('kern county') || name.includes('law enforcement') ||
+               name.includes('n913kc') || name.includes('n912kv') || name.includes('n912kc');
       }).length;
       
-      const peCount = parsedEntities.filter(e => {
+      const peCount = allEntities.filter(e => {
         const name = e.name.toLowerCase();
         const type = e.type.toLowerCase();
         return type.includes('equity') || type.includes('investment') || type.includes('capital') ||
                name.includes('equity') || name.includes('capital') || name.includes('fund');
       }).length;
       
-      setEntities(parsedEntities);
+      setEntities(allEntities);
       setStats({
-        totalEntities: parsedEntities.length,
+        totalEntities: allEntities.length,
         shellCompanies: shellCount,
         aircraft: aircraftCount,
         lawEnforcement: lawCount,

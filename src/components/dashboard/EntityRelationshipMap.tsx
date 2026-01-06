@@ -71,29 +71,36 @@ export const EntityRelationshipMap = () => {
         connections: []
       }));
       
-      // Calculate stats
-      const shellCount = parsedEntities.filter(e => 
-        e.type.toLowerCase().includes('shell') || 
-        e.type.toLowerCase().includes('llc') ||
-        e.type.toLowerCase().includes('company')
-      ).length;
+      // Calculate stats - check both name and type fields for accurate categorization
+      const shellCount = parsedEntities.filter(e => {
+        const name = e.name.toLowerCase();
+        const type = e.type.toLowerCase();
+        return type.includes('shell') || type.includes('llc') || type.includes('company') ||
+               name.includes('llc') || name.includes('holdings') || name.includes('partners');
+      }).length;
       
-      const aircraftCount = parsedEntities.filter(e => 
-        e.type.toLowerCase().includes('aircraft') || 
-        e.type.toLowerCase().includes('aviation')
-      ).length;
+      const aircraftCount = parsedEntities.filter(e => {
+        const name = e.name.toLowerCase();
+        const type = e.type.toLowerCase();
+        return type.includes('aircraft') || type.includes('aviation') ||
+               name.includes('aviation') || name.includes('air ') || name.includes('aero');
+      }).length;
       
-      const lawCount = parsedEntities.filter(e => 
-        e.type.toLowerCase().includes('law') || 
-        e.type.toLowerCase().includes('sheriff') ||
-        e.type.toLowerCase().includes('police')
-      ).length;
+      const lawCount = parsedEntities.filter(e => {
+        const name = e.name.toLowerCase();
+        const type = e.type.toLowerCase();
+        return type.includes('law') || type.includes('sheriff') || type.includes('police') ||
+               type.includes('enforcement') || type.includes('agency') ||
+               name.includes('kcso') || name.includes('sheriff') || name.includes('police') ||
+               name.includes('kern county') || name.includes('law enforcement');
+      }).length;
       
-      const peCount = parsedEntities.filter(e => 
-        e.type.toLowerCase().includes('equity') || 
-        e.type.toLowerCase().includes('investment') ||
-        e.type.toLowerCase().includes('capital')
-      ).length;
+      const peCount = parsedEntities.filter(e => {
+        const name = e.name.toLowerCase();
+        const type = e.type.toLowerCase();
+        return type.includes('equity') || type.includes('investment') || type.includes('capital') ||
+               name.includes('equity') || name.includes('capital') || name.includes('fund');
+      }).length;
       
       setEntities(parsedEntities);
       setStats({
@@ -111,12 +118,13 @@ export const EntityRelationshipMap = () => {
     }
   };
 
-  const getEntityIcon = (type: string) => {
+  const getEntityIcon = (type: string, name: string = '') => {
     const t = type.toLowerCase();
-    if (t.includes('shell') || t.includes('llc') || t.includes('company')) return <Building2 className="h-4 w-4" />;
-    if (t.includes('aircraft') || t.includes('aviation')) return <Plane className="h-4 w-4" />;
-    if (t.includes('law') || t.includes('sheriff')) return <Shield className="h-4 w-4" />;
-    if (t.includes('equity') || t.includes('investment')) return <DollarSign className="h-4 w-4" />;
+    const n = name.toLowerCase();
+    if (t.includes('shell') || t.includes('llc') || t.includes('company') || n.includes('llc') || n.includes('holdings')) return <Building2 className="h-4 w-4" />;
+    if (t.includes('aircraft') || t.includes('aviation') || n.includes('aviation')) return <Plane className="h-4 w-4" />;
+    if (t.includes('law') || t.includes('sheriff') || t.includes('agency') || n.includes('kcso') || n.includes('sheriff') || n.includes('kern county')) return <Shield className="h-4 w-4" />;
+    if (t.includes('equity') || t.includes('investment') || n.includes('capital') || n.includes('equity')) return <DollarSign className="h-4 w-4" />;
     return <Users className="h-4 w-4" />;
   };
 
@@ -224,7 +232,7 @@ export const EntityRelationshipMap = () => {
                             className="flex items-center gap-3 p-3 bg-muted/20 rounded-lg border border-border/30"
                           >
                             <div className="text-muted-foreground">
-                              {getEntityIcon(entity.type)}
+                              {getEntityIcon(entity.type, entity.name)}
                             </div>
                             <div className="flex-1 min-w-0">
                               <p className="font-medium text-foreground truncate">

@@ -58,6 +58,7 @@ import GenevaConventionAnalysis from "@/components/dashboard/GenevaConventionAna
 import DeepPatternAnalyzer from "@/components/dashboard/DeepPatternAnalyzer";
 import { LegalBriefDashboard } from "@/components/dashboard/LegalBriefDashboard";
 import { LiveFlightTracker } from "@/components/dashboard/LiveFlightTracker";
+import { LiveAlertBanner } from "@/components/dashboard/LiveAlertBanner";
 import { DeepCorrelationEngine } from "@/components/dashboard/DeepCorrelationEngine";
 import { OperatorEnrichmentPanel } from "@/components/dashboard/OperatorEnrichmentPanel";
 import { DirectAircraftCorrelation } from "@/components/dashboard/DirectAircraftCorrelation";
@@ -93,6 +94,16 @@ const Index = () => {
     <div className="min-h-screen bg-background">
       <div className="relative z-10">
         <CommandHeader />
+        
+        {/* LIVE ALERT BANNER - Always visible at top */}
+        <div className="container pt-4">
+          <LiveAlertBanner 
+            lowAltitudeThreshold={1500} 
+            autoRefreshInterval={30000}
+            soundEnabled={true}
+          />
+        </div>
+        
         <main className="container py-6 space-y-6">
           {/* COMPREHENSIVE EVIDENCE SCAN - Top Priority */}
           <section id="comprehensive-scan" className="space-y-6">

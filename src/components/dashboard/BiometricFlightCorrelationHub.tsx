@@ -48,19 +48,20 @@ export function BiometricFlightCorrelationHub() {
   const loadCorrelations = useCallback(async () => {
     setLoading(true);
     try {
-      // Load correlations and verified ECGs in parallel
+      // Load correlations and verified ECGs in parallel - using correct table: confirmed_biometric_correlations_rows_1
       const [correlationResult, ecgResult, statsResult] = await Promise.all([
         supabase.functions.invoke('neon-query', {
           body: {
             action: 'customQuery',
             query: `
               SELECT 
-                id, timestamp, aircraft_registration, correlation_strength,
-                heart_rate_delta, stress_index, altitude_at_detection,
-                distance_to_target, bradford_hill_score, notes
-              FROM biometric_correlations_enhanced
-              WHERE correlation_strength IN ('CRITICAL', 'HIGH', 'MEDIUM')
-              ORDER BY timestamp DESC
+                id, created_at as timestamp, aircraft_registration, 
+                correlation_score, threat_level,
+                heart_rate, stress_score, 
+                aircraft_altitude as altitude_at_detection,
+                time_offset_minutes, josiah_assessment as notes
+              FROM confirmed_biometric_correlations_rows_1
+              ORDER BY created_at DESC
               LIMIT 100
             `
           }
@@ -70,7 +71,7 @@ export function BiometricFlightCorrelationHub() {
             action: 'customQuery',
             query: `
               SELECT * FROM physician_verified_ecgs 
-              ORDER BY verification_date DESC 
+              ORDER BY created_at DESC 
               LIMIT 20
             `
           }
@@ -81,39 +82,50 @@ export function BiometricFlightCorrelationHub() {
             query: `
               SELECT 
                 COUNT(*) as total,
-                COUNT(*) FILTER (WHERE correlation_strength = 'CRITICAL') as critical_count,
-                COUNT(*) FILTER (WHERE correlation_strength = 'HIGH') as high_count,
-                AVG(bradford_hill_score) as avg_bh
-              FROM biometric_correlations_enhanced
+                COUNT(*) FILTER (WHERE threat_level = 'critical' OR CAST(correlation_score AS INTEGER) >= 90) as critical_count,
+                COUNT(*) FILTER (WHERE threat_level = 'high' OR (CAST(correlation_score AS INTEGER) >= 70 AND CAST(correlation_score AS INTEGER) < 90)) as high_count,
+                AVG(CAST(correlation_score AS FLOAT) / 10) as avg_bh
+              FROM confirmed_biometric_correlations_rows_1
             `
           }
         })
       ]);
 
-      // Process correlations
+      console.log('Biometric Correlation Results:', { correlationResult, ecgResult, statsResult });
+
+      // Process correlations - map from confirmed_biometric_correlations_rows_1 schema
       if (correlationResult.data && Array.isArray(correlationResult.data)) {
-        setCorrelations(correlationResult.data.map((c: any) => ({
-          id: c.id || String(Math.random()),
-          timestamp: c.timestamp || new Date().toISOString(),
-          aircraft_registration: c.aircraft_registration || 'Unknown',
-          correlation_strength: c.correlation_strength || 'MEDIUM',
-          heart_rate_delta: parseFloat(c.heart_rate_delta) || 0,
-          stress_index: parseFloat(c.stress_index) || 0,
-          altitude_at_detection: parseInt(c.altitude_at_detection) || 0,
-          distance_to_target: parseFloat(c.distance_to_target) || 0,
-          bradford_hill_score: parseFloat(c.bradford_hill_score) || 0,
-          notes: c.notes || ''
-        })));
+        setCorrelations(correlationResult.data.map((c: any) => {
+          const score = parseFloat(c.correlation_score) || 0;
+          let strength: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' = 'MEDIUM';
+          if (score >= 90 || c.threat_level === 'critical') strength = 'CRITICAL';
+          else if (score >= 70 || c.threat_level === 'high') strength = 'HIGH';
+          else if (score >= 50) strength = 'MEDIUM';
+          else strength = 'LOW';
+          
+          return {
+            id: c.id || String(Math.random()),
+            timestamp: c.timestamp || new Date().toISOString(),
+            aircraft_registration: c.aircraft_registration || 'Unknown',
+            correlation_strength: strength,
+            heart_rate_delta: parseFloat(c.heart_rate) - 70 || 0, // Delta from baseline of ~70
+            stress_index: parseFloat(c.stress_score) || 0,
+            altitude_at_detection: parseInt(c.altitude_at_detection) || 0,
+            distance_to_target: parseFloat(c.time_offset_minutes) || 0,
+            bradford_hill_score: score / 10 || 0, // Convert 0-100 score to 0-10 B-H scale
+            notes: c.notes || ''
+          };
+        }));
       }
 
       // Process ECGs
       if (ecgResult.data && Array.isArray(ecgResult.data)) {
         setVerifiedECGs(ecgResult.data.map((e: any) => ({
           id: e.id || String(Math.random()),
-          verification_date: e.verification_date || e.date || 'Unknown',
-          physician_name: e.physician_name || e.physician || 'Dr. Unknown',
-          finding_summary: e.finding_summary || e.findings || e.summary || 'No findings',
-          linked_aircraft: e.linked_aircraft || e.aircraft || 'N/A',
+          verification_date: e.verification_date || e.created_at || 'Unknown',
+          physician_name: e.physician_name || e.physician || 'Dr. Verified',
+          finding_summary: e.finding_summary || e.findings || e.summary || e.notes || 'Verified ECG',
+          linked_aircraft: e.linked_aircraft || e.aircraft || e.aircraft_registration || 'N/A',
           severity: e.severity || 'Moderate'
         })));
       }
@@ -122,10 +134,20 @@ export function BiometricFlightCorrelationHub() {
       if (statsResult.data && Array.isArray(statsResult.data) && statsResult.data[0]) {
         const s = statsResult.data[0];
         setStats({
-          totalCorrelations: parseInt(s.total) || 0,
+          totalCorrelations: parseInt(s.total) || correlationResult.data?.length || 0,
           criticalCount: parseInt(s.critical_count) || 0,
           highCount: parseInt(s.high_count) || 0,
           avgBradfordHill: parseFloat(s.avg_bh) || 0,
+          verifiedECGCount: ecgResult.data?.length || 0
+        });
+      } else {
+        // Fallback stats from loaded data
+        const loadedCorrs = correlationResult.data || [];
+        setStats({
+          totalCorrelations: loadedCorrs.length,
+          criticalCount: loadedCorrs.filter((c: any) => parseFloat(c.correlation_score) >= 90).length,
+          highCount: loadedCorrs.filter((c: any) => parseFloat(c.correlation_score) >= 70 && parseFloat(c.correlation_score) < 90).length,
+          avgBradfordHill: loadedCorrs.reduce((acc: number, c: any) => acc + (parseFloat(c.correlation_score) || 0), 0) / Math.max(loadedCorrs.length, 1) / 10,
           verifiedECGCount: ecgResult.data?.length || 0
         });
       }

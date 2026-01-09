@@ -22,6 +22,7 @@ import BaselineDefensePanel from "@/components/dashboard/BaselineDefensePanel";
 import { ConsentDocumentation } from "@/components/dashboard/ConsentDocumentation";
 import { PatternCoordinationAnalysis } from "@/components/dashboard/PatternCoordinationAnalysis";
 import DataQualityAudit from "@/components/dashboard/DataQualityAudit";
+import { DatabaseQualityControl } from "@/components/dashboard/DatabaseQualityControl";
 import { TimelineNavigator } from "@/components/dashboard/TimelineNavigator";
 import { LegalEvidenceMap } from "@/components/dashboard/LegalEvidenceMap";
 import { JosiahWitnessLogs } from "@/components/dashboard/JosiahWitnessLogs";
@@ -268,6 +269,7 @@ const Index = () => {
           </section>
           
           <section id="data-quality" className="space-y-6">
+            <DatabaseQualityControl />
             <DataIntegrityPanel />
             <DataQualityAudit />
           </section>

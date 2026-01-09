@@ -88,6 +88,10 @@ import { ComprehensiveEvidenceScan } from "@/components/dashboard/ComprehensiveE
 import F24RadarUploader from "@/components/dashboard/F24RadarUploader";
 import { DataIntegrityPanel } from "@/components/dashboard/DataIntegrityPanel";
 import { ForensicLinkageHub } from "@/components/dashboard/ForensicLinkageHub";
+import { DatabaseIntelligenceScanner } from "@/components/dashboard/DatabaseIntelligenceScanner";
+import { KCSOEvidenceMatrix } from "@/components/dashboard/KCSOEvidenceMatrix";
+import { BiometricFlightCorrelationHub } from "@/components/dashboard/BiometricFlightCorrelationHub";
+import { MasterEvidenceSearch } from "@/components/dashboard/MasterEvidenceSearch";
 
 const Index = () => {
   return (
@@ -105,6 +109,18 @@ const Index = () => {
         </div>
         
         <main className="container py-6 space-y-6">
+          {/* DATABASE INTELLIGENCE - Multi-Modal Scanner */}
+          <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <DatabaseIntelligenceScanner />
+            <MasterEvidenceSearch />
+          </section>
+
+          {/* KCSO & BIOMETRIC EVIDENCE HUB */}
+          <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <KCSOEvidenceMatrix />
+            <BiometricFlightCorrelationHub />
+          </section>
+
           {/* COMPREHENSIVE EVIDENCE SCAN - Top Priority */}
           <section id="comprehensive-scan" className="space-y-6">
             <ComprehensiveEvidenceScan />

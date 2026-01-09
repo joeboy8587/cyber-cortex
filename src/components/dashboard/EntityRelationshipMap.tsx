@@ -39,8 +39,8 @@ export const EntityRelationshipMap = () => {
 
   const loadEntityData = async () => {
     try {
-      // Fetch both enterprise entities AND KCSO fleet in parallel
-      const [entitiesResponse, kcsoResponse] = await Promise.all([
+      // Fetch enterprise entities, KCSO fleet, and Neon KCSO tables in parallel
+      const [entitiesResponse, kcsoResponse, neonKcsoResult, shellResult, operatorResult] = await Promise.all([
         supabase.functions.invoke('neon-query', {
           body: { 
             action: 'customQuery',
@@ -60,11 +60,39 @@ export const EntityRelationshipMap = () => {
             `
           }
         }),
-        supabase.from('kcso_fleet').select('tail_number, model, frequent_oildale_operation')
+        supabase.from('kcso_fleet').select('tail_number, model, frequent_oildale_operation'),
+        // Query KCSO tables from Neon
+        supabase.functions.invoke('neon-query', {
+          body: { 
+            action: 'customQuery',
+            query: `
+              SELECT cluster_id, aircraft_count, detection_count, location 
+              FROM "KCSO_clusters" 
+              LIMIT 100
+            `
+          }
+        }),
+        // Query shell companies
+        supabase.functions.invoke('neon-query', {
+          body: { 
+            action: 'customQuery',
+            query: `SELECT * FROM shell_companies LIMIT 50`
+          }
+        }),
+        // Query operator registry
+        supabase.functions.invoke('neon-query', {
+          body: { 
+            action: 'customQuery',
+            query: `SELECT operator_name, operator_type, aircraft_count FROM operator_registry LIMIT 50`
+          }
+        })
       ]);
       
       const rows = entitiesResponse?.data || [];
       const kcsoFleet = kcsoResponse?.data || [];
+      const neonKcsoClusters = neonKcsoResult?.data || [];
+      const shellCompanies = shellResult?.data || [];
+      const operators = operatorResult?.data || [];
       
       // Parse entities from command structure
       const parsedEntities: Entity[] = rows.map((r: any) => ({
@@ -79,23 +107,51 @@ export const EntityRelationshipMap = () => {
       const kcsoAircraftEntities: Entity[] = kcsoFleet.map((aircraft: any) => ({
         name: `KCSO ${aircraft.tail_number}`,
         type: 'Law Enforcement Aircraft',
-        tier: 2, // High priority tier
+        tier: 2,
         role: aircraft.frequent_oildale_operation ? 'Oildale Operations' : 'Surveillance Asset',
         connections: ['KCSO', 'Kern County Sheriff']
       }));
+
+      // Add KCSO as agency entity based on cluster data
+      if (neonKcsoClusters.length > 0) {
+        parsedEntities.push({
+          name: 'Kern County Sheriff Office',
+          type: 'Law Enforcement Agency',
+          tier: 1,
+          role: `${neonKcsoClusters.length} surveillance clusters documented`,
+          connections: ['N912KC', 'N913KC']
+        });
+      }
+
+      // Add shell companies from Neon
+      const shellEntities: Entity[] = shellCompanies.map((s: any) => ({
+        name: s.company_name || s.name || 'Unknown Shell',
+        type: 'Shell Company',
+        tier: 3,
+        role: s.purpose || s.role || 'Asset Concealment',
+        connections: []
+      }));
+
+      // Add operators from registry
+      const operatorEntities: Entity[] = operators.slice(0, 10).map((o: any) => ({
+        name: o.operator_name || 'Unknown Operator',
+        type: o.operator_type || 'Aviation Operator',
+        tier: 3,
+        role: o.aircraft_count ? `${o.aircraft_count} aircraft` : 'Operator',
+        connections: []
+      }));
       
-      // Merge entities - avoid duplicates by checking if KCSO aircraft already exist
-      const existingKcsoNames = new Set(
-        parsedEntities
-          .filter(e => e.name.toLowerCase().includes('n913') || e.name.toLowerCase().includes('n912'))
-          .map(e => e.name.toLowerCase())
-      );
+      // Merge all entities - avoid duplicates
+      const seenNames = new Set<string>();
+      const allEntities: Entity[] = [];
       
-      const newKcsoEntities = kcsoAircraftEntities.filter(
-        e => !existingKcsoNames.has(e.name.toLowerCase())
-      );
-      
-      const allEntities = [...parsedEntities, ...newKcsoEntities];
+      for (const entity of [...parsedEntities, ...kcsoAircraftEntities, ...shellEntities, ...operatorEntities]) {
+        const key = entity.name.toLowerCase();
+        if (!seenNames.has(key)) {
+          seenNames.add(key);
+          allEntities.push(entity);
+        }
+      }
       
       // Calculate stats - check both name and type fields for accurate categorization
       const shellCount = allEntities.filter(e => {

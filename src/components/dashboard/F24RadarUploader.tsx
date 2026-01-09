@@ -123,70 +123,124 @@ const F24RadarUploader: React.FC = () => {
             software: null
           };
           
-          // Check for JPEG marker
-          if (dataView.getUint16(0) === 0xFFD8) {
+          let foundExif = false;
+          
+          // Check for JPEG marker (0xFFD8)
+          if (dataView.byteLength >= 2 && dataView.getUint16(0) === 0xFFD8) {
+            console.log('[EXIF] Detected JPEG format');
             let offset = 2;
-            while (offset < dataView.byteLength) {
-              const marker = dataView.getUint16(offset);
-              if (marker === 0xFFE1) { // APP1 marker (EXIF)
-                const length = dataView.getUint16(offset + 2);
-                const exifStart = offset + 4;
+            
+            while (offset < dataView.byteLength - 4) {
+              try {
+                const marker = dataView.getUint16(offset);
                 
-                // Check for "Exif\0\0"
-                const exifHeader = String.fromCharCode(
-                  dataView.getUint8(exifStart),
-                  dataView.getUint8(exifStart + 1),
-                  dataView.getUint8(exifStart + 2),
-                  dataView.getUint8(exifStart + 3)
-                );
-                
-                if (exifHeader === 'Exif') {
-                  // Parse TIFF header at exifStart + 6
-                  const tiffStart = exifStart + 6;
-                  const littleEndian = dataView.getUint16(tiffStart) === 0x4949;
+                // Check for APP1 marker (EXIF)
+                if (marker === 0xFFE1) {
+                  const segmentLength = dataView.getUint16(offset + 2);
+                  const exifStart = offset + 4;
                   
-                  // Get IFD0 offset
-                  const ifd0Offset = dataView.getUint32(tiffStart + 4, littleEndian);
-                  const numEntries = dataView.getUint16(tiffStart + ifd0Offset, littleEndian);
-                  
-                  // Parse IFD entries for EXIF sub-IFD pointer
-                  for (let i = 0; i < numEntries; i++) {
-                    const entryOffset = tiffStart + ifd0Offset + 2 + i * 12;
-                    const tag = dataView.getUint16(entryOffset, littleEndian);
+                  // Check for "Exif\0\0" header
+                  if (dataView.byteLength > exifStart + 6) {
+                    const exifHeader = String.fromCharCode(
+                      dataView.getUint8(exifStart),
+                      dataView.getUint8(exifStart + 1),
+                      dataView.getUint8(exifStart + 2),
+                      dataView.getUint8(exifStart + 3)
+                    );
                     
-                    // DateTime tag (0x0132)
-                    if (tag === 0x0132) {
-                      const valueOffset = dataView.getUint32(entryOffset + 8, littleEndian);
-                      let dateStr = '';
-                      for (let j = 0; j < 19; j++) {
-                        dateStr += String.fromCharCode(dataView.getUint8(tiffStart + valueOffset + j));
+                    if (exifHeader === 'Exif') {
+                      console.log('[EXIF] Found EXIF header');
+                      const tiffStart = exifStart + 6;
+                      const littleEndian = dataView.getUint16(tiffStart) === 0x4949;
+                      
+                      // Get IFD0 offset
+                      const ifd0Offset = dataView.getUint32(tiffStart + 4, littleEndian);
+                      
+                      if (tiffStart + ifd0Offset + 2 < dataView.byteLength) {
+                        const numEntries = dataView.getUint16(tiffStart + ifd0Offset, littleEndian);
+                        
+                        // Parse IFD entries
+                        for (let i = 0; i < Math.min(numEntries, 50); i++) {
+                          const entryOffset = tiffStart + ifd0Offset + 2 + i * 12;
+                          if (entryOffset + 12 > dataView.byteLength) break;
+                          
+                          const tag = dataView.getUint16(entryOffset, littleEndian);
+                          const type = dataView.getUint16(entryOffset + 2, littleEndian);
+                          const count = dataView.getUint32(entryOffset + 4, littleEndian);
+                          
+                          // DateTime tag (0x0132) or DateTimeOriginal (0x9003) or DateTimeDigitized (0x9004)
+                          if (tag === 0x0132 || tag === 0x9003 || tag === 0x9004) {
+                            const valueOffset = count <= 4 
+                              ? entryOffset + 8 
+                              : tiffStart + dataView.getUint32(entryOffset + 8, littleEndian);
+                            
+                            if (valueOffset + 19 <= dataView.byteLength) {
+                              let dateStr = '';
+                              for (let j = 0; j < 19; j++) {
+                                const char = dataView.getUint8(valueOffset + j);
+                                if (char === 0) break;
+                                dateStr += String.fromCharCode(char);
+                              }
+                              
+                              if (dateStr.length >= 10) {
+                                // Convert "YYYY:MM:DD HH:MM:SS" to ISO format
+                                const isoDate = dateStr.replace(/^(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3');
+                                console.log(`[EXIF] Found date tag 0x${tag.toString(16)}: ${isoDate}`);
+                                
+                                if (tag === 0x9003) exifData.dateTimeOriginal = isoDate;
+                                else if (tag === 0x9004) exifData.dateTimeDigitized = isoDate;
+                                else exifData.modifyDate = isoDate;
+                                foundExif = true;
+                              }
+                            }
+                          }
+                        }
                       }
-                      exifData.modifyDate = dateStr.replace(/:/g, '-').replace(/-/, ':').replace(/-/, ':');
                     }
                   }
+                  break;
                 }
-                break;
-              } else if ((marker & 0xFF00) !== 0xFF00) {
+                
+                // Move to next marker
+                if ((marker & 0xFF00) !== 0xFF00) break;
+                const segmentLength = dataView.getUint16(offset + 2);
+                offset += 2 + segmentLength;
+              } catch (parseErr) {
+                console.error('[EXIF] Parse error at offset', offset, parseErr);
                 break;
               }
-              const length = dataView.getUint16(offset + 2);
-              offset += 2 + length;
             }
           }
-          
-          // If no EXIF date, try using file's lastModified
-          if (!exifData.dateTimeOriginal && !exifData.modifyDate && file.lastModified) {
-            exifData.modifyDate = new Date(file.lastModified).toISOString();
+          // Check for PNG (screenshots are often PNG)
+          else if (dataView.byteLength >= 8 && 
+                   dataView.getUint32(0) === 0x89504E47 && 
+                   dataView.getUint32(4) === 0x0D0A1A0A) {
+            console.log('[EXIF] Detected PNG format (no native EXIF support)');
+            // PNG doesn't have EXIF, use file metadata
           }
+          
+          // Use file's lastModified as the timestamp source
+          // This is reliable for screenshots as it captures when the file was created
+          if (!foundExif && file.lastModified) {
+            const fileDate = new Date(file.lastModified);
+            exifData.modifyDate = fileDate.toISOString();
+            console.log(`[EXIF] Using file.lastModified: ${exifData.modifyDate}`);
+          }
+          
+          // Prioritize dateTimeOriginal if found
+          const bestTimestamp = exifData.dateTimeOriginal || exifData.dateTimeDigitized || exifData.modifyDate;
+          console.log(`[EXIF] Best timestamp for ${file.name}: ${bestTimestamp}`);
           
           resolve(exifData);
         } catch (err) {
-          console.error('EXIF extraction error:', err);
+          console.error('[EXIF] Extraction error:', err);
           // Fallback to file metadata
+          const fallbackDate = file.lastModified ? new Date(file.lastModified).toISOString() : null;
+          console.log(`[EXIF] Fallback to file.lastModified: ${fallbackDate}`);
           resolve({
             dateTimeOriginal: null,
             dateTimeDigitized: null,
-            modifyDate: file.lastModified ? new Date(file.lastModified).toISOString() : null,
+            modifyDate: fallbackDate,
             gpsLatitude: null,
             gpsLongitude: null,
             make: null,
@@ -194,6 +248,19 @@ const F24RadarUploader: React.FC = () => {
             software: null
           });
         }
+      };
+      reader.onerror = () => {
+        console.error('[EXIF] FileReader error');
+        resolve({
+          dateTimeOriginal: null,
+          dateTimeDigitized: null,
+          modifyDate: file.lastModified ? new Date(file.lastModified).toISOString() : null,
+          gpsLatitude: null,
+          gpsLongitude: null,
+          make: null,
+          model: null,
+          software: null
+        });
       };
       reader.readAsArrayBuffer(file);
     });
@@ -293,17 +360,28 @@ const F24RadarUploader: React.FC = () => {
         });
       }
       
-      // Show EXIF extraction results
-      const withExif = newScreenshots.filter(s => s.exifData?.modifyDate || s.exifData?.dateTimeOriginal);
+      // Count files with timestamps
+      const withTimestamps = newScreenshots.filter(s => 
+        s.exifData?.dateTimeOriginal || s.exifData?.dateTimeDigitized || s.exifData?.modifyDate
+      );
+      const withExifDate = newScreenshots.filter(s => s.exifData?.dateTimeOriginal || s.exifData?.dateTimeDigitized);
       
       setUploadedScreenshots(prev => [...prev, ...newScreenshots]);
       setUploading(false);
       
+      // Show what timestamp source was found
+      let description = '';
+      if (withExifDate.length > 0) {
+        description = `EXIF camera timestamps from ${withExifDate.length} file(s)`;
+      } else if (withTimestamps.length > 0) {
+        description = `File modification timestamps from ${withTimestamps.length} file(s)`;
+      } else {
+        description = "No timestamps found - will use current time";
+      }
+      
       toast({
         title: `${newScreenshots.length} Screenshot(s) Uploaded`,
-        description: withExif.length > 0 
-          ? `EXIF timestamps extracted from ${withExif.length} file(s)`
-          : "No EXIF metadata found - using current timestamp",
+        description,
       });
     } catch (err) {
       console.error('Upload error:', err);
@@ -567,12 +645,17 @@ const F24RadarUploader: React.FC = () => {
                         </button>
                         <div className="absolute bottom-0 left-0 right-0 bg-black/80 text-[10px] text-center px-1 py-0.5">
                           <span className="text-cyan-400 truncate block">{screenshot.filename}</span>
-                          {screenshot.exifData?.modifyDate && (
+                          {screenshot.exifData?.dateTimeOriginal ? (
                             <span className="text-green-400 flex items-center justify-center gap-0.5">
                               <Calendar className="h-2.5 w-2.5" />
-                              EXIF: {new Date(screenshot.exifData.modifyDate).toLocaleDateString()}
+                              EXIF: {new Date(screenshot.exifData.dateTimeOriginal).toLocaleDateString()}
                             </span>
-                          )}
+                          ) : screenshot.exifData?.modifyDate ? (
+                            <span className="text-yellow-400 flex items-center justify-center gap-0.5">
+                              <Clock className="h-2.5 w-2.5" />
+                              File: {new Date(screenshot.exifData.modifyDate).toLocaleDateString()}
+                            </span>
+                          ) : null}
                         </div>
                       </div>
                     ))}
@@ -582,11 +665,11 @@ const F24RadarUploader: React.FC = () => {
                       {uploadedScreenshots.length} screenshot(s) ready
                     </span>
                     <span className={`flex items-center gap-1 ${
-                      uploadedScreenshots.filter(s => s.exifData?.modifyDate).length > 0 
+                      uploadedScreenshots.filter(s => s.exifData?.dateTimeOriginal || s.exifData?.modifyDate).length > 0 
                         ? 'text-green-400' : 'text-yellow-400'
                     }`}>
                       <Calendar className="h-3 w-3" />
-                      {uploadedScreenshots.filter(s => s.exifData?.modifyDate).length} with EXIF
+                      {uploadedScreenshots.filter(s => s.exifData?.dateTimeOriginal).length} EXIF / {uploadedScreenshots.filter(s => s.exifData?.modifyDate && !s.exifData?.dateTimeOriginal).length} File
                     </span>
                   </div>
                 </div>
@@ -594,10 +677,10 @@ const F24RadarUploader: React.FC = () => {
                 <>
                   <Camera className="h-12 w-12 text-cyan-400/50" />
                   <span className="text-cyan-400/70 text-sm">
-                    {uploading ? 'Extracting EXIF metadata...' : 'Upload FlightRadar24 Screenshot(s)'}
+                    {uploading ? 'Extracting timestamps...' : 'Upload FlightRadar24 Screenshot(s)'}
                   </span>
                   <span className="text-cyan-400/50 text-xs">
-                    EXIF timestamps extracted for accurate dating
+                    Extracts EXIF camera dates or file modification times
                   </span>
                 </>
               )}

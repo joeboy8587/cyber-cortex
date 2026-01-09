@@ -51,6 +51,9 @@ verify_jwt = false
 [functions.forensic-linker]
 verify_jwt = false
 
+[functions.database-quality-control]
+verify_jwt = false
+
 [api]
 enabled = true
 port = 54321

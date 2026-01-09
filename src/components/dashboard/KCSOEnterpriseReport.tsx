@@ -26,7 +26,7 @@ interface KCSOStats {
   last_detection: string;
 }
 
-export const KCSOSurveillanceReport = () => {
+export const KCSOEnterpriseReport = () => {
   const [events, setEvents] = useState<KCSOEvent[]>([]);
   const [stats, setStats] = useState<KCSOStats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -140,7 +140,7 @@ export const KCSOSurveillanceReport = () => {
 
   return (
     <CyberPanel 
-      title="KCSO Surveillance Report" 
+      title="KCSO Enterprise Activity Report" 
       icon={<Shield className="h-5 w-5 text-yellow-400" />}
       className="col-span-2"
     >
@@ -148,11 +148,11 @@ export const KCSOSurveillanceReport = () => {
       <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-4 mb-6">
         <div className="flex items-center gap-2 mb-2">
           <AlertTriangle className="h-5 w-5 text-yellow-400" />
-          <span className="font-bold text-yellow-400">LAW ENFORCEMENT SURVEILLANCE PATTERN DETECTED</span>
+          <span className="font-bold text-yellow-400">COORDINATED ENTERPRISE ACTIVITY PATTERN DETECTED</span>
         </div>
         <p className="text-sm text-foreground/80">
-          Kern County Sheriff aircraft (N913KC, N912KC) show repeated presence in surveillance patterns 
-          correlated with documented biometric stress events. Pattern indicates systematic targeting.
+          Kern County Sheriff aircraft (N913KC, N912KC) identified as participants in coordinated enterprise 
+          activity correlated with documented harm events. Evidence indicates multi-actor organized operation.
         </p>
       </div>
 
@@ -213,9 +213,9 @@ export const KCSOSurveillanceReport = () => {
       {/* Events Timeline */}
       <div className="space-y-3 max-h-[400px] overflow-y-auto">
         {loading ? (
-          <div className="text-center py-8 text-muted-foreground">Loading KCSO surveillance data...</div>
+          <div className="text-center py-8 text-muted-foreground">Loading KCSO enterprise activity data...</div>
         ) : events.length === 0 ? (
-          <div className="text-center py-8 text-muted-foreground">No KCSO detections found</div>
+          <div className="text-center py-8 text-muted-foreground">No KCSO activity detected</div>
         ) : (
           events.map((event, idx) => (
             <div 
@@ -286,9 +286,9 @@ export const KCSOSurveillanceReport = () => {
       <div className="mt-6 border-t border-border/30 pt-4">
         <div className="text-xs text-muted-foreground">
           <strong className="text-foreground">Legal Significance:</strong> Repeated law enforcement aircraft 
-          presence correlated with documented physiological stress events establishes pattern of systematic 
-          surveillance targeting. Time-offset correlations between aircraft arrival and biometric spikes 
-          support causation under Bradford Hill criteria.
+          presence correlated with documented harm events establishes pattern of coordinated enterprise activity. 
+          Multi-actor coordination across agencies and shell entities supports RICO predicate analysis under 
+          Bradford Hill causation criteria.
         </div>
       </div>
     </CyberPanel>

@@ -27,7 +27,7 @@ import { TimelineNavigator } from "@/components/dashboard/TimelineNavigator";
 import { LegalEvidenceMap } from "@/components/dashboard/LegalEvidenceMap";
 import { JosiahWitnessLogs } from "@/components/dashboard/JosiahWitnessLogs";
 import { FleetTrackingLedger } from "@/components/dashboard/FleetTrackingLedger";
-import { KCSOSurveillanceReport } from "@/components/dashboard/KCSOSurveillanceReport";
+import { KCSOEnterpriseReport } from "@/components/dashboard/KCSOEnterpriseReport";
 import { KCSOFleetRegistry } from "@/components/dashboard/KCSOFleetRegistry";
 import { KCSOFleetCrossRef } from "@/components/dashboard/KCSOFleetCrossRef";
 import { KCSOBudgetTimeline } from "@/components/dashboard/KCSOBudgetTimeline";
@@ -251,7 +251,7 @@ const Index = () => {
           </section>
           
           <section id="kcso-report" className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-            <KCSOSurveillanceReport />
+            <KCSOEnterpriseReport />
             <KCSOFleetRegistry />
           </section>
           

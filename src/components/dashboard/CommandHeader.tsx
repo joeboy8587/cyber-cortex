@@ -51,11 +51,11 @@ export function CommandHeader() {
               <div className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-destructive animate-pulse" />
             </div>
             <div>
-              <h1 className="font-display text-xl lg:text-2xl uppercase tracking-[0.3em] text-gradient-cyber">
+            <h1 className="font-display text-xl lg:text-2xl uppercase tracking-[0.3em] text-gradient-cyber">
                 Watchtower
               </h1>
               <p className="font-mono text-xs text-muted-foreground">
-                COMMAND CENTER v2.0 // OILDALE GRID EXPOSURE
+                EVIDENCE CORRELATION SYSTEM v3.0 // ENTERPRISE ACTIVITY EXPOSURE
               </p>
             </div>
           </div>

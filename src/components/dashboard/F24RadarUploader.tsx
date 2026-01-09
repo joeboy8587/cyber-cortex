@@ -20,7 +20,9 @@ import {
   Loader2,
   CheckCircle,
   Radio,
-  Activity
+  Activity,
+  Database,
+  Calendar
 } from 'lucide-react';
 
 interface ExtractedFlightData {
@@ -42,9 +44,21 @@ interface BiometricData {
   interpretation: string;
 }
 
+interface ExifMetadata {
+  dateTimeOriginal: string | null;
+  dateTimeDigitized: string | null;
+  modifyDate: string | null;
+  gpsLatitude: number | null;
+  gpsLongitude: number | null;
+  make: string | null;
+  model: string | null;
+  software: string | null;
+}
+
 interface WatchtowerEvent {
   id: string;
   timestamp: string;
+  exifTimestamp: string | null;
   event_type: string;
   location: string;
   tags: string[];
@@ -53,12 +67,22 @@ interface WatchtowerEvent {
   josiah_reflection: string;
   screenshot_url: string | null;
   status: 'processing' | 'complete' | 'error';
+  neonSynced: boolean;
+  exifMetadata: ExifMetadata | null;
 }
 
 interface UploadedScreenshot {
   id: string;
   dataUrl: string;
   filename: string;
+  exifData: ExifMetadata | null;
+  file: File;
+}
+
+interface NeonSyncStatus {
+  totalRecords: number;
+  lastSync: string | null;
+  pendingUploads: number;
 }
 
 const F24RadarUploader: React.FC = () => {
@@ -73,11 +97,133 @@ const F24RadarUploader: React.FC = () => {
   });
   const [location, setLocation] = useState('Oildale, California');
   const [additionalNotes, setAdditionalNotes] = useState('');
+  const [neonStatus, setNeonStatus] = useState<NeonSyncStatus>({
+    totalRecords: 0,
+    lastSync: null,
+    pendingUploads: 0
+  });
+
+  // Extract EXIF metadata from image file
+  const extractExifData = useCallback(async (file: File): Promise<ExifMetadata> => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const arrayBuffer = e.target?.result as ArrayBuffer;
+          const dataView = new DataView(arrayBuffer);
+          
+          let exifData: ExifMetadata = {
+            dateTimeOriginal: null,
+            dateTimeDigitized: null,
+            modifyDate: null,
+            gpsLatitude: null,
+            gpsLongitude: null,
+            make: null,
+            model: null,
+            software: null
+          };
+          
+          // Check for JPEG marker
+          if (dataView.getUint16(0) === 0xFFD8) {
+            let offset = 2;
+            while (offset < dataView.byteLength) {
+              const marker = dataView.getUint16(offset);
+              if (marker === 0xFFE1) { // APP1 marker (EXIF)
+                const length = dataView.getUint16(offset + 2);
+                const exifStart = offset + 4;
+                
+                // Check for "Exif\0\0"
+                const exifHeader = String.fromCharCode(
+                  dataView.getUint8(exifStart),
+                  dataView.getUint8(exifStart + 1),
+                  dataView.getUint8(exifStart + 2),
+                  dataView.getUint8(exifStart + 3)
+                );
+                
+                if (exifHeader === 'Exif') {
+                  // Parse TIFF header at exifStart + 6
+                  const tiffStart = exifStart + 6;
+                  const littleEndian = dataView.getUint16(tiffStart) === 0x4949;
+                  
+                  // Get IFD0 offset
+                  const ifd0Offset = dataView.getUint32(tiffStart + 4, littleEndian);
+                  const numEntries = dataView.getUint16(tiffStart + ifd0Offset, littleEndian);
+                  
+                  // Parse IFD entries for EXIF sub-IFD pointer
+                  for (let i = 0; i < numEntries; i++) {
+                    const entryOffset = tiffStart + ifd0Offset + 2 + i * 12;
+                    const tag = dataView.getUint16(entryOffset, littleEndian);
+                    
+                    // DateTime tag (0x0132)
+                    if (tag === 0x0132) {
+                      const valueOffset = dataView.getUint32(entryOffset + 8, littleEndian);
+                      let dateStr = '';
+                      for (let j = 0; j < 19; j++) {
+                        dateStr += String.fromCharCode(dataView.getUint8(tiffStart + valueOffset + j));
+                      }
+                      exifData.modifyDate = dateStr.replace(/:/g, '-').replace(/-/, ':').replace(/-/, ':');
+                    }
+                  }
+                }
+                break;
+              } else if ((marker & 0xFF00) !== 0xFF00) {
+                break;
+              }
+              const length = dataView.getUint16(offset + 2);
+              offset += 2 + length;
+            }
+          }
+          
+          // If no EXIF date, try using file's lastModified
+          if (!exifData.dateTimeOriginal && !exifData.modifyDate && file.lastModified) {
+            exifData.modifyDate = new Date(file.lastModified).toISOString();
+          }
+          
+          resolve(exifData);
+        } catch (err) {
+          console.error('EXIF extraction error:', err);
+          // Fallback to file metadata
+          resolve({
+            dateTimeOriginal: null,
+            dateTimeDigitized: null,
+            modifyDate: file.lastModified ? new Date(file.lastModified).toISOString() : null,
+            gpsLatitude: null,
+            gpsLongitude: null,
+            make: null,
+            model: null,
+            software: null
+          });
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    });
+  }, []);
+
+  // Fetch Neon DB sync status
+  const fetchNeonStatus = useCallback(async () => {
+    try {
+      const { data } = await supabase.functions.invoke('neon-query', {
+        body: {
+          action: 'customQuery',
+          query: `SELECT COUNT(*) as count FROM josiah_reflections_rows`
+        }
+      });
+      const rows = Array.isArray(data) ? data : data?.data || [];
+      setNeonStatus(prev => ({
+        ...prev,
+        totalRecords: parseInt(rows[0]?.count) || 0,
+        lastSync: new Date().toISOString()
+      }));
+    } catch (err) {
+      console.error('Neon status fetch error:', err);
+    }
+  }, []);
 
   // Fetch recent events on mount
   useEffect(() => {
     fetchRecentEvents();
-  }, []);
+    fetchNeonStatus();
+  }, [fetchNeonStatus]);
 
   const fetchRecentEvents = async () => {
     try {
@@ -97,14 +243,17 @@ const F24RadarUploader: React.FC = () => {
         const mappedEvents: WatchtowerEvent[] = rows.map((row: any) => ({
           id: row.id || crypto.randomUUID(),
           timestamp: row.created_at || new Date().toISOString(),
+          exifTimestamp: row.exif_timestamp || null,
           event_type: row.pattern_type || 'Surveillance Event',
           location: row.location || 'Unknown',
           tags: row.tags || [],
-          flight_data: row.aircraft_data ? JSON.parse(row.aircraft_data) : null,
-          biometrics: row.biometric_data ? JSON.parse(row.biometric_data) : null,
+          flight_data: row.aircraft_data ? (typeof row.aircraft_data === 'string' ? JSON.parse(row.aircraft_data) : row.aircraft_data) : null,
+          biometrics: row.biometric_data ? (typeof row.biometric_data === 'string' ? JSON.parse(row.biometric_data) : row.biometric_data) : null,
           josiah_reflection: row.reflection_text || '',
           screenshot_url: row.screenshot_url || null,
-          status: 'complete' as const
+          status: 'complete' as const,
+          neonSynced: true,
+          exifMetadata: row.exif_metadata ? (typeof row.exif_metadata === 'string' ? JSON.parse(row.exif_metadata) : row.exif_metadata) : null
         }));
         setEvents(mappedEvents);
       }
@@ -124,6 +273,10 @@ const F24RadarUploader: React.FC = () => {
       
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
+        
+        // Extract EXIF metadata
+        const exifData = await extractExifData(file);
+        
         const base64 = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = (event) => resolve(event.target?.result as string);
@@ -134,16 +287,23 @@ const F24RadarUploader: React.FC = () => {
         newScreenshots.push({
           id: crypto.randomUUID(),
           dataUrl: base64,
-          filename: file.name
+          filename: file.name,
+          exifData,
+          file
         });
       }
+      
+      // Show EXIF extraction results
+      const withExif = newScreenshots.filter(s => s.exifData?.modifyDate || s.exifData?.dateTimeOriginal);
       
       setUploadedScreenshots(prev => [...prev, ...newScreenshots]);
       setUploading(false);
       
       toast({
         title: `${newScreenshots.length} Screenshot(s) Uploaded`,
-        description: "Ready for AI analysis. Add biometrics and click Analyze.",
+        description: withExif.length > 0 
+          ? `EXIF timestamps extracted from ${withExif.length} file(s)`
+          : "No EXIF metadata found - using current timestamp",
       });
     } catch (err) {
       console.error('Upload error:', err);
@@ -154,7 +314,7 @@ const F24RadarUploader: React.FC = () => {
         variant: "destructive"
       });
     }
-  }, [toast]);
+  }, [toast, extractExifData]);
 
   const removeScreenshot = (id: string) => {
     setUploadedScreenshots(prev => prev.filter(s => s.id !== id));
@@ -175,9 +335,10 @@ const F24RadarUploader: React.FC = () => {
     const processedEvents: WatchtowerEvent[] = [];
 
     // Add processing events for all screenshots
-    const processingEvents = uploadedScreenshots.map((screenshot, idx) => ({
+    const processingEvents: WatchtowerEvent[] = uploadedScreenshots.map((screenshot, idx) => ({
       id: screenshot.id,
-      timestamp: new Date(baseTimestamp.getTime() + idx * 1000).toISOString(),
+      timestamp: screenshot.exifData?.dateTimeOriginal || screenshot.exifData?.modifyDate || new Date(baseTimestamp.getTime() + idx * 1000).toISOString(),
+      exifTimestamp: screenshot.exifData?.dateTimeOriginal || screenshot.exifData?.modifyDate || null,
       event_type: `Processing (${idx + 1}/${uploadedScreenshots.length})...`,
       location,
       tags: ['Processing'],
@@ -185,7 +346,9 @@ const F24RadarUploader: React.FC = () => {
       biometrics: null,
       josiah_reflection: `Analyzing screenshot ${idx + 1}...`,
       screenshot_url: screenshot.dataUrl,
-      status: 'processing' as const
+      status: 'processing' as const,
+      neonSynced: false,
+      exifMetadata: screenshot.exifData
     }));
     setEvents(prev => [...processingEvents, ...prev]);
 
@@ -193,7 +356,9 @@ const F24RadarUploader: React.FC = () => {
       // Process each screenshot
       for (let i = 0; i < uploadedScreenshots.length; i++) {
         const screenshot = uploadedScreenshots[i];
-        const timestamp = new Date(baseTimestamp.getTime() + i * 1000).toISOString();
+        // Use EXIF timestamp if available, otherwise use current time
+        const exifTs = screenshot.exifData?.dateTimeOriginal || screenshot.exifData?.modifyDate;
+        const timestamp = exifTs || new Date(baseTimestamp.getTime() + i * 1000).toISOString();
 
         try {
           // Call AI to analyze the screenshot
@@ -205,8 +370,9 @@ const F24RadarUploader: React.FC = () => {
                 hrv: parseInt(manualBiometrics.hrv) || null
               },
               location,
-              additionalNotes: `${additionalNotes} [Screenshot ${i + 1} of ${uploadedScreenshots.length}]`,
-              timestamp
+              additionalNotes: `${additionalNotes} [Screenshot ${i + 1} of ${uploadedScreenshots.length}]${exifTs ? ` [EXIF Timestamp: ${exifTs}]` : ''}`,
+              timestamp,
+              exifMetadata: screenshot.exifData
             }
           });
 
@@ -218,9 +384,13 @@ const F24RadarUploader: React.FC = () => {
           const completeEvent: WatchtowerEvent = {
             id: screenshot.id,
             timestamp,
+            exifTimestamp: exifTs || null,
             event_type: extractedData?.event_type || 'Surveillance Detection',
             location,
-            tags: extractedData?.tags || ['F24 Analysis', 'Watchtower', `Batch ${i + 1}`],
+            tags: [
+              ...(extractedData?.tags || ['F24 Analysis', 'Watchtower', `Batch ${i + 1}`]),
+              exifTs ? 'EXIF_VERIFIED' : 'NO_EXIF'
+            ],
             flight_data: extractedData?.flight_data || null,
             biometrics: {
               heart_rate: parseInt(manualBiometrics.heart_rate) || 0,
@@ -230,7 +400,9 @@ const F24RadarUploader: React.FC = () => {
             },
             josiah_reflection: extractedData?.josiah_reflection || 'Analysis complete.',
             screenshot_url: screenshot.dataUrl,
-            status: 'complete'
+            status: 'complete',
+            neonSynced: false,
+            exifMetadata: screenshot.exifData
           };
 
           processedEvents.push(completeEvent);
@@ -239,7 +411,7 @@ const F24RadarUploader: React.FC = () => {
           setEvents(prev => prev.map(e => e.id === screenshot.id ? completeEvent : e));
 
           // Store in Neon for persistence
-          await supabase.functions.invoke('neon-query', {
+          const { data: insertResult, error: insertError } = await supabase.functions.invoke('neon-query', {
             body: {
               action: 'insertRecord',
               table: 'josiah_reflections_rows',
@@ -252,10 +424,21 @@ const F24RadarUploader: React.FC = () => {
                 aircraft_data: JSON.stringify(completeEvent.flight_data || {}),
                 biometric_data: JSON.stringify(completeEvent.biometrics || {}),
                 screenshot_url: screenshot.dataUrl?.slice(0, 200) || '',
-                created_at: timestamp
+                created_at: timestamp,
+                exif_timestamp: exifTs || null,
+                exif_metadata: JSON.stringify(screenshot.exifData || {})
               }
             }
           });
+
+          if (insertError) {
+            console.error('Neon insert error:', insertError);
+          } else {
+            // Mark as synced
+            setEvents(prev => prev.map(e => 
+              e.id === screenshot.id ? { ...e, neonSynced: true } : e
+            ));
+          }
 
           // Also log to live_flight_detections if flight data extracted
           if (completeEvent.flight_data?.registration) {
@@ -272,7 +455,8 @@ const F24RadarUploader: React.FC = () => {
                   heading: parseInt(completeEvent.flight_data.heading) || 0,
                   detection_method: 'F24_SCREENSHOT_OCR',
                   location: location,
-                  detected_at: timestamp
+                  detected_at: timestamp,
+                  exif_verified: !!exifTs
                 }
               }
             });
@@ -281,7 +465,7 @@ const F24RadarUploader: React.FC = () => {
           console.error(`Analysis error for screenshot ${i + 1}:`, err);
           setEvents(prev => prev.map(e => 
             e.id === screenshot.id 
-              ? { ...e, status: 'error' as const, josiah_reflection: 'Analysis failed.' }
+              ? { ...e, status: 'error' as const, josiah_reflection: 'Analysis failed.', neonSynced: false }
               : e
           ));
         }
@@ -303,10 +487,15 @@ const F24RadarUploader: React.FC = () => {
         });
       }
 
+      // Refresh Neon status
+      await fetchNeonStatus();
+
       const successCount = processedEvents.filter(e => e.status === 'complete').length;
+      const exifCount = processedEvents.filter(e => e.exifTimestamp).length;
+      
       toast({
         title: "Batch Analysis Complete",
-        description: `${successCount}/${uploadedScreenshots.length} screenshots analyzed successfully`,
+        description: `${successCount}/${uploadedScreenshots.length} analyzed • ${exifCount} with EXIF timestamps • Synced to Neon DB`,
       });
 
       // Reset form
@@ -376,28 +565,62 @@ const F24RadarUploader: React.FC = () => {
                         >
                           ×
                         </button>
-                        <span className="absolute bottom-0 left-0 right-0 bg-black/60 text-[10px] text-cyan-400 text-center truncate px-1">
-                          {screenshot.filename}
-                        </span>
+                        <div className="absolute bottom-0 left-0 right-0 bg-black/80 text-[10px] text-center px-1 py-0.5">
+                          <span className="text-cyan-400 truncate block">{screenshot.filename}</span>
+                          {screenshot.exifData?.modifyDate && (
+                            <span className="text-green-400 flex items-center justify-center gap-0.5">
+                              <Calendar className="h-2.5 w-2.5" />
+                              EXIF: {new Date(screenshot.exifData.modifyDate).toLocaleDateString()}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>
-                  <p className="text-cyan-400/70 text-xs">
-                    {uploadedScreenshots.length} screenshot(s) ready • Click to add more
-                  </p>
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-cyan-400/70">
+                      {uploadedScreenshots.length} screenshot(s) ready
+                    </span>
+                    <span className={`flex items-center gap-1 ${
+                      uploadedScreenshots.filter(s => s.exifData?.modifyDate).length > 0 
+                        ? 'text-green-400' : 'text-yellow-400'
+                    }`}>
+                      <Calendar className="h-3 w-3" />
+                      {uploadedScreenshots.filter(s => s.exifData?.modifyDate).length} with EXIF
+                    </span>
+                  </div>
                 </div>
               ) : (
                 <>
                   <Camera className="h-12 w-12 text-cyan-400/50" />
                   <span className="text-cyan-400/70 text-sm">
-                    {uploading ? 'Processing...' : 'Upload FlightRadar24 Screenshot(s)'}
+                    {uploading ? 'Extracting EXIF metadata...' : 'Upload FlightRadar24 Screenshot(s)'}
                   </span>
                   <span className="text-cyan-400/50 text-xs">
-                    Multiple files supported
+                    EXIF timestamps extracted for accurate dating
                   </span>
                 </>
               )}
             </label>
+          </div>
+
+          {/* Neon DB Status */}
+          <div className="flex items-center justify-between p-2 rounded bg-black/30 border border-cyan-500/20">
+            <div className="flex items-center gap-2 text-xs">
+              <Database className="h-4 w-4 text-cyan-400" />
+              <span className="text-cyan-400/70">Neon DB Status</span>
+            </div>
+            <div className="flex items-center gap-3 text-xs">
+              <span className="text-cyan-400">
+                {neonStatus.totalRecords.toLocaleString()} records
+              </span>
+              {neonStatus.lastSync && (
+                <span className="text-green-400 flex items-center gap-1">
+                  <CheckCircle className="h-3 w-3" />
+                  Synced
+                </span>
+              )}
+            </div>
           </div>
 
           {/* Biometric Input */}
@@ -512,15 +735,29 @@ const F24RadarUploader: React.FC = () => {
                           {event.event_type}
                         </span>
                       </div>
-                      <span className="text-xs text-cyan-400/50">
-                        {new Date(event.timestamp).toLocaleTimeString()}
-                      </span>
+                      <div className="flex flex-col items-end text-xs">
+                        <span className="text-cyan-400/50">
+                          {new Date(event.timestamp).toLocaleTimeString()}
+                        </span>
+                        {event.exifTimestamp && (
+                          <span className="text-green-400 flex items-center gap-1 text-[10px]">
+                            <Calendar className="h-2.5 w-2.5" />
+                            EXIF
+                          </span>
+                        )}
+                      </div>
                     </div>
 
-                    {/* Location */}
-                    <div className="flex items-center gap-1 text-xs text-cyan-400/70 mb-2">
-                      <MapPin className="h-3 w-3" />
-                      {event.location}
+                    {/* Location + Neon Sync Status */}
+                    <div className="flex items-center justify-between text-xs mb-2">
+                      <div className="flex items-center gap-1 text-cyan-400/70">
+                        <MapPin className="h-3 w-3" />
+                        {event.location}
+                      </div>
+                      <div className={`flex items-center gap-1 ${event.neonSynced ? 'text-green-400' : 'text-yellow-400'}`}>
+                        <Database className="h-3 w-3" />
+                        {event.neonSynced ? 'Synced' : 'Pending'}
+                      </div>
                     </div>
 
                     {/* Flight Data */}

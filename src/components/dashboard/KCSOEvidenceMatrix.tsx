@@ -55,18 +55,18 @@ export function KCSOEvidenceMatrix() {
   const loadKCSOData = useCallback(async () => {
     setLoading(true);
     try {
-      // Load all KCSO data sources in parallel
+      // Load all KCSO data sources in parallel - using correct table schemas
       const [factResult, injuryResult, fleetResult, clusterResult, supabaseFleet] = await Promise.all([
         supabase.functions.invoke('neon-query', {
           body: { 
             action: 'customQuery',
-            query: `SELECT * FROM "KCSO_Fact_Matrix_v1" ORDER BY id LIMIT 50`
+            query: `SELECT serial_id, "Event__Claim", "Date__Year", "Category", "Source", "URL", "Amount__Outcome" FROM "KCSO_Fact_Matrix_v1" ORDER BY serial_id LIMIT 50`
           }
         }),
         supabase.functions.invoke('neon-query', {
           body: { 
             action: 'customQuery',
-            query: `SELECT * FROM "KCSO_Personal_Injury_Timeline" ORDER BY event_date DESC LIMIT 50`
+            query: `SELECT serial_id, "Date", "Time", "AircraftTail", "Operator", "ActivityConduct", "BiometricMedical_Impact", "Location", "Primary_Source" FROM "KCSO_Personal_Injury_Timeline" ORDER BY serial_id LIMIT 50`
           }
         }),
         supabase.functions.invoke('neon-query', {
@@ -78,33 +78,35 @@ export function KCSOEvidenceMatrix() {
         supabase.functions.invoke('neon-query', {
           body: { 
             action: 'customQuery',
-            query: `SELECT * FROM "KCSO_clusters" ORDER BY cluster_id LIMIT 50`
+            query: `SELECT serial_id, cluster, content, kcso_score, tails, places FROM "KCSO_clusters" ORDER BY kcso_score DESC LIMIT 50`
           }
         }),
         supabase.from('kcso_fleet').select('*')
       ]);
 
-      // Process fact matrix
+      console.log('KCSO Data Results:', { factResult, injuryResult, fleetResult, clusterResult });
+
+      // Process fact matrix - using actual column names from KCSO_Fact_Matrix_v1
       if (factResult.data && Array.isArray(factResult.data)) {
         setFactMatrix(factResult.data.map((f: any) => ({
-          id: f.id || f.fact_id || String(Math.random()),
-          fact_description: f.fact_description || f.description || f.fact || 'No description',
-          evidence_type: f.evidence_type || f.type || 'Document',
-          date_documented: f.date_documented || f.date || 'Unknown',
-          source: f.source || f.citation || 'Primary',
-          severity: f.severity || 'High'
+          id: String(f.serial_id || Math.random()),
+          fact_description: f['Event__Claim'] || f.event_claim || 'No description',
+          evidence_type: f['Category'] || 'Document',
+          date_documented: f['Date__Year'] || 'Unknown',
+          source: f['Source'] || 'Primary',
+          severity: f['Amount__Outcome']?.includes('verdict') || f['Amount__Outcome']?.includes('M') ? 'Critical' : 'High'
         })));
       }
 
-      // Process injury timeline
+      // Process injury timeline - using actual column names from KCSO_Personal_Injury_Timeline
       if (injuryResult.data && Array.isArray(injuryResult.data)) {
         setInjuryTimeline(injuryResult.data.map((e: any) => ({
-          id: e.id || String(Math.random()),
-          event_date: e.event_date || e.date || 'Unknown',
-          event_description: e.event_description || e.description || 'No description',
-          injury_type: e.injury_type || e.type || 'Physical',
-          medical_documentation: e.medical_documentation || e.documentation || 'Pending',
-          witnesses: e.witnesses || 'None documented'
+          id: String(e.serial_id || Math.random()),
+          event_date: e['Date'] || 'Unknown',
+          event_description: e['ActivityConduct'] || 'No description',
+          injury_type: e['BiometricMedical_Impact'] || 'Physical',
+          medical_documentation: e['Primary_Source'] || 'Pending',
+          witnesses: e['AircraftTail'] || 'None documented'
         })));
       }
 
@@ -129,14 +131,14 @@ export function KCSOEvidenceMatrix() {
       
       setFleetRecords(allFleet);
 
-      // Process clusters
+      // Process clusters - using actual column names from KCSO_clusters
       if (clusterResult.data && Array.isArray(clusterResult.data)) {
         setClusters(clusterResult.data.map((c: any) => ({
-          cluster_id: c.cluster_id || c.id || String(Math.random()),
-          aircraft_count: c.aircraft_count || c.count || 1,
-          detection_count: c.detection_count || c.detections || 0,
-          time_range: c.time_range || c.timeframe || 'Unknown',
-          location: c.location || c.area || 'Oildale'
+          cluster_id: c.cluster || String(c.serial_id || Math.random()),
+          aircraft_count: 1,
+          detection_count: Math.round((c.kcso_score || 0) * 100),
+          time_range: c.content || 'Unknown',
+          location: c.places && c.places !== '[]' ? c.places : 'Oildale'
         })));
       }
 

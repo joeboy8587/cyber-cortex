@@ -144,20 +144,76 @@ function msToKnots(ms: number | null): number {
   return Math.round(ms * 1.94384);
 }
 
+// Retry helper with exponential backoff
+async function fetchWithRetry(url: string, options: RequestInit, maxRetries = 3): Promise<Response | null> {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
+      
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId);
+      return response;
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+      console.warn(`Fetch attempt ${attempt}/${maxRetries} failed: ${errorMsg}`);
+      
+      if (attempt < maxRetries) {
+        const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+  return null;
+}
+
+// Safe database query helper
+async function safeDbQuery<T>(neonUrl: string, queryFn: (sql: any) => Promise<T>): Promise<T | null> {
+  let sql = null;
+  try {
+    sql = postgres(neonUrl, { 
+      ssl: 'require', 
+      max: 1, 
+      idle_timeout: 5, 
+      connect_timeout: 10 
+    });
+    const result = await queryFn(sql);
+    return result;
+  } catch (err) {
+    console.error('Database query error:', err instanceof Error ? err.message : err);
+    return null;
+  } finally {
+    if (sql) {
+      try { await sql.end(); } catch { /* ignore */ }
+    }
+  }
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
 
+  const neonUrl = Deno.env.get('NEON_DATABASE_URL');
+  
+  // Safe JSON parse
+  let body: any = {};
   try {
-    const neonUrl = Deno.env.get('NEON_DATABASE_URL');
-    const body = await req.json();
-    const { action = 'fetchKernCounty' } = body;
-    
-    console.log(`OpenSky Network action: ${action}`);
+    body = await req.json();
+  } catch {
+    body = { action: 'fetchKernCounty' };
+  }
+  
+  const { action = 'fetchKernCounty' } = body;
+  
+  console.log(`OpenSky Network action: ${action}`);
 
+  try {
     // Kern County bounding box (expanded to catch more aircraft)
-    // Lat: 34.5 to 36.5, Lon: -120.5 to -117.5
     const KERN_BOUNDS = {
       lamin: 34.5,
       lamax: 36.5,
@@ -166,80 +222,73 @@ serve(async (req) => {
     };
 
     if (action === 'fetchKernCounty' || action === 'fetchFlights') {
-      // OpenSky Network API - free, no key required for basic access
       const url = `https://opensky-network.org/api/states/all?lamin=${KERN_BOUNDS.lamin}&lamax=${KERN_BOUNDS.lamax}&lomin=${KERN_BOUNDS.lomin}&lomax=${KERN_BOUNDS.lomax}`;
       
       console.log('Fetching flights from OpenSky Network (Kern County)...');
-      console.log(`URL: ${url}`);
       
       let flights: any[] = [];
       let apiSuccess = false;
-      let apiError = null;
+      let apiError: string | null = null;
       
-      try {
-        const response = await fetch(url, {
-          headers: { 
-            'Accept': 'application/json',
-            'User-Agent': 'LovableFlightTracker/1.0'
-          },
-          signal: AbortSignal.timeout(20000)
-        });
-        
+      // Try OpenSky API with retry
+      const response = await fetchWithRetry(url, {
+        headers: { 
+          'Accept': 'application/json',
+          'User-Agent': 'LovableFlightTracker/1.0'
+        }
+      }, 2);
+      
+      if (response) {
         console.log(`OpenSky response status: ${response.status}`);
         
         if (response.ok) {
-          const data = await response.json();
-          console.log(`OpenSky returned time: ${data.time}, states count: ${data.states?.length || 0}`);
-          
-          if (data.states && Array.isArray(data.states)) {
-            // OpenSky state vector format:
-            // [0] icao24, [1] callsign, [2] origin_country, [3] time_position, 
-            // [4] last_contact, [5] longitude, [6] latitude, [7] baro_altitude,
-            // [8] on_ground, [9] velocity, [10] true_track, [11] vertical_rate,
-            // [12] sensors, [13] geo_altitude, [14] squawk, [15] spi, [16] position_source
+          try {
+            const data = await response.json();
+            console.log(`OpenSky returned time: ${data.time}, states count: ${data.states?.length || 0}`);
             
-            flights = data.states.map((state: any[]) => ({
-              icao24: state[0],
-              callsign: (state[1] || '').trim(),
-              origin_country: state[2],
-              longitude: state[5],
-              latitude: state[6],
-              altitude: state[7], // barometric altitude in meters
-              geo_altitude: state[13], // geometric altitude in meters
-              on_ground: state[8],
-              velocity: state[9], // m/s
-              heading: state[10],
-              vertical_rate: state[11],
-              squawk: state[14],
-              time_position: state[3],
-              last_contact: state[4]
-            }));
-            
-            apiSuccess = true;
-            console.log(`Parsed ${flights.length} aircraft from OpenSky`);
-          } else {
-            console.log('OpenSky returned no states - area may be clear');
-            flights = [];
-            apiSuccess = true;
+            if (data.states && Array.isArray(data.states)) {
+              flights = data.states.map((state: any[]) => ({
+                icao24: state[0],
+                callsign: (state[1] || '').trim(),
+                origin_country: state[2],
+                longitude: state[5],
+                latitude: state[6],
+                altitude: state[7],
+                geo_altitude: state[13],
+                on_ground: state[8],
+                velocity: state[9],
+                heading: state[10],
+                vertical_rate: state[11],
+                squawk: state[14],
+                time_position: state[3],
+                last_contact: state[4]
+              }));
+              
+              apiSuccess = true;
+              console.log(`Parsed ${flights.length} aircraft from OpenSky`);
+            } else {
+              flights = [];
+              apiSuccess = true;
+            }
+          } catch (parseErr) {
+            apiError = 'Failed to parse OpenSky response';
+            console.error(apiError);
           }
         } else if (response.status === 429) {
-          apiError = 'OpenSky rate limit exceeded - try again in a few minutes';
-          console.warn(apiError);
+          apiError = 'OpenSky rate limit exceeded';
         } else {
-          apiError = `OpenSky API returned status ${response.status}`;
-          console.error(apiError);
+          apiError = `OpenSky API returned ${response.status}`;
         }
-      } catch (fetchErr) {
-        apiError = fetchErr instanceof Error ? fetchErr.message : 'Fetch failed';
-        console.error('OpenSky fetch error:', apiError);
+      } else {
+        apiError = 'OpenSky API unreachable after retries';
       }
       
-      // If API failed, try to get recent cached data from database
+      // Fallback to cached data if API failed
       if (!apiSuccess && neonUrl) {
         console.log('API unavailable, fetching cached flights from database...');
-        try {
-          const sql = postgres(neonUrl, { ssl: 'require', max: 1, idle_timeout: 10, connect_timeout: 15 });
-          const cachedFlights = await sql`
+        
+        const cachedFlights = await safeDbQuery(neonUrl, async (sql) => {
+          return await sql`
             SELECT DISTINCT ON (registration)
               icao_code as hex, registration, callsign, altitude, speed,
               latitude, longitude, heading, vertical_rate,
@@ -247,47 +296,59 @@ serve(async (req) => {
               threat_score, tier_level, flagged, flagged_reasons
             FROM live_flight_detections_rows
             WHERE latitude IS NOT NULL AND longitude IS NOT NULL
-              AND detection_timestamp > NOW() - INTERVAL '1 hour'
+              AND detection_timestamp > NOW() - INTERVAL '2 hours'
             ORDER BY registration, detection_timestamp DESC
             LIMIT 200
           `;
-          await sql.end();
+        });
+        
+        if (cachedFlights && cachedFlights.length > 0) {
+          const transformedCached = cachedFlights.map((f: any) => ({
+            hex: f.hex || '',
+            registration: f.registration || '',
+            callsign: f.callsign || '',
+            altitude: f.altitude || 0,
+            speed: f.speed || 0,
+            latitude: f.latitude,
+            longitude: f.longitude,
+            heading: f.heading || 0,
+            vertical_rate: f.vertical_rate || 0,
+            detected_at: f.detected_at,
+            taxonomyTag: f.taxonomy_tag || 'xxb_live',
+            threatScore: parseInt(f.threat_score) || 0,
+            tierLevel: parseInt(f.tier_level) || 5,
+            flagged: f.flagged || false,
+            flaggedReasons: f.flagged_reasons ? f.flagged_reasons.split('; ') : [],
+            entity: 'Cached'
+          }));
           
-          if (cachedFlights.length > 0) {
-            const transformedCached = cachedFlights.map((f: any) => ({
-              hex: f.hex || '',
-              registration: f.registration || '',
-              callsign: f.callsign || '',
-              altitude: f.altitude || 0,
-              speed: f.speed || 0,
-              latitude: f.latitude,
-              longitude: f.longitude,
-              heading: f.heading || 0,
-              vertical_rate: f.vertical_rate || 0,
-              detected_at: f.detected_at,
-              taxonomyTag: f.taxonomy_tag || 'xxb_live',
-              threatScore: parseInt(f.threat_score) || 0,
-              tierLevel: parseInt(f.tier_level) || 5,
-              flagged: f.flagged || false,
-              flaggedReasons: f.flagged_reasons ? f.flagged_reasons.split('; ') : [],
-              entity: 'Cached'
-            }));
-            
-            return new Response(
-              JSON.stringify({
-                success: true,
-                flights: transformedCached,
-                count: transformedCached.length,
-                source: 'cached',
-                apiError,
-                timestamp: new Date().toISOString()
-              }),
-              { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-            );
-          }
-        } catch (cacheErr) {
-          console.error('Cache fetch error:', cacheErr);
+          return new Response(
+            JSON.stringify({
+              success: true,
+              flights: transformedCached,
+              count: transformedCached.length,
+              source: 'cached',
+              apiError,
+              timestamp: new Date().toISOString()
+            }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
         }
+      }
+
+      // Return empty result if both API and cache failed (don't throw 500)
+      if (!apiSuccess && flights.length === 0) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            flights: [],
+            count: 0,
+            source: 'none',
+            apiError: apiError || 'No data available',
+            timestamp: new Date().toISOString()
+          }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
       }
 
       // Transform and classify flights
@@ -295,13 +356,10 @@ serve(async (req) => {
       const transformedFlights = flights
         .filter(f => f.latitude && f.longitude && !f.on_ground)
         .map((f: any) => {
-          // OpenSky uses ICAO24 hex code, not N-numbers directly
-          // We'll use callsign which sometimes contains registration
           const callsign = f.callsign || '';
           const altitudeFeet = metersToFeet(f.altitude || f.geo_altitude);
           const speedKnots = msToKnots(f.velocity);
           
-          // Try to extract registration from callsign (often the first characters match)
           let registration = '';
           if (callsign.startsWith('N') && /^N\d/.test(callsign)) {
             registration = callsign.replace(/\s+/g, '');
@@ -309,7 +367,6 @@ serve(async (req) => {
           
           const classification = classifyAircraft(registration, callsign, altitudeFeet);
           
-          // Use OpenSky's actual timestamp (UNIX seconds) - prefer time_position, fallback to last_contact
           const openskyTimestamp = f.time_position || f.last_contact;
           const detectedAt = openskyTimestamp 
             ? new Date(openskyTimestamp * 1000).toISOString()
@@ -324,7 +381,7 @@ serve(async (req) => {
             latitude: f.latitude,
             longitude: f.longitude,
             heading: f.heading || 0,
-            vertical_rate: Math.round((f.vertical_rate || 0) * 3.28084 / 60), // m/s to ft/min
+            vertical_rate: Math.round((f.vertical_rate || 0) * 3.28084 / 60),
             squawk: f.squawk || '',
             origin_country: f.origin_country || '',
             detected_at: detectedAt,
@@ -334,15 +391,13 @@ serve(async (req) => {
 
       console.log(`Transformed ${transformedFlights.length} valid flights`);
 
-      // Store in database
+      // Store in database (fire and forget, don't fail if DB is unavailable)
       let inserted = 0;
       if (neonUrl && transformedFlights.length > 0) {
-        try {
-          const sql = postgres(neonUrl, { ssl: 'require', max: 1, idle_timeout: 10, connect_timeout: 15 });
-          
+        const insertResult = await safeDbQuery(neonUrl, async (sql) => {
+          let count = 0;
           for (const flight of transformedFlights) {
             try {
-              // Deduplication check
               const existing = await sql`
                 SELECT id FROM live_flight_detections_rows 
                 WHERE (icao_code = ${flight.hex} OR registration = ${flight.registration})
@@ -350,11 +405,7 @@ serve(async (req) => {
                 LIMIT 1
               `;
               
-              if (existing.length > 0) {
-                continue;
-              }
-              
-              const flightId = crypto.randomUUID();
+              if (existing.length > 0) continue;
               
               await sql`
                 INSERT INTO live_flight_detections_rows (
@@ -363,7 +414,7 @@ serve(async (req) => {
                   detection_timestamp, created_at, taxonomy_tag,
                   threat_score, tier_level, flagged, flagged_reasons
                 ) VALUES (
-                  ${flightId},
+                  ${crypto.randomUUID()},
                   ${flight.hex},
                   ${flight.registration},
                   ${flight.callsign},
@@ -383,23 +434,21 @@ serve(async (req) => {
                 )
               `;
               
-              inserted++;
+              count++;
               if (flight.flagged) {
                 console.log(`🚨 FLAGGED: ${flight.registration} - ${flight.flaggedReasons.join(', ')}`);
               }
-            } catch (insertErr) {
-              console.warn(`Insert error for ${flight.hex}:`, insertErr);
+            } catch {
+              // Skip individual insert errors
             }
           }
-          
-          await sql.end();
-          console.log(`Inserted ${inserted} new flights into database`);
-        } catch (dbErr) {
-          console.error('Database error:', dbErr);
-        }
+          return count;
+        });
+        
+        inserted = insertResult || 0;
+        console.log(`Inserted ${inserted} new flights into database`);
       }
 
-      // Calculate stats
       const stats = {
         total: transformedFlights.length,
         flagged: transformedFlights.filter(f => f.flagged).length,
@@ -426,29 +475,18 @@ serve(async (req) => {
     }
 
     if (action === 'testConnection') {
-      try {
-        const response = await fetch('https://opensky-network.org/api/states/all?lamin=35&lamax=36&lomin=-120&lomax=-119', {
-          headers: { 'Accept': 'application/json' },
-          signal: AbortSignal.timeout(10000)
-        });
-        
-        return new Response(
-          JSON.stringify({
-            success: response.ok,
-            status: response.status,
-            message: response.ok ? 'OpenSky Network connection successful' : `OpenSky returned ${response.status}`
-          }),
-          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      } catch (err) {
-        return new Response(
-          JSON.stringify({
-            success: false,
-            error: err instanceof Error ? err.message : 'Connection test failed'
-          }),
-          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
+      const response = await fetchWithRetry('https://opensky-network.org/api/states/all?lamin=35&lamax=36&lomin=-120&lomax=-119', {
+        headers: { 'Accept': 'application/json' }
+      }, 2);
+      
+      return new Response(
+        JSON.stringify({
+          success: response?.ok || false,
+          status: response?.status || 0,
+          message: response?.ok ? 'OpenSky Network connection successful' : 'OpenSky unreachable'
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
 
     return new Response(
@@ -458,12 +496,16 @@ serve(async (req) => {
 
   } catch (error) {
     console.error('OpenSky function error:', error);
+    // Always return valid JSON, never 500 for network issues
     return new Response(
       JSON.stringify({ 
-        error: 'Internal server error', 
-        details: error instanceof Error ? error.message : 'Unknown error' 
+        success: false,
+        flights: [],
+        count: 0,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        timestamp: new Date().toISOString()
       }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
 });

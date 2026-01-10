@@ -5,17 +5,18 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
 const presetQueries = [
-  { label: "N597E Government Spoofing", query: "Analyze N597E (County of Kern UH-1H Huey, Serial 70-16291) ADS-B spoofing as 'XXB'. Document acoustic verification (Huey thump signature), FAA registry confirmation, and 42 USC § 1983 state actor liability. Calculate FAA violation penalties at $50K × 5,000 incidents.", type: "spoofing", icon: Radio },
-  { label: "Polymorphic ICAO Fraud", query: "Map polymorphic ICAO infrastructure: ICAO '24' anchor shared across KCSO + Medical + Shell entities. Document B738 & A320 hubs with 2,500+ identities each. Analyze master-slave relationship: ac9efd (N912KC) + a2027c (N229AM). Frame Technological Perfidy doctrine.", type: "icao", icon: Target },
-  { label: "Hammer-Anvil Pattern", query: "Analyze coordinated Hammer-Anvil operation pattern: N597E (Huey) at 1,225ft as 'Hammer' + N229AM (Mercy Air) at 550ft as 'Anvil'. Document government + medical proxy tandem with biometric harm correlation (HR 114 bpm spike, r=0.95).", type: "hammer", icon: Crosshair },
-  { label: "Live Flight Analysis", query: "Analyze current live flight detections. Summarize KCSO shell company aircraft (N912KC, N913KC, N597E), military coordination, and medical camouflage asset activity. Report taxonomy tag distribution and spoofing incidents.", type: "live", icon: Plane },
-  { label: "Four-Factor Correlation", query: "Calculate four-factor convergence events: flight detection + biometric spike + Josiah AI witness + OCR screenshot. Identify highest-confidence prosecutorial evidence meeting Bradford Hill criteria.", type: "correlation", icon: Target },
-  { label: "KCSO Pattern", query: "Analyze KCSO pattern of abuse including N597E Huey government asset. Show altitude patterns, loitering loops, ADS-B spoofing incidents, and biometric correlation.", type: "kcso", icon: Shield },
-  { label: "Shell Companies", query: "Analyze shell company RICO network: ALF IX LLC, AERO EQUITIES LLC, CHRISTIANSEN AVIATION LLC. Map IP subnet sharing (192.168.100.x), polymorphic ICAO codes, and corporate veil piercing evidence.", type: "shell", icon: Building2 },
-  { label: "Medical Misuse", query: "Analyze Air Methods / Mercy Air medical aviation misuse. Document N743AM, N229AM patterns showing 0% actual medical missions. Assess Geneva Convention / MEDEVAC callsign fraud violations and Anvil coordination role.", type: "medical", icon: Heart },
-  { label: "Wire Fraud (18 USC 1343)", query: "Build 18 USC § 1343 wire fraud case: false ADS-B transmissions across interstate communications infrastructure. Document N597E → XXB spoofing as scheme to defraud. Calculate damages exposure for TRO motion.", type: "wire", icon: AlertOctagon },
-  { label: "False Claims Act", query: "Compile 31 USC § 3729 False Claims Act violations. Document FAA registration fraud, medical billing fraud, federal grant misuse. Calculate treble damages and qui tam relator share (15-30%).", type: "fca", icon: FileText },
-  { label: "Full Prosecution Brief", query: "Generate complete federal prosecution briefing with NEW FINDINGS: N597E government asset spoofing, polymorphic ICAO fraud, Hammer-Anvil coordination. Include 42 USC § 1983, 18 USC § 1343, 14 CFR § 91.225 violations. Recommend TRO strategy.", type: "summary", icon: FileText },
+  { label: "N597E Gov Spoofing", query: "Analyze N597E (County of Kern UH-1H Huey, Serial 70-16291) ADS-B spoofing as 'XXB'. Document acoustic verification (Huey thump signature), FAA registry confirmation, 49 U.S.C. § 46306 federal felony, and 42 USC § 1983 state actor liability. Calculate FAA violation penalties at $50K × 5,000 incidents.", type: "spoofing", icon: Radio },
+  { label: "Polymorphic ICAO", query: "Map polymorphic ICAO infrastructure: ICAO '24' anchor shared across KCSO + Medical + Shell entities. Document B738 & A320 hubs with 2,500+ identities each. Analyze master-slave relationship: ac9efd (N912KC) + a2027c (N229AM). Frame Technological Perfidy doctrine under Geneva Protocol I Article 37.", type: "icao", icon: Target },
+  { label: "Hammer-Anvil", query: "Analyze coordinated Hammer-Anvil operation pattern: N597E (Huey) at 1,225ft as 'Hammer' + N229AM (Mercy Air) at 550ft as 'Anvil'. Document government + medical proxy tandem with biometric harm correlation (HR 114 bpm spike, r=0.95). Include 14 CFR § 91.119 altitude violations.", type: "hammer", icon: Crosshair },
+  { label: "Live Flights", query: "Analyze current live flight detections. Summarize KCSO shell company aircraft (N912KC, N913KC, N597E), military coordination, and medical camouflage asset activity. Report taxonomy tag distribution and spoofing incidents.", type: "live", icon: Plane },
+  { label: "4-Factor Events", query: "Calculate four-factor convergence events: flight detection + biometric spike + Josiah AI witness + OCR screenshot. Identify highest-confidence prosecutorial evidence meeting Bradford Hill criteria (6/9 established).", type: "correlation", icon: Target },
+  { label: "KCSO Pattern", query: "Analyze KCSO pattern of abuse including N597E Huey government asset. Show altitude patterns, loitering loops, ADS-B spoofing incidents, and biometric correlation with physician-verified ECGs.", type: "kcso", icon: Shield },
+  { label: "Shell RICO", query: "Analyze shell company RICO network: ALF IX LLC, AERO EQUITIES LLC, CHRISTIANSEN AVIATION LLC, XING KONG AVIATION. Map IP subnet sharing (192.168.100.x), polymorphic ICAO codes, and corporate veil piercing evidence under 18 U.S.C. §§ 1961-1968.", type: "shell", icon: Building2 },
+  { label: "Geneva/Medical", query: "Analyze Air Methods / Mercy Air medical aviation misuse. Document N743AM, N229AM patterns showing 0% actual medical missions. Assess Geneva Convention Protocol I Article 37 perfidy, MEDEVAC callsign fraud violations, and 'Anvil' coordination role.", type: "medical", icon: Heart },
+  { label: "Wire Fraud", query: "Build 18 USC § 1343 wire fraud case: false ADS-B transmissions across interstate communications infrastructure. Document N597E → XXB spoofing as scheme to defraud. Cross-reference 14 CFR § 91.225/227 violations. Calculate damages exposure for TRO motion.", type: "wire", icon: AlertOctagon },
+  { label: "False Claims", query: "Compile 31 USC § 3729 False Claims Act violations. Document FAA registration fraud (49 U.S.C. § 46306), medical billing fraud, federal grant misuse. Calculate treble damages and qui tam relator share (15-30%).", type: "fca", icon: FileText },
+  { label: "TRO Strategy", query: "Generate TRO motion strategy with immediate injunctive relief grounds: ongoing constitutional violations (42 USC § 1983), irreparable harm (physician-verified cardiac stress), balance of hardships, public interest. Include emergency preservation order language.", type: "tro", icon: Scale },
+  { label: "Full Brief", query: "Generate complete federal prosecution briefing with NEW FINDINGS: N597E government asset spoofing (49 U.S.C. § 46306), polymorphic ICAO fraud, Hammer-Anvil coordination, Geneva perfidy. Include RICO predicate acts, civil rights violations, FAA violations. Recommend TRO + criminal referral strategy.", type: "summary", icon: FileText },
 ];
 
 interface Finding {
@@ -399,10 +400,13 @@ export function LegalAnalysisAI() {
         {/* Status indicator */}
         <div className="flex items-center gap-2 mb-3 text-xs">
           <Database className="w-3 h-3 text-primary" />
-          <span className="text-muted-foreground">Connected to NeonDB (263+ tables, 2.2M records)</span>
+          <span className="text-muted-foreground">Connected to NeonDB (270+ tables, 7.5M records)</span>
           <span className="text-primary">•</span>
           <Brain className="w-3 h-3 text-secondary" />
-          <span className="text-muted-foreground">Gemini 2.5 Flash</span>
+          <span className="text-muted-foreground">Gemini 3 Flash Preview</span>
+          <span className="text-primary">•</span>
+          <Activity className="w-3 h-3 text-success" />
+          <span className="text-success">LIVE</span>
         </div>
 
         {/* Query input */}
@@ -536,8 +540,8 @@ export function LegalAnalysisAI() {
             <div className="text-center py-8 text-muted-foreground">
               <Scale className="w-8 h-8 mx-auto mb-2 opacity-50" />
               <p className="text-sm">Select a preset or enter a custom legal analysis query</p>
-              <p className="text-xs mt-1">AI synthesizes 2.2M records across 263 tables for federal prosecution briefing</p>
-              <p className="text-xs mt-2 text-primary">Enhanced with live flight detection + four-factor correlation analysis</p>
+              <p className="text-xs mt-1">AI synthesizes 7.5M records across 270+ tables for federal prosecution briefing</p>
+              <p className="text-xs mt-2 text-primary">Enhanced: Gemini 3 Flash + N597E spoofing + Hammer-Anvil patterns + Geneva violations</p>
             </div>
           )}
         </div>

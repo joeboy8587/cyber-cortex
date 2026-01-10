@@ -166,7 +166,18 @@ serve(async (req) => {
         
         const pkColumn = pkResult.length > 0 ? pkResult[0].pk_column : null;
         if (!pkColumn) {
-          throw new Error(`Table ${safeTable} has no primary key - cannot update hashes`);
+          // Skip tables without primary keys gracefully
+          console.log(`[evidence-fingerprint] Skipping ${safeTable} - no primary key`);
+          result = {
+            table: safeTable,
+            updated: 0,
+            remaining: 0,
+            message: `Skipped ${safeTable} - no primary key (backup/staging table)`,
+            hasMore: false,
+            skipped: true,
+            reason: 'no_primary_key'
+          };
+          break;
         }
         
         // Get rows without hash (limited batch)

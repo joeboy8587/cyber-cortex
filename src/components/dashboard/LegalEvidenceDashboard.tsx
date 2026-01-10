@@ -5,9 +5,10 @@ import { Progress } from "@/components/ui/progress";
 import { 
   Scale, TrendingUp, Globe, Plane, AlertTriangle,
   DollarSign, FileText, Shield, Building, Clock,
-  ExternalLink, Phone, Mail, BookOpen
+  ExternalLink, Phone, Mail, BookOpen, Radio, Radar, Gavel
 } from "lucide-react";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { supabase } from "@/integrations/supabase/client";
 import {
   PieChart, Pie, Cell, ResponsiveContainer, 
@@ -413,6 +414,114 @@ export function LegalEvidenceDashboard() {
               </AccordionContent>
             </AccordionItem>
 
+            <AccordionItem value="helicopter-ops" className="border-border/50">
+              <AccordionTrigger className="text-sm hover:no-underline">
+                <div className="flex items-center gap-2">
+                  <Plane className="w-4 h-4 text-warning" />
+                  Helicopter Low-Altitude Operations (§ 91.119(d))
+                </div>
+              </AccordionTrigger>
+              <AccordionContent>
+                <div className="space-y-3 text-sm">
+                  <Alert className="border-success/30 bg-success/5">
+                    <AlertDescription className="text-xs">
+                      <span className="font-medium text-success">Legitimate reasons for low hovering:</span>
+                      <ul className="mt-2 space-y-1 text-muted-foreground">
+                        <li>• Active law-enforcement support (tracking suspects, 200-400 ft AGL)</li>
+                        <li>• Medical/rescue operations (patient loading, LZ recon)</li>
+                        <li>• Utility/survey flights (power-line, pipeline inspection at 200-500 ft)</li>
+                      </ul>
+                    </AlertDescription>
+                  </Alert>
+                  
+                  <Alert className="border-destructive/30 bg-destructive/5">
+                    <AlertDescription className="text-xs">
+                      <span className="font-medium text-destructive">When it becomes questionable:</span>
+                      <ul className="mt-2 space-y-1 text-muted-foreground">
+                        <li>• Loitering over homes for extended periods without visible emergency</li>
+                        <li>• Significant rotor downwash, noise, or vibration endangering property</li>
+                        <li>• Multiple complaints describe same low-level pattern</li>
+                      </ul>
+                    </AlertDescription>
+                  </Alert>
+                  
+                  <p className="text-xs text-muted-foreground">
+                    <span className="font-medium">§ 91.119(d)</span> allows helicopters to operate below normal minimums 
+                    "if the operation is conducted without hazard to persons or property on the surface."
+                  </p>
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="adsb-spoofing" className="border-border/50">
+              <AccordionTrigger className="text-sm hover:no-underline">
+                <div className="flex items-center gap-2">
+                  <Radio className="w-4 h-4 text-destructive" />
+                  ADS-B / Transponder Spoofing Regulations
+                </div>
+              </AccordionTrigger>
+              <AccordionContent>
+                <div className="space-y-3 text-sm">
+                  <div className="flex items-start gap-2 p-2 rounded bg-card/50 border border-destructive/20">
+                    <Badge variant="outline" className="text-xs shrink-0 border-destructive/50 text-destructive">§ 91.215</Badge>
+                    <div>
+                      <p className="font-medium">ATC Transponder Requirements</p>
+                      <p className="text-xs text-muted-foreground">
+                        Must have operating Mode C/S transponder in controlled airspace. 
+                        Operating with transponder off, altered, or transmitting false data is a violation.
+                      </p>
+                      <a 
+                        href="https://www.ecfr.gov/current/title-14/section-91.215" 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs text-primary hover:underline mt-1"
+                      >
+                        View <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-start gap-2 p-2 rounded bg-card/50 border border-destructive/20">
+                    <Badge variant="outline" className="text-xs shrink-0 border-destructive/50 text-destructive">§ 91.227</Badge>
+                    <div>
+                      <p className="font-medium">ADS-B Out Performance Requirements</p>
+                      <p className="text-xs text-muted-foreground">
+                        Must broadcast accurate position, velocity, and identity (ICAO 24-bit address). 
+                        § 91.227(d)(8) requires transmitted data match FAA registry.
+                      </p>
+                      <a 
+                        href="https://www.ecfr.gov/current/title-14/section-91.227" 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs text-primary hover:underline mt-1"
+                      >
+                        View <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-start gap-2 p-2 rounded bg-destructive/10 border border-destructive/30">
+                    <Gavel className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-medium text-destructive">49 U.S.C. § 46306 — Federal Felony</p>
+                      <p className="text-xs text-muted-foreground">
+                        Knowingly displaying false, altered, or another aircraft's registration or electronic identifier. 
+                        Penalties include certificate suspension/revocation and DOJ criminal referral.
+                      </p>
+                      <a 
+                        href="https://uscode.house.gov/view.xhtml?req=(title:49%20section:46306)" 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs text-primary hover:underline mt-1"
+                      >
+                        View Federal Statute <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+
             <AccordionItem value="reporting" className="border-border/50">
               <AccordionTrigger className="text-sm hover:no-underline">
                 <div className="flex items-center gap-2">
@@ -449,6 +558,24 @@ export function LegalEvidenceDashboard() {
                         9-AVS-WP15-FSDO@faa.gov
                       </span>
                     </div>
+                  </div>
+
+                  <div className="p-3 rounded border border-warning/30 bg-warning/5">
+                    <p className="font-medium text-warning mb-2 flex items-center gap-2">
+                      <Radar className="w-4 h-4" />
+                      FCC Spectrum Enforcement (ADS-B Spoofing)
+                    </p>
+                    <a 
+                      href="https://consumercomplaints.fcc.gov" 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-primary hover:underline text-xs"
+                    >
+                      File FCC Complaint <ExternalLink className="w-3 h-3" />
+                    </a>
+                    <p className="text-xs text-muted-foreground mt-2">
+                      Include: Time, location, spoofed ICAO hex codes, ADS-B message samples, receiver location
+                    </p>
                   </div>
 
                   <div className="p-3 rounded border border-border/50 bg-card/50">

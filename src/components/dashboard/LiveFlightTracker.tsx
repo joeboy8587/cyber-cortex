@@ -271,10 +271,20 @@ export function LiveFlightTracker() {
           </div>
           
           <div className="flex items-center gap-2">
+            {/* Data Source Status Indicator */}
             {apiConnected !== null && (
-              <Badge variant={apiConnected ? "default" : "secondary"} className="gap-1">
+              <Badge 
+                variant={apiConnected ? "default" : "secondary"} 
+                className={`gap-1 ${apiConnected ? 'bg-green-600 text-white' : 'bg-destructive/20 text-destructive'}`}
+              >
                 {apiConnected ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
-                {apiConnected ? 'OpenSky' : 'API Offline'}
+                {apiConnected ? 'REAL DATA' : 'FALLBACK'}
+              </Badge>
+            )}
+            {apiConnected === true && stats.live_api_count && stats.live_api_count > 0 && (
+              <Badge variant="outline" className="gap-1 border-green-500/50 text-green-500">
+                <Radio className="w-3 h-3 animate-pulse" />
+                {stats.live_api_count} Live
               </Badge>
             )}
             <Badge variant={dbConnected ? 'outline' : 'destructive'} className="gap-1">

@@ -198,7 +198,8 @@ export function LiveAlertBanner({
     fetchAlerts();
     const interval = setInterval(fetchAlerts, autoRefreshInterval);
     return () => clearInterval(interval);
-  }, [fetchAlerts, autoRefreshInterval]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoRefreshInterval]);
 
   const dismissAlert = (alertId: string) => {
     setAlerts(prev => prev.filter(a => a.id !== alertId));

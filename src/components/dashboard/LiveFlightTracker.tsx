@@ -187,13 +187,15 @@ export function LiveFlightTracker() {
 
   useEffect(() => {
     fetchLiveFlights();
-    
-    const interval = autoRefresh ? setInterval(fetchLiveFlights, 60000) : null;
-    
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [fetchLiveFlights, autoRefresh]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const interval = setInterval(fetchLiveFlights, 60000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoRefresh]);
 
   const getThreatBadge = (level: string) => {
     switch (level) {

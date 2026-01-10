@@ -4,8 +4,10 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { 
   Scale, TrendingUp, Globe, Plane, AlertTriangle,
-  DollarSign, FileText, Shield, Building, Clock
+  DollarSign, FileText, Shield, Building, Clock,
+  ExternalLink, Phone, Mail, BookOpen
 } from "lucide-react";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { supabase } from "@/integrations/supabase/client";
 import {
   PieChart, Pie, Cell, ResponsiveContainer, 
@@ -294,6 +296,179 @@ export function LegalEvidenceDashboard() {
               </div>
             ))}
           </div>
+        </div>
+
+        {/* FAA Regulatory References */}
+        <div className="cyber-panel p-4 border-primary/50">
+          <h3 className="text-sm font-display text-primary mb-4 flex items-center gap-2">
+            <BookOpen className="w-4 h-4" />
+            FAA Regulatory Framework (14 CFR)
+          </h3>
+          
+          <Accordion type="single" collapsible className="w-full">
+            <AccordionItem value="min-altitudes" className="border-border/50">
+              <AccordionTrigger className="text-sm hover:no-underline">
+                <div className="flex items-center gap-2">
+                  <Plane className="w-4 h-4 text-primary" />
+                  14 CFR § 91.119 — Minimum Safe Altitudes
+                </div>
+              </AccordionTrigger>
+              <AccordionContent>
+                <div className="space-y-3 text-sm">
+                  <a 
+                    href="https://www.ecfr.gov/current/title-14/section-91.119" 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-primary hover:underline"
+                  >
+                    Direct Link <ExternalLink className="w-3 h-3" />
+                  </a>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs border-collapse">
+                      <thead>
+                        <tr className="border-b border-border/50">
+                          <th className="text-left py-2 pr-4 text-muted-foreground">Airspace / Area</th>
+                          <th className="text-left py-2 text-muted-foreground">Minimum Altitude Rule</th>
+                        </tr>
+                      </thead>
+                      <tbody className="text-muted-foreground">
+                        <tr className="border-b border-border/30">
+                          <td className="py-2 pr-4 font-medium">Anywhere</td>
+                          <td className="py-2">Maintain altitude for emergency landing without undue hazard</td>
+                        </tr>
+                        <tr className="border-b border-border/30">
+                          <td className="py-2 pr-4 font-medium text-destructive">Congested areas</td>
+                          <td className="py-2 text-destructive">≥1,000 ft above highest obstacle within 2,000 ft radius</td>
+                        </tr>
+                        <tr className="border-b border-border/30">
+                          <td className="py-2 pr-4 font-medium">Other areas</td>
+                          <td className="py-2">≥500 ft AGL except over open water/sparse areas</td>
+                        </tr>
+                        <tr>
+                          <td className="py-2 pr-4 font-medium">Open water / Sparse</td>
+                          <td className="py-2">Must remain 500 ft from any person, vessel, vehicle, structure</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="related-rules" className="border-border/50">
+              <AccordionTrigger className="text-sm hover:no-underline">
+                <div className="flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-warning" />
+                  Related FAA Rules
+                </div>
+              </AccordionTrigger>
+              <AccordionContent>
+                <div className="space-y-2 text-sm">
+                  <div className="flex items-start gap-2 p-2 rounded bg-card/50">
+                    <Badge variant="outline" className="text-xs shrink-0">§ 91.13</Badge>
+                    <div>
+                      <p className="font-medium">Careless or Reckless Operation</p>
+                      <p className="text-xs text-muted-foreground">Catch-all when flight endangers life or property</p>
+                      <a 
+                        href="https://www.ecfr.gov/current/title-14/section-91.13" 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs text-primary hover:underline mt-1"
+                      >
+                        View <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-2 p-2 rounded bg-card/50">
+                    <Badge variant="outline" className="text-xs shrink-0">§ 91.111</Badge>
+                    <div>
+                      <p className="font-medium">Operating Near Other Aircraft</p>
+                      <p className="text-xs text-muted-foreground">Prohibits formation/close-proximity flight without consent</p>
+                      <a 
+                        href="https://www.ecfr.gov/current/title-14/section-91.111" 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs text-primary hover:underline mt-1"
+                      >
+                        View <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-2 p-2 rounded bg-card/50">
+                    <Badge variant="outline" className="text-xs shrink-0">§ 91.123</Badge>
+                    <div>
+                      <p className="font-medium">Compliance with ATC Clearances</p>
+                      <p className="text-xs text-muted-foreground">ATC clearances and instructions compliance</p>
+                      <a 
+                        href="https://www.ecfr.gov/current/title-14/section-91.123" 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs text-primary hover:underline mt-1"
+                      >
+                        View <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="reporting" className="border-border/50">
+              <AccordionTrigger className="text-sm hover:no-underline">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-destructive" />
+                  Reporting Channels
+                </div>
+              </AccordionTrigger>
+              <AccordionContent>
+                <div className="space-y-4 text-sm">
+                  <div className="p-3 rounded border border-destructive/30 bg-destructive/5">
+                    <p className="font-medium text-destructive mb-2">FAA Safety Hotline</p>
+                    <a 
+                      href="https://www.faa.gov/about/office_org/headquarters_offices/aae/programs_services/faa_hotlines" 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-primary hover:underline"
+                    >
+                      File Online <ExternalLink className="w-3 h-3" />
+                    </a>
+                    <p className="text-xs text-muted-foreground mt-2">
+                      Provide: Date/time/location, N-number, altitude, direction, hazard description
+                    </p>
+                  </div>
+                  
+                  <div className="p-3 rounded border border-border/50 bg-card/50">
+                    <p className="font-medium mb-2">Van Nuys FSDO (WP-15) — Bakersfield/Oildale Area</p>
+                    <div className="flex flex-wrap gap-4 text-xs">
+                      <span className="inline-flex items-center gap-1">
+                        <Phone className="w-3 h-3 text-muted-foreground" />
+                        (818) 267-3300
+                      </span>
+                      <span className="inline-flex items-center gap-1">
+                        <Mail className="w-3 h-3 text-muted-foreground" />
+                        9-AVS-WP15-FSDO@faa.gov
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="p-3 rounded border border-border/50 bg-card/50">
+                    <p className="font-medium mb-2">FAA Enforcement Guidance</p>
+                    <a 
+                      href="https://www.faa.gov/regulations_policies/orders_notices/index.cfm/go/document.information/documentID/1020049" 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-primary hover:underline text-xs"
+                    >
+                      FAA Order 2150.3C — Compliance & Enforcement Program <ExternalLink className="w-3 h-3" />
+                    </a>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Explains counseling, remedial training, or enforcement action determination
+                    </p>
+                  </div>
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+          </Accordion>
         </div>
 
         {/* Key Findings */}

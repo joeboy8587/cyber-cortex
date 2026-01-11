@@ -90,6 +90,7 @@ import F24RadarUploader from "@/components/dashboard/F24RadarUploader";
 import { DataIntegrityPanel } from "@/components/dashboard/DataIntegrityPanel";
 import { ForensicLinkageHub } from "@/components/dashboard/ForensicLinkageHub";
 import { DatabaseIntelligenceScanner } from "@/components/dashboard/DatabaseIntelligenceScanner";
+import { CeramicAnchorPanel } from "@/components/dashboard/CeramicAnchorPanel";
 import { KCSOEvidenceMatrix } from "@/components/dashboard/KCSOEvidenceMatrix";
 import { BiometricFlightCorrelationHub } from "@/components/dashboard/BiometricFlightCorrelationHub";
 import { MasterEvidenceSearch } from "@/components/dashboard/MasterEvidenceSearch";
@@ -270,6 +271,7 @@ const Index = () => {
           
           <section id="data-quality" className="space-y-6">
             <DatabaseQualityControl />
+            <CeramicAnchorPanel />
             <DataIntegrityPanel />
             <DataQualityAudit />
           </section>

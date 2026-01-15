@@ -39,7 +39,13 @@ export function CeramicAnchorPanel() {
     pending: number;
     failed: number;
     coverage: number;
-  } | null>(null);
+  }>({
+    totalRecords: 0,
+    anchored: 0,
+    pending: 0,
+    failed: 0,
+    coverage: 0
+  });
 
   const [checking, setChecking] = useState(false);
 
@@ -104,34 +110,34 @@ export function CeramicAnchorPanel() {
           <div className="bg-background/50 border border-border/30 rounded-lg p-3 text-center">
             <Anchor className="h-5 w-5 mx-auto mb-1 text-cyan-400" />
             <div className="text-xl font-mono font-bold text-foreground">
-              {stats?.anchored?.toLocaleString() || '0'}
+              {checking ? '...' : stats.anchored.toLocaleString()}
             </div>
-            <div className="text-xs text-muted-foreground">Records Anchored</div>
+            <div className="text-xs text-muted-foreground">SHA-256 Hashed</div>
           </div>
           
           <div className="bg-background/50 border border-border/30 rounded-lg p-3 text-center">
             <Database className="h-5 w-5 mx-auto mb-1 text-yellow-400" />
             <div className="text-xl font-mono font-bold text-foreground">
-              {stats?.pending?.toLocaleString() || '0'}
+              {checking ? '...' : stats.pending.toLocaleString()}
             </div>
-            <div className="text-xs text-muted-foreground">Pending</div>
+            <div className="text-xs text-muted-foreground">Pending Hash</div>
           </div>
           
           <div className="bg-background/50 border border-border/30 rounded-lg p-3 text-center">
             <ShieldCheck className="h-5 w-5 mx-auto mb-1 text-green-400" />
             <div className="text-xl font-mono font-bold text-foreground">
-              {stats?.coverage || 0}%
+              {checking ? '...' : `${stats.coverage}%`}
             </div>
-            <div className="text-xs text-muted-foreground">Coverage</div>
+            <div className="text-xs text-muted-foreground">Hash Coverage</div>
           </div>
         </div>
 
         {/* Progress Bar */}
-        {stats && stats.totalRecords > 0 && (
+        {stats.totalRecords > 0 && (
           <div className="space-y-1">
             <div className="flex justify-between text-xs text-muted-foreground">
-              <span>Anchoring Progress</span>
-              <span>{stats.anchored.toLocaleString()} / {stats.totalRecords.toLocaleString()}</span>
+              <span>Fingerprinting Progress (SHA-256)</span>
+              <span>{stats.anchored.toLocaleString()} / {stats.totalRecords.toLocaleString()} records hashed</span>
             </div>
             <Progress value={stats.coverage} className="h-2" />
           </div>

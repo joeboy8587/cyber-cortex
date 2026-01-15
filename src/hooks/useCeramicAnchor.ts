@@ -149,28 +149,36 @@ export function useCeramicAnchor() {
     }
   }, []);
 
-  // Get anchor statistics from NeonDB
+  // Get anchor statistics from NeonDB - count records with sha256_hash
   const getAnchorStats = useCallback(async (): Promise<AnchorStats> => {
     setIsLoading(true);
     setError(null);
     try {
-      // Query NeonDB for anchor statistics
+      // Query NeonDB for total records with sha256_hash across key evidence tables
       const { data, error: fnError } = await supabase.functions.invoke('neon-query', {
         body: {
           query: `
             SELECT 
-              COUNT(*) as total_records,
-              COUNT(CASE WHEN ceramic_stream_id IS NOT NULL THEN 1 END) as anchored,
-              COUNT(CASE WHEN ceramic_anchor_status = 'pending' THEN 1 END) as pending,
-              COUNT(CASE WHEN ceramic_anchor_status = 'failed' THEN 1 END) as failed
-            FROM information_schema.columns
-            WHERE column_name = 'ceramic_stream_id'
+              SUM(total_count) as total_records,
+              SUM(hashed_count) as anchored
+            FROM (
+              SELECT COUNT(*) as total_count, COUNT(sha256_hash) as hashed_count FROM "KCSO_Fact_Matrix_v1"
+              UNION ALL
+              SELECT COUNT(*) as total_count, COUNT(sha256_hash) as hashed_count FROM live_flight_detections_rows
+              UNION ALL
+              SELECT COUNT(*) as total_count, COUNT(sha256_hash) as hashed_count FROM biometric_monitoring
+              UNION ALL
+              SELECT COUNT(*) as total_count, COUNT(sha256_hash) as hashed_count FROM josiah_reflections_rows
+              UNION ALL
+              SELECT COUNT(*) as total_count, COUNT(sha256_hash) as hashed_count FROM evidence_documents_rows
+            ) subquery
           `,
         },
       });
 
       if (fnError) {
-        // Return mock stats if query fails (columns don't exist yet)
+        console.error('NeonDB stats query error:', fnError);
+        // Return mock stats if query fails
         return {
           totalRecords: 0,
           anchored: 0,
@@ -180,15 +188,16 @@ export function useCeramicAnchor() {
         };
       }
 
-      const row = data?.rows?.[0] || {};
-      const total = parseInt(row.total_records) || 0;
-      const anchored = parseInt(row.anchored) || 0;
+      const row = Array.isArray(data) && data.length > 0 ? data[0] : {};
+      const total = parseInt(row.total_records || '0');
+      const anchored = parseInt(row.anchored || '0');
+      const pending = total - anchored;
 
       return {
         totalRecords: total,
         anchored: anchored,
-        pending: parseInt(row.pending) || 0,
-        failed: parseInt(row.failed) || 0,
+        pending: pending,
+        failed: 0,
         coverage: total > 0 ? Math.round((anchored / total) * 100) : 0,
       };
     } catch (err) {

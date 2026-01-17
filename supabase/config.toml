@@ -57,6 +57,9 @@ verify_jwt = false
 [functions.ceramic-anchor]
 verify_jwt = false
 
+[functions.data-enrichment-engine]
+verify_jwt = false
+
 [api]
 enabled = true
 port = 54321

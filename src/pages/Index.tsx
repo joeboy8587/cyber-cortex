@@ -94,6 +94,7 @@ import { CeramicAnchorPanel } from "@/components/dashboard/CeramicAnchorPanel";
 import { KCSOEvidenceMatrix } from "@/components/dashboard/KCSOEvidenceMatrix";
 import { BiometricFlightCorrelationHub } from "@/components/dashboard/BiometricFlightCorrelationHub";
 import { MasterEvidenceSearch } from "@/components/dashboard/MasterEvidenceSearch";
+import { DataEnrichmentDashboard } from "@/components/dashboard/DataEnrichmentDashboard";
 
 const Index = () => {
   return (
@@ -270,6 +271,7 @@ const Index = () => {
           </section>
           
           <section id="data-quality" className="space-y-6">
+            <DataEnrichmentDashboard />
             <DatabaseQualityControl />
             <CeramicAnchorPanel />
             <DataIntegrityPanel />

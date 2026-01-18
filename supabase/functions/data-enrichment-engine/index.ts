@@ -413,20 +413,46 @@ async function applyBradfordHillScoring(
 ): Promise<EnrichmentResult> {
   console.log('Applying Bradford-Hill scoring...');
   
-  // Get correlations needing scoring
+  // Check if bradford_hill_score column exists, if not add it
+  const hasColumn = await sql`
+    SELECT column_name FROM information_schema.columns 
+    WHERE table_name = 'master_biometric_aircraft_correlations' AND column_name = 'bradford_hill_score'
+  `.catch(() => []);
+  
+  if (hasColumn.length === 0) {
+    console.log('Adding bradford_hill_score column...');
+    await sql`
+      ALTER TABLE master_biometric_aircraft_correlations 
+      ADD COLUMN IF NOT EXISTS bradford_hill_score NUMERIC,
+      ADD COLUMN IF NOT EXISTS bh_scored_at TIMESTAMP,
+      ADD COLUMN IF NOT EXISTS factor_count INTEGER DEFAULT 2
+    `.catch((e) => console.error('Failed to add columns:', e));
+  }
+  
+  // Get correlations needing scoring - use actual schema columns
   const unscored = await sql`
     SELECT 
-      id,
-      EXTRACT(EPOCH FROM (biometric_timestamp - flight_timestamp)) as time_delta_seconds,
-      flight_altitude as altitude,
-      biometric_heart_rate as heart_rate,
-      threat_level
+      correlation_id,
+      time_difference_seconds,
+      altitude,
+      heart_rate,
+      threat_score
     FROM master_biometric_aircraft_correlations
     WHERE bradford_hill_score IS NULL
     LIMIT ${batchSize}
   `.catch(() => []);
   
   if (dryRun) {
+    const sampleScores = unscored.slice(0, 5).map(r => ({
+      correlation_id: r.correlation_id,
+      calculated_score: calculateBradfordHillScore({
+        time_delta_seconds: Number(r.time_difference_seconds),
+        altitude: Number(r.altitude),
+        heart_rate: Number(r.heart_rate) || undefined,
+        threat_score: Number(r.threat_score) || 50
+      })
+    }));
+    
     return {
       action: 'bradford_hill_score',
       success: true,
@@ -434,15 +460,7 @@ async function applyBradfordHillScoring(
       errors: 0,
       details: {
         would_score: unscored.length,
-        sample_scores: unscored.slice(0, 5).map(r => ({
-          id: r.id,
-          calculated_score: calculateBradfordHillScore({
-            time_delta_seconds: Number(r.time_delta_seconds),
-            altitude: Number(r.altitude),
-            heart_rate: Number(r.heart_rate),
-            threat_score: r.threat_level === 'critical' ? 100 : r.threat_level === 'high' ? 75 : 50
-          })
-        })),
+        sample_scores: sampleScores,
         dry_run: true
       },
       duration_ms: 0
@@ -454,16 +472,16 @@ async function applyBradfordHillScoring(
   
   for (const record of unscored) {
     const score = calculateBradfordHillScore({
-      time_delta_seconds: Number(record.time_delta_seconds),
+      time_delta_seconds: Number(record.time_difference_seconds),
       altitude: Number(record.altitude),
-      heart_rate: Number(record.heart_rate),
-      threat_score: record.threat_level === 'critical' ? 100 : record.threat_level === 'high' ? 75 : 50
+      heart_rate: Number(record.heart_rate) || undefined,
+      threat_score: Number(record.threat_score) || 50
     });
     
     await sql`
       UPDATE master_biometric_aircraft_correlations
       SET bradford_hill_score = ${score}, bh_scored_at = NOW()
-      WHERE id = ${record.id}
+      WHERE correlation_id = ${record.correlation_id}
     `.catch(() => { errors++; });
     
     processed++;
@@ -486,19 +504,20 @@ async function generateFourFactorCorrelations(
   sql: ReturnType<typeof postgres>,
   batchSize: number,
   dryRun: boolean,
-  options: { timeWindowMinutes?: number }
+  options: { timeWindowMinutes?: number; lookbackDays?: number }
 ): Promise<EnrichmentResult> {
   console.log('Generating four-factor correlations...');
   
-  const timeWindow = options.timeWindowMinutes || 5;
+  const timeWindow = options.timeWindowMinutes || 30;
+  const lookbackDays = options.lookbackDays || 365; // Extend to 1 year
   
-  // Find flight records that can be correlated
+  // Find flight records that can be correlated - broader criteria
   const flights = await sql`
     SELECT 
       id, registration, detection_timestamp, altitude, latitude, longitude, taxonomy_tag, threat_score
     FROM live_flight_detections_rows
-    WHERE detection_timestamp > NOW() - INTERVAL '30 days'
-      AND taxonomy_tag IN ('xxb_tier1_priority', 'xxb_tier2_shell', 'xxb_low_alt_suspicious', 'xxb_kcso')
+    WHERE detection_timestamp > NOW() - INTERVAL '${lookbackDays} days'
+      AND (taxonomy_tag IS NOT NULL OR threat_score > 30 OR altitude::numeric < 2000)
     ORDER BY detection_timestamp DESC
     LIMIT ${batchSize}
   `.catch(() => []);

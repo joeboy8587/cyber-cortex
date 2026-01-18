@@ -429,72 +429,76 @@ async function applyBradfordHillScoring(
     `.catch((e) => console.error('Failed to add columns:', e));
   }
   
-  // Get correlations needing scoring - use actual schema columns
-  const unscored = await sql`
-    SELECT 
-      correlation_id,
-      time_difference_seconds,
-      altitude,
-      heart_rate,
-      threat_score
-    FROM master_biometric_aircraft_correlations
-    WHERE bradford_hill_score IS NULL
-    LIMIT ${batchSize}
-  `.catch(() => []);
+  // Get count of unscored records first
+  const unscoredCount = await sql`
+    SELECT COUNT(*) as count FROM master_biometric_aircraft_correlations WHERE bradford_hill_score IS NULL
+  `.catch(() => [{ count: 0 }]);
+  
+  const toScore = Number(unscoredCount[0]?.count || 0);
   
   if (dryRun) {
-    const sampleScores = unscored.slice(0, 5).map(r => ({
-      correlation_id: r.correlation_id,
-      calculated_score: calculateBradfordHillScore({
-        time_delta_seconds: Number(r.time_difference_seconds),
-        altitude: Number(r.altitude),
-        heart_rate: Number(r.heart_rate) || undefined,
-        threat_score: Number(r.threat_score) || 50
-      })
-    }));
-    
     return {
       action: 'bradford_hill_score',
       success: true,
       processed: 0,
       errors: 0,
       details: {
-        would_score: unscored.length,
-        sample_scores: sampleScores,
+        would_score: toScore,
         dry_run: true
       },
       duration_ms: 0
     };
   }
   
-  let processed = 0;
-  let errors = 0;
+  // Use a single SQL UPDATE with computed scores for maximum efficiency
+  // Bradford-Hill weights: temporality (18%), strength (15% altitude + 15% HR), gradient (12%)
+  const result = await sql`
+    UPDATE master_biometric_aircraft_correlations
+    SET 
+      bradford_hill_score = ROUND((
+        -- Temporality: closer time = higher score (18% weight)
+        CASE 
+          WHEN ABS(COALESCE(time_difference_seconds, 9999)) < 60 THEN 18
+          WHEN ABS(COALESCE(time_difference_seconds, 9999)) < 300 THEN 14.4
+          WHEN ABS(COALESCE(time_difference_seconds, 9999)) < 600 THEN 9
+          ELSE 3.6
+        END +
+        -- Strength from altitude (15% weight - lower = higher score)
+        CASE 
+          WHEN COALESCE(altitude::numeric, 10000) < 1500 THEN 15 * (1 - COALESCE(altitude::numeric, 1500) / 1500)
+          ELSE 0
+        END +
+        -- Strength from heart rate (15% weight - elevated = higher score)  
+        CASE 
+          WHEN COALESCE(heart_rate, 70) > 80 THEN 15 * LEAST((COALESCE(heart_rate, 70) - 80) / 60.0, 1)
+          ELSE 0
+        END +
+        -- Biological gradient from threat score (12% weight)
+        COALESCE(threat_score, 50)::numeric * 0.12
+      ), 1),
+      bh_scored_at = NOW()
+    WHERE bradford_hill_score IS NULL
+  `.catch((e) => {
+    console.error('Bradford-Hill bulk update failed:', e);
+    return null;
+  });
   
-  for (const record of unscored) {
-    const score = calculateBradfordHillScore({
-      time_delta_seconds: Number(record.time_difference_seconds),
-      altitude: Number(record.altitude),
-      heart_rate: Number(record.heart_rate) || undefined,
-      threat_score: Number(record.threat_score) || 50
-    });
-    
-    await sql`
-      UPDATE master_biometric_aircraft_correlations
-      SET bradford_hill_score = ${score}, bh_scored_at = NOW()
-      WHERE correlation_id = ${record.correlation_id}
-    `.catch(() => { errors++; });
-    
-    processed++;
-  }
+  // Get updated count
+  const scoredCount = await sql`
+    SELECT COUNT(*) as count FROM master_biometric_aircraft_correlations WHERE bradford_hill_score IS NOT NULL
+  `.catch(() => [{ count: 0 }]);
+  
+  const scored = Number(scoredCount[0]?.count || 0);
   
   return {
     action: 'bradford_hill_score',
-    success: errors === 0,
-    processed,
-    errors,
+    success: result !== null,
+    processed: scored,
+    errors: result === null ? 1 : 0,
     details: {
-      total_unscored: unscored.length,
-      weights_used: BRADFORD_HILL_WEIGHTS
+      total_before: toScore,
+      total_scored: scored,
+      method: 'bulk_sql_update'
     },
     duration_ms: 0
   };

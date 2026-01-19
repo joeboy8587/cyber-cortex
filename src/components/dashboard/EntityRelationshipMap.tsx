@@ -88,11 +88,20 @@ export const EntityRelationshipMap = () => {
         })
       ]);
       
-      const rows = entitiesResponse?.data || [];
+      // For edge functions, response is { data: result } where result is the array
+      // For Supabase tables, response is { data: [...] }
+      const unwrap = (res: any): any[] => {
+        if (!res?.data) return [];
+        if (Array.isArray(res.data)) return res.data;
+        if (Array.isArray(res.data?.data)) return res.data.data;
+        return [];
+      };
+      
+      const rows = unwrap(entitiesResponse);
       const kcsoFleet = kcsoResponse?.data || [];
-      const neonKcsoClusters = neonKcsoResult?.data || [];
-      const shellCompanies = shellResult?.data || [];
-      const operators = operatorResult?.data || [];
+      const neonKcsoClusters = unwrap(neonKcsoResult);
+      const shellCompanies = unwrap(shellResult);
+      const operators = unwrap(operatorResult);
       
       // Parse entities from command structure
       const parsedEntities: Entity[] = rows.map((r: any) => ({

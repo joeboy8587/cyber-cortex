@@ -208,30 +208,34 @@ export const FourFactorCorrelationEngine = () => {
           })
         : { data: { data: [] } };
 
-      // Create maps for quick lookup
+      // Create maps for quick lookup - handle both array and nested response formats
+      const bioRows = Array.isArray(bioData?.data) ? bioData.data : bioData?.data?.data || [];
       const bioMap = new Map<string, { count: number; peakHr?: number }>(
-        (bioData?.data || []).map((b: { date: string; bio_count: string; peak_hr?: string }) => [
+        bioRows.map((b: { date: string; bio_count: string; peak_hr?: string }) => [
           b.date, 
           { count: parseInt(b.bio_count || '0'), peakHr: b.peak_hr ? parseInt(b.peak_hr) : undefined }
         ])
       );
       
+      const josiahRows = Array.isArray(josiahData?.data) ? josiahData.data : josiahData?.data?.data || [];
       const josiahMap = new Map<string, number>(
-        (josiahData?.data || []).map((j: { date: string; josiah_count: string }) => [
+        josiahRows.map((j: { date: string; josiah_count: string }) => [
           j.date, 
           parseInt(j.josiah_count || '0')
         ])
       );
       
+      const ocrRows = Array.isArray(ocrData?.data) ? ocrData.data : ocrData?.data?.data || [];
       const ocrMap = new Map<string, number>(
-        (ocrData?.data || []).map((o: { date: string; ocr_count: string }) => [
+        ocrRows.map((o: { date: string; ocr_count: string }) => [
           o.date, 
           parseInt(o.ocr_count || '0')
         ])
       );
 
       // Combine into correlation events
-      const combined: CorrelationEvent[] = (flightData?.data || []).map((f: { 
+      const flightRows = Array.isArray(flightData?.data) ? flightData.data : flightData?.data?.data || [];
+      const combined: CorrelationEvent[] = flightRows.map((f: {
         date: string; 
         flight_count: string; 
         registrations: string[];
@@ -336,7 +340,8 @@ export const FourFactorCorrelationEngine = () => {
         }
       });
 
-      const clusters: BiometricEventCluster[] = (clusterData?.data || []).map((row: {
+      const clusterRows = Array.isArray(clusterData?.data) ? clusterData.data : clusterData?.data?.data || [];
+      const clusters: BiometricEventCluster[] = clusterRows.map((row: {
         measurement_timestamp: string;
         heart_rate: number;
         hrv?: number;
@@ -470,7 +475,8 @@ export const FourFactorCorrelationEngine = () => {
 
       if (error) throw new Error(error.message);
 
-      const events: FourFactorEvent[] = (data?.data || []).map((e: any) => ({
+      const eventRows = Array.isArray(data?.data) ? data.data : data?.data?.data || [];
+      const events: FourFactorEvent[] = eventRows.map((e: any) => ({
         timestamp: e.timestamp,
         registration: e.registration,
         heart_rate: parseInt(e.heart_rate || '0'),

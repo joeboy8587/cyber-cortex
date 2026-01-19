@@ -84,8 +84,10 @@ export function EnterpriseNetworkGraph() {
         }
       });
 
-      if (entityData?.data) {
-        const parsedNodes: NetworkNode[] = entityData.data.map((e: any) => ({
+      // The edge function returns result directly, supabase.functions.invoke wraps it in { data: result }
+      const entities = Array.isArray(entityData?.data) ? entityData.data : entityData?.data?.data || [];
+      if (entities.length > 0) {
+        const parsedNodes: NetworkNode[] = entities.map((e: any) => ({
           id: e.id,
           name: e.entity_name,
           type: e.entity_type === 'SHELL_COMPANY' ? 'shell' : 
@@ -138,8 +140,9 @@ export function EnterpriseNetworkGraph() {
         setEdges(parsedEdges);
       }
 
-      if (shellData?.data) {
-        setShells(shellData.data.map((s: any) => ({
+      const shellList = Array.isArray(shellData?.data) ? shellData.data : shellData?.data?.data || [];
+      if (shellList.length > 0) {
+        setShells(shellList.map((s: any) => ({
           ...s,
           aircraft_controlled: parseArray(s.aircraft_controlled),
           red_flags: parseArray(s.red_flags)

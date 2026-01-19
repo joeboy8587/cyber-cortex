@@ -89,7 +89,8 @@ export function CriminalEnterpriseNetwork() {
       });
       if (statsError) throw statsError;
 
-      const rawEntities = unwrapRows(entityData);
+      // entityData is { data: [...] } from supabase.functions.invoke, extract .data first
+      const rawEntities = unwrapRows(entityData?.data);
       console.log('[CriminalEnterpriseNetwork] Raw entities:', rawEntities);
       
       if (Array.isArray(rawEntities) && rawEntities.length > 0) {
@@ -111,7 +112,8 @@ export function CriminalEnterpriseNetwork() {
           }
         });
 
-        const rawStats = unwrapRows(statsData);
+        // statsData is { data: [...] } from supabase.functions.invoke
+        const rawStats = unwrapRows(statsData?.data);
         const firstStat = rawStats[0] || null;
         
         setStats({

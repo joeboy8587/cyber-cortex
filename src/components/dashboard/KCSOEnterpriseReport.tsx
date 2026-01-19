@@ -97,8 +97,9 @@ export const KCSOEnterpriseReport = () => {
         offset: number;
       }>();
 
-      // Enrich flight data with correlations
-      const enrichedEvents: KCSOEvent[] = (flightData?.data || []).map((row: {
+      // Enrich flight data with correlations - handle both array and nested response
+      const flightRows = Array.isArray(flightData?.data) ? flightData.data : flightData?.data?.data || [];
+      const enrichedEvents: KCSOEvent[] = flightRows.map((row: {
         registration: string;
         timestamp: string;
         altitude: number;
@@ -121,9 +122,10 @@ export const KCSOEnterpriseReport = () => {
 
       setEvents(enrichedEvents);
       
-      if (statsData?.data?.[0]) {
+      const statsRows = Array.isArray(statsData?.data) ? statsData.data : statsData?.data?.data || [];
+      if (statsRows[0]) {
         setStats({
-          ...statsData.data[0],
+          ...statsRows[0],
           biometric_correlations: correlationMap.size
         });
       }

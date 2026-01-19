@@ -51,13 +51,6 @@ export function CriminalEnterpriseNetwork() {
   }, []);
 
   const fetchEnterpriseData = async () => {
-    // Unwrap neon-query responses which may be array or { data: [...] }
-    const unwrapRows = (payload: unknown): any[] => {
-      if (Array.isArray(payload)) return payload;
-      if (payload && typeof payload === 'object' && Array.isArray((payload as any).data)) return (payload as any).data;
-      return [];
-    };
-
     try {
       const { data: entityData, error: entityError } = await supabase.functions.invoke("neon-query", {
         body: {
@@ -89,11 +82,12 @@ export function CriminalEnterpriseNetwork() {
       });
       if (statsError) throw statsError;
 
-      // entityData is { data: [...] } from supabase.functions.invoke, extract .data first
-      const rawEntities = unwrapRows(entityData?.data);
+      // neon-query returns arrays directly, supabase.functions.invoke wraps in { data: result }
+      // So entityData is the array directly if neon-query returned an array
+      const rawEntities = Array.isArray(entityData) ? entityData : [];
       console.log('[CriminalEnterpriseNetwork] Raw entities:', rawEntities);
       
-      if (Array.isArray(rawEntities) && rawEntities.length > 0) {
+      if (rawEntities.length > 0) {
         // Parse arrays that may come as PostgreSQL array strings from the database
         const parsedEntities = rawEntities.map((e: any) => ({
           ...e,
@@ -112,8 +106,8 @@ export function CriminalEnterpriseNetwork() {
           }
         });
 
-        // statsData is { data: [...] } from supabase.functions.invoke
-        const rawStats = unwrapRows(statsData?.data);
+        // statsData is also an array directly
+        const rawStats = Array.isArray(statsData) ? statsData : [];
         const firstStat = rawStats[0] || null;
         
         setStats({

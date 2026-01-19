@@ -97,8 +97,8 @@ export const KCSOEnterpriseReport = () => {
         offset: number;
       }>();
 
-      // Enrich flight data with correlations - handle both array and nested response
-      const flightRows = Array.isArray(flightData?.data) ? flightData.data : flightData?.data?.data || [];
+      // neon-query returns arrays directly, flightData IS the array
+      const flightRows = Array.isArray(flightData) ? flightData : [];
       const enrichedEvents: KCSOEvent[] = flightRows.map((row: {
         registration: string;
         timestamp: string;
@@ -122,7 +122,7 @@ export const KCSOEnterpriseReport = () => {
 
       setEvents(enrichedEvents);
       
-      const statsRows = Array.isArray(statsData?.data) ? statsData.data : statsData?.data?.data || [];
+      const statsRows = Array.isArray(statsData) ? statsData : [];
       if (statsRows[0]) {
         setStats({
           ...statsRows[0],

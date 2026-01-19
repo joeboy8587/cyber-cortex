@@ -155,7 +155,8 @@ export const FourFactorCorrelationEngine = () => {
         const { data: schemaRes } = await supabase.functions.invoke('neon-query', {
           body: { action: 'getTableSchema', table: tableName }
         });
-        const cols: string[] = (schemaRes?.data || []).map((c: any) => String(c.column_name));
+        // neon-query returns array directly
+        const cols: string[] = (Array.isArray(schemaRes) ? schemaRes : []).map((c: any) => String(c.column_name));
         return candidates.find(c => cols.includes(c)) || null;
       };
 
@@ -189,7 +190,7 @@ export const FourFactorCorrelationEngine = () => {
               `
             }
           })
-        : { data: { data: [] } };
+        : { data: [] };
 
       // Get daily OCR counts
       const { data: ocrData } = radarTsCol
@@ -206,10 +207,10 @@ export const FourFactorCorrelationEngine = () => {
               `
             }
           })
-        : { data: { data: [] } };
+        : { data: [] };
 
-      // Create maps for quick lookup - handle both array and nested response formats
-      const bioRows = Array.isArray(bioData?.data) ? bioData.data : bioData?.data?.data || [];
+      // Create maps for quick lookup - neon-query returns arrays directly
+      const bioRows = Array.isArray(bioData) ? bioData : [];
       const bioMap = new Map<string, { count: number; peakHr?: number }>(
         bioRows.map((b: { date: string; bio_count: string; peak_hr?: string }) => [
           b.date, 
@@ -217,7 +218,7 @@ export const FourFactorCorrelationEngine = () => {
         ])
       );
       
-      const josiahRows = Array.isArray(josiahData?.data) ? josiahData.data : josiahData?.data?.data || [];
+      const josiahRows = Array.isArray(josiahData) ? josiahData : [];
       const josiahMap = new Map<string, number>(
         josiahRows.map((j: { date: string; josiah_count: string }) => [
           j.date, 
@@ -225,7 +226,7 @@ export const FourFactorCorrelationEngine = () => {
         ])
       );
       
-      const ocrRows = Array.isArray(ocrData?.data) ? ocrData.data : ocrData?.data?.data || [];
+      const ocrRows = Array.isArray(ocrData) ? ocrData : [];
       const ocrMap = new Map<string, number>(
         ocrRows.map((o: { date: string; ocr_count: string }) => [
           o.date, 
@@ -234,7 +235,7 @@ export const FourFactorCorrelationEngine = () => {
       );
 
       // Combine into correlation events
-      const flightRows = Array.isArray(flightData?.data) ? flightData.data : flightData?.data?.data || [];
+      const flightRows = Array.isArray(flightData) ? flightData : [];
       const combined: CorrelationEvent[] = flightRows.map((f: {
         date: string; 
         flight_count: string; 
@@ -340,7 +341,7 @@ export const FourFactorCorrelationEngine = () => {
         }
       });
 
-      const clusterRows = Array.isArray(clusterData?.data) ? clusterData.data : clusterData?.data?.data || [];
+      const clusterRows = Array.isArray(clusterData) ? clusterData : [];
       const clusters: BiometricEventCluster[] = clusterRows.map((row: {
         measurement_timestamp: string;
         heart_rate: number;
@@ -475,7 +476,7 @@ export const FourFactorCorrelationEngine = () => {
 
       if (error) throw new Error(error.message);
 
-      const eventRows = Array.isArray(data?.data) ? data.data : data?.data?.data || [];
+      const eventRows = Array.isArray(data) ? data : [];
       const events: FourFactorEvent[] = eventRows.map((e: any) => ({
         timestamp: e.timestamp,
         registration: e.registration,

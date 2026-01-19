@@ -84,8 +84,9 @@ export function EnterpriseNetworkGraph() {
         }
       });
 
-      // The edge function returns result directly, supabase.functions.invoke wraps it in { data: result }
-      const entities = Array.isArray(entityData?.data) ? entityData.data : entityData?.data?.data || [];
+      // neon-query returns arrays directly, supabase.functions.invoke wraps in { data: result }
+      // So entityData IS the array directly
+      const entities = Array.isArray(entityData) ? entityData : [];
       if (entities.length > 0) {
         const parsedNodes: NetworkNode[] = entities.map((e: any) => ({
           id: e.id,
@@ -140,7 +141,7 @@ export function EnterpriseNetworkGraph() {
         setEdges(parsedEdges);
       }
 
-      const shellList = Array.isArray(shellData?.data) ? shellData.data : shellData?.data?.data || [];
+      const shellList = Array.isArray(shellData) ? shellData : [];
       if (shellList.length > 0) {
         setShells(shellList.map((s: any) => ({
           ...s,

@@ -24,6 +24,7 @@ import { PatternCoordinationAnalysis } from "@/components/dashboard/PatternCoord
 import DataQualityAudit from "@/components/dashboard/DataQualityAudit";
 import { DatabaseQualityControl } from "@/components/dashboard/DatabaseQualityControl";
 import { TimelineNavigator } from "@/components/dashboard/TimelineNavigator";
+import { DailyNarrativeBuilder } from "@/components/dashboard/DailyNarrativeBuilder";
 import { LegalEvidenceMap } from "@/components/dashboard/LegalEvidenceMap";
 import { JosiahWitnessLogs } from "@/components/dashboard/JosiahWitnessLogs";
 import { FleetTrackingLedger } from "@/components/dashboard/FleetTrackingLedger";
@@ -282,7 +283,8 @@ const Index = () => {
             <LegalEvidenceMap />
           </section>
           
-          <section id="timeline-navigator">
+          <section id="timeline-navigator" className="space-y-6">
+            <DailyNarrativeBuilder />
             <TimelineNavigator />
           </section>
           

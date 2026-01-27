@@ -301,7 +301,18 @@ serve(async (req) => {
         message: 'Document parsed and stored in NeonDB',
         documentHash,
         extractions,
-        crossLinks
+        crossLinks,
+        summary: {
+          aircraftFound: extractions.aircraft.length,
+          citationsFound: extractions.legalCitations.length,
+          entitiesFound: extractions.entities.length,
+          datesFound: extractions.dates.length,
+          amountsFound: extractions.dollarAmounts.length,
+          exhibitsFound: extractions.exhibits.length,
+          existingAircraftMatches: crossLinks.aircraftMatches,
+          existingEntityMatches: crossLinks.entityMatches,
+          flightCorrelations: crossLinks.flightCorrelations
+        }
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });

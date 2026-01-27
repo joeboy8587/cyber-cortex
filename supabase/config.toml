@@ -60,6 +60,12 @@ verify_jwt = false
 [functions.data-enrichment-engine]
 verify_jwt = false
 
+[functions.legal-intel-parser]
+verify_jwt = false
+
+[functions.historical-biometric-enrichment]
+verify_jwt = false
+
 [api]
 enabled = true
 port = 54321

@@ -21,10 +21,10 @@ interface BiometricEntry {
 }
 
 const STRESS_LEVELS = [
-  { value: 'NORMAL', label: 'Normal', color: 'bg-green-500/20 text-green-400' },
-  { value: 'ELEVATED', label: 'Elevated', color: 'bg-yellow-500/20 text-yellow-400' },
-  { value: 'HIGH', label: 'High', color: 'bg-orange-500/20 text-orange-400' },
-  { value: 'CRITICAL', label: 'Critical', color: 'bg-red-500/20 text-red-400' },
+  { value: 1, label: 'Normal', color: 'bg-green-500/20 text-green-400' },
+  { value: 2, label: 'Elevated', color: 'bg-yellow-500/20 text-yellow-400' },
+  { value: 3, label: 'High', color: 'bg-orange-500/20 text-orange-400' },
+  { value: 4, label: 'Critical', color: 'bg-red-500/20 text-red-400' },
 ];
 
 export const ManualBiometricLogger = () => {
@@ -34,7 +34,7 @@ export const ManualBiometricLogger = () => {
   // Form state
   const [heartRate, setHeartRate] = useState('');
   const [hrv, setHrv] = useState('');
-  const [stressLevel, setStressLevel] = useState('NORMAL');
+  const [stressLevel, setStressLevel] = useState(1);
   const [notes, setNotes] = useState('');
   const [markAsEvidence, setMarkAsEvidence] = useState(false);
   const [markAsMedicalAlert, setMarkAsMedicalAlert] = useState(false);
@@ -49,11 +49,12 @@ export const ManualBiometricLogger = () => {
     return hrvValue >= 0 && hrvValue <= 300;
   };
 
-  const getStressBadge = (level: string) => {
-    const stressConfig = STRESS_LEVELS.find(s => s.value === level);
+  const getStressBadge = (level: number | string) => {
+    const numLevel = typeof level === 'string' ? parseInt(level) || 1 : level;
+    const stressConfig = STRESS_LEVELS.find(s => s.value === numLevel);
     return (
       <Badge className={stressConfig?.color || 'bg-muted text-muted-foreground'}>
-        {stressConfig?.label || level}
+        {stressConfig?.label || `Level ${level}`}
       </Badge>
     );
   };
@@ -191,7 +192,7 @@ export const ManualBiometricLogger = () => {
       // Reset form
       setHeartRate('');
       setHrv('');
-      setStressLevel('NORMAL');
+      setStressLevel(1);
       setNotes('');
       setMarkAsEvidence(false);
       setMarkAsMedicalAlert(false);
@@ -274,13 +275,13 @@ export const ManualBiometricLogger = () => {
           {/* Stress Level */}
           <div className="space-y-2">
             <Label>Stress Level</Label>
-            <Select value={stressLevel} onValueChange={setStressLevel}>
+            <Select value={String(stressLevel)} onValueChange={(v) => setStressLevel(Number(v))}>
               <SelectTrigger className="bg-background/50 border-border/50">
                 <SelectValue placeholder="Select stress level" />
               </SelectTrigger>
               <SelectContent>
                 {STRESS_LEVELS.map(level => (
-                  <SelectItem key={level.value} value={level.value}>
+                  <SelectItem key={level.value} value={String(level.value)}>
                     {level.label}
                   </SelectItem>
                 ))}

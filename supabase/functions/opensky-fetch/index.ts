@@ -19,9 +19,10 @@ const corsHeaders = {
 
 // Priority aircraft watchlist with threat levels
 const WATCHLIST: Record<string, { tier: number; threat: string; entity: string; entityType: string }> = {
-  // KCSO ASSETS (Tier 0 - APEX)
+  // KCSO ASSETS (Tier 0 - APEX) - All KCSO helicopters
   'N912KC': { tier: 0, threat: 'CRITICAL', entity: 'KCSO', entityType: 'law_enforcement' },
   'N913KC': { tier: 0, threat: 'CRITICAL', entity: 'KCSO', entityType: 'law_enforcement' },
+  'N597E': { tier: 0, threat: 'CRITICAL', entity: 'KCSO Bell UH-1H Huey II', entityType: 'law_enforcement' },
   'N743AM': { tier: 0, threat: 'CRITICAL', entity: 'KCSO/Air Methods', entityType: 'medical_kcso' },
   
   // SHELL NETWORK (Tier 1 - RICO Enterprise)
@@ -103,11 +104,12 @@ function classifyAircraft(registration: string, callsign: string, altitude: numb
   // ============ TRIGGER 1: AGGRAVATED BREACH ============
   // Threshold: Altitude < 500 ft AND Speed < 100 kts
   // Action: CRITICAL_ENDANGERMENT
-  if (altitude > 0 && altitude < 500 && speed < 100) {
+  // Changed from < 500 to <= 500 to catch boundary condition (500ft is still violation)
+  if (altitude > 0 && altitude <= 500 && speed < 100) {
     flaggedReasons.push(`AGGRAVATED_BREACH: ${altitude}ft @ ${speed}kts`);
     legalTags.push(LEGAL_TAGS.AGGRAVATED_BREACH);
     triggerType = 'AGGRAVATED_BREACH';
-  } else if (altitude > 0 && altitude < 500) {
+  } else if (altitude > 0 && altitude <= 500) {
     flaggedReasons.push(`EXTREME_LOW_ALT: ${altitude}ft`);
     legalTags.push(LEGAL_TAGS.LOW_ALTITUDE_HARASSMENT);
   }
@@ -215,17 +217,18 @@ function classifyAircraft(registration: string, callsign: string, altitude: numb
   }
   
   // Low altitude suspicious (any unknown aircraft below 1000ft)
+  // Changed < 500 to <= 500 to catch 500ft boundary condition
   if (altitude > 0 && altitude < 1000) {
     return {
       taxonomyTag: 'xxb_low_alt_suspicious',
-      threatScore: altitude < 500 ? 50 : 30,
+      threatScore: altitude <= 500 ? 50 : 30,
       tierLevel: 4,
-      flagged: altitude < 500, // Flag extreme low altitude
+      flagged: altitude <= 500, // Flag extreme low altitude including 500ft boundary
       flaggedReasons: [`LOW_ALT: ${altitude}ft`],
       entity: 'Unknown',
       entityType: 'unknown',
-      legalTags: altitude < 500 ? [LEGAL_TAGS.LOW_ALTITUDE_HARASSMENT] : [],
-      triggerType: altitude < 500 ? 'AGGRAVATED_BREACH' : null
+      legalTags: altitude <= 500 ? [LEGAL_TAGS.LOW_ALTITUDE_HARASSMENT] : [],
+      triggerType: altitude <= 500 ? 'AGGRAVATED_BREACH' : null
     };
   }
   

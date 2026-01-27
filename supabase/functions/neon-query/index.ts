@@ -1953,7 +1953,8 @@ serve(async (req) => {
         
         // RICO Shell Entity List
         const RICO_ENTITIES = ['ALF IX LLC', 'AERO EQUITIES LLC', 'JERK ASSETS LLC', 'FF22 LLC', 'Christiansen Aviation'];
-        const KCSO_PATTERN = ['N912KC', 'N913KC', 'N743AM'];
+        // Added N597E (Bell UH-1H Huey II) to KCSO fleet
+        const KCSO_PATTERN = ['N912KC', 'N913KC', 'N743AM', 'N597E'];
         const SHELL_REGISTRATIONS = ['N790FA', 'N788FA', 'N791FA', 'N787FA', 'N2464D', 'N997SE', 'N8274E', 'N74FF', 'N2363K', 'N759AF'];
         const MEDICAL_REGISTRATIONS = ['N31RX', 'N229AM'];
         
@@ -1997,13 +1998,13 @@ serve(async (req) => {
           let newTier = rec.tier_level || 5;
           let newScore = rec.threat_score || 0;
           
-          // TRIGGER 1: AGGRAVATED BREACH
-          if (alt > 0 && alt < 500 && spd < 100 && !reasons.some(r => r.includes('AGGRAVATED_BREACH'))) {
+          // TRIGGER 1: AGGRAVATED BREACH (changed < 500 to <= 500 for boundary catch)
+          if (alt > 0 && alt <= 500 && spd < 100 && !reasons.some(r => r.includes('AGGRAVATED_BREACH'))) {
             reasons.push(`AGGRAVATED_BREACH: ${alt}ft @ ${spd}kts`);
             needsUpdate = true;
             aggressiveBreach++;
             newScore = Math.max(newScore, 90);
-          } else if (alt > 0 && alt < 500 && !reasons.some(r => r.includes('EXTREME_LOW_ALT'))) {
+          } else if (alt > 0 && alt <= 500 && !reasons.some(r => r.includes('EXTREME_LOW_ALT'))) {
             reasons.push(`EXTREME_LOW_ALT: ${alt}ft`);
             needsUpdate = true;
             aggressiveBreach++;

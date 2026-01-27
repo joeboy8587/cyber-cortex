@@ -90,42 +90,30 @@ export const ManualBiometricLogger = () => {
     setIsLogging(true);
 
     try {
-      // Build the INSERT query
-      const hrvColumn = hrvValue !== null ? `, hrv` : '';
-      const hrvValueStr = hrvValue !== null ? `, ${hrvValue}` : '';
-      const notesColumn = notes.trim() ? `, notes` : '';
-      const notesValue = notes.trim() ? `, '${notes.replace(/'/g, "''")}'` : '';
-
-      const query = `
-        INSERT INTO biometric_monitoring (
-          measurement_timestamp, 
-          heart_rate, 
-          stress_level, 
-          medical_alert, 
-          legal_evidence,
-          source_table
-          ${hrvColumn}
-          ${notesColumn}
-        ) VALUES (
-          '${timestamp}',
-          ${hr},
-          '${stressLevel}',
-          ${markAsMedicalAlert},
-          ${markAsEvidence},
-          'manual_entry'
-          ${hrvValueStr}
-          ${notesValue}
-        )
-        RETURNING id, measurement_timestamp, heart_rate, hrv, stress_level
-      `;
+      // Build the data object for insertRecord action
+      const insertData: Record<string, any> = {
+        measurement_timestamp: timestamp,
+        heart_rate: hr,
+        stress_level: stressLevel,
+        medical_alert: markAsMedicalAlert,
+        legal_evidence: markAsEvidence,
+        source_table: 'manual_entry'
+      };
+      
+      if (hrvValue !== null) {
+        insertData.hrv = hrvValue;
+      }
+      if (notes.trim()) {
+        insertData.notes = notes.trim();
+      }
 
       const { data, error } = await supabase.functions.invoke('neon-query', {
-        body: { action: 'customQuery', query }
+        body: { action: 'insertRecord', table: 'biometric_monitoring', data: insertData }
       });
 
       if (error) throw error;
 
-      const insertedRow = data?.rows?.[0] || data?.[0];
+      const insertedRow = data?.rows?.[0] || data?.[0] || data;
       
       // Add to recent entries
       if (insertedRow) {

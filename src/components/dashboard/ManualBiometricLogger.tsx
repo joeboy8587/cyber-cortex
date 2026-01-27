@@ -120,7 +120,7 @@ export const ManualBiometricLogger = () => {
       `;
 
       const { data, error } = await supabase.functions.invoke('neon-query', {
-        body: { action: 'custom', query }
+        body: { action: 'customQuery', query }
       });
 
       if (error) throw error;
@@ -164,7 +164,7 @@ export const ManualBiometricLogger = () => {
         `;
         
         const { data: correlationData } = await supabase.functions.invoke('neon-query', {
-          body: { action: 'custom', query: correlationQuery }
+          body: { action: 'customQuery', query: correlationQuery }
         });
 
         const flights = correlationData?.rows || correlationData || [];
@@ -190,7 +190,7 @@ export const ManualBiometricLogger = () => {
             ON CONFLICT DO NOTHING
           `;
           await supabase.functions.invoke('neon-query', {
-            body: { action: 'custom', query: correlationInsert }
+            body: { action: 'customQuery', query: correlationInsert }
           }).catch(() => {}); // Silent fail if table doesn't exist
         }
       } catch (corrErr) {

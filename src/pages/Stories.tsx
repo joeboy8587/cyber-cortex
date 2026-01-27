@@ -45,7 +45,7 @@ export default function Stories() {
     try {
       const { data, error } = await supabase.functions.invoke('neon-query', {
         body: {
-          action: 'rawQuery',
+          action: 'customQuery',
           query: `
             WITH daily_flights AS (
               SELECT 

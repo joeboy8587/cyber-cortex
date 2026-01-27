@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { CyberPanel } from "@/components/ui/cyber-panel";
 import { Link2, RefreshCw, AlertTriangle, Database, GitBranch, Unlink, Activity, Plane } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -53,6 +53,7 @@ export function DeepCorrelationEngine() {
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
+  const hasFetched = useRef(false);
 
   // Helper to safely extract array data from neon-query response
   const safeExtractData = (response: any): any[] => {
@@ -327,6 +328,8 @@ export function DeepCorrelationEngine() {
   };
 
   useEffect(() => {
+    if (hasFetched.current) return;
+    hasFetched.current = true;
     fetchCorrelationData();
   }, [fetchCorrelationData]);
 

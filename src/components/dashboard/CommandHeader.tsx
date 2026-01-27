@@ -1,7 +1,9 @@
 import { useState } from "react";
-import { Shield, Radio, AlertTriangle, Eye, Mail, Scale, Database, Menu, X } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { Shield, Radio, AlertTriangle, Eye, Mail, Scale, Database, Menu, X, LogOut, BookOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { useAuth } from "@/hooks/useAuth";
 
 interface NavItem {
   id: string;
@@ -19,6 +21,13 @@ const navItems: NavItem[] = [
 export function CommandHeader() {
   const [activeNav, setActiveNav] = useState("dashboard");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const { signOut, user } = useAuth();
+  const navigate = useNavigate();
+
+  const handleSignOut = async () => {
+    await signOut();
+    navigate("/auth");
+  };
 
   const scrollToSection = (id: string) => {
     setActiveNav(id);
@@ -81,7 +90,7 @@ export function CommandHeader() {
             ))}
           </nav>
 
-          {/* Status indicators */}
+          {/* Status indicators and actions */}
           <div className="hidden md:flex items-center gap-6">
             <StatusIndicator
               icon={<Shield className="w-4 h-4" />}
@@ -101,6 +110,28 @@ export function CommandHeader() {
               value="CRITICAL"
               status="critical"
             />
+            
+            {/* Stories link */}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => navigate("/stories")}
+              className="gap-2 font-mono text-xs"
+            >
+              <BookOpen className="w-4 h-4" />
+              Stories
+            </Button>
+            
+            {/* Sign out button */}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleSignOut}
+              className="gap-2 font-mono text-xs text-muted-foreground hover:text-destructive"
+            >
+              <LogOut className="w-4 h-4" />
+              Sign Out
+            </Button>
           </div>
 
           {/* Mobile menu button */}

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { CyberPanel } from '@/components/ui/cyber-panel';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -111,7 +111,7 @@ export const FourFactorCorrelationEngine = () => {
   const [fourFactorEvents, setFourFactorEvents] = useState<FourFactorEvent[]>([]);
   const [showFourFactor, setShowFourFactor] = useState(false);
   const [fourFactorLoading, setFourFactorLoading] = useState(false);
-
+  const hasFetched = useRef(false);
   const fetchCorrelations = useCallback(async () => {
     setLoading(true);
     try {
@@ -509,6 +509,8 @@ export const FourFactorCorrelationEngine = () => {
   }, [toast]);
 
   useEffect(() => {
+    if (hasFetched.current) return;
+    hasFetched.current = true;
     fetchCorrelations();
   }, [fetchCorrelations]);
 

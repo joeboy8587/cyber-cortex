@@ -68,11 +68,11 @@ export default function Stories() {
             ),
             daily_josiah AS (
               SELECT 
-                DATE(reflection_timestamp) as date,
-                STRING_AGG(reflection_content, ' | ' ORDER BY reflection_timestamp DESC) as reflections
+                DATE(created_at) as date,
+                STRING_AGG(reflection_content, ' | ' ORDER BY created_at DESC) as reflections
               FROM josiah_reflections_rows
-              WHERE reflection_timestamp > NOW() - INTERVAL '60 days'
-              GROUP BY DATE(reflection_timestamp)
+              WHERE created_at > NOW() - INTERVAL '60 days'
+              GROUP BY DATE(created_at)
             )
             SELECT 
               COALESCE(f.date, b.date) as date,

@@ -96,6 +96,9 @@ import { KCSOEvidenceMatrix } from "@/components/dashboard/KCSOEvidenceMatrix";
 import { BiometricFlightCorrelationHub } from "@/components/dashboard/BiometricFlightCorrelationHub";
 import { MasterEvidenceSearch } from "@/components/dashboard/MasterEvidenceSearch";
 import { DataEnrichmentDashboard } from "@/components/dashboard/DataEnrichmentDashboard";
+import { ADALegalExportPackage } from "@/components/dashboard/ADALegalExportPackage";
+import { ChronoBiometricDigest } from "@/components/dashboard/ChronoBiometricDigest";
+import { EntityNetworkDiagram } from "@/components/dashboard/EntityNetworkDiagram";
 
 const Index = () => {
   return (
@@ -181,6 +184,12 @@ const Index = () => {
           </section>
           
           <section id="legal-analysis" className="space-y-6">
+            {/* NEW: Triple Export System */}
+            <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+              <ADALegalExportPackage />
+              <ChronoBiometricDigest />
+              <EntityNetworkDiagram />
+            </div>
             <LegalEvidenceDashboard />
             <LegalNarrativeGenerator />
             <LegalIntakeStrategy />

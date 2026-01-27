@@ -99,6 +99,7 @@ import { DataEnrichmentDashboard } from "@/components/dashboard/DataEnrichmentDa
 import { ADALegalExportPackage } from "@/components/dashboard/ADALegalExportPackage";
 import { ChronoBiometricDigest } from "@/components/dashboard/ChronoBiometricDigest";
 import { EntityNetworkDiagram } from "@/components/dashboard/EntityNetworkDiagram";
+import { LegalIntelUploader } from "@/components/dashboard/LegalIntelUploader";
 
 const Index = () => {
   return (
@@ -215,6 +216,7 @@ const Index = () => {
           <section id="evidence-upload" className="space-y-6">
             <FirecrawlTacticsModule />
             <FireclawExtractionPanel />
+            <LegalIntelUploader />
             <EvidenceUploader />
           </section>
           

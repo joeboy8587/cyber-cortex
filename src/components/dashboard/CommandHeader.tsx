@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Shield, Radio, AlertTriangle, Eye, Mail, Scale, Database, Menu, X, LogOut, BookOpen } from "lucide-react";
+import { Shield, Radio, AlertTriangle, Eye, Mail, Scale, Database, Menu, X, LogOut, BookOpen, Upload } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
@@ -15,6 +15,7 @@ const navItems: NavItem[] = [
   { id: "dashboard", label: "Dashboard", icon: <Eye className="w-4 h-4" /> },
   { id: "outreach", label: "Outreach Hub", icon: <Mail className="w-4 h-4" /> },
   { id: "legal", label: "Legal Analysis", icon: <Scale className="w-4 h-4" /> },
+  { id: "upload", label: "MD Upload", icon: <Upload className="w-4 h-4" /> },
   { id: "database", label: "Database", icon: <Database className="w-4 h-4" /> },
 ];
 
@@ -37,6 +38,7 @@ export function CommandHeader() {
       dashboard: "database-stats",
       outreach: "outreach-hub",
       legal: "legal-analysis",
+      upload: "evidence-upload",
       database: "sql-console",
     };
     

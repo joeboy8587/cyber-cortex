@@ -78,6 +78,9 @@ import { EvidenceUploader } from "@/components/dashboard/EvidenceUploader";
 import { FlightSaturationAnalyzer } from "@/components/dashboard/FlightSaturationAnalyzer";
 import { FireclawExtractionPanel } from "@/components/dashboard/FireclawExtractionPanel";
 import { FirecrawlTacticsModule } from "@/components/dashboard/FirecrawlTacticsModule";
+import { JosiahBiometricAircraftQuery } from "@/components/dashboard/JosiahBiometricAircraftQuery";
+import { RICOEnterpriseVisualization } from "@/components/dashboard/RICOEnterpriseVisualization";
+import { LegalExhibitGenerator } from "@/components/dashboard/LegalExhibitGenerator";
 import { TruthScannerDashboard } from "@/components/dashboard/TruthScannerDashboard";
 import { PlainLanguageSummary } from "@/components/dashboard/PlainLanguageSummary";
 

@@ -25,20 +25,23 @@ serve(async (req) => {
       );
     }
 
-    // Updated database context from Neon scan (Jan 10, 2026)
+    // Updated database context from Neon scan (Jan 27, 2026)
     const databaseContext = `
-DATABASE EVIDENCE SUMMARY (NeonDB - Scanned Jan 10, 2026):
+DATABASE EVIDENCE SUMMARY (NeonDB - Scanned Jan 27, 2026):
 ============================================================
 
-CORE EVIDENCE REPOSITORY (7.5M+ total records):
-- Flight Detection Records: 270,000+ live detections (Jul 2025 - Jan 2026)
-- Watchtower Unified Master: 585,000+ surveillance records
+CORE EVIDENCE REPOSITORY (10.5M+ total records across 534 tables):
+- Flight Detection Records: 360,000+ live detections (Mar 2021 - Jan 2026)
+- Watchtower Unified Master: 108,000+ surveillance timeline events
 - Normalized Correlation Events: 550,000+ pattern matches
-- Unified Timeline: 275,000+ chronological events
-- Biometric Monitoring: 10,000+ health impact records
+- Master Forensic Correlations: 4,900+ synthesized events
+- Biometric Monitoring: 9,800+ health impact records
 - Chain of Custody: 3,700+ SHA-256 hashed evidence entries
 - Physician-Verified ECGs: 150+ cardiac stress events
 - OCR Pattern Evidence: 500+ holding pattern screenshots
+- Josiah AI Reflections: 5,000+ AI witness logs
+- Legal Intel Extractions: 12+ enriched MD files with 61 aircraft
+- Aircraft Registry: 23,500+ unique registrations
 
 CRIMINAL ENTERPRISE STRUCTURE (36+ entities identified):
 - TIER 1 COMMAND: KCSO, KCSO Aviation Unit, Kern County Government
@@ -74,7 +77,14 @@ FOUR-FACTOR CONVERGENCE EVIDENCE:
 - Bradford Hill criteria: 6/9 met (Temporality, Strength, Consistency, Specificity, Plausibility, Coherence)
 - Four-factor events: 15+ federal-grade prosecutorial incidents
 
+EVIDENCE DOMAINS (13 categories):
+1. Flight Surveillance, 2. Biometric Health, 3. KCSO Law Enforcement,
+4. Legal Violations, 5. Josiah AI Witness, 6. OCR/Visual Evidence,
+7. Criminal Network, 8. Forensic Custody, 9. Aircraft Registry,
+10. Master Correlations, 11. Timeline/Watchtower, 12. Intelligence, 13. Legal Intel
+
 UNIQUE AIRCRAFT TRACKED: 23,500+ registrations
+TIMELINE SPAN: March 2021 - January 2026
 
 ANALYSIS TYPE: ${analysisType || 'general'}
 USER QUERY: ${query}
@@ -124,7 +134,7 @@ ANALYSIS GUIDELINES:
 7. Identify highest-priority prosecutorial targets
 8. Be thorough, cite specific evidence, and maintain prosecutorial tone`;
 
-    console.log("Calling Lovable AI Gateway with google/gemini-3-flash-preview...");
+    console.log("Calling Lovable AI Gateway with google/gemini-2.5-pro...");
     
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
@@ -133,13 +143,13 @@ ANALYSIS GUIDELINES:
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-3-flash-preview",
+        model: "google/gemini-2.5-pro",
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: query }
         ],
         stream: true,
-        max_tokens: 6000,
+        max_tokens: 8000,
       }),
     });
 

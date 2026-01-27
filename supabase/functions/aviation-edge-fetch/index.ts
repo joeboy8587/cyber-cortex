@@ -35,60 +35,140 @@ async function fetchWithRetry(url: string, options: RequestInit = {}, maxRetries
   throw lastError;
 }
 
+// ============ BIO-RICO SENTINEL TRIGGER SYSTEM ============
+// Three automated triggers for legal-ready evidence generation:
+// 1. AGGRAVATED_BREACH: <500ft + <100kts = CRITICAL_ENDANGERMENT
+// 2. SHELL_CONVERGENCE: ALF IX LLC, AERO EQUITIES, JERK ASSETS = ENTERPRISE_COORDINATION
+// 3. BIOMETRIC_COLLISION: Checked separately with ±3 min window
+
 // Priority aircraft watchlist with threat levels
-const WATCHLIST: Record<string, { tier: number; threat: string; entity: string }> = {
-  'N912KC': { tier: 1, threat: 'CRITICAL', entity: 'KCSO' },
-  'N913KC': { tier: 1, threat: 'CRITICAL', entity: 'KCSO' },
-  'N743AM': { tier: 1, threat: 'CRITICAL', entity: 'KCSO/Air Methods' },
-  'N790FA': { tier: 2, threat: 'HIGH', entity: 'ALF IX LLC' },
-  'N788FA': { tier: 2, threat: 'HIGH', entity: 'ALF IX LLC' },
-  'N791FA': { tier: 2, threat: 'HIGH', entity: 'ALF IX LLC' },
-  'N74FF': { tier: 2, threat: 'HIGH', entity: 'FF22 LLC' },
-  'N2464D': { tier: 2, threat: 'HIGH', entity: 'AERO EQUITIES LLC' },
-  'N139HP': { tier: 1, threat: 'CRITICAL', entity: 'CA Highway Patrol' },
-  'N156HP': { tier: 1, threat: 'CRITICAL', entity: 'CA Highway Patrol' },
-  'N202HP': { tier: 1, threat: 'CRITICAL', entity: 'CA Highway Patrol' },
-  'N31RX': { tier: 2, threat: 'HIGH', entity: 'REACH Medical' },
-  'N229AM': { tier: 2, threat: 'HIGH', entity: 'Air Methods' },
-  'N8274E': { tier: 2, threat: 'EXTREME', entity: 'Christiansen Aviation' },
-  'N198TH': { tier: 2, threat: 'HIGH', entity: 'Private Coordinator' },
+const WATCHLIST: Record<string, { tier: number; threat: string; entity: string; entityType: string }> = {
+  // KCSO ASSETS (Tier 0 - APEX)
+  'N912KC': { tier: 0, threat: 'CRITICAL', entity: 'KCSO', entityType: 'law_enforcement' },
+  'N913KC': { tier: 0, threat: 'CRITICAL', entity: 'KCSO', entityType: 'law_enforcement' },
+  'N743AM': { tier: 0, threat: 'CRITICAL', entity: 'KCSO/Air Methods', entityType: 'medical_kcso' },
+  
+  // SHELL NETWORK (Tier 1 - RICO Enterprise)
+  'N790FA': { tier: 1, threat: 'HIGH', entity: 'ALF IX LLC', entityType: 'shell_company' },
+  'N788FA': { tier: 1, threat: 'HIGH', entity: 'ALF IX LLC', entityType: 'shell_company' },
+  'N791FA': { tier: 1, threat: 'HIGH', entity: 'ALF IX LLC', entityType: 'shell_company' },
+  'N787FA': { tier: 1, threat: 'HIGH', entity: 'ALF IX LLC', entityType: 'shell_company' },
+  'N2464D': { tier: 1, threat: 'HIGH', entity: 'AERO EQUITIES LLC', entityType: 'shell_company' },
+  'N997SE': { tier: 1, threat: 'HIGH', entity: 'AERO EQUITIES LLC', entityType: 'shell_company' },
+  'N8274E': { tier: 1, threat: 'EXTREME', entity: 'Christiansen Aviation', entityType: 'shell_company' },
+  'N74FF': { tier: 1, threat: 'HIGH', entity: 'FF22 LLC', entityType: 'shell_company' },
+  'N2363K': { tier: 1, threat: 'HIGH', entity: 'JERK ASSETS LLC', entityType: 'shell_company' },
+  'N759AF': { tier: 1, threat: 'HIGH', entity: 'Unknown Shell', entityType: 'shell_company' },
+  
+  // MEDICAL ASSETS (Tier 2 - Cover Operations)
+  'N31RX': { tier: 2, threat: 'HIGH', entity: 'REACH Medical', entityType: 'medical' },
+  'N229AM': { tier: 2, threat: 'HIGH', entity: 'Air Methods', entityType: 'medical' },
+  
+  // LAW ENFORCEMENT (Tier 1)
+  'N139HP': { tier: 1, threat: 'CRITICAL', entity: 'CA Highway Patrol', entityType: 'law_enforcement' },
+  'N156HP': { tier: 1, threat: 'CRITICAL', entity: 'CA Highway Patrol', entityType: 'law_enforcement' },
+  'N202HP': { tier: 1, threat: 'CRITICAL', entity: 'CA Highway Patrol', entityType: 'law_enforcement' },
+  
+  // PRIVATE COORDINATORS (Tier 2)
+  'N198TH': { tier: 2, threat: 'HIGH', entity: 'Private Coordinator', entityType: 'private' },
+  'N916GW': { tier: 2, threat: 'MEDIUM', entity: 'Unknown', entityType: 'suspicious' },
+  'N6196P': { tier: 2, threat: 'MEDIUM', entity: 'Unknown', entityType: 'suspicious' },
 };
 
-// Shell company registration patterns
+// Shell company registration patterns (expanded)
 const SHELL_PATTERNS = [
-  { pattern: /^N7[89]\dFA$/i, entity: 'ALF IX LLC', tier: 2 },
-  { pattern: /^N\d+FF$/i, entity: 'FF22 LLC', tier: 2 },
-  { pattern: /^N\d+KC$/i, entity: 'KCSO', tier: 1 },
-  { pattern: /^N\d+HP$/i, entity: 'CA Highway Patrol', tier: 1 },
-  { pattern: /^N\d+AM$/i, entity: 'Air Methods', tier: 2 },
-  { pattern: /^N\d+RX$/i, entity: 'REACH Medical', tier: 2 },
+  { pattern: /^N7[89]\dFA$/i, entity: 'ALF IX LLC', tier: 1, entityType: 'shell_company' },
+  { pattern: /^N\d+FF$/i, entity: 'FF22 LLC', tier: 1, entityType: 'shell_company' },
+  { pattern: /^N\d+SE$/i, entity: 'AERO EQUITIES LLC', tier: 1, entityType: 'shell_company' },
+  { pattern: /^N\d+KC$/i, entity: 'KCSO', tier: 0, entityType: 'law_enforcement' },
+  { pattern: /^N\d+HP$/i, entity: 'CA Highway Patrol', tier: 1, entityType: 'law_enforcement' },
+  { pattern: /^N\d+AM$/i, entity: 'Air Methods', tier: 2, entityType: 'medical' },
+  { pattern: /^N\d+RX$/i, entity: 'REACH Medical', tier: 2, entityType: 'medical' },
 ];
 
-function classifyAircraft(registration: string, callsign: string, altitude: number): {
+// RICO Shell Entity List for ENTERPRISE_COORDINATION trigger
+const RICO_SHELL_ENTITIES = [
+  'ALF IX LLC',
+  'AERO EQUITIES LLC', 
+  'JERK ASSETS LLC',
+  'FF22 LLC',
+  'Christiansen Aviation'
+];
+
+// Legal tags for automated evidence categorization
+const LEGAL_TAGS = {
+  AGGRAVATED_BREACH: '14 CFR § 91.119 violation; establishes mens rea for reckless endangerment',
+  ENTERPRISE_COORDINATION: '18 U.S.C. § 1962 (RICO) pattern activity',
+  BIOMETRIC_COLLISION: 'Direct evidence of bodily injury/neurological battery',
+  LOW_ALTITUDE_HARASSMENT: '14 CFR § 91.119(c) violation - minimum safe altitude',
+  KCSO_TARGETING: 'Government entity coordinated harassment',
+  MEDICAL_COVER: 'Medical asset used for surveillance cover'
+};
+
+interface ClassificationResult {
   taxonomyTag: string;
   threatScore: number;
   tierLevel: number;
   flagged: boolean;
   flaggedReasons: string[];
   entity: string;
-} {
+  entityType: string;
+  legalTags: string[];
+  triggerType: string | null;
+}
+
+function classifyAircraft(registration: string, callsign: string, altitude: number, speed: number = 0): ClassificationResult {
   const reg = registration?.toUpperCase() || '';
   const call = callsign?.toUpperCase() || '';
   const flaggedReasons: string[] = [];
+  const legalTags: string[] = [];
+  let triggerType: string | null = null;
+  
+  // ============ TRIGGER 1: AGGRAVATED BREACH ============
+  if (altitude > 0 && altitude < 500 && speed < 100) {
+    flaggedReasons.push(`AGGRAVATED_BREACH: ${altitude}ft @ ${speed}kts`);
+    legalTags.push(LEGAL_TAGS.AGGRAVATED_BREACH);
+    triggerType = 'AGGRAVATED_BREACH';
+  } else if (altitude > 0 && altitude < 500) {
+    flaggedReasons.push(`EXTREME_LOW_ALT: ${altitude}ft`);
+    legalTags.push(LEGAL_TAGS.LOW_ALTITUDE_HARASSMENT);
+  }
   
   // Check watchlist first
   if (WATCHLIST[reg]) {
     const match = WATCHLIST[reg];
     flaggedReasons.push(`WATCHLIST: ${match.entity}`);
-    if (altitude < 1500) flaggedReasons.push(`LOW_ALT: ${altitude}ft`);
+    
+    // ============ TRIGGER 2: SHELL ENTITY CONVERGENCE ============
+    if (RICO_SHELL_ENTITIES.includes(match.entity)) {
+      flaggedReasons.push(`ENTERPRISE_COORDINATION: ${match.entity}`);
+      legalTags.push(LEGAL_TAGS.ENTERPRISE_COORDINATION);
+      triggerType = triggerType || 'SHELL_CONVERGENCE';
+    }
+    
+    if (match.entityType === 'law_enforcement' && match.entity.includes('KCSO')) {
+      legalTags.push(LEGAL_TAGS.KCSO_TARGETING);
+    }
+    
+    if (match.entityType === 'medical' || match.entityType === 'medical_kcso') {
+      legalTags.push(LEGAL_TAGS.MEDICAL_COVER);
+    }
+    
+    if (altitude > 0 && altitude < 1500) {
+      flaggedReasons.push(`LOW_ALT: ${altitude}ft`);
+      if (altitude < 1000) legalTags.push(LEGAL_TAGS.LOW_ALTITUDE_HARASSMENT);
+    }
     
     return {
-      taxonomyTag: match.tier === 1 ? 'xxb_tier1_priority' : 'xxb_tier2_shell',
-      threatScore: match.tier === 1 ? 95 : 75,
+      taxonomyTag: match.tier === 0 ? 'xxb_tier0_kcso' : match.tier === 1 ? 'xxb_tier1_priority' : 'xxb_tier2_shell',
+      threatScore: match.tier === 0 ? 100 : match.tier === 1 ? 95 : 75,
       tierLevel: match.tier,
       flagged: true,
       flaggedReasons,
-      entity: match.entity
+      entity: match.entity,
+      entityType: match.entityType,
+      legalTags,
+      triggerType
     };
   }
   
@@ -96,20 +176,33 @@ function classifyAircraft(registration: string, callsign: string, altitude: numb
   for (const sp of SHELL_PATTERNS) {
     if (sp.pattern.test(reg)) {
       flaggedReasons.push(`SHELL_PATTERN: ${sp.entity}`);
-      if (altitude < 1500) flaggedReasons.push(`LOW_ALT: ${altitude}ft`);
+      
+      if (RICO_SHELL_ENTITIES.includes(sp.entity)) {
+        flaggedReasons.push(`ENTERPRISE_COORDINATION: ${sp.entity}`);
+        legalTags.push(LEGAL_TAGS.ENTERPRISE_COORDINATION);
+        triggerType = triggerType || 'SHELL_CONVERGENCE';
+      }
+      
+      if (altitude > 0 && altitude < 1500) {
+        flaggedReasons.push(`LOW_ALT: ${altitude}ft`);
+        if (altitude < 1000) legalTags.push(LEGAL_TAGS.LOW_ALTITUDE_HARASSMENT);
+      }
       
       return {
-        taxonomyTag: sp.tier === 1 ? 'xxb_tier1_priority' : 'xxb_tier2_shell',
-        threatScore: sp.tier === 1 ? 80 : 60,
+        taxonomyTag: sp.tier === 0 ? 'xxb_tier0_kcso' : sp.tier === 1 ? 'xxb_tier1_priority' : 'xxb_tier2_shell',
+        threatScore: sp.tier === 0 ? 100 : sp.tier === 1 ? 80 : 60,
         tierLevel: sp.tier,
         flagged: true,
         flaggedReasons,
-        entity: sp.entity
+        entity: sp.entity,
+        entityType: sp.entityType,
+        legalTags,
+        triggerType
       };
     }
   }
   
-  // Military patterns (XX-XXXXX format)
+  // Military patterns
   if (/^\d{2}-\d{5}$/.test(reg)) {
     return {
       taxonomyTag: 'xxb_military',
@@ -117,19 +210,26 @@ function classifyAircraft(registration: string, callsign: string, altitude: numb
       tierLevel: 3,
       flagged: true,
       flaggedReasons: ['MILITARY_ASSET'],
-      entity: 'US Military'
+      entity: 'US Military',
+      entityType: 'military',
+      legalTags: [],
+      triggerType: null
     };
   }
   
   // Medical air patterns
   if (/AM|RX|MERCY|LIFE|MED/i.test(reg) || /AM|RX|MERCY|LIFE|MED/i.test(call)) {
+    const isSuspicious = altitude > 0 && altitude < 2000;
     return {
       taxonomyTag: 'xxb_medical_air',
-      threatScore: 40,
+      threatScore: isSuspicious ? 45 : 40,
       tierLevel: 3,
-      flagged: false,
-      flaggedReasons: [],
-      entity: 'Medical Air'
+      flagged: isSuspicious,
+      flaggedReasons: isSuspicious ? ['MEDICAL_LOW_ALT', `ALT: ${altitude}ft`] : [],
+      entity: 'Medical Air',
+      entityType: 'medical',
+      legalTags: isSuspicious ? [LEGAL_TAGS.MEDICAL_COVER] : [],
+      triggerType: null
     };
   }
   
@@ -137,11 +237,14 @@ function classifyAircraft(registration: string, callsign: string, altitude: numb
   if (altitude > 0 && altitude < 1000) {
     return {
       taxonomyTag: 'xxb_low_alt_suspicious',
-      threatScore: 30,
+      threatScore: altitude < 500 ? 50 : 30,
       tierLevel: 4,
-      flagged: false,
+      flagged: altitude < 500,
       flaggedReasons: [`LOW_ALT: ${altitude}ft`],
-      entity: 'Unknown'
+      entity: 'Unknown',
+      entityType: 'unknown',
+      legalTags: altitude < 500 ? [LEGAL_TAGS.LOW_ALTITUDE_HARASSMENT] : [],
+      triggerType: altitude < 500 ? 'AGGRAVATED_BREACH' : null
     };
   }
   
@@ -152,7 +255,10 @@ function classifyAircraft(registration: string, callsign: string, altitude: numb
     tierLevel: 5,
     flagged: false,
     flaggedReasons: [],
-    entity: 'Commercial/General'
+    entity: 'Commercial/General',
+    entityType: 'commercial',
+    legalTags: [],
+    triggerType: null
   };
 }
 

@@ -1945,6 +1945,218 @@ serve(async (req) => {
         break;
       }
 
+      // ============ BIO-RICO SENTINEL: RETROACTIVE FLAGGING ============
+      case 'retroactiveFlagging': {
+        console.log('Running Bio-RICO Sentinel retroactive flagging...');
+        
+        const { timeWindow = '7 days', dryRun = true } = body;
+        
+        // RICO Shell Entity List
+        const RICO_ENTITIES = ['ALF IX LLC', 'AERO EQUITIES LLC', 'JERK ASSETS LLC', 'FF22 LLC', 'Christiansen Aviation'];
+        const KCSO_PATTERN = ['N912KC', 'N913KC', 'N743AM'];
+        const SHELL_REGISTRATIONS = ['N790FA', 'N788FA', 'N791FA', 'N787FA', 'N2464D', 'N997SE', 'N8274E', 'N74FF', 'N2363K', 'N759AF'];
+        const MEDICAL_REGISTRATIONS = ['N31RX', 'N229AM'];
+        
+        // Get records needing flagging update
+        const candidates = await sql`
+          SELECT id, registration, callsign, altitude, speed, flagged_reasons, tier_level, threat_score
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() - INTERVAL ${timeWindow}
+            AND (
+              -- AGGRAVATED BREACH: <500ft
+              (altitude > 0 AND altitude < 500)
+              -- SHELL ENTITIES
+              OR registration = ANY(${SHELL_REGISTRATIONS})
+              -- KCSO ASSETS
+              OR registration = ANY(${KCSO_PATTERN})
+              -- MEDICAL COVER
+              OR registration = ANY(${MEDICAL_REGISTRATIONS})
+              -- Pattern matches
+              OR registration ~ '^N7[89][0-9]FA$'
+              OR registration ~ '^N[0-9]+KC$'
+              OR registration ~ '^N[0-9]+AM$'
+            )
+          ORDER BY detection_timestamp DESC
+          LIMIT 1000
+        `;
+        
+        let flaggedCount = 0;
+        let aggressiveBreach = 0;
+        let shellConvergence = 0;
+        let kcsoTargeting = 0;
+        let medicalCover = 0;
+        
+        const flaggedRecords: any[] = [];
+        
+        for (const rec of candidates) {
+          const reg = (rec.registration || '').toUpperCase();
+          const alt = rec.altitude || 0;
+          const spd = rec.speed || 0;
+          const reasons: string[] = rec.flagged_reasons ? rec.flagged_reasons.split('; ') : [];
+          let needsUpdate = false;
+          let newTier = rec.tier_level || 5;
+          let newScore = rec.threat_score || 0;
+          
+          // TRIGGER 1: AGGRAVATED BREACH
+          if (alt > 0 && alt < 500 && spd < 100 && !reasons.some(r => r.includes('AGGRAVATED_BREACH'))) {
+            reasons.push(`AGGRAVATED_BREACH: ${alt}ft @ ${spd}kts`);
+            needsUpdate = true;
+            aggressiveBreach++;
+            newScore = Math.max(newScore, 90);
+          } else if (alt > 0 && alt < 500 && !reasons.some(r => r.includes('EXTREME_LOW_ALT'))) {
+            reasons.push(`EXTREME_LOW_ALT: ${alt}ft`);
+            needsUpdate = true;
+            aggressiveBreach++;
+            newScore = Math.max(newScore, 80);
+          }
+          
+          // TRIGGER 2: SHELL CONVERGENCE (RICO)
+          if (SHELL_REGISTRATIONS.includes(reg) && !reasons.some(r => r.includes('ENTERPRISE_COORDINATION'))) {
+            const entity = reg.match(/^N7[89]\dFA$/i) ? 'ALF IX LLC' : 
+                          reg.match(/^N\d+SE$/i) ? 'AERO EQUITIES LLC' : 
+                          reg === 'N2363K' ? 'JERK ASSETS LLC' : 'Unknown Shell';
+            reasons.push(`ENTERPRISE_COORDINATION: ${entity}`);
+            needsUpdate = true;
+            shellConvergence++;
+            newTier = Math.min(newTier, 1);
+            newScore = Math.max(newScore, 95);
+          }
+          
+          // KCSO TARGETING
+          if (KCSO_PATTERN.includes(reg) && !reasons.some(r => r.includes('KCSO_TARGETING'))) {
+            reasons.push('KCSO_TARGETING: Government coordinated harassment');
+            needsUpdate = true;
+            kcsoTargeting++;
+            newTier = 0;
+            newScore = 100;
+          }
+          
+          // MEDICAL COVER
+          if ((MEDICAL_REGISTRATIONS.includes(reg) || /AM|RX/i.test(reg)) && alt > 0 && alt < 2000) {
+            if (!reasons.some(r => r.includes('MEDICAL_COVER'))) {
+              reasons.push('MEDICAL_COVER: Medical asset surveillance');
+              needsUpdate = true;
+              medicalCover++;
+              newScore = Math.max(newScore, 70);
+            }
+          }
+          
+          if (needsUpdate) {
+            flaggedCount++;
+            flaggedRecords.push({
+              id: rec.id,
+              registration: reg,
+              altitude: alt,
+              speed: spd,
+              newReasons: reasons.join('; '),
+              newTier,
+              newScore
+            });
+            
+            if (!dryRun) {
+              await sql`
+                UPDATE live_flight_detections_rows
+                SET 
+                  flagged = true,
+                  flagged_reasons = ${reasons.join('; ')},
+                  tier_level = ${newTier},
+                  threat_score = ${newScore},
+                  taxonomy_tag = CASE 
+                    WHEN ${newTier} = 0 THEN 'xxb_tier0_kcso'
+                    WHEN ${newTier} = 1 THEN 'xxb_tier1_priority'
+                    WHEN ${newTier} = 2 THEN 'xxb_tier2_shell'
+                    ELSE taxonomy_tag
+                  END
+                WHERE id = ${rec.id}
+              `;
+            }
+          }
+        }
+        
+        result = {
+          data: {
+            message: dryRun ? 'DRY RUN - No changes applied' : 'Retroactive flagging complete',
+            timeWindow,
+            candidatesScanned: candidates.length,
+            flaggedCount,
+            triggers: {
+              aggressiveBreach,
+              shellConvergence,
+              kcsoTargeting,
+              medicalCover
+            },
+            samples: flaggedRecords.slice(0, 20)
+          }
+        };
+        break;
+      }
+
+      // ============ BIOMETRIC COLLISION CHECK ============
+      case 'biometricCollisionCheck': {
+        console.log('Checking biometric collision triggers...');
+        
+        const bioTimeWindow = body.timeWindow || '7 days';
+        const heartRateThreshold = body.heartRateThreshold || 110;
+        const minuteWindow = body.minuteWindow || 3;
+        
+        // Find biometric spikes
+        const biometricSpikes = await sql`
+          SELECT id, measurement_timestamp, heart_rate, stress_level
+          FROM biometric_monitoring
+          WHERE measurement_timestamp > NOW() - INTERVAL ${bioTimeWindow}
+            AND heart_rate > ${heartRateThreshold}
+          ORDER BY measurement_timestamp DESC
+          LIMIT 500
+        `;
+        
+        const collisions: any[] = [];
+        
+        for (const spike of biometricSpikes) {
+          // Find flagged aircraft within ±N minutes using raw SQL with minute value
+          const nearbyFlights = await sql`
+            SELECT id, registration, altitude, speed, detection_timestamp, flagged_reasons, tier_level
+            FROM live_flight_detections_rows
+            WHERE flagged = true
+              AND detection_timestamp BETWEEN 
+                ${spike.measurement_timestamp}::timestamptz - (${minuteWindow} * INTERVAL '1 minute')
+                AND ${spike.measurement_timestamp}::timestamptz + (${minuteWindow} * INTERVAL '1 minute')
+            ORDER BY tier_level ASC, threat_score DESC
+            LIMIT 10
+          `;
+          
+          if (nearbyFlights.length > 0) {
+            collisions.push({
+              biometricId: spike.id,
+              timestamp: spike.measurement_timestamp,
+              heartRate: spike.heart_rate,
+              stressLevel: spike.stress_level,
+              collidingAircraft: nearbyFlights.map((f: any) => ({
+                registration: f.registration,
+                altitude: f.altitude,
+                speed: f.speed,
+                detectedAt: f.detection_timestamp,
+                reasons: f.flagged_reasons,
+                tier: f.tier_level
+              })),
+              legalTag: 'CAUSATION_AFFIDAVIT: Direct evidence of bodily injury/neurological battery'
+            });
+          }
+        }
+        
+        result = {
+          data: {
+            message: `Found ${collisions.length} biometric collision events`,
+            timeWindow: bioTimeWindow,
+            heartRateThreshold,
+            minuteWindow,
+            biometricSpikesChecked: biometricSpikes.length,
+            collisionCount: collisions.length,
+            collisions: collisions.slice(0, 50)
+          }
+        };
+        break;
+      }
+
       default:
         throw new Error(`Unknown action: ${action}`);
     }

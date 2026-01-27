@@ -96,8 +96,7 @@ export const ManualBiometricLogger = () => {
         heart_rate: hr,
         stress_level: stressLevel,
         medical_alert: markAsMedicalAlert,
-        legal_evidence: markAsEvidence,
-        source_table: 'manual_entry'
+        legal_evidence: markAsEvidence
       };
       
       if (hrvValue !== null) {

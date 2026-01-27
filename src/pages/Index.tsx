@@ -104,6 +104,8 @@ import { ADALegalExportPackage } from "@/components/dashboard/ADALegalExportPack
 import { ChronoBiometricDigest } from "@/components/dashboard/ChronoBiometricDigest";
 import { EntityNetworkDiagram } from "@/components/dashboard/EntityNetworkDiagram";
 import { LegalIntelUploader } from "@/components/dashboard/LegalIntelUploader";
+import { BiometricEarlyWarningSystem } from "@/components/dashboard/BiometricEarlyWarningSystem";
+import { JosiahAutonomousHypothesis } from "@/components/dashboard/JosiahAutonomousHypothesis";
 
 const Index = () => {
   return (
@@ -131,6 +133,12 @@ const Index = () => {
           <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <KCSOEvidenceMatrix />
             <BiometricFlightCorrelationHub />
+          </section>
+
+          {/* BIOMETRIC EARLY WARNING & AUTONOMOUS HYPOTHESIS */}
+          <section id="early-warning" className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+            <BiometricEarlyWarningSystem />
+            <JosiahAutonomousHypothesis />
           </section>
 
           {/* BIOMETRIC CAUSATION VALIDATOR - Smoking Gun Evidence */}

@@ -83,6 +83,7 @@ import { RICOEnterpriseVisualization } from "@/components/dashboard/RICOEnterpri
 import { LegalExhibitGenerator } from "@/components/dashboard/LegalExhibitGenerator";
 import { TruthScannerDashboard } from "@/components/dashboard/TruthScannerDashboard";
 import { PlainLanguageSummary } from "@/components/dashboard/PlainLanguageSummary";
+import { BiometricCausationValidator } from "@/components/dashboard/BiometricCausationValidator";
 
 import { EntityRelationshipMap } from "@/components/dashboard/EntityRelationshipMap";
 import TROMotionGenerator from "@/components/dashboard/TROMotionGenerator";
@@ -130,6 +131,11 @@ const Index = () => {
           <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <KCSOEvidenceMatrix />
             <BiometricFlightCorrelationHub />
+          </section>
+
+          {/* BIOMETRIC CAUSATION VALIDATOR - Smoking Gun Evidence */}
+          <section id="biometric-causation" className="space-y-6">
+            <BiometricCausationValidator />
           </section>
 
           {/* COMPREHENSIVE EVIDENCE SCAN - Top Priority */}

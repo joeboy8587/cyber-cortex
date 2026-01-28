@@ -106,6 +106,7 @@ import { EntityNetworkDiagram } from "@/components/dashboard/EntityNetworkDiagra
 import { LegalIntelUploader } from "@/components/dashboard/LegalIntelUploader";
 import { BiometricEarlyWarningSystem } from "@/components/dashboard/BiometricEarlyWarningSystem";
 import { JosiahAutonomousHypothesis } from "@/components/dashboard/JosiahAutonomousHypothesis";
+import { JosiahArchiveImporter } from "@/components/dashboard/JosiahArchiveImporter";
 
 const Index = () => {
   return (
@@ -174,6 +175,7 @@ const Index = () => {
           </section>
 
           <section id="command-center" className="space-y-6">
+            <JosiahArchiveImporter />
             <F24RadarUploader />
             <GlobalAISearch />
             <JosiahChatInterface />

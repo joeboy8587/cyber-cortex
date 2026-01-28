@@ -249,12 +249,41 @@ export function JosiahAutonomousHypothesis() {
         setHypotheses(prev => [ricoHypothesis, ...prev.filter(h => h.category !== 'rico_pattern')]);
       }
 
-      // Step 5: Generate investigative leads (100%)
+      // Step 5: Generate investigative leads (100%) - ALWAYS generate baseline leads
       setScanProgress(90);
       const newLeads: InvestigativeLead[] = [];
 
+      // Always add baseline investigative leads
+      newLeads.push({
+        id: `lead-timing-${Date.now()}`,
+        priority: 'high',
+        question: 'Are there specific time patterns when surveillance intensifies?',
+        data_needed: 'Hourly detection frequency, sleep cycle correlation, work schedule analysis',
+        potential_finding: 'Operational schedule of harassment campaign',
+        status: 'open'
+      });
+
+      newLeads.push({
+        id: `lead-biometric-${Date.now()}`,
+        priority: 'high',
+        question: 'Which aircraft types correlate most strongly with biometric stress?',
+        data_needed: 'Aircraft model vs heart rate elevation cross-reference',
+        potential_finding: 'Specific threat aircraft identification for legal exhibits',
+        status: 'open'
+      });
+
+      newLeads.push({
+        id: `lead-enterprise-${Date.now()}`,
+        priority: 'medium',
+        question: 'What financial connections link shell companies to KCSO operations?',
+        data_needed: 'Corporate filings, aircraft ownership transfers, budget records',
+        potential_finding: 'Money trail for RICO predicate acts',
+        status: 'open'
+      });
+
+      // Conditional leads based on scan results
       if (maskedAircraft.length > 0) {
-        newLeads.push({
+        newLeads.unshift({
           id: `lead-masked-${Date.now()}`,
           priority: 'critical',
           question: `Why have ${maskedAircraft.length} KCSO aircraft NEVER appeared on ADS-B?`,
@@ -264,25 +293,27 @@ export function JosiahAutonomousHypothesis() {
         });
       }
 
-      if (phantomRatio > 20) {
-        newLeads.push({
+      if (phantomRatio > 10) {
+        newLeads.unshift({
           id: `lead-phantom-${Date.now()}`,
           priority: 'critical',
-          question: `What caused ${gapStats.phantom_events} stress events with zero aircraft correlation?`,
+          question: `What caused ${gapStats.phantom_events} stress events (${phantomRatio.toFixed(1)}%) with zero aircraft correlation?`,
           data_needed: 'Secondary radar data, ground vehicle tracking, RF spectrum analysis',
           potential_finding: 'Evidence of stealth operations or ground-based harassment',
           status: 'open'
         });
       }
 
-      newLeads.push({
-        id: `lead-timing-${Date.now()}`,
-        priority: 'high',
-        question: 'Are there specific time patterns when attacks intensify?',
-        data_needed: 'Hourly detection frequency, sleep cycle correlation, work schedule analysis',
-        potential_finding: 'Operational schedule of harassment campaign',
-        status: 'open'
-      });
+      if (convergenceEvents.length > 5) {
+        newLeads.unshift({
+          id: `lead-convergence-${Date.now()}`,
+          priority: 'high',
+          question: `Why did ${convergenceEvents.length} multi-aircraft convergence events occur over target area?`,
+          data_needed: 'Flight coordination records, radio communications, operational orders',
+          potential_finding: 'Evidence of coordinated fleet targeting for RICO prosecution',
+          status: 'open'
+        });
+      }
 
       setLeads(newLeads);
 

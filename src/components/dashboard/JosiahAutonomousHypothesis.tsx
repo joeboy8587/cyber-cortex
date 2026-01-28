@@ -11,11 +11,12 @@ import {
   XCircle, Clock, TrendingUp, Plane, Heart, Eye,
   Database, Zap, RefreshCw, Target, FileText,
   Shield, Scale, Network, Play, Settings, Download,
-  Rocket, Timer, Bot
+  Rocket, Timer, Bot, Radar, Telescope
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { LegalFilingGenerator } from "./LegalFilingGenerator";
 
 interface Hypothesis {
   id: string;
@@ -58,25 +59,46 @@ interface PatternAnomaly {
   aircraft?: string[];
 }
 
+interface PredictivePattern {
+  type: string;
+  severity: 'critical' | 'high' | 'medium';
+  description: string;
+  prediction: string;
+  confidence: number;
+  recommended_action: string;
+}
+
+interface MissedTactic {
+  id: string;
+  name: string;
+  description: string;
+  legal_relevance: string;
+}
+
 interface AutomationConfig {
   auto_scan_on_lead: boolean;
   auto_validate_hypotheses: boolean;
   auto_file_to_legal: boolean;
   scan_interval_minutes: number;
   ai_hypothesis_generation: boolean;
+  predictive_modeling: boolean;
 }
 
 export function JosiahAutonomousHypothesis() {
   const [hypotheses, setHypotheses] = useState<Hypothesis[]>([]);
   const [leads, setLeads] = useState<InvestigativeLead[]>([]);
   const [anomalies, setAnomalies] = useState<PatternAnomaly[]>([]);
+  const [predictions, setPredictions] = useState<PredictivePattern[]>([]);
+  const [missedTactics, setMissedTactics] = useState<MissedTactic[]>([]);
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('hypotheses');
   const [lastScan, setLastScan] = useState<Date | null>(null);
   const [scanProgress, setScanProgress] = useState(0);
   const [showConfig, setShowConfig] = useState(false);
+  const [showFilings, setShowFilings] = useState(false);
   const [validatingLead, setValidatingLead] = useState<string | null>(null);
   const [aiHypothesis, setAiHypothesis] = useState<string | null>(null);
+  const [aiSynthesis, setAiSynthesis] = useState<string | null>(null);
   const hasFetched = useRef(false);
   const scanIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -85,7 +107,8 @@ export function JosiahAutonomousHypothesis() {
     auto_validate_hypotheses: true,
     auto_file_to_legal: false,
     scan_interval_minutes: 5,
-    ai_hypothesis_generation: true
+    ai_hypothesis_generation: true,
+    predictive_modeling: true
   });
 
   // Hypothesis templates for automated validation
@@ -185,6 +208,33 @@ export function JosiahAutonomousHypothesis() {
       return data;
     } catch (err) {
       console.error('Watchtower agent error:', err);
+      return null;
+    }
+  }, []);
+
+  const runPredictiveScan = useCallback(async () => {
+    try {
+      const { data, error } = await supabase.functions.invoke('josiah-predictive-scan', {
+        body: { action: 'full_scan' }
+      });
+
+      if (error) throw error;
+
+      if (data?.predictions) {
+        setPredictions(data.predictions);
+      }
+
+      if (data?.missedTactics) {
+        setMissedTactics(data.missedTactics);
+      }
+
+      if (data?.aiSynthesis) {
+        setAiSynthesis(data.aiSynthesis);
+      }
+
+      return data;
+    } catch (err) {
+      console.error('Predictive scan error:', err);
       return null;
     }
   }, []);
@@ -466,6 +516,12 @@ export function JosiahAutonomousHypothesis() {
       setScanProgress(85);
       if (config.ai_hypothesis_generation) {
         await runWatchtowerAgent();
+      }
+
+      // Step 5b: Run Predictive Modeling (88%)
+      if (config.predictive_modeling) {
+        setScanProgress(88);
+        await runPredictiveScan();
       }
 
       // Step 6: Generate investigative leads (100%)

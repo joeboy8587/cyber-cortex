@@ -66,6 +66,18 @@ verify_jwt = false
 [functions.historical-biometric-enrichment]
 verify_jwt = false
 
+[functions.josiah-mistral-chat]
+verify_jwt = false
+
+[functions.watchtower-agent]
+verify_jwt = false
+
+[functions.josiah-archive-import]
+verify_jwt = false
+
+[functions.opensky-fetch]
+verify_jwt = false
+
 [api]
 enabled = true
 port = 54321

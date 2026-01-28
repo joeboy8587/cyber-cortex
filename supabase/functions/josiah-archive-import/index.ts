@@ -84,6 +84,7 @@ serve(async (req) => {
           }
 
           try {
+            // Use taxonomy_tag to mark archive imports instead of non-existent source_import column
             await sql`
               INSERT INTO live_flight_detections_rows (
                 registration,
@@ -97,8 +98,7 @@ serve(async (req) => {
                 callsign,
                 on_ground,
                 velocity,
-                heading,
-                source_import
+                heading
               ) VALUES (
                 ${record.registration || null},
                 ${record.icao24 || null},
@@ -106,13 +106,12 @@ serve(async (req) => {
                 ${record.latitude || null},
                 ${record.longitude || null},
                 ${record.timestamp || record.detection_timestamp || new Date().toISOString()},
-                ${record.taxonomy_tag || 'josiah_archive'},
+                ${'josiah_archive_import'},
                 ${record.operator || null},
                 ${record.callsign || null},
                 ${record.on_ground || false},
                 ${record.velocity || null},
-                ${record.heading || null},
-                'josiah_archive_import'
+                ${record.heading || null}
               )
               ON CONFLICT DO NOTHING
             `;
@@ -277,11 +276,11 @@ serve(async (req) => {
       }
 
       case "correlateWithExisting": {
-        // Run correlation between imported data and existing records
+        // Run correlation using taxonomy_tag instead of source_import
         const correlations = await sql`
           WITH new_flights AS (
             SELECT * FROM live_flight_detections_rows
-            WHERE source_import = 'josiah_archive_import'
+            WHERE taxonomy_tag = 'josiah_archive_import'
             AND detection_timestamp IS NOT NULL
           ),
           matching_biometrics AS (
@@ -320,9 +319,9 @@ serve(async (req) => {
       case "getImportStats": {
         const stats = await sql`
           SELECT 
-            (SELECT COUNT(*) FROM live_flight_detections_rows WHERE source_import = 'josiah_archive_import') as imported_flights,
+            (SELECT COUNT(*) FROM live_flight_detections_rows WHERE taxonomy_tag = 'josiah_archive_import') as imported_flights,
             (SELECT COUNT(*) FROM josiah_hypotheses) as hypotheses,
-            (SELECT COUNT(DISTINCT registration) FROM live_flight_detections_rows WHERE source_import = 'josiah_archive_import') as unique_aircraft
+            (SELECT COUNT(DISTINCT registration) FROM live_flight_detections_rows WHERE taxonomy_tag = 'josiah_archive_import') as unique_aircraft
         `;
 
         result = { success: true, stats: stats[0] };

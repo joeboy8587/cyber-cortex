@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { supabase } from '@/integrations/supabase/client';
+import JSZip from 'jszip';
 import { 
   Archive, 
   Upload, 
@@ -16,7 +17,8 @@ import {
   Brain,
   FileJson,
   Link,
-  Loader2
+  Loader2,
+  FileArchive
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -34,12 +36,18 @@ interface CorrelationResult {
   avg_time_diff: number;
 }
 
+interface ExtractedFile {
+  name: string;
+  content: string;
+}
+
 export const JosiahArchiveImporter = () => {
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [currentAction, setCurrentAction] = useState('');
   const [stats, setStats] = useState<ImportStats>({});
   const [correlations, setCorrelations] = useState<CorrelationResult[]>([]);
+  const [extractedFiles, setExtractedFiles] = useState<ExtractedFile[]>([]);
   const [importResults, setImportResults] = useState<{
     flights?: { inserted: number; skipped: number };
     biometrics?: { inserted: number; skipped: number };
@@ -47,14 +55,28 @@ export const JosiahArchiveImporter = () => {
     logs?: { inserted: number; skipped: number };
   }>({});
 
-  const parseJSONFile = async (file: File): Promise<any[]> => {
-    const text = await file.text();
+  const extractZipFile = async (file: File): Promise<ExtractedFile[]> => {
+    const zip = new JSZip();
+    const contents = await zip.loadAsync(file);
+    const extracted: ExtractedFile[] = [];
+    
+    for (const [filename, zipEntry] of Object.entries(contents.files)) {
+      if (!zipEntry.dir && (filename.endsWith('.json') || filename.endsWith('.txt'))) {
+        const content = await zipEntry.async('string');
+        extracted.push({ name: filename, content });
+      }
+    }
+    
+    return extracted;
+  };
+
+  const parseJSONContent = (content: string): any[] => {
     try {
-      const data = JSON.parse(text);
+      const data = JSON.parse(content);
       return Array.isArray(data) ? data : [data];
     } catch {
       // Try to parse as JSONL
-      return text.split('\n')
+      return content.split('\n')
         .filter(line => line.trim())
         .map(line => {
           try { return JSON.parse(line); } 
@@ -104,6 +126,7 @@ export const JosiahArchiveImporter = () => {
     setLoading(true);
     setProgress(0);
     setImportResults({});
+    setExtractedFiles([]);
 
     const categorizedData: Record<string, any[]> = {
       flights: [],
@@ -112,19 +135,36 @@ export const JosiahArchiveImporter = () => {
       logs: []
     };
 
+    const allExtracted: ExtractedFile[] = [];
+
     try {
-      // Parse all files
-      setCurrentAction('Parsing files...');
+      // Extract and parse all files
+      setCurrentAction('Extracting files...');
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        setProgress(Math.round((i / files.length) * 30));
+        setProgress(Math.round((i / files.length) * 20));
         
-        if (file.name.endsWith('.json') || file.name.endsWith('.txt')) {
-          const data = await parseJSONFile(file);
+        if (file.name.endsWith('.zip')) {
+          // Extract ZIP file
+          const extracted = await extractZipFile(file);
+          allExtracted.push(...extracted);
+          
+          for (const ef of extracted) {
+            const data = parseJSONContent(ef.content);
+            const { type, records } = categorizeData(ef.name, data);
+            categorizedData[type].push(...records);
+          }
+        } else if (file.name.endsWith('.json') || file.name.endsWith('.txt')) {
+          const content = await file.text();
+          allExtracted.push({ name: file.name, content });
+          const data = parseJSONContent(content);
           const { type, records } = categorizeData(file.name, data);
           categorizedData[type].push(...records);
         }
       }
+
+      setExtractedFiles(allExtracted);
+      setProgress(30);
 
       // Import flights
       if (categorizedData.flights.length > 0) {
@@ -244,14 +284,14 @@ export const JosiahArchiveImporter = () => {
       {/* Upload Section */}
       <div className="mb-6">
         <div className="border-2 border-dashed border-primary/30 rounded-lg p-6 text-center bg-background/50">
-          <Archive className="h-12 w-12 mx-auto mb-4 text-primary/60" />
+          <FileArchive className="h-12 w-12 mx-auto mb-4 text-primary/60" />
           <p className="text-sm text-muted-foreground mb-4">
-            Upload JSON files from Josiah OCR/NLP processing
+            Upload ZIP archives or JSON files from Josiah OCR/NLP processing
           </p>
           <input
             type="file"
             multiple
-            accept=".json,.txt"
+            accept=".json,.txt,.zip"
             onChange={handleFileUpload}
             className="hidden"
             id="archive-upload"
@@ -265,15 +305,37 @@ export const JosiahArchiveImporter = () => {
                 ) : (
                   <Upload className="h-4 w-4 mr-2" />
                 )}
-                Select Files
+                Select Files or ZIPs
               </span>
             </Button>
           </label>
           <p className="text-xs text-muted-foreground mt-2">
-            Supports: flight_detections, biometrics, hypotheses, logs (JSON)
+            Supports: .zip archives, flight_detections.json, biometrics.json, hypotheses.json
           </p>
         </div>
       </div>
+
+      {/* Extracted Files List */}
+      {extractedFiles.length > 0 && (
+        <div className="mb-4 p-3 bg-primary/5 border border-primary/20 rounded-lg">
+          <div className="flex items-center gap-2 mb-2">
+            <FileArchive className="h-4 w-4 text-primary" />
+            <span className="text-sm font-medium">Extracted {extractedFiles.length} files</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {extractedFiles.slice(0, 10).map((f, i) => (
+              <Badge key={i} variant="outline" className="text-xs">
+                {f.name.split('/').pop()}
+              </Badge>
+            ))}
+            {extractedFiles.length > 10 && (
+              <Badge variant="secondary" className="text-xs">
+                +{extractedFiles.length - 10} more
+              </Badge>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Progress */}
       {loading && (

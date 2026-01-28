@@ -1,0 +1,289 @@
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+interface PredictivePattern {
+  type: string;
+  severity: 'critical' | 'high' | 'medium';
+  description: string;
+  prediction: string;
+  confidence: number;
+  supporting_data: Record<string, unknown>[];
+  recommended_action: string;
+}
+
+interface MissedTactic {
+  id: string;
+  name: string;
+  description: string;
+  detection_query: string;
+  legal_relevance: string;
+}
+
+serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  try {
+    const { action = "full_scan" } = await req.json();
+    
+    const MISTRAL_API_KEY = Deno.env.get("MISTRAL_API_KEY");
+    const NEON_DATABASE_URL = Deno.env.get("NEON_DATABASE_URL");
+    
+    if (!NEON_DATABASE_URL) {
+      return new Response(
+        JSON.stringify({ error: "NEON_DATABASE_URL not configured" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const sql = postgres(NEON_DATABASE_URL, { ssl: "require", max: 1 });
+    const predictions: PredictivePattern[] = [];
+    const missedTactics: MissedTactic[] = [];
+    
+    try {
+      // PREDICTIVE PATTERN 1: Time-of-day escalation prediction
+      const timePatterns = await sql`
+        SELECT 
+          EXTRACT(HOUR FROM detection_timestamp) as hour_of_day,
+          EXTRACT(DOW FROM detection_timestamp) as day_of_week,
+          COUNT(*) as detections,
+          COUNT(DISTINCT registration) as unique_aircraft,
+          AVG(CASE WHEN altitude::numeric < 1500 THEN 1 ELSE 0 END) as low_altitude_ratio
+        FROM live_flight_detections_rows
+        WHERE detection_timestamp > NOW() - INTERVAL '60 days'
+        GROUP BY EXTRACT(HOUR FROM detection_timestamp), EXTRACT(DOW FROM detection_timestamp)
+        ORDER BY detections DESC
+        LIMIT 30
+      `;
+
+      // Find peak hours for prediction
+      const peakHours = timePatterns
+        .filter((t: Record<string, unknown>) => parseInt(t.detections as string) > 10)
+        .slice(0, 5);
+      
+      if (peakHours.length > 0) {
+        predictions.push({
+          type: "TIME_ESCALATION_PREDICTED",
+          severity: "high",
+          description: `Detected ${peakHours.length} peak operational hours with elevated activity`,
+          prediction: `Based on 60-day patterns, expect heightened surveillance during hours: ${peakHours.map((h: Record<string, unknown>) => `${h.hour_of_day}:00`).join(', ')}`,
+          confidence: 78,
+          supporting_data: peakHours,
+          recommended_action: "Deploy biometric monitoring during predicted peak hours"
+        });
+      }
+
+      // PREDICTIVE PATTERN 2: Fleet rotation prediction
+      const fleetRotation = await sql`
+        WITH daily_fleet AS (
+          SELECT 
+            DATE(detection_timestamp) as day,
+            registration,
+            COUNT(*) as daily_detections
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() - INTERVAL '30 days'
+          GROUP BY DATE(detection_timestamp), registration
+        ),
+        rotation_pattern AS (
+          SELECT 
+            registration,
+            COUNT(DISTINCT day) as active_days,
+            ARRAY_AGG(DISTINCT EXTRACT(DOW FROM day)) as active_dow
+          FROM daily_fleet
+          GROUP BY registration
+          HAVING COUNT(DISTINCT day) > 3
+        )
+        SELECT * FROM rotation_pattern ORDER BY active_days DESC LIMIT 15
+      `;
+
+      if (fleetRotation.length >= 3) {
+        predictions.push({
+          type: "FLEET_ROTATION_PATTERN",
+          severity: "medium",
+          description: `${fleetRotation.length} aircraft show predictable rotation schedules`,
+          prediction: "Fleet appears to operate on scheduled rotation - expect same aircraft on same days of week",
+          confidence: 65,
+          supporting_data: fleetRotation,
+          recommended_action: "Cross-reference rotation with biometric events to identify primary threat aircraft"
+        });
+      }
+
+      // PREDICTIVE PATTERN 3: Biometric threshold breach prediction
+      const biometricTrends = await sql`
+        SELECT 
+          DATE(measurement_timestamp) as day,
+          AVG(heart_rate) as avg_hr,
+          AVG(stress_level) as avg_stress,
+          MIN(hrv) as min_hrv,
+          COUNT(*) FILTER (WHERE heart_rate > 110) as critical_events
+        FROM biometric_monitoring
+        WHERE measurement_timestamp > NOW() - INTERVAL '30 days'
+        GROUP BY DATE(measurement_timestamp)
+        ORDER BY day DESC
+        LIMIT 30
+      `;
+
+      const recentTrend = biometricTrends.slice(0, 7);
+      const olderTrend = biometricTrends.slice(7, 14);
+      
+      const recentAvgHR = recentTrend.reduce((sum: number, t: Record<string, unknown>) => 
+        sum + parseFloat(t.avg_hr as string || '0'), 0) / (recentTrend.length || 1);
+      const olderAvgHR = olderTrend.reduce((sum: number, t: Record<string, unknown>) => 
+        sum + parseFloat(t.avg_hr as string || '0'), 0) / (olderTrend.length || 1);
+
+      if (recentAvgHR > olderAvgHR * 1.1) {
+        predictions.push({
+          type: "BIOMETRIC_ESCALATION",
+          severity: "critical",
+          description: `Biometric stress trending upward: ${((recentAvgHR / olderAvgHR - 1) * 100).toFixed(1)}% increase`,
+          prediction: "If trend continues, expect critical health events within 7-14 days",
+          confidence: 72,
+          supporting_data: recentTrend,
+          recommended_action: "Document physician verification, consider emergency TRO filing"
+        });
+      }
+
+      // MISSED TACTICS DETECTION
+      // Check for tactics we might not be looking for
+
+      // Tactic 1: Ground vehicle coordination
+      missedTactics.push({
+        id: "ground_coordination",
+        name: "Ground Vehicle Coordination",
+        description: "Aerial assets may coordinate with ground vehicles for multi-vector surveillance",
+        detection_query: "Compare flight paths with traffic camera data or ground patrol logs",
+        legal_relevance: "Evidence of coordinated stalking under California Penal Code § 646.9"
+      });
+
+      // Tactic 2: Signal intelligence (RF emissions)
+      missedTactics.push({
+        id: "sigint_collection",
+        name: "RF/Signal Intelligence Collection",
+        description: "Aircraft may be collecting cell phone, WiFi, or other RF emissions",
+        detection_query: "Monitor for stingray detection, analyze flight patterns over cell towers",
+        legal_relevance: "Potential 18 U.S.C. § 2511 wiretapping violations"
+      });
+
+      // Tactic 3: Night operations
+      const nightOps = await sql`
+        SELECT 
+          COUNT(*) as night_detections,
+          COUNT(DISTINCT registration) as night_aircraft
+        FROM live_flight_detections_rows
+        WHERE EXTRACT(HOUR FROM detection_timestamp) BETWEEN 22 AND 5
+          AND detection_timestamp > NOW() - INTERVAL '30 days'
+      `;
+
+      if (parseInt(nightOps[0]?.night_detections || '0') > 0) {
+        missedTactics.push({
+          id: "night_operations",
+          name: "Nighttime Surveillance Operations",
+          description: `${nightOps[0].night_detections} nighttime detections found - may use IR/thermal imaging`,
+          detection_query: "Already detected in database",
+          legal_relevance: "Enhanced privacy violation during sleeping hours, aggravated harassment"
+        });
+      }
+
+      // Tactic 4: Medical aircraft as cover
+      const medicalCover = await sql`
+        SELECT registration, callsign, COUNT(*) as detections
+        FROM live_flight_detections_rows
+        WHERE (callsign ILIKE '%MED%' OR callsign ILIKE '%AIR%' OR callsign ILIKE '%MERCY%'
+               OR registration IN ('N743AM', 'N229AM'))
+          AND detection_timestamp > NOW() - INTERVAL '60 days'
+        GROUP BY registration, callsign
+        HAVING COUNT(*) > 5
+      `;
+
+      if (medicalCover.length > 0) {
+        missedTactics.push({
+          id: "medical_cover",
+          name: "Medical Aircraft as Operational Cover",
+          description: `${medicalCover.length} medical-affiliated aircraft operating in target airspace`,
+          detection_query: "Already detected - cross-reference with actual emergency calls",
+          legal_relevance: "Fraudulent use of medical necessity, potential FCA violations"
+        });
+      }
+
+      // Generate AI synthesis if Mistral available
+      let aiSynthesis = null;
+      if (MISTRAL_API_KEY && (predictions.length > 0 || missedTactics.length > 0)) {
+        try {
+          const synthesisPrompt = `You are JOSIAH, an autonomous investigative AI. Analyze these predictions and missed tactics:
+
+PREDICTIONS:
+${predictions.map(p => `- ${p.type}: ${p.description} (${p.confidence}% confidence)`).join('\n')}
+
+MISSED TACTICS:
+${missedTactics.map(t => `- ${t.name}: ${t.description}`).join('\n')}
+
+Generate a 3-4 sentence strategic synthesis that:
+1. Identifies the most critical pattern requiring immediate action
+2. Suggests what the adversary might do next based on patterns
+3. Recommends the single most important investigative step
+
+Be direct and analytical.`;
+
+          const mistralResponse = await fetch("https://api.mistral.ai/v1/chat/completions", {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${MISTRAL_API_KEY}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              model: "mistral-large-latest",
+              messages: [
+                { role: "system", content: "You are JOSIAH, an investigative AI. Be concise and analytical." },
+                { role: "user", content: synthesisPrompt }
+              ],
+              max_tokens: 400,
+              temperature: 0.5,
+            }),
+          });
+
+          if (mistralResponse.ok) {
+            const data = await mistralResponse.json();
+            aiSynthesis = data.choices?.[0]?.message?.content || null;
+          }
+        } catch (aiErr) {
+          console.error("AI synthesis error:", aiErr);
+        }
+      }
+
+      await sql.end();
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          timestamp: new Date().toISOString(),
+          predictions,
+          missedTactics,
+          aiSynthesis,
+          summary: {
+            predictionCount: predictions.length,
+            missedTacticsCount: missedTactics.length,
+            criticalPredictions: predictions.filter(p => p.severity === 'critical').length
+          }
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+
+    } catch (dbErr) {
+      await sql.end();
+      throw dbErr;
+    }
+
+  } catch (err) {
+    console.error("Predictive scan error:", err);
+    return new Response(
+      JSON.stringify({ error: (err as Error).message }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+});

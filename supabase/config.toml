@@ -72,6 +72,9 @@ verify_jwt = false
 [functions.watchtower-agent]
 verify_jwt = false
 
+[functions.josiah-predictive-scan]
+verify_jwt = false
+
 [functions.josiah-archive-import]
 verify_jwt = false
 

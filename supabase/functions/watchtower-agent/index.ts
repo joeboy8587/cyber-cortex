@@ -47,21 +47,28 @@ serve(async (req) => {
     
     try {
       // 1. Check for invisible/masked aircraft (KCSO fleet with zero detections)
-      const maskedAircraft = await sql`
-        SELECT 
-          kf.tail_number as registration,
-          kf.model,
-          COALESCE(d.detection_count, 0) as detection_count,
-          d.last_seen
-        FROM kcso_fleet kf
-        LEFT JOIN (
-          SELECT registration, COUNT(*) as detection_count, MAX(detection_timestamp) as last_seen
-          FROM live_flight_detections_rows
-          GROUP BY registration
-        ) d ON d.registration = kf.tail_number
-        WHERE COALESCE(d.detection_count, 0) = 0
-           OR d.last_seen < NOW() - INTERVAL '30 days'
-      `;
+      // Note: kcso_fleet may be in Supabase, not Neon - handle gracefully
+      let maskedAircraft: any[] = [];
+      try {
+        maskedAircraft = await sql`
+          SELECT 
+            kf.tail_number as registration,
+            kf.model,
+            COALESCE(d.detection_count, 0) as detection_count,
+            d.last_seen
+          FROM kcso_fleet kf
+          LEFT JOIN (
+            SELECT registration, COUNT(*) as detection_count, MAX(detection_timestamp) as last_seen
+            FROM live_flight_detections_rows
+            GROUP BY registration
+          ) d ON d.registration = kf.tail_number
+          WHERE COALESCE(d.detection_count, 0) = 0
+             OR d.last_seen < NOW() - INTERVAL '30 days'
+        `;
+      } catch (fleetErr: any) {
+        // kcso_fleet table may not exist in Neon (it's in Supabase)
+        console.warn("kcso_fleet query skipped:", fleetErr.message);
+      }
 
       if (maskedAircraft.length > 0) {
         anomalies.push({

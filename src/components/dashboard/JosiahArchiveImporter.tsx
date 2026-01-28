@@ -70,52 +70,127 @@ export const JosiahArchiveImporter = () => {
     return extracted;
   };
 
-  const parseJSONContent = (content: string): any[] => {
+  const parseContent = (content: string, filename: string): any[] => {
+    const lowerName = filename.toLowerCase();
+    
+    // Try JSON first
     try {
       const data = JSON.parse(content);
+      console.log(`[IMPORTER] Parsed ${filename} as JSON:`, Array.isArray(data) ? data.length : 1, 'records');
       return Array.isArray(data) ? data : [data];
     } catch {
-      // Try to parse as JSONL
-      return content.split('\n')
-        .filter(line => line.trim())
-        .map(line => {
-          try { return JSON.parse(line); } 
-          catch { return null; }
-        })
-        .filter(Boolean);
+      // Not JSON - continue
     }
+    
+    // Try JSONL (JSON lines)
+    const jsonlLines = content.split('\n')
+      .filter(line => line.trim())
+      .map(line => {
+        try { return JSON.parse(line); } 
+        catch { return null; }
+      })
+      .filter(Boolean);
+    
+    if (jsonlLines.length > 0) {
+      console.log(`[IMPORTER] Parsed ${filename} as JSONL:`, jsonlLines.length, 'records');
+      return jsonlLines;
+    }
+    
+    // Parse plain text - extract structured data from text content
+    const lines = content.split('\n').filter(l => l.trim());
+    console.log(`[IMPORTER] Parsing ${filename} as TXT with ${lines.length} lines`);
+    
+    // Check if this looks like a timestamped log/reflection
+    const records: any[] = [];
+    let currentRecord: any = {};
+    
+    for (const line of lines) {
+      // Try to extract timestamp
+      const timestampMatch = line.match(/(\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2})/);
+      // Try to extract aircraft registration (N-numbers)
+      const registrationMatch = line.match(/\b(N\d{1,5}[A-Z]{0,2})\b/gi);
+      // Try to extract heart rate
+      const hrMatch = line.match(/(?:heart\s*rate|hr|bpm)[:\s]*(\d+)/i);
+      // Try to extract HRV
+      const hrvMatch = line.match(/(?:hrv)[:\s]*(\d+)/i);
+      // Try to extract altitude
+      const altMatch = line.match(/(?:alt(?:itude)?)[:\s]*(\d+)/i);
+      // Try to extract coordinates
+      const coordMatch = line.match(/(-?\d+\.?\d*)[,\s]+(-?\d+\.?\d*)/);
+      
+      if (timestampMatch || registrationMatch || hrMatch || hrvMatch) {
+        if (Object.keys(currentRecord).length > 0) {
+          records.push(currentRecord);
+        }
+        currentRecord = { content: line };
+        
+        if (timestampMatch) currentRecord.timestamp = timestampMatch[1];
+        if (registrationMatch) {
+          currentRecord.registration = registrationMatch[0];
+          currentRecord.aircraft = registrationMatch[0];
+        }
+        if (hrMatch) currentRecord.heart_rate = parseInt(hrMatch[1]);
+        if (hrvMatch) currentRecord.hrv = parseInt(hrvMatch[1]);
+        if (altMatch) currentRecord.altitude = parseInt(altMatch[1]);
+        if (coordMatch) {
+          currentRecord.latitude = parseFloat(coordMatch[1]);
+          currentRecord.longitude = parseFloat(coordMatch[2]);
+        }
+      } else if (Object.keys(currentRecord).length > 0) {
+        currentRecord.content = (currentRecord.content || '') + '\n' + line;
+      } else {
+        // Line with no clear structure - treat as reflection/log content
+        currentRecord = { content: line, reflection: line };
+      }
+    }
+    
+    // Don't forget last record
+    if (Object.keys(currentRecord).length > 0) {
+      records.push(currentRecord);
+    }
+    
+    console.log(`[IMPORTER] Extracted ${records.length} records from TXT`);
+    if (records.length > 0) {
+      console.log(`[IMPORTER] Sample record:`, records[0]);
+    }
+    
+    return records.length > 0 ? records : lines.map(l => ({ content: l, reflection: l }));
   };
 
   const categorizeData = (filename: string, data: any[]): { type: string; records: any[] } => {
     const lowerName = filename.toLowerCase();
+    console.log(`[IMPORTER] Categorizing ${filename}: ${data.length} records`);
     
-    if (lowerName.includes('flight') || lowerName.includes('detection')) {
+    if (lowerName.includes('flight') || lowerName.includes('detection') || lowerName.includes('radar') || lowerName.includes('adsb')) {
       return { type: 'flights', records: data };
     }
-    if (lowerName.includes('biometric') || lowerName.includes('heart') || lowerName.includes('hrv')) {
+    if (lowerName.includes('biometric') || lowerName.includes('heart') || lowerName.includes('hrv') || lowerName.includes('health')) {
       return { type: 'biometrics', records: data };
     }
-    if (lowerName.includes('hypothesis') || lowerName.includes('pattern')) {
+    if (lowerName.includes('hypothesis') || lowerName.includes('pattern') || lowerName.includes('analysis')) {
       return { type: 'hypotheses', records: data };
     }
-    if (lowerName.includes('log') || lowerName.includes('reflection')) {
+    if (lowerName.includes('log') || lowerName.includes('reflection') || lowerName.includes('josiah') || lowerName.includes('note')) {
       return { type: 'logs', records: data };
     }
     
     // Auto-detect based on content
     if (data.length > 0) {
       const sample = data[0];
-      if (sample.registration || sample.icao24 || sample.altitude) {
+      console.log(`[IMPORTER] Auto-detecting type from sample:`, sample);
+      
+      if (sample.registration || sample.icao24 || sample.altitude || sample.callsign) {
         return { type: 'flights', records: data };
       }
-      if (sample.heart_rate || sample.hrv || sample.stress_level) {
+      if (sample.heart_rate || sample.hrv || sample.stress_level || sample.bpm) {
         return { type: 'biometrics', records: data };
       }
-      if (sample.hypothesis || sample.confidence || sample.pattern_type) {
+      if (sample.hypothesis || sample.confidence || sample.pattern_type || sample.threat_level) {
         return { type: 'hypotheses', records: data };
       }
     }
     
+    // Default to logs for unrecognized content
     return { type: 'logs', records: data };
   };
 
@@ -150,14 +225,14 @@ export const JosiahArchiveImporter = () => {
           allExtracted.push(...extracted);
           
           for (const ef of extracted) {
-            const data = parseJSONContent(ef.content);
+            const data = parseContent(ef.content, ef.name);
             const { type, records } = categorizeData(ef.name, data);
             categorizedData[type].push(...records);
           }
         } else if (file.name.endsWith('.json') || file.name.endsWith('.txt')) {
           const content = await file.text();
           allExtracted.push({ name: file.name, content });
-          const data = parseJSONContent(content);
+          const data = parseContent(content, file.name);
           const { type, records } = categorizeData(file.name, data);
           categorizedData[type].push(...records);
         }

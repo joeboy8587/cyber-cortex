@@ -6,15 +6,16 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
 import { 
   AlertTriangle, Bell, BellOff, Radio, Radar, Shield, 
-  Activity, Eye, EyeOff, RefreshCw, Settings, Zap,
-  Plane, MapPin, Clock, TrendingUp
+  Activity, Eye, EyeOff, RefreshCw, Zap,
+  Plane, MapPin, Clock, TrendingUp, Brain, Rocket
 } from "lucide-react";
 import { useNeonDatabase } from "@/hooks/useNeonDatabase";
+import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
 interface Alert {
   id: string;
-  type: "critical" | "warning" | "info" | "anomaly";
+  type: "critical" | "warning" | "info" | "anomaly" | "ai_hypothesis";
   source: string;
   message: string;
   timestamp: Date;
@@ -31,6 +32,21 @@ interface AlertChannel {
   lastTriggered?: Date;
 }
 
+interface WatchtowerScanResult {
+  anomalies: Array<{
+    type: string;
+    severity: string;
+    description: string;
+    count: number;
+    aircraft?: string[];
+  }>;
+  leads: Array<{
+    priority: string;
+    question: string;
+  }>;
+  aiHypothesis: string | null;
+}
+
 export function WatchtowerAlertsHub() {
   const { customQuery, isLoading } = useNeonDatabase();
   const [alerts, setAlerts] = useState<Alert[]>([]);
@@ -39,18 +55,95 @@ export function WatchtowerAlertsHub() {
     { id: "biometric", name: "Biometric Anomalies", enabled: true, icon: <Activity className="w-4 h-4" />, alertCount: 0 },
     { id: "aircraft", name: "Aircraft Registry", enabled: true, icon: <Plane className="w-4 h-4" />, alertCount: 0 },
     { id: "pattern", name: "Pattern Correlation", enabled: true, icon: <TrendingUp className="w-4 h-4" />, alertCount: 0 },
-    { id: "geofence", name: "Geofence Breaches", enabled: false, icon: <MapPin className="w-4 h-4" />, alertCount: 0 },
+    { id: "ai_agent", name: "Mistral AI Agent", enabled: true, icon: <Brain className="w-4 h-4" />, alertCount: 0 },
     { id: "realtime", name: "Real-Time Feed", enabled: true, icon: <Radio className="w-4 h-4" />, alertCount: 0 },
   ]);
   const [isPulsing, setIsPulsing] = useState(true);
   const [showAcknowledged, setShowAcknowledged] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [aiHypothesis, setAiHypothesis] = useState<string | null>(null);
+
+  const runWatchtowerAgent = useCallback(async () => {
+    try {
+      const { data, error } = await supabase.functions.invoke('watchtower-agent', {
+        body: { action: 'scan' }
+      });
+
+      if (error) throw error;
+
+      const result = data as WatchtowerScanResult;
+      const newAlerts: Alert[] = [];
+
+      // Convert anomalies to alerts
+      if (result?.anomalies) {
+        result.anomalies.forEach((anomaly, index) => {
+          newAlerts.push({
+            id: `anomaly-${Date.now()}-${index}`,
+            type: anomaly.severity === 'critical' ? 'critical' : 
+                  anomaly.severity === 'high' ? 'warning' : 'anomaly',
+            source: 'Watchtower AI',
+            message: `${anomaly.type}: ${anomaly.description}`,
+            timestamp: new Date(),
+            acknowledged: false,
+            metadata: { ...anomaly }
+          });
+        });
+      }
+
+      // Add AI hypothesis as alert
+      if (result?.aiHypothesis) {
+        setAiHypothesis(result.aiHypothesis);
+        newAlerts.push({
+          id: `ai-hyp-${Date.now()}`,
+          type: 'ai_hypothesis',
+          source: 'Mistral AI',
+          message: result.aiHypothesis,
+          timestamp: new Date(),
+          acknowledged: false
+        });
+      }
+
+      // Add leads as informational alerts
+      if (result?.leads) {
+        result.leads.forEach((lead, index) => {
+          newAlerts.push({
+            id: `lead-${Date.now()}-${index}`,
+            type: lead.priority === 'critical' ? 'critical' : 'info',
+            source: 'Investigative Lead',
+            message: lead.question,
+            timestamp: new Date(),
+            acknowledged: false
+          });
+        });
+      }
+
+      setAlerts(prev => [...newAlerts, ...prev.slice(0, 50)]);
+      
+      // Update AI Agent channel count
+      setChannels(prev => prev.map(ch => 
+        ch.id === 'ai_agent' 
+          ? { ...ch, alertCount: newAlerts.length, lastTriggered: new Date() }
+          : ch
+      ));
+
+      if (newAlerts.length > 0) {
+        toast.success(`Watchtower Agent: ${newAlerts.length} findings`, {
+          description: result.aiHypothesis?.slice(0, 100) || 'Scan complete'
+        });
+      }
+
+      return result;
+    } catch (err) {
+      console.error('Watchtower agent error:', err);
+      return null;
+    }
+  }, []);
 
   const loadAlerts = useCallback(async () => {
     setRefreshing(true);
     try {
       // Fetch ALL anomalies from multiple sources - no time filter to show all data
-      const [flightAlerts, biometricAlerts, patternAlerts] = await Promise.all([
+      const [flightAlerts, biometricAlerts] = await Promise.all([
         customQuery(`
           SELECT id, callsign, taxonomy_tag, detection_timestamp, altitude, speed
           FROM live_flight_detections_rows 
@@ -78,9 +171,7 @@ export function WatchtowerAlertsHub() {
           FROM biometric_monitoring 
           ORDER BY measurement_timestamp DESC
           LIMIT 30
-        `).catch(() => []),
-        // Pattern recognition - gracefully return empty if table doesn't exist
-        Promise.resolve([])
+        `).catch(() => [])
       ]);
 
       const newAlerts: Alert[] = [];
@@ -115,38 +206,24 @@ export function WatchtowerAlertsHub() {
         });
       }
 
-      // Process pattern alerts
-      if (Array.isArray(patternAlerts)) {
-        patternAlerts.forEach((p: Record<string, unknown>) => {
-          newAlerts.push({
-            id: `pattern-${p.id}`,
-            type: "anomaly",
-            source: "Pattern Engine",
-            message: `${p.pattern_type} detected (${((p.confidence_score as number) * 100).toFixed(1)}% confidence)`,
-            timestamp: new Date(p.detected_at as string),
-            acknowledged: false,
-            metadata: p
-          });
-        });
-      }
-
       // Sort by timestamp
       newAlerts.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-      setAlerts(newAlerts);
+      setAlerts(prev => {
+        // Merge with existing AI alerts
+        const aiAlerts = prev.filter(a => a.source === 'Watchtower AI' || a.source === 'Mistral AI' || a.source === 'Investigative Lead');
+        return [...aiAlerts, ...newAlerts].sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime()).slice(0, 100);
+      });
 
       // Update channel counts
       setChannels(prev => prev.map(ch => ({
         ...ch,
-        alertCount: newAlerts.filter(a => 
-          (ch.id === "xxb_mlat" && a.source === "XXB MLAT") ||
-          (ch.id === "biometric" && a.source === "Biometric") ||
-          (ch.id === "pattern" && a.source === "Pattern Engine")
-        ).length,
+        alertCount: ch.id === 'xxb_mlat' ? newAlerts.filter(a => a.source === "XXB MLAT").length :
+                    ch.id === 'biometric' ? newAlerts.filter(a => a.source === "Biometric").length :
+                    ch.alertCount,
         lastTriggered: newAlerts.find(a => 
           (ch.id === "xxb_mlat" && a.source === "XXB MLAT") ||
-          (ch.id === "biometric" && a.source === "Biometric") ||
-          (ch.id === "pattern" && a.source === "Pattern Engine")
-        )?.timestamp
+          (ch.id === "biometric" && a.source === "Biometric")
+        )?.timestamp || ch.lastTriggered
       })));
 
     } catch (err) {
@@ -158,9 +235,14 @@ export function WatchtowerAlertsHub() {
 
   useEffect(() => {
     loadAlerts();
-    const interval = setInterval(loadAlerts, 30000); // Refresh every 30 seconds
+    runWatchtowerAgent(); // Run AI agent on mount
+    
+    const interval = setInterval(() => {
+      loadAlerts();
+    }, 30000); // Refresh every 30 seconds
+    
     return () => clearInterval(interval);
-  }, [loadAlerts]);
+  }, [loadAlerts, runWatchtowerAgent]);
 
   const toggleChannel = (channelId: string) => {
     setChannels(prev => prev.map(ch => 
@@ -185,7 +267,8 @@ export function WatchtowerAlertsHub() {
       case "critical": return "bg-destructive/20 text-destructive border-destructive/50";
       case "warning": return "bg-warning/20 text-warning border-warning/50";
       case "anomaly": return "bg-accent/20 text-accent border-accent/50";
-      default: return "bg-primary/20 text-primary border-primary/50";
+      case "ai_hypothesis": return "bg-primary/20 text-primary border-primary/50";
+      default: return "bg-muted/20 text-muted-foreground border-muted/50";
     }
   };
 
@@ -194,12 +277,20 @@ export function WatchtowerAlertsHub() {
       case "critical": return <AlertTriangle className="w-4 h-4" />;
       case "warning": return <Shield className="w-4 h-4" />;
       case "anomaly": return <Zap className="w-4 h-4" />;
+      case "ai_hypothesis": return <Rocket className="w-4 h-4" />;
       default: return <Bell className="w-4 h-4" />;
     }
   };
 
   const filteredAlerts = alerts.filter(a => 
-    showAcknowledged || !a.acknowledged
+    (showAcknowledged || !a.acknowledged) &&
+    channels.find(ch => 
+      (ch.id === 'xxb_mlat' && a.source === 'XXB MLAT') ||
+      (ch.id === 'biometric' && a.source === 'Biometric') ||
+      (ch.id === 'ai_agent' && (a.source === 'Watchtower AI' || a.source === 'Mistral AI' || a.source === 'Investigative Lead')) ||
+      (ch.id === 'pattern' && a.source === 'Pattern Engine') ||
+      ch.enabled
+    )?.enabled !== false
   );
   
   const criticalCount = alerts.filter(a => a.type === "critical" && !a.acknowledged).length;
@@ -211,6 +302,16 @@ export function WatchtowerAlertsHub() {
       variant={criticalCount > 0 ? "threat" : "default"}
       headerActions={
         <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={runWatchtowerAgent}
+            disabled={refreshing}
+            className="h-6 px-2"
+            title="Run Mistral AI Agent"
+          >
+            <Brain className="w-3 h-3" />
+          </Button>
           <Button
             variant="ghost"
             size="sm"
@@ -235,6 +336,17 @@ export function WatchtowerAlertsHub() {
       }
     >
       <div className="p-4 space-y-4">
+        {/* AI Hypothesis Banner */}
+        {aiHypothesis && (
+          <div className="p-3 rounded-lg border border-primary/30 bg-primary/10">
+            <div className="flex items-center gap-2 mb-2">
+              <Rocket className="w-4 h-4 text-primary" />
+              <span className="text-xs font-medium text-primary">Mistral AI Hypothesis</span>
+            </div>
+            <p className="text-sm text-muted-foreground">{aiHypothesis}</p>
+          </div>
+        )}
+
         {/* Channel Controls */}
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
           {channels.map((channel) => (
@@ -347,7 +459,7 @@ export function WatchtowerAlertsHub() {
         <div className="flex items-center justify-between text-xs text-muted-foreground border-t border-border pt-2">
           <span className="flex items-center gap-1">
             <div className={`w-2 h-2 rounded-full ${isPulsing ? "bg-success animate-pulse" : "bg-muted"}`} />
-            {isPulsing ? "Live monitoring active" : "Monitoring paused"}
+            {isPulsing ? "Live monitoring + Mistral AI active" : "Monitoring paused"}
           </span>
           <span>Last updated: {new Date().toLocaleTimeString()}</span>
         </div>

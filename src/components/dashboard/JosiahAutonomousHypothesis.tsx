@@ -271,7 +271,7 @@ export function JosiahAutonomousHypothesis() {
 
       const template = hypothesisTemplates[templateKey];
       
-      const { data, error } = await supabase.functions.invoke('neon-query', {
+       const { data, error } = await supabase.functions.invoke('neon-query', {
         body: { action: 'customQuery', query: template.query }
       });
 
@@ -280,7 +280,12 @@ export function JosiahAutonomousHypothesis() {
         throw error;
       }
 
-      const results = data?.data || [];
+       // neon-query returns either:
+       // 1) an array of rows (normal SELECT)
+       // 2) an object like { data: [], nonFatal: true, ... } (handled error)
+       const results: Record<string, unknown>[] = Array.isArray(data)
+         ? data
+         : (Array.isArray((data as any)?.data) ? (data as any).data : []);
       const evidenceCount = results.length;
       
       // Improved scoring: use minResults as denominator for proper scaling

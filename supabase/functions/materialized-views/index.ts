@@ -248,6 +248,41 @@ serve(async (req) => {
         break;
       }
 
+      case "createPerformanceIndexes": {
+        console.log("Creating performance indexes...");
+        
+        const indexResults: string[] = [];
+        
+        const indexes = [
+          `CREATE INDEX IF NOT EXISTS idx_flights_timestamp ON live_flight_detections_rows (detection_timestamp DESC)`,
+          `CREATE INDEX IF NOT EXISTS idx_flights_registration ON live_flight_detections_rows (registration)`,
+          `CREATE INDEX IF NOT EXISTS idx_flights_icao ON live_flight_detections_rows (icao_code)`,
+          `CREATE INDEX IF NOT EXISTS idx_flights_taxonomy ON live_flight_detections_rows (taxonomy_tag)`,
+          `CREATE INDEX IF NOT EXISTS idx_flights_flagged ON live_flight_detections_rows (flagged) WHERE flagged = true`,
+          `CREATE INDEX IF NOT EXISTS idx_flights_geo ON live_flight_detections_rows (latitude, longitude)`,
+          `CREATE INDEX IF NOT EXISTS idx_bio_timestamp ON biometric_monitoring (measurement_timestamp DESC)`,
+          `CREATE INDEX IF NOT EXISTS idx_bio_heart_rate ON biometric_monitoring (heart_rate)`,
+          `CREATE INDEX IF NOT EXISTS idx_bio_stress ON biometric_monitoring (stress_level)`,
+          `CREATE INDEX IF NOT EXISTS idx_josiah_created ON josiah_reflections_rows (created_at DESC)`,
+        ];
+
+        for (const idxSql of indexes) {
+          try {
+            await sql.unsafe(idxSql);
+            const idxName = idxSql.split(' ')[5];
+            indexResults.push(`✓ ${idxName}`);
+          } catch (e) {
+            indexResults.push(`✗ ${(e as Error).message}`);
+          }
+        }
+
+        result = { 
+          created: indexResults.filter(r => r.startsWith('✓')).length,
+          results: indexResults 
+        };
+        break;
+      }
+
       default:
         throw new Error(`Unknown action: ${action}`);
     }

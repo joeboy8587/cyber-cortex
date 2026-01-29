@@ -264,7 +264,8 @@ serve(async (req) => {
       case 'insertRecord': {
         const allowedTables = ['aircraft_registry_enriched', 'operator_profiles_enriched', 'flagged_aircraft_rows_rows', 
           'criminal_enterprise_command_structure', 'live_flight_detections_rows', 'biometric_monitoring', 
-          'ocr_aircraft_holding_patterns', 'daily_event_imports', 'josiah_reflections_rows', 'pattern_recognition_enriched'];
+          'ocr_aircraft_holding_patterns', 'daily_event_imports', 'josiah_reflections_rows', 'pattern_recognition_enriched',
+          'legal_findings', 'forensic_violation_citations', 'legal_intel_extractions', 'aircraft_violations'];
         
         if (!table || !allowedTables.includes(table)) throw new Error(`Insert not allowed for table: ${table}`);
         if (!data || typeof data !== 'object') throw new Error('Data object is required');
@@ -284,7 +285,8 @@ serve(async (req) => {
       case 'batchInsert': {
         const allowedTables = ['aircraft_registry_enriched', 'operator_profiles_enriched', 'flagged_aircraft_rows_rows', 
           'criminal_enterprise_command_structure', 'live_flight_detections_rows', 'biometric_monitoring', 
-          'ocr_aircraft_holding_patterns', 'daily_event_imports', 'josiah_reflections_rows', 'pattern_recognition_enriched'];
+          'ocr_aircraft_holding_patterns', 'daily_event_imports', 'josiah_reflections_rows', 'pattern_recognition_enriched',
+          'legal_findings', 'forensic_violation_citations', 'legal_intel_extractions', 'aircraft_violations'];
 
         if (!table || !allowedTables.includes(table)) throw new Error(`Batch insert not allowed for table: ${table}`);
         if (!Array.isArray(data) || data.length === 0) throw new Error('Data array is required');

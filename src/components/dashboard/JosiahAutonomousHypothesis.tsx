@@ -112,7 +112,7 @@ export function JosiahAutonomousHypothesis() {
   });
 
   // Hypothesis templates for automated validation
-  const hypothesisTemplates: Record<string, { query: string; threshold: number; legal_code: string }> = {
+  const hypothesisTemplates: Record<string, { query: string; threshold: number; legal_code: string; minResults: number }> = {
     'aircraft_biometric_correlation': {
       query: `
         SELECT 
@@ -126,11 +126,12 @@ export function JosiahAutonomousHypothesis() {
              AND lfdr.detection_timestamp + INTERVAL '5 minutes'
         WHERE bm.heart_rate > 90 OR bm.stress_level > 60
         GROUP BY lfdr.registration
-        HAVING COUNT(*) > 3
+        HAVING COUNT(*) > 1
         ORDER BY correlation_count DESC
-        LIMIT 20
+        LIMIT 30
       `,
-      threshold: 0.7,
+      threshold: 0.3,
+      minResults: 1,
       legal_code: '42 U.S.C. § 1983 - Deprivation of Rights'
     },
     'fleet_convergence_pattern': {
@@ -146,7 +147,8 @@ export function JosiahAutonomousHypothesis() {
         ORDER BY unique_aircraft DESC
         LIMIT 30
       `,
-      threshold: 0.8,
+      threshold: 0.3,
+      minResults: 5,
       legal_code: '18 U.S.C. § 1962 - RICO Violations'
     },
     'invisible_fleet_detection': {
@@ -163,7 +165,8 @@ export function JosiahAutonomousHypothesis() {
         ) d ON d.registration = kf.tail_number
         WHERE COALESCE(d.detection_count, 0) = 0
       `,
-      threshold: 0.9,
+      threshold: 0.5,
+      minResults: 1,
       legal_code: '49 U.S.C. § 46306 - Registration Fraud'
     },
     'timing_pattern_analysis': {
@@ -173,10 +176,12 @@ export function JosiahAutonomousHypothesis() {
           COUNT(*) as detection_count,
           COUNT(DISTINCT registration) as unique_aircraft
         FROM live_flight_detections_rows
+        WHERE detection_timestamp > NOW() - INTERVAL '90 days'
         GROUP BY EXTRACT(HOUR FROM detection_timestamp)
         ORDER BY detection_count DESC
       `,
-      threshold: 0.6,
+      threshold: 0.2,
+      minResults: 10,
       legal_code: 'Evidence of Operational Schedule'
     }
   };
@@ -243,35 +248,57 @@ export function JosiahAutonomousHypothesis() {
     setValidatingLead(lead.id);
     
     try {
-      // Determine which template to use based on lead question
+      // Determine which template to use based on lead question - improved matching
+      const questionLower = lead.question.toLowerCase();
       let templateKey = 'aircraft_biometric_correlation';
-      if (lead.question.toLowerCase().includes('time') || lead.question.toLowerCase().includes('pattern')) {
+      
+      // More specific matching for better template selection
+      if (questionLower.includes('time pattern') || questionLower.includes('when') || 
+          questionLower.includes('schedule') || questionLower.includes('intensif')) {
         templateKey = 'timing_pattern_analysis';
-      } else if (lead.question.toLowerCase().includes('converge') || lead.question.toLowerCase().includes('fleet')) {
+      } else if (questionLower.includes('aircraft type') || questionLower.includes('biometric stress') ||
+                 questionLower.includes('correlate') || questionLower.includes('heart rate')) {
+        templateKey = 'aircraft_biometric_correlation';
+      } else if (questionLower.includes('converge') || questionLower.includes('fleet') ||
+                 questionLower.includes('coordination')) {
         templateKey = 'fleet_convergence_pattern';
-      } else if (lead.question.toLowerCase().includes('invisible') || lead.question.toLowerCase().includes('adsb')) {
+      } else if (questionLower.includes('invisible') || questionLower.includes('adsb') ||
+                 questionLower.includes('masked') || questionLower.includes('hidden')) {
         templateKey = 'invisible_fleet_detection';
       }
 
+      console.log(`Validating lead with template: ${templateKey} for question: ${lead.question}`);
+
       const template = hypothesisTemplates[templateKey];
       
-      const { data } = await supabase.functions.invoke('neon-query', {
+      const { data, error } = await supabase.functions.invoke('neon-query', {
         body: { action: 'customQuery', query: template.query }
       });
 
+      if (error) {
+        console.error('Query error:', error);
+        throw error;
+      }
+
       const results = data?.data || [];
       const evidenceCount = results.length;
-      const correlationScore = Math.min(evidenceCount / 10, 1);
+      
+      // Improved scoring: use minResults as denominator for proper scaling
+      const minExpected = template.minResults || 5;
+      const correlationScore = Math.min(evidenceCount / (minExpected * 2), 1);
+      const isValidated = evidenceCount >= minExpected && correlationScore >= template.threshold;
+
+      console.log(`Validation results: ${evidenceCount} records, score: ${(correlationScore * 100).toFixed(1)}%, validated: ${isValidated}`);
 
       // Update lead with validation results
       setLeads(prev => prev.map(l => {
         if (l.id === lead.id) {
           return {
             ...l,
-            status: correlationScore >= template.threshold ? 'validated' : 'investigating',
+            status: isValidated ? 'validated' : 'investigating',
             validation_result: {
               score: correlationScore,
-              evidence: results.slice(0, 5).map((r: Record<string, unknown>) => JSON.stringify(r)),
+              evidence: results.slice(0, 10).map((r: Record<string, unknown>) => JSON.stringify(r)),
               timestamp: new Date().toISOString()
             }
           };
@@ -280,17 +307,18 @@ export function JosiahAutonomousHypothesis() {
       }));
 
       // Generate hypothesis if validated
-      if (correlationScore >= template.threshold) {
+      if (isValidated) {
         const newHypothesis: Hypothesis = {
           id: `hyp-validated-${Date.now()}`,
           title: `Validated: ${lead.potential_finding}`,
           category: templateKey.includes('fleet') ? 'fleet_coordination' : 
-                    templateKey.includes('biometric') ? 'biometric_causation' : 'rico_pattern',
+                    templateKey.includes('biometric') || templateKey.includes('aircraft') ? 'biometric_causation' : 
+                    templateKey.includes('timing') ? 'temporal_anomaly' : 'rico_pattern',
           confidence: Math.round(correlationScore * 100),
           evidence_count: evidenceCount,
           status: 'validated',
           summary: `Lead validation confirmed: ${lead.question} Evidence shows ${evidenceCount} supporting data points with ${(correlationScore * 100).toFixed(1)}% correlation strength.`,
-          supporting_evidence: results.slice(0, 5).map((r: Record<string, unknown>) => JSON.stringify(r)),
+          supporting_evidence: results.slice(0, 8).map((r: Record<string, unknown>) => JSON.stringify(r)),
           contrary_evidence: ['Statistical variation possible', 'Additional verification recommended'],
           generated_at: new Date().toISOString(),
           last_updated: new Date().toISOString(),
@@ -302,15 +330,15 @@ export function JosiahAutonomousHypothesis() {
         setHypotheses(prev => [newHypothesis, ...prev]);
 
         // Auto-file to legal if enabled
-        if (config.auto_file_to_legal && correlationScore >= 0.8) {
+        if (config.auto_file_to_legal && correlationScore >= 0.5) {
           toast.success(`Hypothesis auto-filed to Legal Export Queue`, {
             description: `Evidence packet ready for ${template.legal_code}`
           });
         }
 
-        toast.success(`Lead validated with ${(correlationScore * 100).toFixed(0)}% confidence`);
+        toast.success(`Lead validated with ${(correlationScore * 100).toFixed(0)}% confidence - ${evidenceCount} evidence points found`);
       } else {
-        toast.info(`Lead requires more data (${(correlationScore * 100).toFixed(0)}% confidence)`);
+        toast.info(`Lead analysis: ${evidenceCount} evidence points found (${(correlationScore * 100).toFixed(0)}% confidence)`);
       }
 
     } catch (err) {
@@ -319,7 +347,7 @@ export function JosiahAutonomousHypothesis() {
     } finally {
       setValidatingLead(null);
     }
-  }, [config.auto_file_to_legal]);
+  }, [config.auto_file_to_legal, hypothesisTemplates]);
 
   const runAutonomousScan = useCallback(async () => {
     if (loading) return;

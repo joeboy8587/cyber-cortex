@@ -90,11 +90,27 @@ serve(async (req) => {
       }
 
       // 2. Phantom biometric events (stress spikes with no aircraft)
+      // CRITICAL FIX v2: Only count phantoms during "monitored periods" where
+      // we have sufficient flight data (>50 flights that day) to ensure correlation validity
       const phantomEvents = await sql`
-        WITH bio_spikes AS (
+        WITH daily_flight_coverage AS (
+          -- Calculate daily flight density to identify "monitored" vs "gap" periods
+          SELECT 
+            DATE(detection_timestamp) as flight_date,
+            COUNT(*) as daily_flights
+          FROM live_flight_detections_rows
+          GROUP BY DATE(detection_timestamp)
+        ),
+        monitored_dates AS (
+          -- Only dates with >50 flights are considered "actively monitored"
+          SELECT flight_date FROM daily_flight_coverage WHERE daily_flights >= 50
+        ),
+        bio_spikes AS (
           SELECT id, measurement_timestamp, heart_rate, hrv, stress_level
           FROM biometric_monitoring
           WHERE (heart_rate > 100 OR hrv < 40 OR stress_level > 70)
+            -- Only include biometrics on monitored dates
+            AND DATE(measurement_timestamp) IN (SELECT flight_date FROM monitored_dates)
         ),
         with_flights AS (
           SELECT 
@@ -113,20 +129,50 @@ serve(async (req) => {
         SELECT 
           COUNT(*) FILTER (WHERE nearby_aircraft = 0) as phantom_count,
           COUNT(*) FILTER (WHERE nearby_aircraft > 0) as correlated_count,
-          COUNT(*) as total_count
+          COUNT(*) as total_count,
+          (SELECT COUNT(*) FROM biometric_monitoring WHERE (heart_rate > 100 OR hrv < 40 OR stress_level > 70)) as total_bio_spikes,
+          (SELECT COUNT(DISTINCT flight_date) FROM daily_flight_coverage WHERE daily_flights >= 50) as monitored_days,
+          (SELECT COUNT(DISTINCT DATE(measurement_timestamp)) FROM biometric_monitoring 
+           WHERE (heart_rate > 100 OR hrv < 40 OR stress_level > 70)
+             AND DATE(measurement_timestamp) NOT IN (SELECT flight_date FROM monitored_dates)) as gap_days
         FROM with_flights
       `;
 
-      const phantomStats = phantomEvents[0] || { phantom_count: 0, correlated_count: 0, total_count: 0 };
+      const phantomStats = phantomEvents[0] || { phantom_count: 0, correlated_count: 0, total_count: 0, total_bio_spikes: 0, monitored_days: 0, gap_days: 0 };
       const phantomCount = parseInt(phantomStats.phantom_count || '0');
+      const correlatedCount = parseInt(phantomStats.correlated_count || '0');
       const totalCount = parseInt(phantomStats.total_count || '0');
+      const totalBioSpikes = parseInt(phantomStats.total_bio_spikes || '0');
+      const monitoredDays = parseInt(phantomStats.monitored_days || '0');
+      const gapDays = parseInt(phantomStats.gap_days || '0');
       const phantomRatio = totalCount > 0 ? (phantomCount / totalCount) * 100 : 0;
 
-      if (phantomCount > 0) {
+      // Report data coverage gap if significant
+      if (gapDays > 0 && totalBioSpikes > totalCount) {
+        const gapCount = totalBioSpikes - totalCount;
+        anomalies.push({
+          type: "DATA_COVERAGE_GAP",
+          severity: gapCount > 100 ? "high" : "medium",
+          description: `${gapCount} biometric stress events on ${gapDays} days with insufficient flight data (<50 flights/day) - cannot verify correlations`,
+          count: gapCount,
+          timestamp: new Date().toISOString()
+        });
+
+        leads.push({
+          id: `lead-gap-${Date.now()}`,
+          priority: "high",
+          question: `Can we backfill flight data for ${gapDays} days missing coverage to verify ${gapCount} unanalyzed stress events?`,
+          data_needed: "Historical ADS-B data from FlightAware, FlightRadar24, or OpenSky archives",
+          potential_finding: "Hidden correlations currently masked by data gaps"
+        });
+      }
+
+      // Only flag PHANTOM_STRESS during actively monitored periods
+      if (phantomCount > 0 && monitoredDays > 0) {
         anomalies.push({
           type: "PHANTOM_STRESS",
-          severity: phantomRatio > 30 ? "critical" : "high",
-          description: `${phantomCount} stress events (${phantomRatio.toFixed(1)}%) with NO visible aircraft - suggests stealth operations`,
+          severity: phantomRatio > 30 ? "critical" : (phantomRatio > 10 ? "high" : "medium"),
+          description: `${phantomCount}/${totalCount} stress events (${phantomRatio.toFixed(1)}%) during MONITORED periods (${monitoredDays} days with 50+ flights) had NO visible aircraft - potential stealth ops`,
           count: phantomCount,
           timestamp: new Date().toISOString()
         });
@@ -135,9 +181,9 @@ serve(async (req) => {
           leads.push({
             id: `lead-phantom-${Date.now()}`,
             priority: phantomRatio > 30 ? "critical" : "high",
-            question: `What caused ${phantomCount} biometric stress events with zero aircraft correlation?`,
-            data_needed: "Secondary radar data, ground vehicle tracking, RF spectrum analysis",
-            potential_finding: "Evidence of stealth operations or ground-based harassment"
+            question: `What caused ${phantomCount} biometric stress events with zero aircraft correlation during active monitoring?`,
+            data_needed: "Secondary radar data, ground vehicle tracking, RF spectrum analysis, transponder-off flight records",
+            potential_finding: "Evidence of stealth operations, ground-based harassment, or ADS-B masking"
           });
         }
       }

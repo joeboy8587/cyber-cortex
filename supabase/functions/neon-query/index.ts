@@ -2160,6 +2160,146 @@ serve(async (req) => {
         break;
       }
 
+      // ============== SYNC KCSO FLEET FROM SUPABASE ==============
+      case 'syncKcsoFleet': {
+        const kcsoFleetData = body.fleetData;
+        if (!Array.isArray(kcsoFleetData) || kcsoFleetData.length === 0) {
+          throw new Error('fleetData array is required');
+        }
+
+        // Create kcso_fleet table if not exists
+        await sql.unsafe(`
+          CREATE TABLE IF NOT EXISTS kcso_fleet (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            tail_number TEXT NOT NULL UNIQUE,
+            model TEXT NOT NULL,
+            model_citation TEXT,
+            tail_number_citation TEXT,
+            oildale_citation TEXT,
+            surveillance_capabilities TEXT,
+            surveillance_citation TEXT,
+            frequent_oildale_operation BOOLEAN,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+          )
+        `);
+
+        // Upsert fleet data
+        let synced = 0;
+        for (const aircraft of kcsoFleetData) {
+          await sql`
+            INSERT INTO kcso_fleet (
+              tail_number, model, model_citation, tail_number_citation,
+              oildale_citation, surveillance_capabilities, surveillance_citation,
+              frequent_oildale_operation
+            ) VALUES (
+              ${aircraft.tail_number},
+              ${aircraft.model},
+              ${aircraft.model_citation || null},
+              ${aircraft.tail_number_citation || null},
+              ${aircraft.oildale_citation || null},
+              ${aircraft.surveillance_capabilities || null},
+              ${aircraft.surveillance_citation || null},
+              ${aircraft.frequent_oildale_operation || false}
+            )
+            ON CONFLICT (tail_number) DO UPDATE SET
+              model = EXCLUDED.model,
+              model_citation = EXCLUDED.model_citation,
+              tail_number_citation = EXCLUDED.tail_number_citation,
+              oildale_citation = EXCLUDED.oildale_citation,
+              surveillance_capabilities = EXCLUDED.surveillance_capabilities,
+              surveillance_citation = EXCLUDED.surveillance_citation,
+              frequent_oildale_operation = EXCLUDED.frequent_oildale_operation,
+              updated_at = NOW()
+          `;
+          synced++;
+        }
+
+        result = { data: { synced, message: `Synced ${synced} KCSO fleet records to Neon` } };
+        break;
+      }
+
+      // ============== CREATE PERFORMANCE INDEXES ==============
+      case 'createPerformanceIndexes': {
+        const indexResults: string[] = [];
+
+        const indexes = [
+          { name: 'idx_flights_timestamp', table: 'live_flight_detections_rows', column: 'detection_timestamp DESC' },
+          { name: 'idx_flights_registration', table: 'live_flight_detections_rows', column: 'registration' },
+          { name: 'idx_flights_icao', table: 'live_flight_detections_rows', column: 'icao_code' },
+          { name: 'idx_flights_taxonomy', table: 'live_flight_detections_rows', column: 'taxonomy_tag' },
+          { name: 'idx_flights_flagged', table: 'live_flight_detections_rows', column: 'flagged' },
+          { name: 'idx_flights_geo', table: 'live_flight_detections_rows', column: 'latitude, longitude' },
+          { name: 'idx_bio_timestamp', table: 'biometric_monitoring', column: 'measurement_timestamp DESC' },
+          { name: 'idx_bio_heart_rate', table: 'biometric_monitoring', column: 'heart_rate' },
+          { name: 'idx_bio_stress', table: 'biometric_monitoring', column: 'stress_level' },
+          { name: 'idx_josiah_created', table: 'josiah_reflections_rows', column: 'created_at DESC' },
+          { name: 'idx_ocr_created', table: 'ocr_aircraft_holding_patterns', column: 'created_at DESC' },
+          { name: 'idx_ocr_registration', table: 'ocr_aircraft_holding_patterns', column: 'registration' }
+        ];
+
+        for (const idx of indexes) {
+          try {
+            await sql.unsafe(`CREATE INDEX IF NOT EXISTS ${idx.name} ON ${idx.table} (${idx.column})`);
+            indexResults.push(`✓ ${idx.name}`);
+          } catch (e) {
+            indexResults.push(`✗ ${idx.name}: ${(e as Error).message}`);
+          }
+        }
+
+        result = { data: { indexes: indexResults, created: indexResults.filter(r => r.startsWith('✓')).length } };
+        break;
+      }
+
+      // ============== GET DATA COVERAGE STATS ==============
+      case 'getDataCoverageStats': {
+        const daysBack = body.daysBack || 90;
+        const minFlights = body.minFlightsPerDay || 50;
+
+        const coverage = await sql.unsafe(`
+          WITH daily_counts AS (
+            SELECT 
+              DATE(detection_timestamp) as date,
+              COUNT(*) as flight_count
+            FROM live_flight_detections_rows
+            WHERE detection_timestamp > NOW() - INTERVAL '${daysBack} days'
+              AND detection_timestamp IS NOT NULL
+            GROUP BY DATE(detection_timestamp)
+          ),
+          bio_counts AS (
+            SELECT 
+              DATE(measurement_timestamp) as date,
+              COUNT(*) as bio_count
+            FROM biometric_monitoring
+            WHERE measurement_timestamp > NOW() - INTERVAL '${daysBack} days'
+              AND measurement_timestamp IS NOT NULL
+            GROUP BY DATE(measurement_timestamp)
+          )
+          SELECT 
+            d.date,
+            COALESCE(d.flight_count, 0) as flight_count,
+            COALESCE(b.bio_count, 0) as bio_count,
+            CASE WHEN COALESCE(d.flight_count, 0) >= ${minFlights} THEN true ELSE false END as adequate_coverage
+          FROM daily_counts d
+          LEFT JOIN bio_counts b ON d.date = b.date
+          ORDER BY d.date DESC
+        `);
+
+        const totalDays = coverage.length;
+        const adequateDays = coverage.filter((r: any) => r.adequate_coverage).length;
+        
+        result = {
+          data: {
+            totalDays,
+            adequateDays,
+            coveragePercentage: totalDays > 0 ? Math.round((adequateDays / totalDays) * 100) : 0,
+            dailyData: coverage.slice(0, 30),
+            minFlightsThreshold: minFlights
+          }
+        };
+        break;
+      }
+
       default:
         throw new Error(`Unknown action: ${action}`);
     }

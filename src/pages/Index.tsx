@@ -107,6 +107,11 @@ import { LegalIntelUploader } from "@/components/dashboard/LegalIntelUploader";
 import { BiometricEarlyWarningSystem } from "@/components/dashboard/BiometricEarlyWarningSystem";
 import { JosiahAutonomousHypothesis } from "@/components/dashboard/JosiahAutonomousHypothesis";
 import { JosiahArchiveImporter } from "@/components/dashboard/JosiahArchiveImporter";
+import { MultiAgentHub } from "@/components/dashboard/MultiAgentHub";
+import { LegalAnalystAgent } from "@/components/dashboard/LegalAnalystAgent";
+import { ShellCompanyInvestigator } from "@/components/dashboard/ShellCompanyInvestigator";
+import { LegalDraftingAgent } from "@/components/dashboard/LegalDraftingAgent";
+import { DataCoverageGuardrails } from "@/components/dashboard/DataCoverageGuardrails";
 
 const Index = () => {
   return (
@@ -174,6 +179,16 @@ const Index = () => {
             <MasterEvidenceHub />
           </section>
 
+          {/* MULTI-AGENT INVESTIGATION HUB */}
+          <section id="multi-agent-hub" className="space-y-6">
+            <MultiAgentHub />
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+              <LegalAnalystAgent />
+              <ShellCompanyInvestigator />
+            </div>
+            <LegalDraftingAgent />
+          </section>
+
           <section id="command-center" className="space-y-6">
             <JosiahArchiveImporter />
             <F24RadarUploader />
@@ -183,6 +198,7 @@ const Index = () => {
               <WatchtowerAlertsHub />
               <MaterializedViewsPanel />
             </div>
+            <DataCoverageGuardrails />
           </section>
           
           <section id="threat-matrix" className="grid grid-cols-1 xl:grid-cols-2 gap-6">

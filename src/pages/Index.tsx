@@ -112,6 +112,7 @@ import { LegalAnalystAgent } from "@/components/dashboard/LegalAnalystAgent";
 import { ShellCompanyInvestigator } from "@/components/dashboard/ShellCompanyInvestigator";
 import { LegalDraftingAgent } from "@/components/dashboard/LegalDraftingAgent";
 import { DataCoverageGuardrails } from "@/components/dashboard/DataCoverageGuardrails";
+import { DataGapFiller } from "@/components/dashboard/DataGapFiller";
 
 const Index = () => {
   return (
@@ -199,6 +200,7 @@ const Index = () => {
               <MaterializedViewsPanel />
             </div>
             <DataCoverageGuardrails />
+            <DataGapFiller />
           </section>
           
           <section id="threat-matrix" className="grid grid-cols-1 xl:grid-cols-2 gap-6">

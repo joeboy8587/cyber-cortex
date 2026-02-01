@@ -311,7 +311,7 @@ async function enrichFlightData(pool: Pool, dryRun: boolean) {
         new_columns: newCols.map(c => c.column_name),
       });
 
-      results.records_to_merge += sourceCount.rows[0]?.count || 0;
+      results.records_to_merge += Number(sourceCount.rows[0]?.count || 0);
     }
 
     // If not dry run, perform actual enrichment
@@ -364,7 +364,7 @@ async function enrichBiometricData(pool: Pool, dryRun: boolean) {
         row_count: sourceCount.rows[0]?.count || 0,
       });
 
-      results.records_to_merge += sourceCount.rows[0]?.count || 0;
+      results.records_to_merge += Number(sourceCount.rows[0]?.count || 0);
     }
 
     if (!dryRun) {
@@ -471,7 +471,7 @@ async function mergeJosiahData(pool: Pool, dryRun: boolean) {
         row_count: sourceCount.rows[0]?.count || 0,
       });
 
-      results.total_josiah_records += sourceCount.rows[0]?.count || 0;
+      results.total_josiah_records += Number(sourceCount.rows[0]?.count || 0);
     }
 
     return results;
@@ -504,14 +504,14 @@ async function cleanupTables(pool: Pool, dryRun: boolean) {
         FROM "${table_name}"
       `).catch(() => ({ rows: [{ count: 0, size: 0 }] }));
 
-      if (countResult.rows[0]?.count === 0) {
+      if (Number(countResult.rows[0]?.count || 0) === 0) {
         results.empty_tables.push(table_name);
-        totalRecoverableBytes += countResult.rows[0]?.size || 0;
+        totalRecoverableBytes += Number(countResult.rows[0]?.size || 0);
       }
 
       if (SAFE_DROP_CANDIDATES.includes(table_name)) {
         results.safe_to_drop.push(table_name);
-        totalRecoverableBytes += countResult.rows[0]?.size || 0;
+        totalRecoverableBytes += Number(countResult.rows[0]?.size || 0);
       }
     }
 

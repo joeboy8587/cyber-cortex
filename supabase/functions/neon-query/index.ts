@@ -627,8 +627,8 @@ serve(async (req) => {
         const biometricCount = await sql`
           SELECT 
             COUNT(*) as total,
-            MAX(COALESCE(measurement_timestamp, event_timestamp, created_at)) as last_update,
-            COUNT(CASE WHEN COALESCE(measurement_timestamp, event_timestamp, created_at) > NOW() - INTERVAL '30 days' THEN 1 END) as recent
+            MAX(COALESCE(measurement_timestamp, created_at)) as last_update,
+            COUNT(CASE WHEN COALESCE(measurement_timestamp, created_at) > NOW() - INTERVAL '30 days' THEN 1 END) as recent
           FROM biometric_monitoring
         `;
         

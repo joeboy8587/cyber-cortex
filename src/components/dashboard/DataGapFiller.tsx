@@ -120,10 +120,11 @@ export const DataGapFiller = () => {
             ),
             daily_ocr AS (
               SELECT 
-                DATE(COALESCE(created_at, NOW())) as date,
+                DATE(COALESCE(screenshot_utc_timestamp, analyzed_at, NOW())) as date,
                 COUNT(*) as ocr_count
               FROM radar_screenshot_analysis
-              GROUP BY DATE(COALESCE(created_at, NOW()))
+              WHERE screenshot_utc_timestamp IS NOT NULL OR analyzed_at IS NOT NULL
+              GROUP BY DATE(COALESCE(screenshot_utc_timestamp, analyzed_at, NOW()))
             ),
             daily_ocr_holding AS (
               SELECT 
@@ -152,8 +153,8 @@ export const DataGapFiller = () => {
             LEFT JOIN daily_ocr o ON ds.date = o.date
             LEFT JOIN daily_ocr_holding oh ON ds.date = oh.date
             LEFT JOIN daily_josiah j ON ds.date = j.date
-            WHERE COALESCE(f.flight_count, 0) < 20 
-               OR COALESCE(b.bio_count, 0) < 5
+            WHERE (f.flight_count IS NULL OR f.flight_count = 0)
+               OR (b.bio_count IS NULL OR b.bio_count = 0)
             ORDER BY ds.date DESC
             LIMIT 120
           `
@@ -249,7 +250,7 @@ export const DataGapFiller = () => {
                     location_mentioned as location,
                     analysis_date as timestamp
                   FROM radar_screenshot_analysis
-                  WHERE DATE(COALESCE(created_at, analysis_date, NOW())) = '${gap.date}'
+                  WHERE DATE(COALESCE(screenshot_utc_timestamp, analyzed_at, NOW())) = '${gap.date}'
                     AND registration IS NOT NULL
                   UNION ALL
                   SELECT 

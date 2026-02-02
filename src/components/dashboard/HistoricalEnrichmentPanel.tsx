@@ -60,7 +60,7 @@ export function HistoricalEnrichmentPanel() {
         body: { 
           action: 'analyze',
           startDate: '2021-01-01',
-          endDate: '2025-01-01'
+          endDate: '2026-12-31'
         }
       });
 
@@ -89,7 +89,7 @@ export function HistoricalEnrichmentPanel() {
           body: { 
             action: 'enrich',
             startDate: '2021-01-01',
-            endDate: '2025-01-01',
+            endDate: '2026-12-31',
             batchSize: 100
           }
         });
@@ -132,7 +132,7 @@ export function HistoricalEnrichmentPanel() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Activity className="h-5 w-5 text-primary" />
-          Historical Biometric Enrichment (2021-2024)
+          Historical Biometric Enrichment (2021-2026)
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">

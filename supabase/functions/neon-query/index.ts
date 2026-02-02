@@ -2300,6 +2300,142 @@ serve(async (req) => {
         break;
       }
 
+      // ============== MULTIMODAL COVERAGE ANALYSIS ==============
+      case 'getMultimodalCoverage': {
+        console.log('Fetching multimodal coverage stats...');
+        
+        // Query all key modalities for coverage analysis
+        const coverageQuery = await sql`
+          SELECT 
+            -- Flight data
+            (SELECT COUNT(*) FROM live_flight_detections_rows WHERE detection_timestamp IS NOT NULL) as flights,
+            (SELECT MIN(detection_timestamp) FROM live_flight_detections_rows WHERE detection_timestamp IS NOT NULL) as flight_earliest,
+            (SELECT MAX(detection_timestamp) FROM live_flight_detections_rows WHERE detection_timestamp IS NOT NULL) as flight_latest,
+            
+            -- Biometric data
+            (SELECT COUNT(*) FROM biometric_monitoring WHERE measurement_timestamp IS NOT NULL) as biometrics,
+            (SELECT MIN(measurement_timestamp) FROM biometric_monitoring WHERE measurement_timestamp IS NOT NULL) as bio_earliest,
+            (SELECT MAX(measurement_timestamp) FROM biometric_monitoring WHERE measurement_timestamp IS NOT NULL) as bio_latest,
+            
+            -- Watchtower unified
+            (SELECT COUNT(*) FROM watchtower_unified_master WHERE event_time IS NOT NULL) as watchtower,
+            (SELECT MIN(event_time) FROM watchtower_unified_master WHERE event_time IS NOT NULL) as watch_earliest,
+            (SELECT MAX(event_time) FROM watchtower_unified_master WHERE event_time IS NOT NULL) as watch_latest,
+            
+            -- Josiah reflections
+            (SELECT COUNT(*) FROM josiah_reflections_rows WHERE created_at IS NOT NULL) as josiah,
+            (SELECT MIN(created_at) FROM josiah_reflections_rows WHERE created_at IS NOT NULL) as josiah_earliest,
+            (SELECT MAX(created_at) FROM josiah_reflections_rows WHERE created_at IS NOT NULL) as josiah_latest,
+            
+            -- OCR analysis
+            (SELECT COUNT(*) FROM radar_screenshot_analysis) as ocr,
+            (SELECT MIN(COALESCE(screenshot_utc_timestamp, analyzed_at)) FROM radar_screenshot_analysis) as ocr_earliest,
+            (SELECT MAX(COALESCE(screenshot_utc_timestamp, analyzed_at)) FROM radar_screenshot_analysis) as ocr_latest,
+            
+            -- Unified timeline
+            (SELECT COUNT(*) FROM unified_timeline_enhanced WHERE event_timestamp IS NOT NULL) as unified,
+            (SELECT MIN(event_timestamp) FROM unified_timeline_enhanced WHERE event_timestamp IS NOT NULL) as unified_earliest,
+            (SELECT MAX(event_timestamp) FROM unified_timeline_enhanced WHERE event_timestamp IS NOT NULL) as unified_latest
+        `;
+        
+        const row = coverageQuery[0] || {};
+        
+        // Calculate coverage days for each modality
+        const modalities = [
+          { name: 'Flight Detections', table: 'live_flight_detections_rows', count: parseInt(row.flights) || 0, earliest: row.flight_earliest, latest: row.flight_latest, category: 'flight' },
+          { name: 'Biometric Monitoring', table: 'biometric_monitoring', count: parseInt(row.biometrics) || 0, earliest: row.bio_earliest, latest: row.bio_latest, category: 'biometric' },
+          { name: 'Watchtower Unified', table: 'watchtower_unified_master', count: parseInt(row.watchtower) || 0, earliest: row.watch_earliest, latest: row.watch_latest, category: 'flight' },
+          { name: 'Josiah AI', table: 'josiah_reflections_rows', count: parseInt(row.josiah) || 0, earliest: row.josiah_earliest, latest: row.josiah_latest, category: 'ai' },
+          { name: 'OCR Analysis', table: 'radar_screenshot_analysis', count: parseInt(row.ocr) || 0, earliest: row.ocr_earliest, latest: row.ocr_latest, category: 'evidence' },
+          { name: 'Unified Timeline', table: 'unified_timeline_enhanced', count: parseInt(row.unified) || 0, earliest: row.unified_earliest, latest: row.unified_latest, category: 'evidence' }
+        ];
+        
+        const totalRecords = modalities.reduce((acc, m) => acc + m.count, 0);
+        
+        result = {
+          modalities,
+          totalRecords,
+          timestamp: new Date().toISOString()
+        };
+        break;
+      }
+
+      // ============== FULL TIMELINE STORIES QUERY ==============
+      case 'getFullTimelineStories': {
+        console.log('Fetching full timeline stories...');
+        const limitDays = body.limit || 365;
+        
+        const storiesData = await sql.unsafe(`
+          WITH daily_flights AS (
+            SELECT 
+              DATE(detection_timestamp) as date,
+              COUNT(*) as flight_count,
+              COUNT(DISTINCT registration) as unique_aircraft,
+              ARRAY_AGG(DISTINCT registration ORDER BY registration) FILTER (WHERE registration IS NOT NULL) as aircraft_list,
+              BOOL_OR(registration LIKE 'N91%KC' OR registration LIKE 'N912KC' OR registration LIKE 'N913KC') as has_kcso,
+              COUNT(*) FILTER (WHERE altitude::numeric < 1500 AND altitude IS NOT NULL) as low_altitude_events
+            FROM live_flight_detections_rows
+            WHERE detection_timestamp IS NOT NULL
+            GROUP BY DATE(detection_timestamp)
+          ),
+          daily_biometrics AS (
+            SELECT 
+              DATE(measurement_timestamp) as date,
+              AVG(heart_rate) as avg_hr,
+              MAX(heart_rate) as peak_hr,
+              AVG(stress_level) as avg_stress,
+              COUNT(*) as bio_count
+            FROM biometric_monitoring
+            WHERE measurement_timestamp IS NOT NULL
+            GROUP BY DATE(measurement_timestamp)
+          ),
+          daily_josiah AS (
+            SELECT 
+              DATE(created_at) as date,
+              COUNT(*) as josiah_count
+            FROM josiah_reflections_rows
+            WHERE created_at IS NOT NULL
+            GROUP BY DATE(created_at)
+          ),
+          daily_ocr AS (
+            SELECT 
+              DATE(COALESCE(screenshot_utc_timestamp, analyzed_at)) as date,
+              COUNT(*) as ocr_count
+            FROM radar_screenshot_analysis
+            WHERE COALESCE(screenshot_utc_timestamp, analyzed_at) IS NOT NULL
+            GROUP BY DATE(COALESCE(screenshot_utc_timestamp, analyzed_at))
+          )
+          SELECT 
+            COALESCE(f.date, b.date) as date,
+            COALESCE(f.flight_count, 0) as flight_count,
+            COALESCE(f.unique_aircraft, 0) as unique_aircraft,
+            COALESCE(f.has_kcso, false) as has_kcso,
+            COALESCE(f.low_altitude_events, 0) as low_altitude_events,
+            COALESCE(b.avg_hr, 0) as avg_hr,
+            COALESCE(b.peak_hr, 0) as peak_hr,
+            COALESCE(b.avg_stress, 0) as avg_stress,
+            COALESCE(b.bio_count, 0) as bio_count,
+            COALESCE(j.josiah_count, 0) as josiah_count,
+            COALESCE(o.ocr_count, 0) as ocr_count,
+            CASE 
+              WHEN f.flight_count > 0 AND b.bio_count > 0 AND j.josiah_count > 0 AND o.ocr_count > 0 THEN 4
+              WHEN f.flight_count > 0 AND b.bio_count > 0 AND (j.josiah_count > 0 OR o.ocr_count > 0) THEN 3
+              WHEN f.flight_count > 0 AND b.bio_count > 0 THEN 2
+              ELSE 1
+            END as factor_count
+          FROM daily_flights f
+          FULL OUTER JOIN daily_biometrics b ON f.date = b.date
+          LEFT JOIN daily_josiah j ON COALESCE(f.date, b.date) = j.date
+          LEFT JOIN daily_ocr o ON COALESCE(f.date, b.date) = o.date
+          WHERE COALESCE(f.date, b.date) IS NOT NULL
+          ORDER BY COALESCE(f.date, b.date) DESC
+          LIMIT ${limitDays}
+        `);
+        
+        result = storiesData;
+        break;
+      }
+
       default:
         throw new Error(`Unknown action: ${action}`);
     }

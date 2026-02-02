@@ -65,7 +65,7 @@ export default function Stories() {
                 BOOL_OR(registration LIKE 'N91%KC' OR registration LIKE 'N912KC' OR registration LIKE 'N913KC') as has_kcso,
                 COUNT(*) FILTER (WHERE altitude::numeric < 1500) as low_altitude_events
               FROM live_flight_detections_rows
-              WHERE detection_timestamp > NOW() - INTERVAL '90 days'
+              WHERE detection_timestamp IS NOT NULL
               GROUP BY DATE(detection_timestamp)
             ),
             daily_biometrics AS (
@@ -76,7 +76,7 @@ export default function Stories() {
                 AVG(stress_level) as avg_stress,
                 COUNT(*) as bio_count
               FROM biometric_monitoring
-              WHERE measurement_timestamp > NOW() - INTERVAL '90 days'
+              WHERE measurement_timestamp IS NOT NULL
               GROUP BY DATE(measurement_timestamp)
             ),
             daily_josiah AS (
@@ -85,23 +85,23 @@ export default function Stories() {
                 COUNT(*) as josiah_count,
                 STRING_AGG(reflection_content, ' | ' ORDER BY created_at DESC) as reflections
               FROM josiah_reflections_rows
-              WHERE created_at > NOW() - INTERVAL '90 days'
+              WHERE created_at IS NOT NULL
               GROUP BY DATE(created_at)
             ),
             daily_ocr AS (
               SELECT 
-                DATE(created_at) as date,
+                DATE(COALESCE(screenshot_utc_timestamp, analyzed_at)) as date,
                 COUNT(*) as ocr_count
               FROM radar_screenshot_analysis
-              WHERE created_at > NOW() - INTERVAL '90 days'
-              GROUP BY DATE(created_at)
+              WHERE COALESCE(screenshot_utc_timestamp, analyzed_at) IS NOT NULL
+              GROUP BY DATE(COALESCE(screenshot_utc_timestamp, analyzed_at))
             ),
             fleet_convergence AS (
               SELECT 
                 DATE(b.measurement_timestamp) as date,
                 COUNT(*) as convergence_events
               FROM biometric_monitoring b
-              WHERE b.measurement_timestamp > NOW() - INTERVAL '90 days'
+              WHERE b.measurement_timestamp IS NOT NULL
                 AND b.heart_rate > 80
                 AND EXISTS (
                   SELECT 1 FROM live_flight_detections_rows f
@@ -138,7 +138,7 @@ export default function Stories() {
             LEFT JOIN fleet_convergence fc ON COALESCE(f.date, b.date) = fc.date
             WHERE COALESCE(f.date, b.date) IS NOT NULL
             ORDER BY COALESCE(f.date, b.date) DESC
-            LIMIT 60
+            LIMIT 365
           `
         }
       });

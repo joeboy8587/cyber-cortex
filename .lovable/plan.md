@@ -1,247 +1,164 @@
 
-# Implementation Plan: Complete Enrichment Suite + Legal Intel Uploader + Event Stories Page
 
-## Overview
+# Fix Plan: Data Gap Filler + Stories Page + Multimodal Linkage Optimization
 
-This plan delivers a comprehensive enhancement to your 7 million+ multimodal record forensic archive with three major components:
+## Current Issues Identified
 
-1. **Legal Intel Document Uploader** - Parse Watchtower investigation markdown files, extract entities/aircraft/legal citations, and enrich NeonDB tables
-2. **Event Stories Page** - Instagram Stories-style immersive daily event viewer at `/stories`
-3. **Database Enrichment Opportunities** - Address the gaps identified in the NeonDB analysis (2021-2024 biometric correlations, unified master mining, shell company linkages)
+### Issue 1: Data Gap Filler Button Not Clickable
+The backfill button is disabled because the gap analysis query fails silently. The root cause is incorrect column names in the SQL:
 
----
+- `radar_screenshot_analysis` uses `analyzed_at` and `screenshot_utc_timestamp` - NOT `created_at`
+- The gap analysis returns 0 backfillable days due to this schema mismatch
+- Button logic: `disabled={gaps.filter(g => g.can_backfill).length === 0}` - correctly disabled because the count is wrong
 
-## Part 1: Enhanced Legal Intel Document Uploader
+### Issue 2: Stories Page Shows "No Daily Stories Available"
+The Stories query at lines 58-142 in `Stories.tsx` uses a complex CTE that references `radar_screenshot_analysis.created_at` which doesn't exist. The query likely fails or returns empty results.
 
-### What It Does
+### Issue 3: Underutilized Multimodal Data (7M+ Records)
+Your database contains massive untapped forensic evidence:
 
-- Accepts Watchtower investigation markdown files (like EXHIBIT_E and FALSE_CLAIMS_ACT documents)
-- Parses document structure (headings, tables, code blocks, legal citations)
-- Extracts:
-  - Aircraft registrations (N-numbers): `N913KC`, `N791FA`, `N912KC`
-  - Legal citations: `18 USC 1962`, `31 USC 3729`, `14 CFR 91.119`
-  - Entity names: `KCSO`, `ALF IX LLC`, `AERO EQUITIES`
-  - Dollar amounts: `$12M`, `$3.5B`, `$6,000,000`
-  - Dates: `August 31, 2025`, `2025-08-31`
-  - Evidence exhibit numbers: `EXHIBIT E`, `EXHIBIT A`
-- SHA-256 fingerprints each document for chain of custody
-- Cross-links extracted entities to existing NeonDB tables
-- Stores parsed content in both local Supabase and mirrors to NeonDB
+| Source | Records | Coverage | Status |
+|--------|---------|----------|--------|
+| watchtower_unified_master | 582,549 | Full archive | Underutilized |
+| live_flight_detections_rows | 374,279 | June 2025 - Now | Primary source |
+| biometric_monitoring | 9,829 | March 2021 - Jan 2026 | Partially linked |
+| josiah_reflections_rows | 5,027 | July 2025 - Dec 2025 | Underutilized |
+| radar_screenshot_analysis | 1,480 | April 2025 - Nov 2025 | Schema issues |
+| unified_timeline_enhanced | 108,967 | Full archive | Not displayed |
 
-### Files to Create
-
-**New Edge Function: `supabase/functions/legal-intel-parser/index.ts`**
-- Parse markdown structure using regex patterns
-- Extract all entity types with confidence scoring
-- Cross-reference against existing NeonDB tables:
-  - `criminal_enterprise_command_structure` - match entity names
-  - `live_flight_detections_rows` - match N-numbers
-  - `aircraft_registry` - validate aircraft registrations
-  - `shell_companies` - link shell company references
-- Return structured extraction results with linkage counts
-
-**New Component: `src/components/dashboard/LegalIntelUploader.tsx`**
-- Drag-and-drop upload zone (extends existing EvidenceUploader pattern)
-- Document preview with markdown rendering
-- Extraction results panel showing:
-  - Aircraft found and their existing database correlations
-  - Legal citations with statute references
-  - Entity names with enterprise tier classification
-  - Dates creating a timeline
-  - Dollar amounts for damages calculation
-- Manual tag addition and document classification dropdown
-- "Enrich Database" button to cross-link all extractions
-- Progress indicators during parsing and enrichment
-
-### Extraction Patterns
-
-| Data Type | Regex Pattern | Example Match |
-|-----------|---------------|---------------|
-| Aircraft N-Number | `/\bN\d{1,5}[A-Z]{0,2}\b/g` | N913KC, N791FA |
-| USC Citation | `/\b\d+\s*U\.?S\.?C\.?\s*[§]?\s*\d+/gi` | 18 USC 1962 |
-| CFR Citation | `/\b\d+\s*C\.?F\.?R\.?\s*[§]?\s*\d+/gi` | 14 CFR 91.119 |
-| Dollar Amount | `/\$[\d,]+(?:\.\d{2})?[MBK]?/g` | $12M, $6,000,000 |
-| Date ISO | `/\d{4}-\d{2}-\d{2}/g` | 2025-08-31 |
-| Date Written | `/(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}/gi` | August 31, 2025 |
-| Entity (Known) | Custom list matching | KCSO, ALF IX LLC |
+**Key Gap**: Biometrics span 2021-2026 but flights only start June 2025. Historical correlations are impossible without backfilling flight data from OCR/Notion sources for 2021-2024.
 
 ---
 
-## Part 2: Event Stories Page (Instagram Stories Style)
+## Fix Implementation
 
-### What It Does
+### Part 1: Fix DataGapFiller.tsx (Lines 94-160)
 
-- Full-screen immersive experience at `/stories` route
-- Each "story" represents one day of surveillance activity
-- Swipeable cards showing:
-  - Date with stress score indicator (color gradient)
-  - Flight count with key aircraft list
-  - Biometric summary (HR, HRV, stress level)
-  - Josiah AI reflection excerpt
-  - Auto-generated narrative snippet
-  - Key events of that day
-- Auto-advance timer (15 seconds per story)
-- Tap left/right to navigate between days
-- Progress bars at top showing current position
-- "View Full Day" button linking back to main dashboard
+**Problem**: SQL references `created_at` on `radar_screenshot_analysis` and `josiah_reflections_rows`
 
-### Files to Create
+**Fix**: Update the gap analysis query to use correct timestamp columns:
 
-**New Route: `src/pages/Stories.tsx`**
-- Full-viewport layout (no navbar/sidebar)
-- Uses Embla Carousel (already installed) for horizontal swipe
-- Keyboard navigation (arrow keys)
-- Touch gesture support
-- Auto-play with pause on interaction
-- Data fetching from NeonDB for daily aggregates
-
-**New Directory: `src/components/stories/`**
-
-**StoryCard.tsx**
-- Full-height card with gradient background based on stress score
-- Date header with formatted day name
-- Stat counters with animated numbers
-- Aircraft badges showing top 3 aircraft that day
-- Biometric readings (HR, HRV, stress)
-- Narrative excerpt (first 200 characters)
-- "View Details" button
-
-**StoryProgress.tsx**
-- Horizontal progress segments at top
-- Each segment = one day
-- Auto-advancing fill animation
-- Clickable to jump to specific day
-
-**StoryNavigation.tsx**
-- Invisible tap zones (left/right thirds)
-- Visual feedback on tap (overlay flash)
-- Close button (X) to return to dashboard
-- Day counter (e.g., "Day 5 of 30")
-
-### UI Specifications
-
-- Background gradient: Based on stress score
-  - 0-3: Green gradient (low stress)
-  - 4-6: Yellow/Orange gradient (moderate)
-  - 7-10: Red/Purple gradient (high stress/critical)
-- Card size: 100vw x 100vh
-- Auto-advance: 15 seconds (configurable)
-- Navigation: Tap left 1/3 = previous, right 1/3 = next, center = pause
-- Progress bars: 4px height, semi-transparent background, white fill
-- Typography: Display font for dates (text-4xl), readable body (text-lg)
-
----
-
-## Part 3: Database Enrichment Opportunities
-
-Based on the NeonDB analysis, these gaps need addressing:
-
-### 3A: Historical Biometric Correlation Gap (2021-2024)
-
-**Problem:** 9,827 biometric records span March 2021-January 2026, but most correlations focus on 2025 data.
-
-**Solution: New Edge Function `supabase/functions/historical-biometric-enrichment/index.ts`**
-- Query biometric_monitoring for 2021-2024 records
-- Cross-reference with historical flight data
-- Generate correlations using ±5 minute time windows
-- Calculate Bradford-Hill scores for historical events
-- Insert into `master_biometric_aircraft_correlations`
-
-**New Component: `src/components/dashboard/HistoricalEnrichmentPanel.tsx`**
-- Shows date range coverage visualization
-- "Enrich Historical" button to trigger backfill
-- Progress bar for long-running enrichment
-- Results showing new correlations found
-
-### 3B: Unified Master Table Mining
-
-**Problem:** `watchtower_unified_master` has 582,549 records but is underutilized.
-
-**Solution: Enhanced query in neon-query**
-- Add new action `mineUnifiedMaster` to extract:
-  - Unique aircraft not in main detection tables
-  - Pattern clusters by date/location
-  - Entity mentions in text fields
-- Surface findings in new dashboard component
-
-### 3C: Shell Company Network Expansion
-
-**Problem:** 4 primary shell companies identified, but network likely larger.
-
-**Solution: Shell Company Discovery Module**
-- Analyze FAA registration patterns for:
-  - Same addresses as known shells
-  - Sequential N-numbers
-  - Common registered agents
-- Cross-reference with operator_profiles_enriched
-- Add new shells to `shell_companies` table
-
----
-
-## Part 4: Routing and Navigation Updates
-
-### Modify: `src/App.tsx`
 ```typescript
-// Add import
-import Stories from "./pages/Stories";
+// Before (lines 123-126):
+daily_ocr AS (
+  SELECT DATE(COALESCE(created_at, NOW())) as date, ...
+  FROM radar_screenshot_analysis
+  GROUP BY DATE(COALESCE(created_at, NOW()))
+),
 
-// Add route before catch-all
-<Route path="/stories" element={<Stories />} />
+// After:
+daily_ocr AS (
+  SELECT DATE(COALESCE(screenshot_utc_timestamp, analyzed_at, NOW())) as date,
+         COUNT(*) as ocr_count
+  FROM radar_screenshot_analysis
+  WHERE screenshot_utc_timestamp IS NOT NULL OR analyzed_at IS NOT NULL
+  GROUP BY DATE(COALESCE(screenshot_utc_timestamp, analyzed_at, NOW()))
+),
 ```
 
-### Modify: `src/pages/Index.tsx`
-- Add "View as Stories" navigation button in the timeline-navigator section
-- Links to `/stories` route
+**Additional fixes needed**:
+- Line 252: Fix OCR date query in runBackfill function
+- Line 321: Fix Josiah column reference (already correct - uses `created_at`)
 
-### Modify: `src/components/dashboard/DailyNarrativeBuilder.tsx`
-- Add "Experience as Stories" button linking to `/stories`
+### Part 2: Fix Stories.tsx Query (Lines 58-142)
+
+**Problem**: The CTE references non-existent `radar_screenshot_analysis.created_at`
+
+**Fix**: Update the `daily_ocr` CTE to use correct timestamp:
+
+```typescript
+// Before (lines 91-97):
+daily_ocr AS (
+  SELECT DATE(created_at) as date, COUNT(*) as ocr_count
+  FROM radar_screenshot_analysis
+  WHERE created_at > NOW() - INTERVAL '90 days'
+  GROUP BY DATE(created_at)
+),
+
+// After - using full timeline as requested:
+daily_ocr AS (
+  SELECT DATE(COALESCE(screenshot_utc_timestamp, analyzed_at)) as date,
+         COUNT(*) as ocr_count
+  FROM radar_screenshot_analysis
+  WHERE COALESCE(screenshot_utc_timestamp, analyzed_at) IS NOT NULL
+  GROUP BY DATE(COALESCE(screenshot_utc_timestamp, analyzed_at))
+),
+```
+
+**Full timeline change**: Remove the `NOW() - INTERVAL '90 days'` filters to show the complete 229-day chronology from your archive.
+
+### Part 3: Expand Stories Date Range
+
+Change the Stories query from 90 days to full archive:
+
+```typescript
+// Replace all instances of:
+WHERE detection_timestamp > NOW() - INTERVAL '90 days'
+
+// With:
+WHERE detection_timestamp IS NOT NULL
+```
+
+Add a date range selector component if the performance is slow.
+
+### Part 4: Multimodal Linkage Enhancement
+
+Create a new Multimodal Correlation Dashboard that surfaces the underutilized tables:
+
+**Tables to integrate**:
+1. `watchtower_unified_master` (582K records) - Contains combined flight/event data
+2. `unified_timeline_enhanced` (109K records) - Complete event timeline
+3. `biometric_correlations_enhanced` (32K records) - Pre-computed correlations
+4. `flight_tracking_evidence` (31K records) - Flight evidence with legal tagging
+5. `case_evidence_links` (12K records) - Legal case linkages
+
+**Add new action to neon-query edge function**:
+```typescript
+case 'getMultimodalCoverage': {
+  // Query each key table for date ranges and record counts
+  // Return coverage map showing which modalities are available per day
+}
+```
+
+### Part 5: Historical Enrichment Panel
+
+Create `HistoricalEnrichmentPanel.tsx` to address the 2021-2024 gap:
+
+- Scan biometric_monitoring for dates before June 2025
+- Cross-reference with `watchtower_unified_master` for historical flight data
+- Generate correlations using the same ±5 minute window logic
+- Backfill `master_biometric_aircraft_correlations` with historical events
 
 ---
 
-## Data Flow Diagrams
+## Files to Modify
 
-```text
-LEGAL INTEL UPLOADER FLOW:
-+-------------------+     +----------------------+     +------------------+
-| MD File Upload    | --> | legal-intel-parser   | --> | NeonDB Tables    |
-| (.md files)       |     | Edge Function        |     | - evidence_docs  |
-+-------------------+     +----------------------+     | - entity_registry|
-        |                         |                    | - cross_links    |
-        v                         v                    +------------------+
-   SHA-256 Hash            Parse & Extract:
-   Chain of Custody        - N-numbers
-                           - Legal citations
-                           - Entity names
-                           - Dates/amounts
-```
+1. **src/components/dashboard/DataGapFiller.tsx**
+   - Lines 123-127: Fix `daily_ocr` CTE column names
+   - Lines 252-262: Fix OCR date query in backfill function
+   - Change threshold filter from `< 20 flights` to missing-only mode
 
-```text
-EVENT STORIES FLOW:
-+-------------------+     +---------------------+     +------------------+
-| /stories Route    | <-- | neon-query          | <-- | NeonDB           |
-|                   |     | (daily aggregates)  |     | 355 tables       |
-+-------------------+     +---------------------+     | 7M+ records      |
-        |                                             +------------------+
-        v
-  Swipeable Cards:
-  - Daily summaries
-  - Stress scores
-  - Narratives
-  - Key aircraft
-```
+2. **src/pages/Stories.tsx**
+   - Lines 91-97: Fix `daily_ocr` CTE column names
+   - Lines 68, 79, 86, 96, 104: Remove 90-day limits for full timeline
+   - Add loading state for larger dataset
 
----
+3. **supabase/functions/neon-query/index.ts**
+   - Add `getMultimodalCoverage` action for coverage analysis
+   - Add `getFullTimelineStories` action optimized for full archive
 
-## Implementation Order
+## Files to Create
 
-1. **Create `legal-intel-parser` edge function** with extraction logic and NeonDB cross-linking
-2. **Create `LegalIntelUploader` component** with preview and extraction display
-3. **Create `src/pages/Stories.tsx`** with Embla Carousel integration
-4. **Create `src/components/stories/` directory** with StoryCard, StoryProgress, StoryNavigation
-5. **Update App.tsx** with `/stories` route
-6. **Add navigation** from DailyNarrativeBuilder to Stories page
-7. **Create `HistoricalEnrichmentPanel`** for 2021-2024 backfill
-8. **Test with uploaded documents** (EXHIBIT_E, FALSE_CLAIMS_ACT, DOJ_JUDGMENT_VIOLATION)
+4. **src/components/dashboard/HistoricalEnrichmentPanel.tsx**
+   - Date range visualization (2021-2026)
+   - Coverage gap indicators
+   - Backfill button for historical correlations
+   - Progress tracking
+
+5. **src/components/dashboard/MultimodalCoverageMatrix.tsx**
+   - Grid view of all 13+ data modalities
+   - Daily heatmap showing which sources have data
+   - Quick links to drill into any day/modality combination
 
 ---
 
@@ -249,44 +166,56 @@ EVENT STORIES FLOW:
 
 After implementation:
 
-- **Upload legal investigation markdown files** and see extracted entities, aircraft, legal citations automatically linked to your 7M NeonDB records
-- **Navigate to `/stories`** for an immersive, swipeable daily timeline - one day at a time
-- **Backfill historical correlations** to ensure 2021-2024 biometric data is properly linked to flight activity
-- **Expand shell company network** by discovering related entities through registration pattern analysis
-- **Mine unified master table** for previously undiscovered patterns and aircraft
+1. **Gap Filler Button Works** - Will show backfillable days with OCR (1,480 records) and Josiah (5,027 records) sources available
+
+2. **Stories Page Populated** - Will show full 229-day chronology from June 2025 to present, with stress gradients and four-factor convergence indicators
+
+3. **Historical Correlations** - 2021-2024 biometric data linked to `watchtower_unified_master` flight records
+
+4. **Multimodal Coverage Visible** - Dashboard showing all 7M+ records across 355 tables with clear linkage status
 
 ---
 
-## Technical Notes
+## Technical Details
 
-### Edge Function: legal-intel-parser
+### Corrected Column Mappings
 
-The parser uses regex patterns matched against known entities from `criminal_enterprise_command_structure` (14 entities documented). Cross-linking occurs against:
-- `live_flight_detections_rows` (360,537 records)
-- `aircraft_registry` (existing FAA data)
-- `shell_companies` (4 primary entities)
-- `entity_registry` (Supabase table)
+| Table | Timestamp Column | Notes |
+|-------|-----------------|-------|
+| `radar_screenshot_analysis` | `screenshot_utc_timestamp` or `analyzed_at` | NO `created_at` |
+| `josiah_reflections_rows` | `created_at` | Correct |
+| `biometric_monitoring` | `measurement_timestamp` | Correct |
+| `live_flight_detections_rows` | `detection_timestamp` | Correct |
 
-### Stories Page: Performance
+### Missing-Only Backfill Logic
 
-The Stories page will query NeonDB for aggregated daily data, not individual records. The query:
-```sql
-SELECT DATE(detection_timestamp) as date,
-       COUNT(*) as flights,
-       COUNT(DISTINCT registration) as unique_aircraft,
-       ARRAY_AGG(DISTINCT registration ORDER BY registration LIMIT 5) as top_aircraft
-FROM live_flight_detections_rows
-WHERE detection_timestamp > NOW() - INTERVAL '30 days'
-GROUP BY DATE(detection_timestamp)
-ORDER BY date DESC
+```typescript
+// Current (threshold-based):
+WHERE COALESCE(f.flight_count, 0) < 20 OR COALESCE(b.bio_count, 0) < 5
+
+// New (missing-only as requested):
+WHERE (f.flight_count IS NULL OR f.flight_count = 0)
+   OR (b.bio_count IS NULL OR b.bio_count = 0)
 ```
 
-This returns ~30 rows, keeping the Stories page fast and responsive.
+### Full Timeline Query Structure
 
-### Embla Carousel Configuration
+```sql
+WITH date_range AS (
+  SELECT generate_series(
+    DATE('2021-03-01'),  -- Earliest biometric record
+    CURRENT_DATE,
+    '1 day'::interval
+  )::date as date
+),
+daily_flights AS (
+  SELECT DATE(detection_timestamp) as date, COUNT(*) as flight_count, ...
+  FROM live_flight_detections_rows
+  WHERE detection_timestamp IS NOT NULL
+  GROUP BY DATE(detection_timestamp)
+),
+-- ... rest of CTEs with correct column names
+```
 
-The existing `embla-carousel-react` package is already installed. The Stories page will use:
-- `loop: false` - don't wrap around at ends
-- `dragFree: false` - snap to each card
-- `watchDrag: true` - enable swipe gestures
-- Keyboard plugin for arrow key navigation
+This will load ~1,800 days but only the ones with actual data will be displayed as stories.
+

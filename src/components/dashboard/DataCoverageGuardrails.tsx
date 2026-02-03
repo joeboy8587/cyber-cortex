@@ -57,17 +57,19 @@ export function DataCoverageGuardrails() {
         }
       });
 
-      // Get daily biometric counts
+      // Get daily biometric counts - only count valid readings with heart_rate
+      // to exclude OCR-imported text fragments that lack actual biometric data
       const { data: bioData, error: bioError } = await supabase.functions.invoke('neon-query', {
         body: {
           action: 'customQuery',
           query: `
             SELECT 
               DATE(measurement_timestamp) as date,
-              COUNT(*) as bio_count
+              COUNT(DISTINCT (measurement_timestamp, COALESCE(heart_rate, 0), COALESCE(stress_level, 0))) as bio_count
             FROM biometric_monitoring
             WHERE measurement_timestamp IS NOT NULL
               AND measurement_timestamp > NOW() - INTERVAL '90 days'
+              AND (heart_rate IS NOT NULL OR stress_level IS NOT NULL)
             GROUP BY DATE(measurement_timestamp)
             ORDER BY date DESC
           `

@@ -70,14 +70,35 @@ export default function Stories() {
             ),
             daily_biometrics AS (
               SELECT 
-                DATE(measurement_timestamp) as date,
-                AVG(heart_rate) as avg_hr,
-                MAX(heart_rate) as peak_hr,
-                AVG(stress_level) as avg_stress,
-                COUNT(*) as bio_count
-              FROM biometric_monitoring
-              WHERE measurement_timestamp IS NOT NULL
-              GROUP BY DATE(measurement_timestamp)
+                date,
+                AVG(avg_hr) as avg_hr,
+                MAX(peak_hr) as peak_hr,
+                AVG(avg_stress) as avg_stress,
+                SUM(bio_count) as bio_count
+              FROM (
+                -- Primary biometric_monitoring table
+                SELECT 
+                  DATE(measurement_timestamp) as date,
+                  AVG(heart_rate) as avg_hr,
+                  MAX(heart_rate) as peak_hr,
+                  AVG(stress_level::numeric) as avg_stress,
+                  COUNT(*) as bio_count
+                FROM biometric_monitoring
+                WHERE measurement_timestamp IS NOT NULL AND heart_rate IS NOT NULL
+                GROUP BY DATE(measurement_timestamp)
+                UNION ALL
+                -- Threshold collapses table (OCR/screenshot biometrics)
+                SELECT 
+                  DATE(collapse_timestamp) as date,
+                  AVG(heart_rate) as avg_hr,
+                  MAX(heart_rate) as peak_hr,
+                  AVG(stress_level::numeric) as avg_stress,
+                  COUNT(*) as bio_count
+                FROM biometric_threshold_collapses
+                WHERE collapse_timestamp IS NOT NULL AND heart_rate IS NOT NULL
+                GROUP BY DATE(collapse_timestamp)
+              ) combined
+              GROUP BY date
             ),
             daily_josiah AS (
               SELECT 

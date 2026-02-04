@@ -172,7 +172,8 @@ serve(async (req) => {
     }
 
     if (action === "backfillFlights") {
-      const batchSize = typeof params.batchSize === "number" ? params.batchSize : 100;
+      const batchSize = typeof params.batchSize === "number" ? Math.min(params.batchSize, 2000) : 200;
+      const cursor = typeof params.cursor === "string" ? params.cursor : null;
       
       // Create job record
       const jobRes = await supabase
@@ -182,6 +183,7 @@ serve(async (req) => {
           target_table: "live_flight_detections_rows",
           status: "running",
           started_at: new Date().toISOString(),
+          last_cursor: cursor,
         })
         .select("job_id")
         .single();
@@ -192,7 +194,17 @@ serve(async (req) => {
       try {
         const neon = await getNeonClient();
         
-        // Get flights from Neon - using actual column names from schema
+        // Get existing linked IDs to avoid duplicates
+        const existingLinks = await supabase
+          .from("evidence_chain_links")
+          .select("source_id")
+          .eq("source_table", "live_flight_detections_rows")
+          .limit(10000);
+        
+        const linkedIds = new Set((existingLinks.data || []).map(l => l.source_id));
+        
+        // Get flights from Neon with cursor pagination
+        const cursorClause = cursor ? `AND id > '${cursor}'` : '';
         const flightsResult = await neon.queryObject<{
           id: string;
           aircraft_id: string;
@@ -208,60 +220,76 @@ serve(async (req) => {
                  COALESCE(altitude, 0) as altitude,
                  COALESCE(detection_timestamp, created_at, now()) as detected_at
           FROM live_flight_detections_rows
-          ORDER BY COALESCE(detection_timestamp, created_at) DESC NULLS LAST
+          WHERE id IS NOT NULL ${cursorClause}
+          ORDER BY id ASC
           LIMIT ${batchSize}
         `);
 
         await neon.end();
         
-        let processed = 0;
-        let linked = 0;
-
-        for (const flight of flightsResult.rows) {
-          processed++;
-          
-          // Create forensic event
-          const eventRes = await supabase
-            .from("master_forensic_events")
-            .insert({
-              event_timestamp: flight.detected_at,
-              event_type: "flight",
-              primary_entity_id: flight.aircraft_id,
-              primary_entity_type: "aircraft",
-              geo_lat: flight.latitude,
-              geo_lng: flight.longitude,
-              confidence_score: 85,
-              summary: `Flight ${flight.aircraft_id} detected at ${flight.altitude}ft`,
-              linked_records: [{ table: "live_flight_detections_rows", id: flight.id }],
-            })
-            .select("forensic_event_id")
-            .single();
-
-          if (eventRes.data) {
-            // Create chain link
-            await supabase.from("evidence_chain_links").insert({
-              forensic_event_id: eventRes.data.forensic_event_id,
-              source_table: "live_flight_detections_rows",
-              source_id: flight.id,
-              link_type: "temporal",
-              link_confidence: 85,
-            });
-            linked++;
-          }
+        // Filter out already-linked records
+        const newFlights = flightsResult.rows.filter(f => !linkedIds.has(f.id));
+        
+        if (newFlights.length === 0) {
+          await supabase
+            .from("correlation_job_status")
+            .update({ status: "completed", processed_records: 0, linked_records: 0, completed_at: new Date().toISOString() })
+            .eq("job_id", jobId);
+          return ok({ jobId, processed: 0, linked: 0, message: "No new records to link" });
         }
+
+        // Batch insert forensic events
+        const events = newFlights.map(flight => ({
+          event_timestamp: flight.detected_at,
+          event_type: "flight" as const,
+          primary_entity_id: flight.aircraft_id,
+          primary_entity_type: "aircraft" as const,
+          geo_lat: flight.latitude,
+          geo_lng: flight.longitude,
+          confidence_score: 85,
+          summary: `Flight ${flight.aircraft_id} detected at ${flight.altitude}ft`,
+          linked_records: [{ table: "live_flight_detections_rows", id: flight.id }],
+        }));
+
+        const eventRes = await supabase
+          .from("master_forensic_events")
+          .insert(events)
+          .select("forensic_event_id");
+
+        if (eventRes.error) throw new Error(eventRes.error.message);
+        
+        // Batch insert chain links
+        const chainLinks = (eventRes.data || []).map((evt, idx) => ({
+          forensic_event_id: evt.forensic_event_id,
+          source_table: "live_flight_detections_rows",
+          source_id: newFlights[idx].id,
+          link_type: "temporal" as const,
+          link_confidence: 85,
+        }));
+
+        await supabase.from("evidence_chain_links").insert(chainLinks);
+        
+        const lastId = flightsResult.rows[flightsResult.rows.length - 1]?.id;
 
         // Update job status
         await supabase
           .from("correlation_job_status")
           .update({
             status: "completed",
-            processed_records: processed,
-            linked_records: linked,
+            processed_records: flightsResult.rows.length,
+            linked_records: chainLinks.length,
             completed_at: new Date().toISOString(),
+            last_cursor: lastId,
           })
           .eq("job_id", jobId);
 
-        return ok({ jobId, processed, linked });
+        return ok({ 
+          jobId, 
+          processed: flightsResult.rows.length, 
+          linked: chainLinks.length,
+          nextCursor: lastId,
+          hasMore: flightsResult.rows.length === batchSize 
+        });
       } catch (e) {
         await supabase
           .from("correlation_job_status")
@@ -272,7 +300,8 @@ serve(async (req) => {
     }
 
     if (action === "backfillBiometrics") {
-      const batchSize = typeof params.batchSize === "number" ? params.batchSize : 100;
+      const batchSize = typeof params.batchSize === "number" ? Math.min(params.batchSize, 2000) : 200;
+      const cursor = typeof params.cursor === "string" ? params.cursor : null;
       
       const jobRes = await supabase
         .from("correlation_job_status")
@@ -281,6 +310,7 @@ serve(async (req) => {
           target_table: "biometric_monitoring",
           status: "running",
           started_at: new Date().toISOString(),
+          last_cursor: cursor,
         })
         .select("job_id")
         .single();
@@ -291,6 +321,16 @@ serve(async (req) => {
       try {
         const neon = await getNeonClient();
         
+        // Get existing linked IDs to avoid duplicates
+        const existingLinks = await supabase
+          .from("evidence_chain_links")
+          .select("source_id")
+          .eq("source_table", "biometric_monitoring")
+          .limit(10000);
+        
+        const linkedIds = new Set((existingLinks.data || []).map(l => l.source_id));
+        
+        const cursorClause = cursor ? `AND id > ${cursor}` : '';
         const bioResult = await neon.queryObject<{
           id: string;
           heart_rate: number;
@@ -302,55 +342,74 @@ serve(async (req) => {
                  COALESCE(stress_level, 0) as stress_level,
                  COALESCE(measurement_timestamp, created_at, now()) as event_timestamp
           FROM biometric_monitoring 
-          ORDER BY COALESCE(measurement_timestamp, created_at) DESC 
+          WHERE id IS NOT NULL ${cursorClause}
+            AND (heart_rate IS NOT NULL OR stress_level IS NOT NULL)
+          ORDER BY id ASC 
           LIMIT ${batchSize}
         `);
 
         await neon.end();
         
-        let processed = 0;
-        let linked = 0;
-
-        for (const bio of bioResult.rows) {
-          processed++;
-          
-          const eventRes = await supabase
-            .from("master_forensic_events")
-            .insert({
-              event_timestamp: bio.event_timestamp,
-              event_type: "biometric",
-              primary_entity_type: "individual",
-              confidence_score: 90,
-              summary: `Biometric: HR ${bio.heart_rate}, Stress ${bio.stress_level}`,
-              linked_records: [{ table: "biometric_monitoring", id: bio.id }],
-              is_physical_verified: true,
-            })
-            .select("forensic_event_id")
-            .single();
-
-          if (eventRes.data) {
-            await supabase.from("evidence_chain_links").insert({
-              forensic_event_id: eventRes.data.forensic_event_id,
-              source_table: "biometric_monitoring",
-              source_id: bio.id,
-              link_type: "biometric",
-              link_confidence: 90,
-            });
-            linked++;
-          }
+        // Filter out already-linked and invalid records
+        const newBio = bioResult.rows.filter(b => !linkedIds.has(b.id) && (b.heart_rate > 0 || b.stress_level > 0));
+        
+        if (newBio.length === 0) {
+          await supabase
+            .from("correlation_job_status")
+            .update({ status: "completed", processed_records: 0, linked_records: 0, completed_at: new Date().toISOString() })
+            .eq("job_id", jobId);
+          return ok({ jobId, processed: 0, linked: 0, message: "No new valid biometric records to link" });
         }
+
+        // Batch insert forensic events
+        const events = newBio.map(bio => ({
+          event_timestamp: bio.event_timestamp,
+          event_type: "biometric" as const,
+          primary_entity_type: "individual" as const,
+          confidence_score: 90,
+          summary: `Biometric: HR ${bio.heart_rate}, Stress ${bio.stress_level}`,
+          linked_records: [{ table: "biometric_monitoring", id: bio.id }],
+          is_physical_verified: true,
+        }));
+
+        const eventRes = await supabase
+          .from("master_forensic_events")
+          .insert(events)
+          .select("forensic_event_id");
+
+        if (eventRes.error) throw new Error(eventRes.error.message);
+        
+        // Batch insert chain links
+        const chainLinks = (eventRes.data || []).map((evt, idx) => ({
+          forensic_event_id: evt.forensic_event_id,
+          source_table: "biometric_monitoring",
+          source_id: newBio[idx].id,
+          link_type: "biometric" as const,
+          link_confidence: 90,
+        }));
+
+        await supabase.from("evidence_chain_links").insert(chainLinks);
+        
+        const lastId = bioResult.rows[bioResult.rows.length - 1]?.id;
 
         await supabase
           .from("correlation_job_status")
           .update({
             status: "completed",
-            processed_records: processed,
-            linked_records: linked,
+            processed_records: bioResult.rows.length,
+            linked_records: chainLinks.length,
             completed_at: new Date().toISOString(),
+            last_cursor: lastId,
           })
           .eq("job_id", jobId);
 
-        return ok({ jobId, processed, linked });
+        return ok({ 
+          jobId, 
+          processed: bioResult.rows.length, 
+          linked: chainLinks.length,
+          nextCursor: lastId,
+          hasMore: bioResult.rows.length === batchSize 
+        });
       } catch (e) {
         await supabase
           .from("correlation_job_status")

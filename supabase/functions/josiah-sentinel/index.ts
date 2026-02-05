@@ -184,7 +184,11 @@ serve(async (req) => {
       // 6. DETECT FLEET CONVERGENCE
       const hourlyGroups = new Map<string, Set<string>>();
       for (const detection of recentDetections) {
-        const hour = detection.detection_timestamp?.substring(0, 13); // YYYY-MM-DDTHH
+        // postgres.js may return timestamps as Date objects; normalize to ISO string
+        const ts = (detection as any).detection_timestamp;
+        const iso = ts instanceof Date ? ts.toISOString() : new Date(ts).toISOString();
+        const hour = iso.slice(0, 13); // YYYY-MM-DDTHH
+
         if (!hourlyGroups.has(hour)) hourlyGroups.set(hour, new Set());
         if (detection.registration) hourlyGroups.get(hour)!.add(detection.registration);
       }

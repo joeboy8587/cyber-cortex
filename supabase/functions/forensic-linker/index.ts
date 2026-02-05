@@ -172,7 +172,7 @@ serve(async (req) => {
     }
 
     if (action === "backfillFlights") {
-      const batchSize = typeof params.batchSize === "number" ? Math.min(params.batchSize, 2000) : 200;
+      const batchSize = typeof params.batchSize === "number" ? Math.min(params.batchSize, 10000) : 2000;
       const cursor = typeof params.cursor === "string" ? params.cursor : null;
       
       // Create job record
@@ -300,7 +300,7 @@ serve(async (req) => {
     }
 
     if (action === "backfillBiometrics") {
-      const batchSize = typeof params.batchSize === "number" ? Math.min(params.batchSize, 2000) : 200;
+      const batchSize = typeof params.batchSize === "number" ? Math.min(params.batchSize, 10000) : 2000;
       const cursor = typeof params.cursor === "string" ? params.cursor : null;
       
       const jobRes = await supabase
@@ -506,7 +506,7 @@ serve(async (req) => {
     }
 
     if (action === "runFullBackfill") {
-      // Run all backfills in sequence
+      // Run all backfills in sequence with larger batch sizes
       const results: Record<string, unknown> = {};
       
       for (const backfillAction of ["backfillFlights", "backfillBiometrics", "backfillJosiah"]) {
@@ -514,7 +514,7 @@ serve(async (req) => {
           const response = await fetch(req.url, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ action: backfillAction, batchSize: 100 }),
+            body: JSON.stringify({ action: backfillAction, batchSize: 2000 }),
           });
           results[backfillAction] = await response.json();
         } catch (e) {
@@ -523,6 +523,237 @@ serve(async (req) => {
       }
       
       return ok(results);
+    }
+
+    // TURBO MODE: Continuous backfill with larger batches and auto-continue
+    if (action === "turboBackfill") {
+      const targetTable = typeof params.table === "string" ? params.table : "live_flight_detections_rows";
+      const maxBatches = typeof params.maxBatches === "number" ? Math.min(params.maxBatches, 50) : 10;
+      const batchSize = 10000;
+      
+      const jobRes = await supabase
+        .from("correlation_job_status")
+        .insert({
+          job_type: "turbo_backfill",
+          target_table: targetTable,
+          status: "running",
+          started_at: new Date().toISOString(),
+          total_records: maxBatches * batchSize,
+        })
+        .select("job_id")
+        .single();
+      
+      if (jobRes.error) return fail(jobRes.error.message, 500);
+      const jobId = jobRes.data.job_id;
+
+      let totalProcessed = 0;
+      let totalLinked = 0;
+      let cursor: string | null = null;
+      let batchesCompleted = 0;
+      let hasMore = true;
+
+      try {
+        const neon = await getNeonClient();
+
+        while (hasMore && batchesCompleted < maxBatches) {
+          // Get existing linked IDs
+          const existingLinks = await supabase
+            .from("evidence_chain_links")
+            .select("source_id")
+            .eq("source_table", targetTable)
+            .limit(50000);
+          
+          const linkedIds = new Set((existingLinks.data || []).map(l => l.source_id));
+
+          let query = "";
+          if (targetTable === "live_flight_detections_rows") {
+            const cursorClause = cursor ? `AND id > '${cursor}'` : '';
+            query = `
+              SELECT id,
+                     COALESCE(registration, callsign, icao_code, icao24, 'UNKNOWN') as aircraft_id,
+                     COALESCE(latitude, 0) as latitude,
+                     COALESCE(longitude, 0) as longitude,
+                     COALESCE(altitude, 0) as altitude,
+                     COALESCE(detection_timestamp, created_at, now()) as detected_at
+              FROM live_flight_detections_rows
+              WHERE id IS NOT NULL ${cursorClause}
+              ORDER BY id ASC
+              LIMIT ${batchSize}
+            `;
+          } else if (targetTable === "biometric_monitoring") {
+            const cursorClause = cursor ? `AND id > ${cursor}` : '';
+            query = `
+              SELECT id::text, 
+                     COALESCE(heart_rate, 0) as heart_rate,
+                     COALESCE(stress_level, 0) as stress_level,
+                     COALESCE(measurement_timestamp, created_at, now()) as event_timestamp
+              FROM biometric_monitoring 
+              WHERE id IS NOT NULL ${cursorClause}
+                AND (heart_rate IS NOT NULL OR stress_level IS NOT NULL)
+              ORDER BY id ASC 
+              LIMIT ${batchSize}
+            `;
+          } else if (targetTable === "watchtower_unified_master") {
+            const cursorClause = cursor ? `AND id > '${cursor}'` : '';
+            query = `
+              SELECT id::text,
+                     COALESCE(aircraft_id, 'UNKNOWN') as aircraft_id,
+                     COALESCE(event_timestamp, created_at, now()) as event_timestamp,
+                     COALESCE(event_type, 'surveillance') as event_type
+              FROM watchtower_unified_master
+              WHERE id IS NOT NULL ${cursorClause}
+              ORDER BY id ASC
+              LIMIT ${batchSize}
+            `;
+          } else if (targetTable === "unified_timeline_enhanced") {
+            const cursorClause = cursor ? `AND id > '${cursor}'` : '';
+            query = `
+              SELECT id::text,
+                     COALESCE(aircraft_id, entity_id, 'UNKNOWN') as entity_id,
+                     COALESCE(event_timestamp, created_at, now()) as event_timestamp,
+                     COALESCE(event_type, 'timeline') as event_type
+              FROM unified_timeline_enhanced
+              WHERE id IS NOT NULL ${cursorClause}
+              ORDER BY id ASC
+              LIMIT ${batchSize}
+            `;
+          } else if (targetTable === "legal_ada_violations_proper") {
+            const cursorClause = cursor ? `AND id > '${cursor}'` : '';
+            query = `
+              SELECT id::text,
+                     COALESCE(violation_type, 'ADA') as violation_type,
+                     COALESCE(created_at, now()) as event_timestamp
+              FROM legal_ada_violations_proper
+              WHERE id IS NOT NULL ${cursorClause}
+              ORDER BY id ASC
+              LIMIT ${batchSize}
+            `;
+          } else {
+            await neon.end();
+            return fail(`Unsupported table: ${targetTable}`);
+          }
+
+          const result = await neon.queryObject<Record<string, unknown>>(query);
+          
+          if (result.rows.length === 0) {
+            hasMore = false;
+            break;
+          }
+
+          // Filter out already-linked records
+          const newRecords = result.rows.filter(r => !linkedIds.has(String(r.id)));
+          
+          if (newRecords.length > 0) {
+            // Batch insert forensic events based on table type
+            const events = newRecords.map(record => {
+              if (targetTable === "live_flight_detections_rows") {
+                return {
+                  event_timestamp: String(record.detected_at),
+                  event_type: "flight" as const,
+                  primary_entity_id: String(record.aircraft_id),
+                  primary_entity_type: "aircraft" as const,
+                  geo_lat: Number(record.latitude) || null,
+                  geo_lng: Number(record.longitude) || null,
+                  confidence_score: 85,
+                  summary: `Flight ${record.aircraft_id} at ${record.altitude}ft`,
+                  linked_records: [{ table: targetTable, id: String(record.id) }],
+                };
+              } else if (targetTable === "biometric_monitoring") {
+                return {
+                  event_timestamp: String(record.event_timestamp),
+                  event_type: "biometric" as const,
+                  primary_entity_type: "individual" as const,
+                  confidence_score: 90,
+                  summary: `Biometric: HR ${record.heart_rate}, Stress ${record.stress_level}`,
+                  linked_records: [{ table: targetTable, id: String(record.id) }],
+                  is_physical_verified: true,
+                };
+              } else if (targetTable === "watchtower_unified_master" || targetTable === "unified_timeline_enhanced") {
+                return {
+                  event_timestamp: String(record.event_timestamp),
+                  event_type: "multi_factor" as const,
+                  primary_entity_id: String(record.aircraft_id || record.entity_id),
+                  primary_entity_type: "aircraft" as const,
+                  confidence_score: 80,
+                  summary: `Unified event: ${record.event_type}`,
+                  linked_records: [{ table: targetTable, id: String(record.id) }],
+                };
+              } else if (targetTable === "legal_ada_violations_proper") {
+                return {
+                  event_timestamp: String(record.event_timestamp),
+                  event_type: "legal" as const,
+                  confidence_score: 95,
+                  summary: `ADA Violation: ${record.violation_type}`,
+                  linked_records: [{ table: targetTable, id: String(record.id) }],
+                };
+              }
+              return null;
+            }).filter(Boolean);
+
+            const eventRes = await supabase
+              .from("master_forensic_events")
+              .insert(events)
+              .select("forensic_event_id");
+
+            if (!eventRes.error && eventRes.data) {
+              const chainLinks = eventRes.data.map((evt, idx) => ({
+                forensic_event_id: evt.forensic_event_id,
+                source_table: targetTable,
+                source_id: String(newRecords[idx].id),
+                link_type: (targetTable.includes("biometric") ? "biometric" : targetTable.includes("legal") ? "documentary" : "temporal") as "temporal" | "biometric" | "documentary",
+                link_confidence: targetTable.includes("legal") ? 95 : 85,
+              }));
+
+              await supabase.from("evidence_chain_links").insert(chainLinks);
+              totalLinked += chainLinks.length;
+            }
+          }
+
+          totalProcessed += result.rows.length;
+          cursor = String(result.rows[result.rows.length - 1]?.id);
+          batchesCompleted++;
+          hasMore = result.rows.length === batchSize;
+
+          // Update job progress
+          await supabase
+            .from("correlation_job_status")
+            .update({
+              processed_records: totalProcessed,
+              linked_records: totalLinked,
+              last_cursor: cursor,
+            })
+            .eq("job_id", jobId);
+        }
+
+        await neon.end();
+
+        await supabase
+          .from("correlation_job_status")
+          .update({
+            status: "completed",
+            processed_records: totalProcessed,
+            linked_records: totalLinked,
+            completed_at: new Date().toISOString(),
+            last_cursor: cursor,
+          })
+          .eq("job_id", jobId);
+
+        return ok({
+          jobId,
+          table: targetTable,
+          batchesCompleted,
+          totalProcessed,
+          totalLinked,
+          hasMore,
+          nextCursor: cursor,
+        });
+      } catch (e) {
+        await supabase
+          .from("correlation_job_status")
+          .update({ status: "failed", error_message: (e as Error).message })
+          .eq("job_id", jobId);
+        throw e;
+      }
     }
 
     if (action === "calculateBradfordHill") {

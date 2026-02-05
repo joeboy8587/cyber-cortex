@@ -9,6 +9,12 @@ import Index from "./pages/Index";
 import Stories from "./pages/Stories";
 import Auth from "./pages/Auth";
 import NotFound from "./pages/NotFound";
+import Surveillance from "./pages/Surveillance";
+import Biometrics from "./pages/Biometrics";
+import Legal from "./pages/Legal";
+import KCSO from "./pages/KCSO";
+import Josiah from "./pages/Josiah";
+import DataTools from "./pages/DataTools";
 
 const queryClient = new QueryClient();
 
@@ -41,6 +47,36 @@ const App = () => (
             <Route path="/" element={
               <ProtectedRoute>
                 <Index />
+              </ProtectedRoute>
+            } />
+            <Route path="/surveillance" element={
+              <ProtectedRoute>
+                <Surveillance />
+              </ProtectedRoute>
+            } />
+            <Route path="/biometrics" element={
+              <ProtectedRoute>
+                <Biometrics />
+              </ProtectedRoute>
+            } />
+            <Route path="/legal" element={
+              <ProtectedRoute>
+                <Legal />
+              </ProtectedRoute>
+            } />
+            <Route path="/kcso" element={
+              <ProtectedRoute>
+                <KCSO />
+              </ProtectedRoute>
+            } />
+            <Route path="/josiah" element={
+              <ProtectedRoute>
+                <Josiah />
+              </ProtectedRoute>
+            } />
+            <Route path="/data" element={
+              <ProtectedRoute>
+                <DataTools />
               </ProtectedRoute>
             } />
             <Route path="/stories" element={

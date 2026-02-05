@@ -60,6 +60,45 @@ const INTEGRATED_TABLES = new Set([
   'unified_timeline_enhanced',
   'legal_ada_violations_proper',
 ]);
+ // Critical high-value tables - expand integration
+ const CRITICAL_TABLES_TO_ADD = [
+   'correlation_events',
+   'case_evidence_links',
+   'biometric_threshold_collapses',
+   'radar_screenshot_analysis',
+   'flight_correlation_cache',
+   'aircraft_registry',
+   'kcso_fleet',
+   'entity_registry',
+   'master_forensic_events',
+   'evidence_chain_links',
+   'evidence_documents',
+   'josiah_witness_logs',
+   'josiah_autonomous_hypotheses',
+   'josiah_archive_imports',
+   'legal_rico_violations',
+   'legal_geneva_violations',
+   'legal_nuremberg_violations',
+   'ada_legal_violations',
+   'flight_biometric_correlations',
+   'aircraft_operator_enrichment',
+   'operator_shell_connections',
+   'watchtower_alerts',
+   'watchtower_daily_digest',
+   'surveillance_pattern_analysis',
+   'surveillance_coordination_events',
+   'timeline_events_master',
+   'timeline_annotations',
+   'forensic_screenshot_registry',
+   'ocr_extracted_data',
+   'kcso_clusters',
+   'kcso_fact_matrix_v1',
+   'kcso_personal_injury_timeline',
+   'kcso_fleet_modernization_ledger',
+ ];
+ 
+ // Add critical tables to integrated set
+ CRITICAL_TABLES_TO_ADD.forEach(t => INTEGRATED_TABLES.add(t));
 
 // Categorize tables by their purpose
 function categorizeTable(name: string): string {

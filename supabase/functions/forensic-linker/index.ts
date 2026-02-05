@@ -549,18 +549,25 @@ serve(async (req) => {
       try {
         const neon = await getNeonClient();
 
-        // Get existing linked IDs (sample to avoid huge memory)
-        const existingLinks = await supabase
-          .from("evidence_chain_links")
-          .select("source_id")
-          .eq("source_table", targetTable)
-          .limit(20000);
-        
-        const linkedIds = new Set((existingLinks.data || []).map(l => l.source_id));
+        // If no cursor provided, find the last linked ID for this table to resume from there
+        let effectiveCursor = cursor;
+        if (!effectiveCursor) {
+          const lastLinkedRes = await supabase
+            .from("evidence_chain_links")
+            .select("source_id")
+            .eq("source_table", targetTable)
+            .order("linked_at", { ascending: false })
+            .limit(1);
+          
+          if (lastLinkedRes.data && lastLinkedRes.data.length > 0) {
+            effectiveCursor = lastLinkedRes.data[0].source_id;
+            console.log(`[turboBackfill] Resuming from last linked ID: ${effectiveCursor}`);
+          }
+        }
 
         let query = "";
         if (targetTable === "live_flight_detections_rows") {
-          const cursorClause = cursor ? `AND id > '${cursor}'` : '';
+          const cursorClause = effectiveCursor ? `AND id > '${effectiveCursor}'` : '';
           query = `
             SELECT id,
                    COALESCE(registration, callsign, icao_code, icao24, 'UNKNOWN') as aircraft_id,
@@ -574,7 +581,7 @@ serve(async (req) => {
             LIMIT ${batchSize}
           `;
         } else if (targetTable === "biometric_monitoring") {
-          const cursorClause = cursor ? `AND id > ${cursor}` : '';
+          const cursorClause = effectiveCursor ? `AND id > ${effectiveCursor}` : '';
           query = `
             SELECT id::text, 
                    COALESCE(heart_rate, 0) as heart_rate,
@@ -587,7 +594,7 @@ serve(async (req) => {
             LIMIT ${batchSize}
           `;
         } else if (targetTable === "watchtower_unified_master") {
-          const cursorClause = cursor ? `AND id > '${cursor}'` : '';
+          const cursorClause = effectiveCursor ? `AND id > '${effectiveCursor}'` : '';
           query = `
             SELECT id::text,
                    COALESCE(aircraft_id, 'UNKNOWN') as aircraft_id,
@@ -599,7 +606,7 @@ serve(async (req) => {
             LIMIT ${batchSize}
           `;
         } else if (targetTable === "unified_timeline_enhanced") {
-          const cursorClause = cursor ? `AND id > '${cursor}'` : '';
+          const cursorClause = effectiveCursor ? `AND id > '${effectiveCursor}'` : '';
           query = `
             SELECT id::text,
                    COALESCE(aircraft_id, entity_id, 'UNKNOWN') as entity_id,
@@ -611,7 +618,7 @@ serve(async (req) => {
             LIMIT ${batchSize}
           `;
         } else if (targetTable === "legal_ada_violations_proper") {
-          const cursorClause = cursor ? `AND id > '${cursor}'` : '';
+          const cursorClause = effectiveCursor ? `AND id > '${effectiveCursor}'` : '';
           query = `
             SELECT id::text,
                    COALESCE(violation_type, 'ADA') as violation_type,
@@ -634,11 +641,11 @@ serve(async (req) => {
             .from("correlation_job_status")
             .update({ status: "completed", processed_records: 0, linked_records: 0, completed_at: new Date().toISOString() })
             .eq("job_id", jobId);
-          return ok({ jobId, table: targetTable, processed: 0, linked: 0, hasMore: false, message: "No more records" });
+          return ok({ jobId, table: targetTable, processed: 0, linked: 0, hasMore: false, message: "No more records to process" });
         }
 
-        // Filter out already-linked records
-        const newRecords = result.rows.filter(r => !linkedIds.has(String(r.id)));
+        // All records from this batch are new (cursor-based skip ensures no duplicates)
+        const newRecords = result.rows;
         
         let totalLinked = 0;
         if (newRecords.length > 0) {

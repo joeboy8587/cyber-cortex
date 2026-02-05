@@ -106,6 +106,7 @@ import { EntityNetworkDiagram } from "@/components/dashboard/EntityNetworkDiagra
 import { LegalIntelUploader } from "@/components/dashboard/LegalIntelUploader";
 import { BiometricEarlyWarningSystem } from "@/components/dashboard/BiometricEarlyWarningSystem";
 import { JosiahAutonomousHypothesis } from "@/components/dashboard/JosiahAutonomousHypothesis";
+import { JosiahSentinelMonitor } from "@/components/dashboard/JosiahSentinelMonitor";
 import { JosiahArchiveImporter } from "@/components/dashboard/JosiahArchiveImporter";
 import { MultiAgentHub } from "@/components/dashboard/MultiAgentHub";
 import { LegalAnalystAgent } from "@/components/dashboard/LegalAnalystAgent";
@@ -140,6 +141,11 @@ const Index = () => {
           <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <KCSOEvidenceMatrix />
             <BiometricFlightCorrelationHub />
+          </section>
+
+          {/* JOSIAH SENTINEL - Proactive AI Monitoring */}
+          <section id="sentinel-monitor" className="space-y-6">
+            <JosiahSentinelMonitor />
           </section>
 
           {/* BIOMETRIC EARLY WARNING & AUTONOMOUS HYPOTHESIS */}

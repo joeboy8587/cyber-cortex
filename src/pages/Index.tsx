@@ -12,6 +12,8 @@ import { ComprehensiveEvidenceScan } from "@/components/dashboard/ComprehensiveE
 import { MasterEvidenceHub } from "@/components/dashboard/MasterEvidenceHub";
 import { JosiahAutonomousHypothesis } from "@/components/dashboard/JosiahAutonomousHypothesis";
 import { EntityRelationshipMap } from "@/components/dashboard/EntityRelationshipMap";
+import { PredictiveFlightModeling } from "@/components/dashboard/PredictiveFlightModeling";
+import { ShellNetworkGraph } from "@/components/dashboard/ShellNetworkGraph";
 
 const Index = () => {
   return (
@@ -56,6 +58,12 @@ const Index = () => {
         {/* JOSIAH SENTINEL - Proactive AI Monitoring */}
         <section>
           <JosiahSentinelMonitor />
+        </section>
+
+        {/* 🔥 PREDICTIVE HUNTING MACHINE - AI-Powered Threat Prediction */}
+        <section className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <PredictiveFlightModeling />
+          <ShellNetworkGraph />
         </section>
 
         {/* BIOMETRIC EARLY WARNING & AUTONOMOUS HYPOTHESIS */}

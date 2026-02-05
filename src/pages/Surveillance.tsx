@@ -7,6 +7,8 @@ import { FleetTrackingLedger } from "@/components/dashboard/FleetTrackingLedger"
 import { MilitaryAircraftPanel } from "@/components/dashboard/MilitaryAircraftPanel";
 import { CanadianMilitaryTracker } from "@/components/dashboard/CanadianMilitaryTracker";
 import { ADSBSpoofingAudit } from "@/components/dashboard/ADSBSpoofingAudit";
+import { ADSBSpoofingDetector } from "@/components/dashboard/ADSBSpoofingDetector";
+import { BiometricBattleMap } from "@/components/dashboard/BiometricBattleMap";
 import { HammerAnvilPatternPanel } from "@/components/dashboard/HammerAnvilPatternPanel";
 import { HighLowOperationsPanel } from "@/components/dashboard/HighLowOperationsPanel";
 import { FlightDataScraper } from "@/components/dashboard/FlightDataScraper";
@@ -37,10 +39,20 @@ export default function Surveillance() {
           </div>
         </div>
 
+        {/* 🔥 BIOMETRIC BATTLE MAP - Real-Time Overlay */}
+        <section>
+          <BiometricBattleMap />
+        </section>
+
         {/* Map & Live Tracker */}
         <section className="space-y-6">
           <AircraftMapVisualization />
           <LiveFlightTracker />
+        </section>
+
+        {/* 🔥 ADS-B SPOOFING DETECTOR - Real-Time Masking Detection */}
+        <section>
+          <ADSBSpoofingDetector />
         </section>
 
         {/* Direct Correlation */}

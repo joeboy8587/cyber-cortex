@@ -3,7 +3,7 @@ import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
 interface PatternAnomaly {
@@ -31,7 +31,7 @@ serve(async (req) => {
   try {
     const { action = "scan" } = await req.json();
     
-    const MISTRAL_API_KEY = Deno.env.get("MISTRAL_API_KEY");
+    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     const NEON_DATABASE_URL = Deno.env.get("NEON_DATABASE_URL");
     
     if (!NEON_DATABASE_URL) {
@@ -261,7 +261,7 @@ serve(async (req) => {
 
       // Use Mistral to generate AI hypothesis if available
       let aiHypothesis = null;
-      if (MISTRAL_API_KEY && anomalies.length > 0) {
+      if (LOVABLE_API_KEY && anomalies.length > 0) {
         try {
           const analysisPrompt = `Analyze these surveillance anomalies and generate a prosecutable hypothesis:
 
@@ -275,25 +275,24 @@ Generate a 2-3 sentence hypothesis that:
 
 Be direct and analytical.`;
 
-          const mistralResponse = await fetch("https://api.mistral.ai/v1/chat/completions", {
+          const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
             method: "POST",
             headers: {
-              "Authorization": `Bearer ${MISTRAL_API_KEY}`,
+              "Authorization": `Bearer ${LOVABLE_API_KEY}`,
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              model: "mistral-large-latest",
+              model: "google/gemini-3-flash-preview",
               messages: [
                 { role: "system", content: "You are JOSIAH, an investigative AI. Be concise and analytical." },
                 { role: "user", content: analysisPrompt }
               ],
-              max_tokens: 300,
-              temperature: 0.5,
+              max_tokens: 500,
             }),
           });
 
-          if (mistralResponse.ok) {
-            const data = await mistralResponse.json();
+          if (aiResponse.ok) {
+            const data = await aiResponse.json();
             aiHypothesis = data.choices?.[0]?.message?.content || null;
           }
         } catch (aiErr) {

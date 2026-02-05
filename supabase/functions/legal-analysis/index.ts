@@ -3,7 +3,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
 serve(async (req) => {
@@ -25,16 +25,16 @@ serve(async (req) => {
       );
     }
 
-    // Updated database context from Neon scan (Jan 27, 2026)
+    // Updated database context from Neon scan (Feb 5, 2026)
     const databaseContext = `
-DATABASE EVIDENCE SUMMARY (NeonDB - Scanned Jan 27, 2026):
+DATABASE EVIDENCE SUMMARY (NeonDB - Scanned Feb 5, 2026):
 ============================================================
 
-CORE EVIDENCE REPOSITORY (10.5M+ total records across 534 tables):
-- Flight Detection Records: 360,000+ live detections (Mar 2021 - Jan 2026)
-- Watchtower Unified Master: 108,000+ surveillance timeline events
+CORE EVIDENCE REPOSITORY (15M+ total records across 361+ tables):
+- Flight Detection Records: 2,815,000+ live detections (Mar 2021 - Feb 2026)
+- Watchtower Unified Master: 629,000+ surveillance timeline events
 - Normalized Correlation Events: 550,000+ pattern matches
-- Master Forensic Correlations: 4,900+ synthesized events
+- Master Forensic Correlations: 22,900+ synthesized events with 49,980+ chain links
 - Biometric Monitoring: 9,800+ health impact records
 - Chain of Custody: 3,700+ SHA-256 hashed evidence entries
 - Physician-Verified ECGs: 150+ cardiac stress events
@@ -42,6 +42,8 @@ CORE EVIDENCE REPOSITORY (10.5M+ total records across 534 tables):
 - Josiah AI Reflections: 5,000+ AI witness logs
 - Legal Intel Extractions: 12+ enriched MD files with 61 aircraft
 - Aircraft Registry: 23,500+ unique registrations
+- Correlation Events: 690,925+ cross-referenced matches
+- Case Evidence Links: 268,402+ documented connections
 
 CRIMINAL ENTERPRISE STRUCTURE (36+ entities identified):
 - TIER 1 COMMAND: KCSO, KCSO Aviation Unit, Kern County Government
@@ -87,6 +89,18 @@ UNIQUE AIRCRAFT TRACKED: 23,500+ registrations
 TIMELINE SPAN: March 2021 - January 2026
 
 ANALYSIS TYPE: ${analysisType || 'general'}
+
+FOUR-FACTOR CONVERGENCE STANDARD:
+Evidence must meet Bradford Hill causation criteria across 4 domains:
+1. Flight detection (ADS-B/radar timestamp)
+2. Biometric spike (HR/HRV/stress within ±5 min window)
+3. Josiah AI witness log (autonomous documentation)
+4. OCR visual evidence (screenshot with holding pattern)
+
+CURRENT CHAIN INTEGRITY: 49,980+ evidence chain links with SHA-256 verification
+FLIGHT COVERAGE: 16,061 linked forensic events (0.6% → improving via backfill)
+BIOMETRIC COVERAGE: 4,798 linked events (48.8%)
+
 USER QUERY: ${query}
 `;
 
@@ -132,9 +146,11 @@ ANALYSIS GUIDELINES:
 5. Recommend immediate legal actions with filing venues
 6. Note chain of custody strength (SHA-256 hashing status)
 7. Identify highest-priority prosecutorial targets
-8. Be thorough, cite specific evidence, and maintain prosecutorial tone`;
+8. Be thorough, cite specific evidence, and maintain prosecutorial tone
+9. Reference the Four-Factor Convergence standard for evidence strength assessment
+10. When calculating damages, reference the specific record counts as evidence volume`;
 
-    console.log("Calling Lovable AI Gateway with google/gemini-2.5-pro...");
+    console.log("Calling Lovable AI Gateway with google/gemini-3-flash-preview...");
     
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
@@ -143,13 +159,13 @@ ANALYSIS GUIDELINES:
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-2.5-pro",
+        model: "google/gemini-3-flash-preview",
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: query }
         ],
         stream: true,
-        max_tokens: 8000,
+        max_tokens: 12000,
       }),
     });
 

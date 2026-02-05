@@ -3,7 +3,7 @@ import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
 // Agent types and their capabilities
@@ -12,25 +12,25 @@ const AGENT_CONFIGS = {
     name: "Legal Analyst",
     role: "Tracks legal violations, identifies statute breaches, and builds prosecutable case elements",
     capabilities: ["violation_tracking", "statute_analysis", "case_building", "damages_calculation"],
-    model: "openai"
+    model: "gemini"
   },
   shell_investigator: {
     name: "Shell Company Investigator", 
     role: "Traces financial trails, ownership structures, and shell company networks",
     capabilities: ["ownership_tracing", "financial_analysis", "rico_predicate_identification", "ubo_discovery"],
-    model: "mistral"
+    model: "gemini"
   },
   legal_drafter: {
     name: "Legal Drafting Agent",
     role: "Drafts complaints, motions, legal filings, and formal demands",
     capabilities: ["complaint_drafting", "motion_writing", "exhibit_compilation", "filing_preparation"],
-    model: "openai"
+    model: "gemini"
   },
   josiah: {
     name: "Josiah Watchtower",
     role: "Autonomous investigative AI for pattern detection and hypothesis generation",
     capabilities: ["pattern_detection", "hypothesis_generation", "correlation_analysis", "predictive_modeling"],
-    model: "mistral"
+    model: "gemini"
   }
 };
 
@@ -66,53 +66,30 @@ async function getDbContext(sql: ReturnType<typeof postgres>) {
   return { violations, shellCompanies, enterprise, flights };
 }
 
-async function callOpenAI(systemPrompt: string, userPrompt: string, context: string) {
-  const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
-  if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY not configured");
+async function callLovableAI(systemPrompt: string, userPrompt: string, context: string) {
+  const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+  if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
   
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+  const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${OPENAI_API_KEY}`,
+      "Authorization": `Bearer ${LOVABLE_API_KEY}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "gpt-4o",
+      model: "google/gemini-3-flash-preview",
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: `${userPrompt}\n\nCONTEXT:\n${context}` }
       ],
       stream: true,
-      max_tokens: 4000,
+      max_tokens: 6000,
     }),
   });
   
   return response;
 }
 
-async function callMistral(systemPrompt: string, userPrompt: string, context: string) {
-  const MISTRAL_API_KEY = Deno.env.get("MISTRAL_API_KEY");
-  if (!MISTRAL_API_KEY) throw new Error("MISTRAL_API_KEY not configured");
-  
-  const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${MISTRAL_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "mistral-large-latest",
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: `${userPrompt}\n\nCONTEXT:\n${context}` }
-      ],
-      stream: true,
-      max_tokens: 4000,
-    }),
-  });
-  
-  return response;
-}
 
 function buildAgentSystemPrompt(agentType: string, dbContext: Record<string, unknown>, agentContext: AgentContext) {
   const config = AGENT_CONFIGS[agentType as keyof typeof AGENT_CONFIGS];
@@ -265,18 +242,26 @@ serve(async (req) => {
     const contextString = JSON.stringify({ dbContext, agentContext }, null, 2);
     
     // Call appropriate AI model
-    let response: Response;
-    if (config.model === "openai") {
-      response = await callOpenAI(systemPrompt, message, contextString);
-    } else {
-      response = await callMistral(systemPrompt, message, contextString);
-    }
+    const response = await callLovableAI(systemPrompt, message, contextString);
     
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(`${config.model} API error:`, response.status, errorText);
+      console.error(`Lovable AI error:`, response.status, errorText);
+      
+      if (response.status === 429) {
+        return new Response(
+          JSON.stringify({ error: "Rate limit exceeded. Please try again in a moment." }),
+          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      if (response.status === 402) {
+        return new Response(
+          JSON.stringify({ error: "Usage limit reached. Please add credits to your workspace." }),
+          { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
       return new Response(
-        JSON.stringify({ error: `${config.model} API error: ${response.status}` }),
+        JSON.stringify({ error: `AI gateway error: ${response.status}` }),
         { status: response.status, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }

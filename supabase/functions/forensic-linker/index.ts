@@ -549,25 +549,25 @@ serve(async (req) => {
       try {
         const neon = await getNeonClient();
 
-        // If no cursor provided, find the last linked ID for this table to resume from there
-        let effectiveCursor = cursor;
-        if (!effectiveCursor) {
-          const lastLinkedRes = await supabase
-            .from("evidence_chain_links")
-            .select("source_id")
-            .eq("source_table", targetTable)
-            .order("linked_at", { ascending: false })
-            .limit(1);
-          
-          if (lastLinkedRes.data && lastLinkedRes.data.length > 0) {
-            effectiveCursor = lastLinkedRes.data[0].source_id;
-            console.log(`[turboBackfill] Resuming from last linked ID: ${effectiveCursor}`);
-          }
-        }
+        // Get a sample of already-linked IDs for this table to use in exclusion
+        // We'll fetch linked IDs in batches and use NOT IN to exclude them
+        console.log(`[turboBackfill] Fetching linked IDs for ${targetTable}...`);
+        
+        // Get linked IDs from Supabase (sample up to 50k)
+        const linkedIdsResult = await supabase
+          .from("evidence_chain_links")
+          .select("source_id")
+          .eq("source_table", targetTable)
+          .limit(50000);
+        
+        const linkedIdSet = new Set((linkedIdsResult.data || []).map(r => r.source_id));
+        console.log(`[turboBackfill] Found ${linkedIdSet.size} already-linked IDs`);
 
+        // Build query that excludes already-linked records using cursor for pagination
+        const cursorClause = cursor ? `AND id > '${cursor}'` : '';
+        
         let query = "";
         if (targetTable === "live_flight_detections_rows") {
-          const cursorClause = effectiveCursor ? `AND id > '${effectiveCursor}'` : '';
           query = `
             SELECT id,
                    COALESCE(registration, callsign, icao_code, icao24, 'UNKNOWN') as aircraft_id,
@@ -581,20 +581,19 @@ serve(async (req) => {
             LIMIT ${batchSize}
           `;
         } else if (targetTable === "biometric_monitoring") {
-          const cursorClause = effectiveCursor ? `AND id > ${effectiveCursor}` : '';
+          const numericCursor = cursor ? `AND id > ${cursor}` : '';
           query = `
             SELECT id::text, 
                    COALESCE(heart_rate, 0) as heart_rate,
                    COALESCE(stress_level, 0) as stress_level,
                    COALESCE(measurement_timestamp, created_at, now()) as event_timestamp
             FROM biometric_monitoring 
-            WHERE id IS NOT NULL ${cursorClause}
+            WHERE id IS NOT NULL ${numericCursor}
               AND (heart_rate IS NOT NULL OR stress_level IS NOT NULL)
             ORDER BY id ASC 
             LIMIT ${batchSize}
           `;
         } else if (targetTable === "watchtower_unified_master") {
-          const cursorClause = effectiveCursor ? `AND id > '${effectiveCursor}'` : '';
           query = `
             SELECT id::text,
                    COALESCE(aircraft_id, 'UNKNOWN') as aircraft_id,
@@ -606,7 +605,6 @@ serve(async (req) => {
             LIMIT ${batchSize}
           `;
         } else if (targetTable === "unified_timeline_enhanced") {
-          const cursorClause = effectiveCursor ? `AND id > '${effectiveCursor}'` : '';
           query = `
             SELECT id::text,
                    COALESCE(aircraft_id, entity_id, 'UNKNOWN') as entity_id,
@@ -618,7 +616,6 @@ serve(async (req) => {
             LIMIT ${batchSize}
           `;
         } else if (targetTable === "legal_ada_violations_proper") {
-          const cursorClause = effectiveCursor ? `AND id > '${effectiveCursor}'` : '';
           query = `
             SELECT id::text,
                    COALESCE(violation_type, 'ADA') as violation_type,
@@ -632,8 +629,13 @@ serve(async (req) => {
           await neon.end();
           return fail(`Unsupported table: ${targetTable}`);
         }
-
+        
         const result = await neon.queryObject<Record<string, unknown>>(query);
+        
+        // Filter out already-linked records in memory
+        const unlinkedRecords = result.rows.filter(r => !linkedIdSet.has(String(r.id)));
+        console.log(`[turboBackfill] Batch: ${result.rows.length} total, ${unlinkedRecords.length} unlinked`);
+        
         await neon.end();
         
         if (result.rows.length === 0) {
@@ -644,16 +646,29 @@ serve(async (req) => {
           return ok({ jobId, table: targetTable, processed: 0, linked: 0, hasMore: false, message: "No more records to process" });
         }
 
-        // All records from this batch are new (cursor-based skip ensures no duplicates)
-        const newRecords = result.rows;
-        
         let totalLinked = 0;
-        if (newRecords.length > 0) {
-          // Build forensic events
-          const events = newRecords.map(record => {
+        // Helper to convert timestamp to ISO format
+        const toISOTimestamp = (val: unknown): string => {
+          if (!val) return new Date().toISOString();
+          if (typeof val === 'string') {
+            // Try to parse and convert to ISO
+            const parsed = new Date(val);
+            if (!isNaN(parsed.getTime())) {
+              return parsed.toISOString();
+            }
+          }
+          if (val instanceof Date) {
+            return val.toISOString();
+          }
+          return new Date().toISOString();
+        };
+
+        if (unlinkedRecords.length > 0) {
+          // Build forensic events from unlinked records only
+          const events = unlinkedRecords.map(record => {
             if (targetTable === "live_flight_detections_rows") {
               return {
-                event_timestamp: String(record.detected_at),
+                event_timestamp: toISOTimestamp(record.detected_at),
                 event_type: "flight" as const,
                 primary_entity_id: String(record.aircraft_id),
                 primary_entity_type: "aircraft" as const,
@@ -665,7 +680,7 @@ serve(async (req) => {
               };
             } else if (targetTable === "biometric_monitoring") {
               return {
-                event_timestamp: String(record.event_timestamp),
+                event_timestamp: toISOTimestamp(record.event_timestamp),
                 event_type: "biometric" as const,
                 primary_entity_type: "individual" as const,
                 confidence_score: 90,
@@ -675,7 +690,7 @@ serve(async (req) => {
               };
             } else if (targetTable === "watchtower_unified_master" || targetTable === "unified_timeline_enhanced") {
               return {
-                event_timestamp: String(record.event_timestamp),
+                event_timestamp: toISOTimestamp(record.event_timestamp),
                 event_type: "multi_factor" as const,
                 primary_entity_id: String(record.aircraft_id || record.entity_id),
                 primary_entity_type: "aircraft" as const,
@@ -685,7 +700,7 @@ serve(async (req) => {
               };
             } else if (targetTable === "legal_ada_violations_proper") {
               return {
-                event_timestamp: String(record.event_timestamp),
+                event_timestamp: toISOTimestamp(record.event_timestamp),
                 event_type: "legal" as const,
                 confidence_score: 95,
                 summary: `ADA Violation: ${record.violation_type}`,
@@ -695,22 +710,33 @@ serve(async (req) => {
             return null;
           }).filter(Boolean);
 
+          console.log(`[turboBackfill] Inserting ${events.length} forensic events...`);
           const eventRes = await supabase
             .from("master_forensic_events")
             .insert(events)
             .select("forensic_event_id");
 
-          if (!eventRes.error && eventRes.data) {
+          if (eventRes.error) {
+            console.error(`[turboBackfill] Event insert error:`, eventRes.error.message);
+          } else if (eventRes.data && eventRes.data.length > 0) {
+            console.log(`[turboBackfill] Inserted ${eventRes.data.length} events, creating chain links...`);
             const chainLinks = eventRes.data.map((evt, idx) => ({
               forensic_event_id: evt.forensic_event_id,
               source_table: targetTable,
-              source_id: String(newRecords[idx].id),
+              source_id: String(unlinkedRecords[idx].id),
               link_type: (targetTable.includes("biometric") ? "biometric" : targetTable.includes("legal") ? "documentary" : "temporal") as "temporal" | "biometric" | "documentary",
               link_confidence: targetTable.includes("legal") ? 95 : 85,
             }));
 
-            await supabase.from("evidence_chain_links").insert(chainLinks);
-            totalLinked = chainLinks.length;
+            const linkRes = await supabase.from("evidence_chain_links").insert(chainLinks);
+            if (linkRes.error) {
+              console.error(`[turboBackfill] Chain link insert error:`, linkRes.error.message);
+            } else {
+              totalLinked = chainLinks.length;
+              console.log(`[turboBackfill] Successfully linked ${totalLinked} records`);
+            }
+          } else {
+            console.log(`[turboBackfill] No events inserted (empty result)`);
           }
         }
 

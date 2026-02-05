@@ -53,8 +53,10 @@ export function ForensicLinkageHub() {
   const [jobs, setJobs] = useState<JobStatus[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
+  const [isTurboRunning, setIsTurboRunning] = useState(false);
   const [progress, setProgress] = useState(0);
   const [currentStep, setCurrentStep] = useState('');
+  const [turboTable, setTurboTable] = useState('live_flight_detections_rows');
 
   const invokeForensicLinker = async (action: string, params = {}) => {
     const { data, error } = await supabase.functions.invoke('forensic-linker', {
@@ -89,6 +91,37 @@ export function ForensicLinkageHub() {
     fetchStats();
   }, [fetchStats]);
 
+  // TURBO MODE: Process large batches continuously
+  const runTurboBackfill = async () => {
+    setIsTurboRunning(true);
+    setProgress(0);
+    setCurrentStep(`TURBO MODE: Processing ${turboTable}...`);
+    
+    try {
+      const result = await invokeForensicLinker('turboBackfill', { 
+        table: turboTable,
+        maxBatches: 20 // Process up to 200K records
+      });
+      
+      setProgress(100);
+      setCurrentStep(`Complete! Processed ${result.totalProcessed?.toLocaleString()} records, linked ${result.totalLinked?.toLocaleString()}`);
+      toast.success(`Turbo backfill complete: ${result.totalLinked?.toLocaleString()} new links created`);
+      
+      // If there's more data, show a message
+      if (result.hasMore) {
+        toast.info('More data available - run again to continue');
+      }
+      
+      await fetchStats();
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+      toast.error(`Turbo backfill failed: ${errorMessage}`);
+    } finally {
+      setIsTurboRunning(false);
+      setTimeout(() => setProgress(0), 3000);
+    }
+  };
+
   const runFullBackfill = async () => {
     setIsRunning(true);
     setProgress(0);
@@ -98,11 +131,11 @@ export function ForensicLinkageHub() {
       // Step 1: Flights
       setCurrentStep('Processing flight detections...');
       setProgress(10);
-      await invokeForensicLinker('backfillFlights', { batchSize: 2000 });
+      await invokeForensicLinker('backfillFlights', { batchSize: 5000 });
       
       setProgress(40);
       setCurrentStep('Correlating biometrics...');
-      await invokeForensicLinker('backfillBiometrics', { batchSize: 1000 });
+      await invokeForensicLinker('backfillBiometrics', { batchSize: 5000 });
       
       setProgress(60);
       setCurrentStep('Linking Josiah reflections...');
@@ -122,9 +155,9 @@ export function ForensicLinkageHub() {
       
       // Refresh stats
       await fetchStats();
-    } catch (err) {
-      console.error('Backfill error:', err);
-      toast.error(`Backfill failed: ${err.message}`);
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+      toast.error(`Backfill failed: ${errorMessage}`);
     } finally {
       setIsRunning(false);
       setTimeout(() => setProgress(0), 2000);
@@ -137,8 +170,9 @@ export function ForensicLinkageHub() {
       const result = await invokeForensicLinker('runFullBackfill');
       toast.success(result.message || 'Quick linkage complete');
       await fetchStats();
-    } catch (err) {
-      toast.error(`Quick link failed: ${err.message}`);
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+      toast.error(`Quick link failed: ${errorMessage}`);
     } finally {
       setIsRunning(false);
     }
@@ -169,10 +203,34 @@ export function ForensicLinkageHub() {
       className="col-span-full"
     >
       {/* Control Bar */}
-      <div className="flex items-center gap-3 mb-6">
+      <div className="flex flex-wrap items-center gap-3 mb-6">
+        {/* TURBO MODE - Primary Action */}
+        <div className="flex items-center gap-2 p-2 rounded-lg bg-orange-500/10 border border-orange-500/30">
+          <select 
+            value={turboTable}
+            onChange={(e) => setTurboTable(e.target.value)}
+            className="bg-transparent border-none text-xs font-mono text-orange-400 focus:outline-none"
+            disabled={isTurboRunning}
+          >
+            <option value="live_flight_detections_rows">Flights (2.8M)</option>
+            <option value="biometric_monitoring">Biometrics (10K)</option>
+            <option value="watchtower_unified_master">Unified Master (629K)</option>
+            <option value="unified_timeline_enhanced">Timeline (109K)</option>
+            <option value="legal_ada_violations_proper">ADA Violations (37K)</option>
+          </select>
+          <Button 
+            onClick={runTurboBackfill}
+            disabled={isRunning || isTurboRunning}
+            className="bg-orange-500/20 hover:bg-orange-500/30 border border-orange-500/50 text-orange-400"
+          >
+            <Zap className="w-4 h-4 mr-2" />
+            {isTurboRunning ? 'Processing...' : 'TURBO MODE'}
+          </Button>
+        </div>
+
         <Button 
           onClick={runQuickLink}
-          disabled={isRunning}
+          disabled={isRunning || isTurboRunning}
           className="bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/50"
         >
           <Zap className="w-4 h-4 mr-2" />
@@ -180,7 +238,7 @@ export function ForensicLinkageHub() {
         </Button>
         <Button 
           onClick={runFullBackfill}
-          disabled={isRunning}
+          disabled={isRunning || isTurboRunning}
           variant="outline"
           className="border-primary/50"
         >
@@ -196,8 +254,8 @@ export function ForensicLinkageHub() {
           <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
         </Button>
         
-        {isRunning && (
-          <div className="flex-1 ml-4">
+        {(isRunning || isTurboRunning) && (
+          <div className="flex-1 ml-4 min-w-[200px]">
             <div className="text-xs text-muted-foreground mb-1">{currentStep}</div>
             <Progress value={progress} className="h-2" />
           </div>

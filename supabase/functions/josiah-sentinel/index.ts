@@ -86,7 +86,7 @@ serve(async (req) => {
       const recentDetections = await sql`
         SELECT 
           id, registration, callsign, altitude, latitude, longitude,
-          detection_timestamp, icao24, operator, aircraft_type,
+          detection_timestamp, icao24, aircraft_type,
           ground_speed, heading, vertical_rate
         FROM live_flight_detections_rows
         WHERE detection_timestamp > NOW() - INTERVAL '${sql.unsafe(String(windowMinutes))} minutes'

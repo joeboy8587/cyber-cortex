@@ -15,6 +15,7 @@ import Legal from "./pages/Legal";
 import KCSO from "./pages/KCSO";
 import Josiah from "./pages/Josiah";
 import DataTools from "./pages/DataTools";
+import Simulation from "./pages/Simulation";
 
 const queryClient = new QueryClient();
 
@@ -82,6 +83,11 @@ const App = () => (
             <Route path="/stories" element={
               <ProtectedRoute>
                 <Stories />
+              </ProtectedRoute>
+            } />
+            <Route path="/simulation" element={
+              <ProtectedRoute>
+                <Simulation />
               </ProtectedRoute>
             } />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}

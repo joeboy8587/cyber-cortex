@@ -21,6 +21,7 @@ import { EntityNetworkDiagram } from "@/components/dashboard/EntityNetworkDiagra
 import { EnterpriseNetworkGraph } from "@/components/dashboard/EnterpriseNetworkGraph";
 import { PlainLanguageSummary } from "@/components/dashboard/PlainLanguageSummary";
 import { ConsentDocumentation } from "@/components/dashboard/ConsentDocumentation";
+import { WatchtowerReportGenerator } from "@/components/dashboard/WatchtowerReportGenerator";
 
 export default function Legal() {
   return (
@@ -40,6 +41,11 @@ export default function Legal() {
             </p>
           </div>
         </div>
+
+        {/* Watchtower Report Generator - Top Priority */}
+        <section>
+          <WatchtowerReportGenerator />
+        </section>
 
         {/* Main Evidence Dashboard */}
         <section>

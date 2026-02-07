@@ -9,9 +9,6 @@ import {
   ChevronLeft, 
   ChevronRight,
   AlertTriangle,
-  Heart,
-  Plane,
-  FileText,
   Settings,
   Download,
   Loader2,
@@ -22,17 +19,21 @@ import {
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { format, subHours, addMinutes, differenceInMinutes } from "date-fns";
-import { MapContainer, TileLayer, Marker, Popup, Polyline, Circle, useMap } from "react-leaflet";
+import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
-// Fix Leaflet icon issue
-delete (L.Icon.Default.prototype as any)._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
-  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
-});
+// Fix Leaflet icon issue - wrapped in try-catch for SSR safety
+try {
+  delete (L.Icon.Default.prototype as any)._getIconUrl;
+  L.Icon.Default.mergeOptions({
+    iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
+    iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
+    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+  });
+} catch (e) {
+  console.warn("Leaflet icon init warning:", e);
+}
 
 interface FlightEvent {
   id: string;
@@ -76,19 +77,25 @@ interface SimulationData {
 
 // Custom aircraft icons
 const createAircraftIcon = (color: string, heading: number = 0) => {
-  return L.divIcon({
-    html: `<div style="transform: rotate(${heading}deg); color: ${color}; font-size: 24px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5));">✈</div>`,
-    className: 'aircraft-marker',
-    iconSize: [24, 24],
-    iconAnchor: [12, 12],
-  });
+  try {
+    return L.divIcon({
+      html: `<div style="transform: rotate(${heading}deg); color: ${color}; font-size: 24px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5));">✈</div>`,
+      className: 'aircraft-marker',
+      iconSize: [24, 24],
+      iconAnchor: [12, 12],
+    });
+  } catch (e) {
+    return undefined;
+  }
 };
 
 // Map center updater component
 function MapUpdater({ center }: { center: [number, number] }) {
   const map = useMap();
   useEffect(() => {
-    map.setView(center, map.getZoom());
+    if (map) {
+      map.setView(center, map.getZoom());
+    }
   }, [center, map]);
   return null;
 }
@@ -103,6 +110,7 @@ export function IncidentSimulator() {
   const [simulationData, setSimulationData] = useState<SimulationData | null>(null);
   const [activeAlerts, setActiveAlerts] = useState<Alert[]>([]);
   const [aiAnalysis, setAiAnalysis] = useState<string>("");
+  const [error, setError] = useState<string | null>(null);
   
   // Default center (Oildale, CA)
   const mapCenter: [number, number] = [35.4197, -119.0193];
@@ -115,9 +123,10 @@ export function IncidentSimulator() {
   // Load simulation data
   const loadSimulationData = useCallback(async () => {
     setIsLoading(true);
+    setError(null);
     try {
       // Fetch flights in time window
-      const { data: flightsData } = await supabase.functions.invoke("neon-query", {
+      const { data: flightsData, error: flightsError } = await supabase.functions.invoke("neon-query", {
         body: {
           action: "customQuery",
           query: `
@@ -134,8 +143,12 @@ export function IncidentSimulator() {
         }
       });
 
+      if (flightsError) {
+        console.error("Flights query error:", flightsError);
+      }
+
       // Fetch biometrics in time window
-      const { data: biometricsData } = await supabase.functions.invoke("neon-query", {
+      const { data: biometricsData, error: bioError } = await supabase.functions.invoke("neon-query", {
         body: {
           action: "customQuery",
           query: `
@@ -149,10 +162,17 @@ export function IncidentSimulator() {
         }
       });
 
-      // Process flights
-      const flights: FlightEvent[] = (Array.isArray(flightsData) ? flightsData : []).map((f: any) => {
+      if (bioError) {
+        console.error("Biometrics query error:", bioError);
+      }
+
+      // Process flights - handle both array and object responses
+      const flightRows = Array.isArray(flightsData) ? flightsData : 
+                         (flightsData?.rows || flightsData?.data || []);
+      
+      const flights: FlightEvent[] = flightRows.map((f: any) => {
         const alt = parseFloat(f.altitude) || 0;
-        const isLowAlt = alt < 1000;
+        const isLowAlt = alt < 1000 && alt > 0;
         const isMilitary = f.taxonomy_tag?.includes("MILITARY") || f.callsign?.startsWith("STMPD");
         const isShell = f.taxonomy_tag?.includes("SHELL") || f.taxonomy_tag?.includes("ALF");
         
@@ -162,11 +182,11 @@ export function IncidentSimulator() {
         else if (isShell) threatLevel = "medium";
 
         return {
-          id: f.id,
+          id: f.id || String(Math.random()),
           registration: f.registration || "UNKNOWN",
           callsign: f.callsign,
-          latitude: parseFloat(f.latitude),
-          longitude: parseFloat(f.longitude),
+          latitude: parseFloat(f.latitude) || 0,
+          longitude: parseFloat(f.longitude) || 0,
           altitude: alt,
           heading: parseFloat(f.heading) || 0,
           speed: parseFloat(f.speed) || 0,
@@ -176,10 +196,13 @@ export function IncidentSimulator() {
           isMilitary,
           isShellCo: isShell,
         };
-      });
+      }).filter((f: FlightEvent) => f.latitude !== 0 && f.longitude !== 0);
 
       // Process biometrics
-      const biometrics: BiometricEvent[] = (Array.isArray(biometricsData) ? biometricsData : []).map((b: any) => {
+      const bioRows = Array.isArray(biometricsData) ? biometricsData :
+                      (biometricsData?.rows || biometricsData?.data || []);
+      
+      const biometrics: BiometricEvent[] = bioRows.map((b: any) => {
         const hr = parseFloat(b.heart_rate) || 0;
         const stress = parseFloat(b.stress_level) || 0;
         const hrv = parseFloat(b.hrv) || 50;
@@ -190,7 +213,7 @@ export function IncidentSimulator() {
         else if (hr > 90 || stress > 50 || hrv < 50) severity = "medium";
 
         return {
-          id: b.id,
+          id: b.id || String(Math.random()),
           heartRate: hr,
           stress,
           hrv,
@@ -249,6 +272,7 @@ export function IncidentSimulator() {
       toast.success(`Loaded ${flights.length} flights, ${biometrics.length} biometric events`);
     } catch (err) {
       console.error("Simulation load error:", err);
+      setError((err as Error).message);
       toast.error("Failed to load simulation data");
     } finally {
       setIsLoading(false);
@@ -326,12 +350,31 @@ export function IncidentSimulator() {
   // Get color for threat level
   const getThreatColor = (level: string) => {
     switch (level) {
-      case "critical": return "#ef4444";
-      case "high": return "#f97316";
-      case "medium": return "#eab308";
-      default: return "#22c55e";
+      case "critical": return "hsl(var(--destructive))";
+      case "high": return "hsl(24, 95%, 53%)";
+      case "medium": return "hsl(48, 96%, 53%)";
+      default: return "hsl(142, 76%, 36%)";
     }
   };
+
+  // Error display
+  if (error) {
+    return (
+      <div className="h-full flex items-center justify-center bg-background">
+        <Card className="max-w-md">
+          <CardContent className="p-6 text-center">
+            <AlertTriangle className="h-12 w-12 mx-auto text-destructive mb-4" />
+            <h2 className="text-lg font-semibold mb-2">Simulation Error</h2>
+            <p className="text-muted-foreground mb-4">{error}</p>
+            <Button onClick={() => { setError(null); loadSimulationData(); }}>
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Retry
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="h-full flex flex-col bg-background">
@@ -416,7 +459,7 @@ export function IncidentSimulator() {
               center={mapCenter}
               zoom={11}
               className="h-full w-full"
-              style={{ background: "#1a1a2e" }}
+              style={{ background: "hsl(var(--background))" }}
             >
               <TileLayer
                 url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
@@ -429,8 +472,8 @@ export function IncidentSimulator() {
                 center={mapCenter}
                 radius={500}
                 pathOptions={{
-                  color: "#ef4444",
-                  fillColor: "#ef4444",
+                  color: "hsl(var(--destructive))",
+                  fillColor: "hsl(var(--destructive))",
                   fillOpacity: 0.2,
                   weight: 2,
                   dashArray: "5, 5",
@@ -451,10 +494,10 @@ export function IncidentSimulator() {
                       <div>Alt: {flight.altitude}ft</div>
                       <div>Speed: {flight.speed}kts</div>
                       {flight.isMilitary && (
-                        <Badge className="mt-1 bg-red-600 text-xs">MILITARY</Badge>
+                        <Badge className="mt-1 bg-destructive text-xs">MILITARY</Badge>
                       )}
                       {flight.isShellCo && (
-                        <Badge className="mt-1 bg-purple-600 text-xs">SHELL CO</Badge>
+                        <Badge className="mt-1 bg-primary text-xs">SHELL CO</Badge>
                       )}
                     </div>
                   </Popup>
@@ -466,10 +509,10 @@ export function IncidentSimulator() {
           {/* Convergence event overlay */}
           {simulationData && stats.total > 50 && (
             <div className="absolute bottom-20 left-1/2 -translate-x-1/2 bg-destructive/90 backdrop-blur px-4 py-2 rounded-lg border border-destructive flex items-center gap-3">
-              <AlertTriangle className="h-5 w-5 text-white animate-pulse" />
+              <AlertTriangle className="h-5 w-5 text-destructive-foreground animate-pulse" />
               <div>
-                <div className="font-bold text-white text-sm">CRITICAL CONVERGENCE EVENT:</div>
-                <div className="text-white/80 text-xs">{stats.total} Aircraft Detected</div>
+                <div className="font-bold text-destructive-foreground text-sm">CRITICAL CONVERGENCE EVENT:</div>
+                <div className="text-destructive-foreground/80 text-xs">{stats.total} Aircraft Detected</div>
               </div>
             </div>
           )}
@@ -484,9 +527,9 @@ export function IncidentSimulator() {
                 key={alert.id} 
                 className={`border-l-4 ${
                   alert.type === "low_altitude" ? "border-l-orange-500 bg-orange-500/10" :
-                  alert.type === "biometric" ? "border-l-red-500 bg-red-500/10" :
-                  alert.type === "rico" ? "border-l-purple-500 bg-purple-500/10" :
-                  "border-l-cyan-500 bg-cyan-500/10"
+                  alert.type === "biometric" ? "border-l-destructive bg-destructive/10" :
+                  alert.type === "rico" ? "border-l-primary bg-primary/10" :
+                  "border-l-accent bg-accent/10"
                 }`}
               >
                 <CardContent className="p-3">
@@ -494,16 +537,16 @@ export function IncidentSimulator() {
                     <div>
                       <div className={`text-xs font-bold uppercase ${
                         alert.type === "low_altitude" ? "text-orange-400" :
-                        alert.type === "biometric" ? "text-red-400" :
-                        alert.type === "rico" ? "text-purple-400" :
-                        "text-cyan-400"
+                        alert.type === "biometric" ? "text-destructive" :
+                        alert.type === "rico" ? "text-primary" :
+                        "text-accent-foreground"
                       }`}>
                         {alert.title}
                       </div>
                       <div className="text-sm mt-1">{alert.subtitle}</div>
                     </div>
                     <AlertTriangle className={`h-4 w-4 ${
-                      alert.severity === "critical" ? "text-red-500" : "text-orange-500"
+                      alert.severity === "critical" ? "text-destructive" : "text-orange-500"
                     }`} />
                   </div>
                 </CardContent>
@@ -512,13 +555,13 @@ export function IncidentSimulator() {
 
             {/* AI Analysis panel */}
             {aiAnalysis && (
-              <Card className="border-cyan-500/50 bg-cyan-500/5">
+              <Card className="border-accent/50 bg-accent/5">
                 <CardContent className="p-3">
                   <div className="flex items-center gap-2 mb-2">
-                    <div className="w-8 h-8 rounded-full bg-cyan-500/20 flex items-center justify-center">
-                      <Shield className="h-4 w-4 text-cyan-400" />
+                    <div className="w-8 h-8 rounded-full bg-accent/20 flex items-center justify-center">
+                      <Shield className="h-4 w-4 text-accent-foreground" />
                     </div>
-                    <div className="text-xs font-bold text-cyan-400">AI ANALYSIS (Josiah)</div>
+                    <div className="text-xs font-bold text-accent-foreground">AI ANALYSIS (Josiah)</div>
                   </div>
                   <p className="text-sm text-muted-foreground leading-relaxed">
                     {aiAnalysis}
@@ -566,17 +609,17 @@ export function IncidentSimulator() {
               <div className="text-xs text-muted-foreground">LOW ALTITUDE &lt;500 FT</div>
             </div>
             <div className="text-center border-l border-border pl-4">
-              <div className="text-2xl font-bold text-red-400">{stats.bioAlerts}</div>
+              <div className="text-2xl font-bold text-destructive">{stats.bioAlerts}</div>
               <div className="text-xs text-muted-foreground">BIOMETRIC ALERTS</div>
             </div>
             <div className="text-center border-l border-border pl-4">
-              <div className="text-2xl font-bold text-purple-400">{stats.ricoFlags}</div>
+              <div className="text-2xl font-bold text-primary">{stats.ricoFlags}</div>
               <div className="text-xs text-muted-foreground">RICO FLAGS</div>
             </div>
           </div>
 
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" className="border-red-500/50 text-red-400">
+            <Button variant="outline" size="sm" className="border-destructive/50 text-destructive">
               <AlertTriangle className="h-4 w-4 mr-1" />
               Report Incident
             </Button>

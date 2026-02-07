@@ -84,6 +84,9 @@ verify_jwt = false
 [functions.agent-orchestrator]
 verify_jwt = false
 
+[functions.semantic-search]
+verify_jwt = false
+
 [api]
 enabled = true
 port = 54321

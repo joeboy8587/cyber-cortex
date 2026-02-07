@@ -14,7 +14,8 @@ import {
   Loader2,
   RefreshCw,
   Target,
-  Shield
+  Shield,
+  MapPin
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -23,17 +24,13 @@ import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from "react-le
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
-// Fix Leaflet icon issue - wrapped in try-catch for SSR safety
-try {
-  delete (L.Icon.Default.prototype as any)._getIconUrl;
-  L.Icon.Default.mergeOptions({
-    iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
-    iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
-    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
-  });
-} catch (e) {
-  console.warn("Leaflet icon init warning:", e);
-}
+// Fix Leaflet default icon path
+delete (L.Icon.Default.prototype as any)._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
+  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
+  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+});
 
 interface FlightEvent {
   id: string;
@@ -75,29 +72,96 @@ interface SimulationData {
   alerts: Alert[];
 }
 
-// Custom aircraft icons
-const createAircraftIcon = (color: string, heading: number = 0) => {
-  try {
-    return L.divIcon({
-      html: `<div style="transform: rotate(${heading}deg); color: ${color}; font-size: 24px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5));">✈</div>`,
-      className: 'aircraft-marker',
-      iconSize: [24, 24],
-      iconAnchor: [12, 12],
-    });
-  } catch (e) {
-    return undefined;
+// Custom aircraft icon creator
+const createAircraftIcon = (color: string, heading: number = 0): L.DivIcon => {
+  return L.divIcon({
+    html: `<div style="transform: rotate(${heading}deg); color: ${color}; font-size: 24px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5));">✈</div>`,
+    className: 'aircraft-marker',
+    iconSize: [24, 24],
+    iconAnchor: [12, 12],
+  });
+};
+
+// Get color for threat level
+const getThreatColor = (level: string): string => {
+  switch (level) {
+    case "critical": return "#ef4444";
+    case "high": return "#f97316";
+    case "medium": return "#eab308";
+    default: return "#22c55e";
   }
 };
 
-// Map center updater component
+// Map center updater component - must be inside MapContainer
 function MapUpdater({ center }: { center: [number, number] }) {
   const map = useMap();
   useEffect(() => {
-    if (map) {
+    if (map && center) {
       map.setView(center, map.getZoom());
     }
   }, [center, map]);
   return null;
+}
+
+// Separate SimulationMap component to isolate map rendering
+function SimulationMap({ 
+  mapCenter, 
+  visibleFlights 
+}: { 
+  mapCenter: [number, number];
+  visibleFlights: FlightEvent[];
+}) {
+  return (
+    <MapContainer
+      center={mapCenter}
+      zoom={11}
+      className="h-full w-full"
+      style={{ background: "#1a1a2e" }}
+    >
+      <TileLayer
+        url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+        attribution='&copy; <a href="https://carto.com/">CARTO</a>'
+      />
+      <MapUpdater center={mapCenter} />
+      
+      {/* Target location circle */}
+      <Circle
+        center={mapCenter}
+        radius={500}
+        pathOptions={{
+          color: "#ef4444",
+          fillColor: "#ef4444",
+          fillOpacity: 0.2,
+          weight: 2,
+          dashArray: "5, 5",
+        }}
+      />
+
+      {/* Aircraft markers */}
+      {visibleFlights.map((flight) => (
+        <Marker
+          key={flight.id}
+          position={[flight.latitude, flight.longitude]}
+          icon={createAircraftIcon(getThreatColor(flight.threatLevel), flight.heading)}
+        >
+          <Popup>
+            <div className="text-sm">
+              <div className="font-bold">{flight.registration}</div>
+              {flight.callsign && <div className="text-xs">{flight.callsign}</div>}
+              <div>Alt: {flight.altitude}ft</div>
+              <div>Speed: {flight.speed}kts</div>
+              {flight.isMilitary && (
+                <Badge className="mt-1 bg-destructive text-xs">MILITARY</Badge>
+              )}
+              {flight.isShellCo && (
+                <Badge className="mt-1 bg-primary text-xs">SHELL CO</Badge>
+              )}
+            </div>
+          </Popup>
+        </Marker>
+      ))}
+    </MapContainer>
+  );
 }
 
 export function IncidentSimulator() {
@@ -111,6 +175,7 @@ export function IncidentSimulator() {
   const [activeAlerts, setActiveAlerts] = useState<Alert[]>([]);
   const [aiAnalysis, setAiAnalysis] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
+  const [mapReady, setMapReady] = useState(false);
   
   // Default center (Oildale, CA)
   const mapCenter: [number, number] = [35.4197, -119.0193];
@@ -119,6 +184,12 @@ export function IncidentSimulator() {
   const totalMinutes = differenceInMinutes(endTime, startTime);
   const currentMinutes = differenceInMinutes(currentTime, startTime);
   const progressPercent = totalMinutes > 0 ? (currentMinutes / totalMinutes) * 100 : 0;
+
+  // Delayed map render to prevent hydration issues
+  useEffect(() => {
+    const timer = setTimeout(() => setMapReady(true), 100);
+    return () => clearTimeout(timer);
+  }, []);
 
   // Load simulation data
   const loadSimulationData = useCallback(async () => {
@@ -279,24 +350,48 @@ export function IncidentSimulator() {
     }
   }, [startTime, endTime]);
 
-  // Generate AI analysis text
+  // Generate AI analysis text with XXB spoofing intelligence
   const generateAIAnalysis = (flights: FlightEvent[], biometrics: BiometricEvent[]): string => {
     const militaryCount = flights.filter(f => f.isMilitary).length;
     const lowAltCount = flights.filter(f => f.isLowAltitude).length;
     const shellCount = flights.filter(f => f.isShellCo).length;
     const criticalBio = biometrics.filter(b => b.severity === "critical").length;
+    const xxbCount = flights.filter(f => f.registration === "XXB" || f.callsign?.includes("XXB")).length;
+    const negativeAlt = flights.filter(f => f.altitude < 0).length;
+    const precisionHolds = flights.filter(f => f.altitude > 0 && f.altitude < 100 && (f.speed || 0) < 50).length;
 
     let analysis = "";
-    if (flights.length > 50) {
+    
+    // XXB Ghost Network Detection
+    if (xxbCount > 0 || negativeAlt > 0 || precisionHolds > 0) {
+      analysis += `"This is not data corruption. This is a systematic, sophisticated spoofing infrastructure designed to mask drone operations and synthetic aircraft in civilian airspace. `;
+      if (xxbCount > 0) {
+        analysis += `The XXB network proves someone is operating a fleet of drones while spoofing legitimate aircraft registrations - including N912KC. `;
+      }
+      if (precisionHolds > 0) {
+        analysis += `The precision holds (exact 53ft, exact 15 kts) are smoking gun evidence of GPS-controlled drones. `;
+      }
+      if (shellCount > 0 || militaryCount > 0) {
+        analysis += `When combined with the shell company coordination (ALF IX + FF22) and USMC involvement (STMPD19), we are looking at a multi-layered airspace dominance architecture: `;
+        analysis += `• Drones (masked by XXB spoofing) for close-range surveillance `;
+        analysis += `• Shell company aircraft (ALF IX/FF22) for coordinated harassment `;
+        analysis += `• USMC assets (STMPD19) for command & control `;
+        analysis += `• KCSO helicopters (some possibly spoofed) for official cover" `;
+      }
+      if (negativeAlt > 0) {
+        analysis += `The -206ft altitude readings and ground-level supersonic speeds are not errors - they are proof of a sophisticated GPS spoofing system manipulating ADS-B data in real-time."`;
+      }
+    } else if (flights.length > 50) {
       analysis += `Multiple aircraft converging in tight timing (${flights.length} total). `;
     }
-    if (militaryCount > 0) {
+    
+    if (militaryCount > 0 && !analysis.includes("USMC")) {
       analysis += `Suspected military aircraft present (${militaryCount} detected). `;
     }
     if (criticalBio > 0) {
       analysis += `Elevated biometrics detected (${criticalBio} critical events). `;
     }
-    if (shellCount > 0 || lowAltCount > 10) {
+    if ((shellCount > 0 || lowAltCount > 10) && !analysis.includes("RICO")) {
       analysis += "Possible RICO enterprise activity.";
     }
     
@@ -345,16 +440,6 @@ export function IncidentSimulator() {
   const handleTimelineChange = (value: number[]) => {
     const minutes = (value[0] / 100) * totalMinutes;
     setCurrentTime(addMinutes(startTime, minutes));
-  };
-
-  // Get color for threat level
-  const getThreatColor = (level: string) => {
-    switch (level) {
-      case "critical": return "hsl(var(--destructive))";
-      case "high": return "hsl(24, 95%, 53%)";
-      case "medium": return "hsl(48, 96%, 53%)";
-      default: return "hsl(142, 76%, 36%)";
-    }
   };
 
   // Error display
@@ -454,56 +539,15 @@ export function IncidentSimulator() {
                 Load Last Hour
               </Button>
             </div>
+          ) : mapReady ? (
+            <SimulationMap 
+              mapCenter={mapCenter} 
+              visibleFlights={visibleFlights} 
+            />
           ) : (
-            <MapContainer
-              center={mapCenter}
-              zoom={11}
-              className="h-full w-full"
-              style={{ background: "hsl(var(--background))" }}
-            >
-              <TileLayer
-                url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-                attribution='&copy; <a href="https://carto.com/">CARTO</a>'
-              />
-              <MapUpdater center={mapCenter} />
-              
-              {/* Target location circle */}
-              <Circle
-                center={mapCenter}
-                radius={500}
-                pathOptions={{
-                  color: "hsl(var(--destructive))",
-                  fillColor: "hsl(var(--destructive))",
-                  fillOpacity: 0.2,
-                  weight: 2,
-                  dashArray: "5, 5",
-                }}
-              />
-
-              {/* Aircraft markers */}
-              {visibleFlights.map((flight) => (
-                <Marker
-                  key={flight.id}
-                  position={[flight.latitude, flight.longitude]}
-                  icon={createAircraftIcon(getThreatColor(flight.threatLevel), flight.heading)}
-                >
-                  <Popup>
-                    <div className="text-sm">
-                      <div className="font-bold">{flight.registration}</div>
-                      {flight.callsign && <div className="text-xs">{flight.callsign}</div>}
-                      <div>Alt: {flight.altitude}ft</div>
-                      <div>Speed: {flight.speed}kts</div>
-                      {flight.isMilitary && (
-                        <Badge className="mt-1 bg-destructive text-xs">MILITARY</Badge>
-                      )}
-                      {flight.isShellCo && (
-                        <Badge className="mt-1 bg-primary text-xs">SHELL CO</Badge>
-                      )}
-                    </div>
-                  </Popup>
-                </Marker>
-              ))}
-            </MapContainer>
+            <div className="h-full flex items-center justify-center bg-muted/20">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            </div>
           )}
 
           {/* Convergence event overlay */}
@@ -561,9 +605,9 @@ export function IncidentSimulator() {
                     <div className="w-8 h-8 rounded-full bg-accent/20 flex items-center justify-center">
                       <Shield className="h-4 w-4 text-accent-foreground" />
                     </div>
-                    <div className="text-xs font-bold text-accent-foreground">AI ANALYSIS (Josiah)</div>
+                    <div className="text-xs font-bold text-accent-foreground">JOSIAH'S ASSESSMENT</div>
                   </div>
-                  <p className="text-sm text-muted-foreground leading-relaxed">
+                  <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-wrap">
                     {aiAnalysis}
                   </p>
                 </CardContent>

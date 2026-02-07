@@ -7,6 +7,8 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
+// @ts-ignore - exif-js doesn't have proper types
+import EXIF from 'exif-js';
 import { 
   Upload, 
   Plane, 
@@ -22,7 +24,8 @@ import {
   Radio,
   Activity,
   Database,
-  Calendar
+  Calendar,
+  Shield
 } from 'lucide-react';
 
 interface ExtractedFlightData {
@@ -44,6 +47,15 @@ interface BiometricData {
   interpretation: string;
 }
 
+// Forensic timestamp source priority (highest = most reliable)
+type TimestampSource = 
+  | 'EXIF_DATETIME_ORIGINAL'   // Priority 1: Camera capture time
+  | 'EXIF_DATETIME_DIGITIZED'  // Priority 2: Digitization time  
+  | 'EXIF_MODIFY_DATE'         // Priority 3: Last EXIF modification
+  | 'FILENAME_PATTERN'         // Priority 4: Extracted from filename (UNRELIABLE - may be upload date)
+  | 'FILE_LAST_MODIFIED'       // Priority 5: OS file modification (UNRELIABLE)
+  | 'CURRENT_TIME';            // Priority 6: Fallback to now
+
 interface ExifMetadata {
   dateTimeOriginal: string | null;
   dateTimeDigitized: string | null;
@@ -53,6 +65,8 @@ interface ExifMetadata {
   make: string | null;
   model: string | null;
   software: string | null;
+  timestampSource: TimestampSource;
+  forensicNotes: string;
 }
 
 interface WatchtowerEvent {
@@ -103,168 +117,185 @@ const F24RadarUploader: React.FC = () => {
     pendingUploads: 0
   });
 
-  // Extract EXIF metadata from image file
+  // Parse timestamp from filename patterns like "Screenshot_20250613_002914.png"
+  const extractTimestampFromFilename = useCallback((filename: string): { timestamp: string | null; pattern: string | null } => {
+    // Common screenshot filename patterns
+    const patterns = [
+      // Android/Samsung: Screenshot_20250613_002914.png or Screenshot_2025-06-13-00-29-14.png
+      { regex: /Screenshot[_-](\d{4})(\d{2})(\d{2})[_-](\d{2})(\d{2})(\d{2})/, format: 'YYYYMMDD_HHMMSS' },
+      { regex: /Screenshot[_-](\d{4})-(\d{2})-(\d{2})-(\d{2})-(\d{2})-(\d{2})/, format: 'YYYY-MM-DD-HH-MM-SS' },
+      // iOS: IMG_20250613_002914.PNG
+      { regex: /IMG[_-](\d{4})(\d{2})(\d{2})[_-](\d{2})(\d{2})(\d{2})/, format: 'YYYYMMDD_HHMMSS' },
+      // FlightRadar24 exports: FR24_N123AB_20250613_002914.jpg
+      { regex: /FR24[^_]*[_-](\d{4})(\d{2})(\d{2})[_-](\d{2})(\d{2})(\d{2})/, format: 'YYYYMMDD_HHMMSS' },
+      // Generic date patterns
+      { regex: /(\d{4})-(\d{2})-(\d{2})[_T](\d{2})[:-](\d{2})[:-](\d{2})/, format: 'ISO' },
+      { regex: /(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})/, format: 'compact' },
+    ];
+
+    for (const { regex, format } of patterns) {
+      const match = filename.match(regex);
+      if (match) {
+        const [, year, month, day, hour, min, sec] = match;
+        const isoDate = `${year}-${month}-${day}T${hour}:${min}:${sec}`;
+        console.log(`[EXIF] Filename pattern "${format}" extracted: ${isoDate} from "${filename}"`);
+        return { timestamp: isoDate, pattern: format };
+      }
+    }
+    return { timestamp: null, pattern: null };
+  }, []);
+
+  // Extract EXIF metadata using exif-js library (properly follows SubIFD for DateTimeOriginal)
   const extractExifData = useCallback(async (file: File): Promise<ExifMetadata> => {
     return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        try {
-          const arrayBuffer = e.target?.result as ArrayBuffer;
-          const dataView = new DataView(arrayBuffer);
-          
-          let exifData: ExifMetadata = {
-            dateTimeOriginal: null,
-            dateTimeDigitized: null,
-            modifyDate: null,
-            gpsLatitude: null,
-            gpsLongitude: null,
-            make: null,
-            model: null,
-            software: null
-          };
-          
-          let foundExif = false;
-          
-          // Check for JPEG marker (0xFFD8)
-          if (dataView.byteLength >= 2 && dataView.getUint16(0) === 0xFFD8) {
-            console.log('[EXIF] Detected JPEG format');
-            let offset = 2;
-            
-            while (offset < dataView.byteLength - 4) {
-              try {
-                const marker = dataView.getUint16(offset);
-                
-                // Check for APP1 marker (EXIF)
-                if (marker === 0xFFE1) {
-                  const segmentLength = dataView.getUint16(offset + 2);
-                  const exifStart = offset + 4;
-                  
-                  // Check for "Exif\0\0" header
-                  if (dataView.byteLength > exifStart + 6) {
-                    const exifHeader = String.fromCharCode(
-                      dataView.getUint8(exifStart),
-                      dataView.getUint8(exifStart + 1),
-                      dataView.getUint8(exifStart + 2),
-                      dataView.getUint8(exifStart + 3)
-                    );
-                    
-                    if (exifHeader === 'Exif') {
-                      console.log('[EXIF] Found EXIF header');
-                      const tiffStart = exifStart + 6;
-                      const littleEndian = dataView.getUint16(tiffStart) === 0x4949;
-                      
-                      // Get IFD0 offset
-                      const ifd0Offset = dataView.getUint32(tiffStart + 4, littleEndian);
-                      
-                      if (tiffStart + ifd0Offset + 2 < dataView.byteLength) {
-                        const numEntries = dataView.getUint16(tiffStart + ifd0Offset, littleEndian);
-                        
-                        // Parse IFD entries
-                        for (let i = 0; i < Math.min(numEntries, 50); i++) {
-                          const entryOffset = tiffStart + ifd0Offset + 2 + i * 12;
-                          if (entryOffset + 12 > dataView.byteLength) break;
-                          
-                          const tag = dataView.getUint16(entryOffset, littleEndian);
-                          const type = dataView.getUint16(entryOffset + 2, littleEndian);
-                          const count = dataView.getUint32(entryOffset + 4, littleEndian);
-                          
-                          // DateTime tag (0x0132) or DateTimeOriginal (0x9003) or DateTimeDigitized (0x9004)
-                          if (tag === 0x0132 || tag === 0x9003 || tag === 0x9004) {
-                            const valueOffset = count <= 4 
-                              ? entryOffset + 8 
-                              : tiffStart + dataView.getUint32(entryOffset + 8, littleEndian);
-                            
-                            if (valueOffset + 19 <= dataView.byteLength) {
-                              let dateStr = '';
-                              for (let j = 0; j < 19; j++) {
-                                const char = dataView.getUint8(valueOffset + j);
-                                if (char === 0) break;
-                                dateStr += String.fromCharCode(char);
-                              }
-                              
-                              if (dateStr.length >= 10) {
-                                // Convert "YYYY:MM:DD HH:MM:SS" to ISO format
-                                const isoDate = dateStr.replace(/^(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3');
-                                console.log(`[EXIF] Found date tag 0x${tag.toString(16)}: ${isoDate}`);
-                                
-                                if (tag === 0x9003) exifData.dateTimeOriginal = isoDate;
-                                else if (tag === 0x9004) exifData.dateTimeDigitized = isoDate;
-                                else exifData.modifyDate = isoDate;
-                                foundExif = true;
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                  break;
-                }
-                
-                // Move to next marker
-                if ((marker & 0xFF00) !== 0xFF00) break;
-                const segmentLength = dataView.getUint16(offset + 2);
-                offset += 2 + segmentLength;
-              } catch (parseErr) {
-                console.error('[EXIF] Parse error at offset', offset, parseErr);
-                break;
-              }
-            }
-          }
-          // Check for PNG (screenshots are often PNG)
-          else if (dataView.byteLength >= 8 && 
-                   dataView.getUint32(0) === 0x89504E47 && 
-                   dataView.getUint32(4) === 0x0D0A1A0A) {
-            console.log('[EXIF] Detected PNG format (no native EXIF support)');
-            // PNG doesn't have EXIF, use file metadata
-          }
-          
-          // Use file's lastModified as the timestamp source
-          // This is reliable for screenshots as it captures when the file was created
-          if (!foundExif && file.lastModified) {
-            const fileDate = new Date(file.lastModified);
-            exifData.modifyDate = fileDate.toISOString();
-            console.log(`[EXIF] Using file.lastModified: ${exifData.modifyDate}`);
-          }
-          
-          // Prioritize dateTimeOriginal if found
-          const bestTimestamp = exifData.dateTimeOriginal || exifData.dateTimeDigitized || exifData.modifyDate;
-          console.log(`[EXIF] Best timestamp for ${file.name}: ${bestTimestamp}`);
-          
-          resolve(exifData);
-        } catch (err) {
-          console.error('[EXIF] Extraction error:', err);
-          // Fallback to file metadata
-          const fallbackDate = file.lastModified ? new Date(file.lastModified).toISOString() : null;
-          console.log(`[EXIF] Fallback to file.lastModified: ${fallbackDate}`);
-          resolve({
-            dateTimeOriginal: null,
-            dateTimeDigitized: null,
-            modifyDate: fallbackDate,
-            gpsLatitude: null,
-            gpsLongitude: null,
-            make: null,
-            model: null,
-            software: null
-          });
+      // Initialize result with fallback values
+      const createResult = (
+        data: Partial<ExifMetadata>,
+        source: TimestampSource,
+        notes: string
+      ): ExifMetadata => ({
+        dateTimeOriginal: data.dateTimeOriginal ?? null,
+        dateTimeDigitized: data.dateTimeDigitized ?? null,
+        modifyDate: data.modifyDate ?? null,
+        gpsLatitude: data.gpsLatitude ?? null,
+        gpsLongitude: data.gpsLongitude ?? null,
+        make: data.make ?? null,
+        model: data.model ?? null,
+        software: data.software ?? null,
+        timestampSource: source,
+        forensicNotes: notes,
+      });
+
+      // Convert EXIF date format "YYYY:MM:DD HH:MM:SS" to ISO
+      const parseExifDate = (dateStr: string | undefined): string | null => {
+        if (!dateStr || typeof dateStr !== 'string') return null;
+        // EXIF format: "2025:06:13 00:29:14"
+        const match = dateStr.match(/^(\d{4}):(\d{2}):(\d{2})\s+(\d{2}):(\d{2}):(\d{2})$/);
+        if (match) {
+          const [, year, month, day, hour, min, sec] = match;
+          return `${year}-${month}-${day}T${hour}:${min}:${sec}`;
         }
+        return dateStr; // Return as-is if already in different format
       };
-      reader.onerror = () => {
-        console.error('[EXIF] FileReader error');
-        resolve({
-          dateTimeOriginal: null,
-          dateTimeDigitized: null,
-          modifyDate: file.lastModified ? new Date(file.lastModified).toISOString() : null,
-          gpsLatitude: null,
-          gpsLongitude: null,
-          make: null,
-          model: null,
-          software: null
+
+      // Use exif-js library to read EXIF data (properly traverses SubIFD)
+      try {
+        EXIF.getData(file as any, function(this: any) {
+          const allTags = EXIF.getAllTags(this);
+          
+          console.log('[EXIF] Raw tags from exif-js:', Object.keys(allTags));
+          
+          const dateTimeOriginal = parseExifDate(allTags.DateTimeOriginal);
+          const dateTimeDigitized = parseExifDate(allTags.DateTimeDigitized);
+          const modifyDate = parseExifDate(allTags.DateTime);
+          
+          // GPS coordinates
+          let gpsLatitude: number | null = null;
+          let gpsLongitude: number | null = null;
+          
+          if (allTags.GPSLatitude && allTags.GPSLatitudeRef) {
+            const lat = allTags.GPSLatitude;
+            gpsLatitude = lat[0] + lat[1] / 60 + lat[2] / 3600;
+            if (allTags.GPSLatitudeRef === 'S') gpsLatitude = -gpsLatitude;
+          }
+          if (allTags.GPSLongitude && allTags.GPSLongitudeRef) {
+            const lng = allTags.GPSLongitude;
+            gpsLongitude = lng[0] + lng[1] / 60 + lng[2] / 3600;
+            if (allTags.GPSLongitudeRef === 'W') gpsLongitude = -gpsLongitude;
+          }
+
+          // Determine best timestamp and source
+          if (dateTimeOriginal) {
+            console.log(`[EXIF] ✓ DateTimeOriginal found: ${dateTimeOriginal} (FORENSIC GOLD)`);
+            resolve(createResult({
+              dateTimeOriginal,
+              dateTimeDigitized,
+              modifyDate,
+              gpsLatitude,
+              gpsLongitude,
+              make: allTags.Make || null,
+              model: allTags.Model || null,
+              software: allTags.Software || null,
+            }, 'EXIF_DATETIME_ORIGINAL', `Camera capture time verified from EXIF SubIFD. Device: ${allTags.Make || 'Unknown'} ${allTags.Model || ''}`));
+            return;
+          }
+
+          if (dateTimeDigitized) {
+            console.log(`[EXIF] DateTimeDigitized found: ${dateTimeDigitized}`);
+            resolve(createResult({
+              dateTimeDigitized,
+              modifyDate,
+              gpsLatitude,
+              gpsLongitude,
+              make: allTags.Make || null,
+              model: allTags.Model || null,
+              software: allTags.Software || null,
+            }, 'EXIF_DATETIME_DIGITIZED', `Digitization time from EXIF. May differ from capture time.`));
+            return;
+          }
+
+          if (modifyDate) {
+            console.log(`[EXIF] DateTime (modify) found: ${modifyDate}`);
+            resolve(createResult({
+              modifyDate,
+              gpsLatitude,
+              gpsLongitude,
+              make: allTags.Make || null,
+              model: allTags.Model || null,
+              software: allTags.Software || null,
+            }, 'EXIF_MODIFY_DATE', `EXIF modify date only. Original capture time unknown.`));
+            return;
+          }
+
+          // No EXIF dates found - try filename pattern
+          console.log('[EXIF] No EXIF timestamp tags found, trying filename pattern...');
+          const { timestamp: filenameTs, pattern } = extractTimestampFromFilename(file.name);
+          
+          if (filenameTs) {
+            console.log(`[EXIF] ⚠ Using filename timestamp: ${filenameTs} (LESS RELIABLE - may be upload date)`);
+            resolve(createResult({
+              modifyDate: filenameTs,
+            }, 'FILENAME_PATTERN', `WARNING: Timestamp extracted from filename pattern "${pattern}". May represent UPLOAD date, not capture date. Verify against other evidence.`));
+            return;
+          }
+
+          // Last resort: file.lastModified
+          if (file.lastModified) {
+            const fileDate = new Date(file.lastModified).toISOString();
+            console.log(`[EXIF] ⚠ Falling back to file.lastModified: ${fileDate} (UNRELIABLE)`);
+            resolve(createResult({
+              modifyDate: fileDate,
+            }, 'FILE_LAST_MODIFIED', `WARNING: Using OS file modification time. This changes when file is copied/moved. NOT forensically reliable.`));
+            return;
+          }
+
+          // Absolute fallback
+          console.log('[EXIF] ✗ No timestamp source available, using current time');
+          resolve(createResult({
+            modifyDate: new Date().toISOString(),
+          }, 'CURRENT_TIME', `CRITICAL: No timestamp source found. Using upload time. Forensic value: NONE.`));
         });
-      };
-      reader.readAsArrayBuffer(file);
+      } catch (err) {
+        console.error('[EXIF] Library error:', err);
+        
+        // Fallback chain on error
+        const { timestamp: filenameTs, pattern } = extractTimestampFromFilename(file.name);
+        if (filenameTs) {
+          resolve(createResult({
+            modifyDate: filenameTs,
+          }, 'FILENAME_PATTERN', `EXIF extraction failed. Using filename pattern "${pattern}". Verify manually.`));
+        } else if (file.lastModified) {
+          resolve(createResult({
+            modifyDate: new Date(file.lastModified).toISOString(),
+          }, 'FILE_LAST_MODIFIED', `EXIF extraction failed. Using file modification time.`));
+        } else {
+          resolve(createResult({
+            modifyDate: new Date().toISOString(),
+          }, 'CURRENT_TIME', `EXIF extraction failed. No alternative timestamp source.`));
+        }
+      }
     });
-  }, []);
+  }, [extractTimestampFromFilename]);
 
   // Fetch Neon DB sync status
   const fetchNeonStatus = useCallback(async () => {
@@ -360,28 +391,31 @@ const F24RadarUploader: React.FC = () => {
         });
       }
       
-      // Count files with timestamps
-      const withTimestamps = newScreenshots.filter(s => 
-        s.exifData?.dateTimeOriginal || s.exifData?.dateTimeDigitized || s.exifData?.modifyDate
+      // Categorize by timestamp source quality
+      const exifOriginal = newScreenshots.filter(s => s.exifData?.timestampSource === 'EXIF_DATETIME_ORIGINAL');
+      const exifOther = newScreenshots.filter(s => 
+        s.exifData?.timestampSource === 'EXIF_DATETIME_DIGITIZED' || 
+        s.exifData?.timestampSource === 'EXIF_MODIFY_DATE'
       );
-      const withExifDate = newScreenshots.filter(s => s.exifData?.dateTimeOriginal || s.exifData?.dateTimeDigitized);
+      const filenameExtracted = newScreenshots.filter(s => s.exifData?.timestampSource === 'FILENAME_PATTERN');
+      const unreliable = newScreenshots.filter(s => 
+        s.exifData?.timestampSource === 'FILE_LAST_MODIFIED' || 
+        s.exifData?.timestampSource === 'CURRENT_TIME'
+      );
       
       setUploadedScreenshots(prev => [...prev, ...newScreenshots]);
       setUploading(false);
       
-      // Show what timestamp source was found
-      let description = '';
-      if (withExifDate.length > 0) {
-        description = `EXIF camera timestamps from ${withExifDate.length} file(s)`;
-      } else if (withTimestamps.length > 0) {
-        description = `File modification timestamps from ${withTimestamps.length} file(s)`;
-      } else {
-        description = "No timestamps found - will use current time";
-      }
+      // Show forensic quality breakdown
+      const parts: string[] = [];
+      if (exifOriginal.length > 0) parts.push(`${exifOriginal.length} EXIF verified ✓`);
+      if (exifOther.length > 0) parts.push(`${exifOther.length} EXIF partial`);
+      if (filenameExtracted.length > 0) parts.push(`${filenameExtracted.length} from filename ⚠`);
+      if (unreliable.length > 0) parts.push(`${unreliable.length} unreliable ✗`);
       
       toast({
         title: `${newScreenshots.length} Screenshot(s) Uploaded`,
-        description,
+        description: parts.join(' • ') || 'Processing timestamps...',
       });
     } catch (err) {
       console.error('Upload error:', err);
@@ -458,7 +492,8 @@ const F24RadarUploader: React.FC = () => {
 
           const extractedData = aiResponse?.data || aiResponse;
           
-          // Create the complete event
+          // Create the complete event with forensic timestamp source tag
+          const timestampSource = screenshot.exifData?.timestampSource || 'CURRENT_TIME';
           const completeEvent: WatchtowerEvent = {
             id: screenshot.id,
             timestamp,
@@ -467,7 +502,7 @@ const F24RadarUploader: React.FC = () => {
             location,
             tags: [
               ...(extractedData?.tags || ['F24 Analysis', 'Watchtower', `Batch ${i + 1}`]),
-              exifTs ? 'EXIF_VERIFIED' : 'NO_EXIF'
+              timestampSource // Use exact source tag for forensic audit
             ],
             flight_data: extractedData?.flight_data || null,
             biometrics: {
@@ -488,7 +523,7 @@ const F24RadarUploader: React.FC = () => {
           // Update the event in state
           setEvents(prev => prev.map(e => e.id === screenshot.id ? completeEvent : e));
 
-          // Store in Neon for persistence
+          // Store in Neon for persistence with forensic timestamp audit trail
           const { data: insertResult, error: insertError } = await supabase.functions.invoke('neon-query', {
             body: {
               action: 'insertRecord',
@@ -504,7 +539,9 @@ const F24RadarUploader: React.FC = () => {
                 screenshot_url: screenshot.dataUrl?.slice(0, 200) || '',
                 created_at: timestamp,
                 exif_timestamp: exifTs || null,
-                exif_metadata: JSON.stringify(screenshot.exifData || {})
+                exif_metadata: JSON.stringify(screenshot.exifData || {}),
+                timestamp_source: timestampSource, // Forensic audit: how was timestamp derived?
+                forensic_notes: screenshot.exifData?.forensicNotes || null
               }
             }
           });
@@ -569,11 +606,28 @@ const F24RadarUploader: React.FC = () => {
       await fetchNeonStatus();
 
       const successCount = processedEvents.filter(e => e.status === 'complete').length;
-      const exifCount = processedEvents.filter(e => e.exifTimestamp).length;
+      const exifVerified = processedEvents.filter(e => 
+        e.exifMetadata?.timestampSource === 'EXIF_DATETIME_ORIGINAL'
+      ).length;
+      const partialExif = processedEvents.filter(e => 
+        e.exifMetadata?.timestampSource === 'EXIF_DATETIME_DIGITIZED' || 
+        e.exifMetadata?.timestampSource === 'EXIF_MODIFY_DATE'
+      ).length;
+      const unreliableTs = processedEvents.filter(e => 
+        e.exifMetadata?.timestampSource === 'FILENAME_PATTERN' || 
+        e.exifMetadata?.timestampSource === 'FILE_LAST_MODIFIED' ||
+        e.exifMetadata?.timestampSource === 'CURRENT_TIME'
+      ).length;
+      
+      const forensicSummary = [
+        exifVerified > 0 ? `${exifVerified} forensic ✓` : null,
+        partialExif > 0 ? `${partialExif} partial` : null,
+        unreliableTs > 0 ? `${unreliableTs} unreliable ⚠` : null,
+      ].filter(Boolean).join(' • ');
       
       toast({
         title: "Batch Analysis Complete",
-        description: `${successCount}/${uploadedScreenshots.length} analyzed • ${exifCount} with EXIF timestamps • Synced to Neon DB`,
+        description: `${successCount}/${uploadedScreenshots.length} analyzed • ${forensicSummary || 'Check timestamp sources'} • Synced to Neon`,
       });
 
       // Reset form

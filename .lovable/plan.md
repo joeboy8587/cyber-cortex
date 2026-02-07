@@ -1,264 +1,218 @@
 
-# Command Center Restructuring and Data Linkage Fix Plan
+# Comprehensive Data Quality Audit & Security Hardening Plan
 
-## Summary
-Your command center currently has **117 dashboard components** crammed onto a single 400-line page, making it overwhelming and difficult to navigate. Additionally, only **1.5% of flight data** and **47% of records** are properly linked in the Forensic Linkage Hub. This plan addresses both issues by restructuring into a multi-page layout with proper navigation and fixing the data coverage gaps.
+## Executive Summary
+Build a **Master Data Quality Dashboard** that performs deep audits across all 9+ million multimodal records in NeonDB, checking for OCR data quality, duplicates, SHA-256 hash coverage, encryption status, and providing security hardening recommendations.
 
 ---
 
-## Part 1: Multi-Page Navigation Architecture
+## Current State Analysis
 
-### Current Problem
-- All 117 dashboard components on ONE page (Index.tsx)
-- 5 simple scroll-to buttons in header that barely work
-- Users must scroll through massive page to find anything
-- Page is cramped and overwhelming
+### Existing Infrastructure
+| Component | Purpose | Status |
+|-----------|---------|--------|
+| `DataQualityAudit.tsx` | OCR auditing, evidence domains, timeline ranges | Active |
+| `DataHardeningHub.tsx` | SHA-256 coverage overview, Notion sync status | Active |
+| `DataIntegrityPanel.tsx` | Provenance audits, biometric gap detection | Active |
+| `DatabaseQualityControl.tsx` | 13-domain categorization, duplicate families, empty tables | Active |
+| `ChainOfCustodyPanel.tsx` | SHA-256 fingerprinting, verification | Active |
+| `evidence-fingerprint` edge function | SHA-256 hash computation and verification | Deployed |
+| `data-quality-audit` edge function | OCR validation, domain analysis | Deployed |
+| `database-quality-control` edge function | Duplicate detection, quality metrics | Deployed |
 
-### New Structure: 7 Focused Pages
+### Identified Gaps
+1. **No unified comprehensive audit view** - data quality tools are scattered across multiple panels
+2. **No OCR-specific duplicate detection** - OCR data often has repeated text extractions
+3. **No cross-table duplicate detection** - same records may exist in multiple tables
+4. **Missing encryption-at-rest verification** - no visibility into database encryption status
+5. **No automated malformed data cleanup workflow** - flagging exists but remediation is manual
+6. **Limited RLS audit visibility** - only basic linter warnings shown
+
+---
+
+## Implementation Plan
+
+### Phase 1: Unified Data Quality Dashboard Component
+
+Create `src/components/dashboard/ComprehensiveDataAudit.tsx`:
 
 ```text
-/                    -> Mission Control (overview + alerts)
-/surveillance        -> Aircraft & Flight Surveillance  
-/biometrics          -> Biometric Health Monitoring
-/legal               -> Legal Evidence & Filings
-/kcso                -> KCSO Investigation Hub
-/josiah              -> Josiah AI Witness System
-/data                -> Database Tools & Quality
++------------------------------------------------------------------+
+|  COMPREHENSIVE DATA QUALITY AUDIT                                 |
+|------------------------------------------------------------------|
+|  [Run Full Audit]  [Quick Scan]  [Export Report]                  |
+|------------------------------------------------------------------|
+|  OVERVIEW                                                         |
+|  +----------+  +----------+  +----------+  +------------+         |
+|  | 9.2M     |  | 98.7%    |  | 534      |  | 47         |         |
+|  | Records  |  | Hashed   |  | Tables   |  | Issues     |         |
+|  +----------+  +----------+  +----------+  +------------+         |
+|------------------------------------------------------------------|
+|  TABS: [Hash Coverage] [Duplicates] [OCR Quality] [Security]      |
++------------------------------------------------------------------+
 ```
 
-### What Each Page Contains
+**Key Features:**
+- Aggregates all existing audit functions into a single view
+- Adds new cross-table duplicate detection
+- Adds OCR-specific malformed data detection
+- Shows encryption and RLS policy status
+- Provides remediation actions
 
-**1. Mission Control (/)** - Priority Dashboards
-- Live Alert Banner
-- JOSIAH Sentinel Monitor
-- Biometric Early Warning System
-- Database Intelligence Scanner
-- Master Evidence Search
-- KCSO Evidence Matrix
-- Biometric Flight Correlation Hub
-- Forensic Linkage Hub
+### Phase 2: Enhanced Edge Function for Deep Audits
 
-**2. Surveillance (/surveillance)** - 18 Components
-- Aircraft Map Visualization
-- Live Flight Tracker
-- Direct Aircraft Correlation
-- Alaska Airlines Dashboard
-- Fleet Tracking Ledger
-- Military Aircraft Panel
-- Canadian Military Tracker
-- ADSB Spoofing Audit
-- Hammer Anvil Pattern Panel
-- High Low Operations Panel
-- And more flight-related panels
+Extend `supabase/functions/database-quality-control/index.ts` with new actions:
 
-**3. Biometrics (/biometrics)** - 12 Components
-- Biometric Causation Validator
-- Physician Verified ECGs
-- Manual Biometric Logger
-- Deep Correlation Engine
-- Bradford Hill Dashboard
-- Four Factor Correlation Engine
-- And more biometric panels
+| Action | Purpose |
+|--------|---------|
+| `deepOCRAudit` | Detect malformed OCR data (NULL timestamps, OCR artifacts, repeated text blocks) |
+| `crossTableDuplicates` | Find identical records across related tables using hash comparison |
+| `hashCoverageReport` | Detailed SHA-256 coverage per domain with remediation priority |
+| `rlsPolicyAudit` | Enumerate all RLS policies and flag weak/missing policies |
+| `encryptionStatus` | Verify SSL connections and report encryption-at-rest status |
 
-**4. Legal (/legal)** - 22 Components
-- Legal Evidence Dashboard
-- TRO Evidence Compiler
-- ADA Legal Export Package
-- Legal Narrative Generator
-- False Claims Act Compiler
-- Geneva Convention Analysis
-- All legal filing generators
+### Phase 3: OCR-Specific Data Quality Checks
 
-**5. KCSO (/kcso)** - 10 Components
-- KCSO Deep Dive Report
-- KCSO Enterprise Report
-- KCSO Fleet Registry
-- KCSO Budget Timeline
-- Shell Company Matrix
-- Criminal Enterprise Network
+**OCR Malformed Data Detection Patterns:**
 
-**6. Josiah AI (/josiah)** - 8 Components
-- Josiah Sentinel Monitor
-- Josiah Autonomous Hypothesis
-- Josiah Chat Interface
-- Josiah Witness Logs
-- Josiah Archive Importer
-- Multi-Agent Hub
-- Watchtower Alerts Hub
+| Pattern | Detection Query | Remediation |
+|---------|-----------------|-------------|
+| NULL timestamps | `WHERE created_at IS NULL AND exif_timestamp IS NULL` | Extract from filename pattern |
+| OCR text artifacts | `WHERE extracted_text ~ '^[0-9]{3,}$'` | Flag for manual review |
+| Duplicate extractions | `GROUP BY file_hash HAVING COUNT(*) > 1` | Merge into single record |
+| Malformed registrations | `WHERE registration NOT ~ '^N[0-9A-Z]{1,5}$'` | Apply OCR correction mapping |
+| Missing coordinates | `WHERE latitude IS NULL OR longitude IS NULL` | Cross-reference with flight data |
 
-**7. Data Tools (/data)** - 15 Components
-- Table Explorer
-- SQL Console
-- Database Stats
-- Data Quality Audit
-- Ceramic Anchor Panel
-- Data Enrichment Dashboard
+**Tables to audit:**
+- `screenshot_ocr_data`
+- `ocr_aircraft_holding_patterns`
+- `ocr_extracted_text`
+- `radar_screenshot_analysis`
 
----
+### Phase 4: Cross-Table Duplicate Detection
 
-## Part 2: Sidebar Navigation
+**Strategy:** Use SHA-256 hashes to detect identical content across related tables.
 
-### Add Collapsible Sidebar
-A proper sidebar that stays visible and highlights current page, with quick-jump to sections.
+```text
+Duplicate Family Detection:
+1. Group tables by evidence domain (Flight, Biometric, OCR, etc.)
+2. For each domain, compare record hashes across tables
+3. Identify:
+   - Exact duplicates (identical hashes)
+   - Near-duplicates (same entity, different timestamps)
+   - Split records (same entity fragmented across tables)
+4. Generate merge recommendations with safety scoring
+```
 
-### Navigation Items
-- Mission Control (Overview icon)
-- Surveillance (Radar icon)
-- Biometrics (Heart icon)
-- Legal (Scale icon)
-- KCSO Investigation (Shield icon)
-- Josiah AI (Brain icon)
-- Data Tools (Database icon)
-- Stories (existing)
+**Priority domains for duplicate audit:**
+- `live_flight_detections_rows` vs `live_flight_detections`
+- `biometric_monitoring` vs `biometrics_unified`
+- `josiah_reflections_rows` vs `josiah_timeline`
 
----
+### Phase 5: SHA-256 Hash Coverage Deep Dive
 
-## Part 3: Fix Data Linkage Gaps
+**Current Status (from memory context):** 99% coverage across 384 tables.
 
-### Current Coverage Issues
-| Data Type | Total | Linked | Coverage |
-|-----------|-------|--------|----------|
-| Flights | 2,816,939 | 41,061 | 1.5% |
-| Biometrics | 9,830 | 6,798 | 69% |
-| Tables | 364 | 43 | 12% |
-| Records | 9.7M | 5.2M | 53% |
+**Enhanced Reporting:**
+- Coverage by evidence domain
+- Unhashed record counts per table
+- Auto-hash trigger status per table
+- Verification failure log
+- Chain-of-custody completeness score
 
-### Root Causes
+### Phase 6: Security Hardening Recommendations
 
-1. **Batch size too small**: Current backfill runs 2,000 records at a time
-2. **No auto-continue**: Backfill stops after one batch
-3. **Missing tables**: Major tables like `watchtower_unified_master` (629K records) not linked
-4. **Duplicate check limits**: Only checks first 10,000 existing links
+Based on current linter findings and best practices:
 
-### Fixes
+| Finding | Risk Level | Recommendation |
+|---------|------------|----------------|
+| Extension in public schema | WARN | Move extensions to dedicated schema |
+| Leaked password protection disabled | WARN | Enable password breach checking |
+| Tables without RLS | CRITICAL | Enable RLS with proper policies |
+| Service role key exposure | HIGH | Audit edge function access patterns |
+| Missing audit logging | MEDIUM | Add trigger-based audit trail |
 
-**Fix 1: Turbo Backfill Mode**
-- Increase batch size from 2,000 to 10,000
-- Auto-continue batches until complete
-- Add progress indicator showing X of Y records
-- Target: Get flight coverage from 1.5% to 50%+ in one session
-
-**Fix 2: Add Missing Table Backfills**
-- Add backfill actions for:
-  - `watchtower_unified_master` (629K records)
-  - `unified_timeline_enhanced` (109K records)
-  - `flagged_aircraft_rows_rows` (35K records)
-  - `legal_ada_violations_proper` (37K records)
-  - `josiah_event_log` (3K records)
-
-**Fix 3: Enhanced Forensic Linker**
-- Add "Turbo Mode" button that runs continuous backfill
-- Show estimated time to completion
-- Allow linking by table category (all surveillance, all biometric, etc.)
+**Security Dashboard Features:**
+- RLS policy coverage visualization
+- API key/secret usage audit
+- Edge function permission review
+- Encryption status verification
 
 ---
 
-## Part 4: Technical Implementation Details
+## Technical Specifications
 
 ### New Files to Create
 
-**Pages:**
-- `src/pages/Surveillance.tsx` - Flight tracking hub
-- `src/pages/Biometrics.tsx` - Health monitoring hub
-- `src/pages/Legal.tsx` - Legal evidence hub
-- `src/pages/KCSO.tsx` - KCSO investigation hub
-- `src/pages/Josiah.tsx` - AI witness hub
-- `src/pages/DataTools.tsx` - Database management hub
-
-**Layout Components:**
-- `src/components/AppSidebar.tsx` - Navigation sidebar
-- `src/components/DashboardLayout.tsx` - Shared layout with sidebar
-
-**Updated Files:**
-- `src/App.tsx` - Add new routes
-- `src/pages/Index.tsx` - Slim down to Mission Control only (~15 components)
-- `src/components/dashboard/CommandHeader.tsx` - Update navigation
-- `supabase/functions/forensic-linker/index.ts` - Add turbo mode and new table backfills
-
-### Route Structure
 ```text
-/auth             -> Auth page (existing)
-/                 -> Mission Control
-/surveillance     -> Surveillance page
-/biometrics       -> Biometrics page  
-/legal            -> Legal page
-/kcso             -> KCSO page
-/josiah           -> Josiah AI page
-/data             -> Data Tools page
-/stories          -> Stories page (existing)
+src/components/dashboard/ComprehensiveDataAudit.tsx
+  - Unified dashboard component
+  - ~800 lines with 6 tabs
+
+supabase/functions/database-quality-control/index.ts (extend)
+  - Add 5 new actions for deep auditing
+  - ~200 additional lines
 ```
 
----
-
-## Part 5: Implementation Order
-
-### Phase 1: Multi-Page Structure (Main Focus)
-1. Create DashboardLayout component with sidebar
-2. Create AppSidebar with navigation
-3. Create 6 new page files
-4. Move components from Index.tsx to appropriate pages
-5. Update App.tsx with new routes
-6. Slim Index.tsx to Mission Control only
-
-### Phase 2: Data Linkage Fixes
-7. Add turbo backfill action to forensic-linker
-8. Add new table backfill actions
-9. Update ForensicLinkageHub with turbo mode button
-10. Run initial turbo backfill to boost coverage
-
-### Phase 3: Polish
-11. Update CommandHeader with page-aware navigation
-12. Add breadcrumbs to each page
-13. Ensure mobile responsiveness
-
----
-
-## Expected Outcomes
-
-### After Implementation
-
-**Navigation:**
-- 7 focused pages instead of 1 overwhelming page
-- Sidebar always visible for quick navigation
-- Each page has ~10-20 components instead of 117
-
-**Data Coverage:**
-- Flight coverage: 1.5% -> 50%+ 
-- Biometric coverage: 69% -> 95%+
-- Total linked records: 51K -> 500K+
-- Turbo mode can process 100K records in ~5 minutes
-
-**User Experience:**
-- Find any dashboard in 2 clicks max
-- See related dashboards grouped together
-- No more endless scrolling
-- Clear section headers
-
----
-
-## Visual Layout Preview
+### Files to Modify
 
 ```text
-+----------------------------------+
-| WATCHTOWER  [status] [Stories] [Logout]  
-+--------+-------------------------+
-|        |                         |
-| SIDEBAR|   MAIN CONTENT AREA     |
-|        |                         |
-| Mission|   [Dashboards for       |
-| Surveil|    current page]        |
-| Biometr|                         |
-| Legal  |                         |
-| KCSO   |                         |
-| Josiah |                         |
-| Data   |                         |
-|        |                         |
-+--------+-------------------------+
+src/pages/DataTools.tsx
+  - Add ComprehensiveDataAudit as primary component
+  - Reorganize existing panels as secondary
+
+src/components/AppSidebar.tsx
+  - Add "Data Audit" link under Data Tools section (if not present)
 ```
+
+### Database Queries (Read-Only)
+
+All audit queries will be SELECT-only for safety:
+- Hash coverage: `SELECT COUNT(*) FILTER (WHERE sha256_hash IS NOT NULL)`
+- Duplicates: `SELECT sha256_hash, COUNT(*) GROUP BY sha256_hash HAVING COUNT(*) > 1`
+- OCR quality: Pattern matching with `~` regex operator
+- RLS policies: `SELECT * FROM pg_policies`
 
 ---
 
-## Summary
+## Recommended Hardening Actions (Post-Audit)
 
-This plan transforms your single overwhelming 400-line page with 117 components into 7 focused pages with proper sidebar navigation. It also adds a "Turbo Mode" to the forensic linker to quickly boost your data coverage from 1.5% to 50%+. The result will be a professional, navigable command center where you can find any dashboard quickly and all your data is properly linked for prosecution.
+### Immediate (Critical)
+1. Enable leaked password protection in auth settings
+2. Move `pgcrypto` extension to dedicated schema
+3. Add RLS policies to any unprotected tables
+
+### Short-Term (High Priority)
+1. Complete SHA-256 hashing for remaining 1% of records
+2. Create auto-hash triggers on high-ingestion tables
+3. Implement OCR timestamp reconstruction from filename patterns
+4. Merge duplicate OCR extractions
+
+### Medium-Term (Maintenance)
+1. Archive/quarantine empty backup tables
+2. Consolidate duplicate table families
+3. Add comprehensive audit logging triggers
+4. Implement regular automated integrity verification
+
+---
+
+## Estimated Complexity
+
+| Component | Effort | Dependencies |
+|-----------|--------|--------------|
+| ComprehensiveDataAudit.tsx | Medium | Existing edge functions |
+| Edge function extensions | Medium | NeonDB connection |
+| Security dashboard tab | Low | pg_policies access |
+| Integration with DataTools | Low | Routing only |
+
+---
+
+## Success Metrics
+
+After implementation, the dashboard will provide:
+- Single-view data quality score (0-100%)
+- Actionable remediation list with priority ranking
+- Historical trend tracking for data quality
+- Exportable audit reports for legal chain-of-custody documentation
+- Real-time security posture assessment
 

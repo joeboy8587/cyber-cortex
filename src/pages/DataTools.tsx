@@ -16,6 +16,7 @@ import { MultimodalEnrichmentPanel } from "@/components/dashboard/MultimodalEnri
 import { DataCoverageGuardrails } from "@/components/dashboard/DataCoverageGuardrails";
 import { DataGapFiller } from "@/components/dashboard/DataGapFiller";
 import { HistoricalEnrichmentPanel } from "@/components/dashboard/HistoricalEnrichmentPanel";
+import { ComprehensiveDataAudit } from "@/components/dashboard/ComprehensiveDataAudit";
 
 export default function DataTools() {
   return (
@@ -36,7 +37,12 @@ export default function DataTools() {
           </div>
         </div>
 
-        {/* Forensic Linkage Hub - Primary */}
+        {/* Comprehensive Data Audit - Primary */}
+        <section>
+          <ComprehensiveDataAudit />
+        </section>
+
+        {/* Forensic Linkage Hub */}
         <section>
           <ForensicLinkageHub />
         </section>

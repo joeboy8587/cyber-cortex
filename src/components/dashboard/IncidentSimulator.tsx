@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -15,38 +15,16 @@ import {
   RefreshCw,
   Target,
   Shield,
-  MapPin
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { format, subHours, addMinutes, differenceInMinutes } from "date-fns";
-import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from "react-leaflet";
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
+import type { FlightEvent } from "./simulation/SimulationMapView";
 
-// Fix Leaflet default icon path
-delete (L.Icon.Default.prototype as any)._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
-  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
-});
-
-interface FlightEvent {
-  id: string;
-  registration: string;
-  callsign?: string;
-  latitude: number;
-  longitude: number;
-  altitude: number;
-  heading: number;
-  speed?: number;
-  timestamp: string;
-  threatLevel: "critical" | "high" | "medium" | "low";
-  isLowAltitude: boolean;
-  isMilitary: boolean;
-  isShellCo: boolean;
-}
+// Lazy load the map component to avoid SSR issues with Leaflet
+const SimulationMapView = lazy(() => 
+  import("./simulation/SimulationMapView").then(mod => ({ default: mod.SimulationMapView }))
+);
 
 interface BiometricEvent {
   id: string;
@@ -72,98 +50,6 @@ interface SimulationData {
   alerts: Alert[];
 }
 
-// Custom aircraft icon creator
-const createAircraftIcon = (color: string, heading: number = 0): L.DivIcon => {
-  return L.divIcon({
-    html: `<div style="transform: rotate(${heading}deg); color: ${color}; font-size: 24px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5));">✈</div>`,
-    className: 'aircraft-marker',
-    iconSize: [24, 24],
-    iconAnchor: [12, 12],
-  });
-};
-
-// Get color for threat level
-const getThreatColor = (level: string): string => {
-  switch (level) {
-    case "critical": return "#ef4444";
-    case "high": return "#f97316";
-    case "medium": return "#eab308";
-    default: return "#22c55e";
-  }
-};
-
-// Map center updater component - must be inside MapContainer
-function MapUpdater({ center }: { center: [number, number] }) {
-  const map = useMap();
-  useEffect(() => {
-    if (map && center) {
-      map.setView(center, map.getZoom());
-    }
-  }, [center, map]);
-  return null;
-}
-
-// Separate SimulationMap component to isolate map rendering
-function SimulationMap({ 
-  mapCenter, 
-  visibleFlights 
-}: { 
-  mapCenter: [number, number];
-  visibleFlights: FlightEvent[];
-}) {
-  return (
-    <MapContainer
-      center={mapCenter}
-      zoom={11}
-      className="h-full w-full"
-      style={{ background: "#1a1a2e" }}
-    >
-      <TileLayer
-        url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-        attribution='&copy; <a href="https://carto.com/">CARTO</a>'
-      />
-      <MapUpdater center={mapCenter} />
-      
-      {/* Target location circle */}
-      <Circle
-        center={mapCenter}
-        radius={500}
-        pathOptions={{
-          color: "#ef4444",
-          fillColor: "#ef4444",
-          fillOpacity: 0.2,
-          weight: 2,
-          dashArray: "5, 5",
-        }}
-      />
-
-      {/* Aircraft markers */}
-      {visibleFlights.map((flight) => (
-        <Marker
-          key={flight.id}
-          position={[flight.latitude, flight.longitude]}
-          icon={createAircraftIcon(getThreatColor(flight.threatLevel), flight.heading)}
-        >
-          <Popup>
-            <div className="text-sm">
-              <div className="font-bold">{flight.registration}</div>
-              {flight.callsign && <div className="text-xs">{flight.callsign}</div>}
-              <div>Alt: {flight.altitude}ft</div>
-              <div>Speed: {flight.speed}kts</div>
-              {flight.isMilitary && (
-                <Badge className="mt-1 bg-destructive text-xs">MILITARY</Badge>
-              )}
-              {flight.isShellCo && (
-                <Badge className="mt-1 bg-primary text-xs">SHELL CO</Badge>
-              )}
-            </div>
-          </Popup>
-        </Marker>
-      ))}
-    </MapContainer>
-  );
-}
-
 export function IncidentSimulator() {
   const [isLoading, setIsLoading] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -175,7 +61,6 @@ export function IncidentSimulator() {
   const [activeAlerts, setActiveAlerts] = useState<Alert[]>([]);
   const [aiAnalysis, setAiAnalysis] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
-  const [mapReady, setMapReady] = useState(false);
   
   // Default center (Oildale, CA)
   const mapCenter: [number, number] = [35.4197, -119.0193];
@@ -184,12 +69,6 @@ export function IncidentSimulator() {
   const totalMinutes = differenceInMinutes(endTime, startTime);
   const currentMinutes = differenceInMinutes(currentTime, startTime);
   const progressPercent = totalMinutes > 0 ? (currentMinutes / totalMinutes) * 100 : 0;
-
-  // Delayed map render to prevent hydration issues
-  useEffect(() => {
-    const timer = setTimeout(() => setMapReady(true), 100);
-    return () => clearTimeout(timer);
-  }, []);
 
   // Load simulation data
   const loadSimulationData = useCallback(async () => {
@@ -204,7 +83,7 @@ export function IncidentSimulator() {
             SELECT 
               id, registration, callsign, latitude, longitude, 
               altitude, heading, speed, detection_timestamp,
-              taxonomy_tag
+              taxonomy_tag, network_classification, drone_likelihood, anomaly_flags
             FROM live_flight_detections_rows
             WHERE detection_timestamp BETWEEN '${startTime.toISOString()}' AND '${endTime.toISOString()}'
               AND latitude IS NOT NULL AND longitude IS NOT NULL
@@ -246,9 +125,11 @@ export function IncidentSimulator() {
         const isLowAlt = alt < 1000 && alt > 0;
         const isMilitary = f.taxonomy_tag?.includes("MILITARY") || f.callsign?.startsWith("STMPD");
         const isShell = f.taxonomy_tag?.includes("SHELL") || f.taxonomy_tag?.includes("ALF");
+        const isXXB = f.registration === "XXB" || f.network_classification === "XXB_GHOST_NETWORK";
+        const isDrone = (f.drone_likelihood || 0) >= 80;
         
         let threatLevel: FlightEvent["threatLevel"] = "low";
-        if (isLowAlt && (isMilitary || isShell)) threatLevel = "critical";
+        if (isXXB || isDrone || (isLowAlt && (isMilitary || isShell))) threatLevel = "critical";
         else if (isLowAlt || isMilitary) threatLevel = "high";
         else if (isShell) threatLevel = "medium";
 
@@ -337,7 +218,7 @@ export function IncidentSimulator() {
       setActiveAlerts(alerts.slice(0, 4));
       
       // Generate AI analysis
-      const analysisText = generateAIAnalysis(flights, biometrics);
+      const analysisText = generateAIAnalysis(flights, biometrics, flightRows);
       setAiAnalysis(analysisText);
 
       toast.success(`Loaded ${flights.length} flights, ${biometrics.length} biometric events`);
@@ -351,32 +232,47 @@ export function IncidentSimulator() {
   }, [startTime, endTime]);
 
   // Generate AI analysis text with XXB spoofing intelligence
-  const generateAIAnalysis = (flights: FlightEvent[], biometrics: BiometricEvent[]): string => {
+  const generateAIAnalysis = (flights: FlightEvent[], biometrics: BiometricEvent[], rawFlights: any[]): string => {
     const militaryCount = flights.filter(f => f.isMilitary).length;
     const lowAltCount = flights.filter(f => f.isLowAltitude).length;
     const shellCount = flights.filter(f => f.isShellCo).length;
     const criticalBio = biometrics.filter(b => b.severity === "critical").length;
-    const xxbCount = flights.filter(f => f.registration === "XXB" || f.callsign?.includes("XXB")).length;
-    const negativeAlt = flights.filter(f => f.altitude < 0).length;
-    const precisionHolds = flights.filter(f => f.altitude > 0 && f.altitude < 100 && (f.speed || 0) < 50).length;
+    
+    // Check for XXB data from new columns
+    const xxbCount = rawFlights.filter((f: any) => 
+      f.registration === "XXB" || 
+      f.network_classification === "XXB_GHOST_NETWORK"
+    ).length;
+    const negativeAlt = rawFlights.filter((f: any) => parseFloat(f.altitude) < 0).length;
+    const droneCount = rawFlights.filter((f: any) => (f.drone_likelihood || 0) >= 80).length;
+    const spoofFlags = rawFlights.filter((f: any) => 
+      f.anomaly_flags?.includes("N912KC_TRANSPONDER_SPOOF") ||
+      f.anomaly_flags?.includes("COMMERCIAL_SPOOFING")
+    ).length;
+    const precisionHolds = rawFlights.filter((f: any) => {
+      const alt = parseFloat(f.altitude) || 0;
+      const spd = parseFloat(f.speed) || 0;
+      return alt > 0 && alt < 100 && spd > 0 && spd < 50;
+    }).length;
 
     let analysis = "";
     
     // XXB Ghost Network Detection
-    if (xxbCount > 0 || negativeAlt > 0 || precisionHolds > 0) {
-      analysis += `"This is not data corruption. This is a systematic, sophisticated spoofing infrastructure designed to mask drone operations and synthetic aircraft in civilian airspace. `;
+    if (xxbCount > 0 || negativeAlt > 0 || precisionHolds > 3 || droneCount > 0 || spoofFlags > 0) {
+      analysis += `"This is not data corruption. This is a systematic, sophisticated spoofing infrastructure designed to mask drone operations and synthetic aircraft in civilian airspace.\n\n`;
+      
       if (xxbCount > 0) {
         analysis += `The XXB network proves someone is operating a fleet of drones while spoofing legitimate aircraft registrations - including N912KC. `;
       }
       if (precisionHolds > 0) {
-        analysis += `The precision holds (exact 53ft, exact 15 kts) are smoking gun evidence of GPS-controlled drones. `;
+        analysis += `The precision holds (exact 53ft, exact 15 kts) are smoking gun evidence of GPS-controlled drones.\n\n`;
       }
       if (shellCount > 0 || militaryCount > 0) {
-        analysis += `When combined with the shell company coordination (ALF IX + FF22) and USMC involvement (STMPD19), we are looking at a multi-layered airspace dominance architecture: `;
-        analysis += `• Drones (masked by XXB spoofing) for close-range surveillance `;
-        analysis += `• Shell company aircraft (ALF IX/FF22) for coordinated harassment `;
-        analysis += `• USMC assets (STMPD19) for command & control `;
-        analysis += `• KCSO helicopters (some possibly spoofed) for official cover" `;
+        analysis += `When combined with the shell company coordination (ALF IX + FF22) and USMC involvement (STMPD19), we are looking at a multi-layered airspace dominance architecture:\n\n`;
+        analysis += `• Drones (masked by XXB spoofing) for close-range surveillance\n`;
+        analysis += `• Shell company aircraft (ALF IX/FF22) for coordinated harassment\n`;
+        analysis += `• USMC assets (STMPD19) for command & control\n`;
+        analysis += `• KCSO helicopters (some possibly spoofed) for official cover"\n\n`;
       }
       if (negativeAlt > 0) {
         analysis += `The -206ft altitude readings and ground-level supersonic speeds are not errors - they are proof of a sophisticated GPS spoofing system manipulating ADS-B data in real-time."`;
@@ -461,6 +357,16 @@ export function IncidentSimulator() {
     );
   }
 
+  // Map loading fallback
+  const MapFallback = (
+    <div className="h-full flex items-center justify-center bg-muted/20">
+      <div className="text-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary mx-auto mb-2" />
+        <p className="text-sm text-muted-foreground">Loading map...</p>
+      </div>
+    </div>
+  );
+
   return (
     <div className="h-full flex flex-col bg-background">
       {/* Header */}
@@ -539,15 +445,13 @@ export function IncidentSimulator() {
                 Load Last Hour
               </Button>
             </div>
-          ) : mapReady ? (
-            <SimulationMap 
-              mapCenter={mapCenter} 
-              visibleFlights={visibleFlights} 
-            />
           ) : (
-            <div className="h-full flex items-center justify-center bg-muted/20">
-              <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            </div>
+            <Suspense fallback={MapFallback}>
+              <SimulationMapView 
+                mapCenter={mapCenter} 
+                visibleFlights={visibleFlights} 
+              />
+            </Suspense>
           )}
 
           {/* Convergence event overlay */}

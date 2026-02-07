@@ -1,5 +1,5 @@
-import { useEffect, useState, useRef } from "react";
-import { MapContainer, TileLayer, Marker, Popup, Circle } from "react-leaflet";
+import { useEffect, useState, useCallback } from "react";
+import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from "react-leaflet";
 import L from "leaflet";
 import { Badge } from "@/components/ui/badge";
 import "leaflet/dist/leaflet.css";
@@ -40,6 +40,19 @@ function getThreatColor(level: string): string {
   }
 }
 
+// Component to handle map center updates
+function MapCenterUpdater({ center }: { center: [number, number] }) {
+  const map = useMap();
+  
+  useEffect(() => {
+    if (center && center[0] !== 0 && center[1] !== 0) {
+      map.setView(center, map.getZoom());
+    }
+  }, [center, map]);
+  
+  return null;
+}
+
 interface SimulationMapViewProps {
   mapCenter: [number, number];
   visibleFlights: FlightEvent[];
@@ -47,7 +60,6 @@ interface SimulationMapViewProps {
 
 export function SimulationMapView({ mapCenter, visibleFlights }: SimulationMapViewProps) {
   const [ready, setReady] = useState(false);
-  const mapRef = useRef<L.Map | null>(null);
 
   // Initialize Leaflet icons on mount
   useEffect(() => {
@@ -65,16 +77,9 @@ export function SimulationMapView({ mapCenter, visibleFlights }: SimulationMapVi
     }
     
     // Small delay to ensure DOM is ready
-    const timer = setTimeout(() => setReady(true), 100);
+    const timer = setTimeout(() => setReady(true), 150);
     return () => clearTimeout(timer);
   }, []);
-
-  // Update map center when it changes - use ref instead of useMap
-  useEffect(() => {
-    if (mapRef.current && mapCenter && mapCenter[0] !== 0 && mapCenter[1] !== 0) {
-      mapRef.current.setView(mapCenter, mapRef.current.getZoom());
-    }
-  }, [mapCenter]);
 
   if (!ready) {
     return (
@@ -90,12 +95,13 @@ export function SimulationMapView({ mapCenter, visibleFlights }: SimulationMapVi
       zoom={11}
       className="h-full w-full"
       style={{ background: "#1a1a2e" }}
-      ref={mapRef}
     >
       <TileLayer
         url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
         attribution='&copy; <a href="https://carto.com/">CARTO</a>'
       />
+      
+      <MapCenterUpdater center={mapCenter} />
       
       {/* Target location circle */}
       <Circle

@@ -142,3 +142,5 @@ export function SimulationMapView({ mapCenter, visibleFlights }: SimulationMapVi
     </MapContainer>
   );
 }
+
+export default SimulationMapView;

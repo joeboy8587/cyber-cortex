@@ -22,9 +22,7 @@ import { format, subHours, addMinutes, differenceInMinutes } from "date-fns";
 import type { FlightEvent } from "./simulation/SimulationMapView";
 
 // Lazy load the map component to avoid SSR issues with Leaflet
-const SimulationMapView = lazy(() => 
-  import("./simulation/SimulationMapView").then(mod => ({ default: mod.SimulationMapView }))
-);
+const SimulationMapView = lazy(() => import("./simulation/SimulationMapView"));
 
 interface BiometricEvent {
   id: string;

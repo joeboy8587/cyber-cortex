@@ -7,8 +7,19 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
-// @ts-ignore - exif-js doesn't have proper types
-import EXIF from 'exif-js';
+// exif-js is dynamically imported to avoid bundling issues
+let EXIF: any = null;
+const loadExifJs = async () => {
+  if (!EXIF) {
+    try {
+      const module = await import('exif-js');
+      EXIF = module.default || module;
+    } catch (e) {
+      console.warn('[EXIF] Failed to load exif-js library:', e);
+    }
+  }
+  return EXIF;
+};
 import { 
   Upload, 
   Plane, 
@@ -178,122 +189,117 @@ const F24RadarUploader: React.FC = () => {
         return dateStr; // Return as-is if already in different format
       };
 
-      // Use exif-js library to read EXIF data (properly traverses SubIFD)
-      try {
-        EXIF.getData(file as any, function(this: any) {
-          const allTags = EXIF.getAllTags(this);
-          
-          console.log('[EXIF] Raw tags from exif-js:', Object.keys(allTags));
-          
-          const dateTimeOriginal = parseExifDate(allTags.DateTimeOriginal);
-          const dateTimeDigitized = parseExifDate(allTags.DateTimeDigitized);
-          const modifyDate = parseExifDate(allTags.DateTime);
-          
-          // GPS coordinates
-          let gpsLatitude: number | null = null;
-          let gpsLongitude: number | null = null;
-          
-          if (allTags.GPSLatitude && allTags.GPSLatitudeRef) {
-            const lat = allTags.GPSLatitude;
-            gpsLatitude = lat[0] + lat[1] / 60 + lat[2] / 3600;
-            if (allTags.GPSLatitudeRef === 'S') gpsLatitude = -gpsLatitude;
-          }
-          if (allTags.GPSLongitude && allTags.GPSLongitudeRef) {
-            const lng = allTags.GPSLongitude;
-            gpsLongitude = lng[0] + lng[1] / 60 + lng[2] / 3600;
-            if (allTags.GPSLongitudeRef === 'W') gpsLongitude = -gpsLongitude;
-          }
-
-          // Determine best timestamp and source
-          if (dateTimeOriginal) {
-            console.log(`[EXIF] ✓ DateTimeOriginal found: ${dateTimeOriginal} (FORENSIC GOLD)`);
-            resolve(createResult({
-              dateTimeOriginal,
-              dateTimeDigitized,
-              modifyDate,
-              gpsLatitude,
-              gpsLongitude,
-              make: allTags.Make || null,
-              model: allTags.Model || null,
-              software: allTags.Software || null,
-            }, 'EXIF_DATETIME_ORIGINAL', `Camera capture time verified from EXIF SubIFD. Device: ${allTags.Make || 'Unknown'} ${allTags.Model || ''}`));
-            return;
-          }
-
-          if (dateTimeDigitized) {
-            console.log(`[EXIF] DateTimeDigitized found: ${dateTimeDigitized}`);
-            resolve(createResult({
-              dateTimeDigitized,
-              modifyDate,
-              gpsLatitude,
-              gpsLongitude,
-              make: allTags.Make || null,
-              model: allTags.Model || null,
-              software: allTags.Software || null,
-            }, 'EXIF_DATETIME_DIGITIZED', `Digitization time from EXIF. May differ from capture time.`));
-            return;
-          }
-
-          if (modifyDate) {
-            console.log(`[EXIF] DateTime (modify) found: ${modifyDate}`);
-            resolve(createResult({
-              modifyDate,
-              gpsLatitude,
-              gpsLongitude,
-              make: allTags.Make || null,
-              model: allTags.Model || null,
-              software: allTags.Software || null,
-            }, 'EXIF_MODIFY_DATE', `EXIF modify date only. Original capture time unknown.`));
-            return;
-          }
-
-          // No EXIF dates found - try filename pattern
-          console.log('[EXIF] No EXIF timestamp tags found, trying filename pattern...');
-          const { timestamp: filenameTs, pattern } = extractTimestampFromFilename(file.name);
-          
-          if (filenameTs) {
-            console.log(`[EXIF] ⚠ Using filename timestamp: ${filenameTs} (LESS RELIABLE - may be upload date)`);
-            resolve(createResult({
-              modifyDate: filenameTs,
-            }, 'FILENAME_PATTERN', `WARNING: Timestamp extracted from filename pattern "${pattern}". May represent UPLOAD date, not capture date. Verify against other evidence.`));
-            return;
-          }
-
-          // Last resort: file.lastModified
-          if (file.lastModified) {
-            const fileDate = new Date(file.lastModified).toISOString();
-            console.log(`[EXIF] ⚠ Falling back to file.lastModified: ${fileDate} (UNRELIABLE)`);
-            resolve(createResult({
-              modifyDate: fileDate,
-            }, 'FILE_LAST_MODIFIED', `WARNING: Using OS file modification time. This changes when file is copied/moved. NOT forensically reliable.`));
-            return;
-          }
-
-          // Absolute fallback
+      // Fallback chain helper
+      const fallbackToFilename = () => {
+        const { timestamp: filenameTs, pattern } = extractTimestampFromFilename(file.name);
+        if (filenameTs) {
+          console.log(`[EXIF] ⚠ Using filename timestamp: ${filenameTs} (LESS RELIABLE - may be upload date)`);
+          resolve(createResult({
+            modifyDate: filenameTs,
+          }, 'FILENAME_PATTERN', `WARNING: Timestamp extracted from filename pattern "${pattern}". May represent UPLOAD date, not capture date. Verify against other evidence.`));
+        } else if (file.lastModified) {
+          const fileDate = new Date(file.lastModified).toISOString();
+          console.log(`[EXIF] ⚠ Falling back to file.lastModified: ${fileDate} (UNRELIABLE)`);
+          resolve(createResult({
+            modifyDate: fileDate,
+          }, 'FILE_LAST_MODIFIED', `WARNING: Using OS file modification time. This changes when file is copied/moved. NOT forensically reliable.`));
+        } else {
           console.log('[EXIF] ✗ No timestamp source available, using current time');
           resolve(createResult({
             modifyDate: new Date().toISOString(),
           }, 'CURRENT_TIME', `CRITICAL: No timestamp source found. Using upload time. Forensic value: NONE.`));
-        });
-      } catch (err) {
-        console.error('[EXIF] Library error:', err);
-        
-        // Fallback chain on error
-        const { timestamp: filenameTs, pattern } = extractTimestampFromFilename(file.name);
-        if (filenameTs) {
-          resolve(createResult({
-            modifyDate: filenameTs,
-          }, 'FILENAME_PATTERN', `EXIF extraction failed. Using filename pattern "${pattern}". Verify manually.`));
-        } else if (file.lastModified) {
-          resolve(createResult({
-            modifyDate: new Date(file.lastModified).toISOString(),
-          }, 'FILE_LAST_MODIFIED', `EXIF extraction failed. Using file modification time.`));
-        } else {
-          resolve(createResult({
-            modifyDate: new Date().toISOString(),
-          }, 'CURRENT_TIME', `EXIF extraction failed. No alternative timestamp source.`));
         }
-      }
+      };
+
+      // Use exif-js library to read EXIF data (properly traverses SubIFD)
+      // Load library dynamically to avoid bundling issues
+      loadExifJs().then((exifLib) => {
+        if (!exifLib || typeof exifLib.getData !== 'function') {
+          console.warn('[EXIF] exif-js library not available, using fallback');
+          fallbackToFilename();
+          return;
+        }
+
+        try {
+          exifLib.getData(file as any, function(this: any) {
+            const allTags = exifLib.getAllTags(this);
+            
+            console.log('[EXIF] Raw tags from exif-js:', Object.keys(allTags));
+            
+            const dateTimeOriginal = parseExifDate(allTags.DateTimeOriginal);
+            const dateTimeDigitized = parseExifDate(allTags.DateTimeDigitized);
+            const modifyDate = parseExifDate(allTags.DateTime);
+            
+            // GPS coordinates
+            let gpsLatitude: number | null = null;
+            let gpsLongitude: number | null = null;
+            
+            if (allTags.GPSLatitude && allTags.GPSLatitudeRef) {
+              const lat = allTags.GPSLatitude;
+              gpsLatitude = lat[0] + lat[1] / 60 + lat[2] / 3600;
+              if (allTags.GPSLatitudeRef === 'S') gpsLatitude = -gpsLatitude;
+            }
+            if (allTags.GPSLongitude && allTags.GPSLongitudeRef) {
+              const lng = allTags.GPSLongitude;
+              gpsLongitude = lng[0] + lng[1] / 60 + lng[2] / 3600;
+              if (allTags.GPSLongitudeRef === 'W') gpsLongitude = -gpsLongitude;
+            }
+
+            // Determine best timestamp and source
+            if (dateTimeOriginal) {
+              console.log(`[EXIF] ✓ DateTimeOriginal found: ${dateTimeOriginal} (FORENSIC GOLD)`);
+              resolve(createResult({
+                dateTimeOriginal,
+                dateTimeDigitized,
+                modifyDate,
+                gpsLatitude,
+                gpsLongitude,
+                make: allTags.Make || null,
+                model: allTags.Model || null,
+                software: allTags.Software || null,
+              }, 'EXIF_DATETIME_ORIGINAL', `Camera capture time verified from EXIF SubIFD. Device: ${allTags.Make || 'Unknown'} ${allTags.Model || ''}`));
+              return;
+            }
+
+            if (dateTimeDigitized) {
+              console.log(`[EXIF] DateTimeDigitized found: ${dateTimeDigitized}`);
+              resolve(createResult({
+                dateTimeDigitized,
+                modifyDate,
+                gpsLatitude,
+                gpsLongitude,
+                make: allTags.Make || null,
+                model: allTags.Model || null,
+                software: allTags.Software || null,
+              }, 'EXIF_DATETIME_DIGITIZED', `Digitization time from EXIF. May differ from capture time.`));
+              return;
+            }
+
+            if (modifyDate) {
+              console.log(`[EXIF] DateTime (modify) found: ${modifyDate}`);
+              resolve(createResult({
+                modifyDate,
+                gpsLatitude,
+                gpsLongitude,
+                make: allTags.Make || null,
+                model: allTags.Model || null,
+                software: allTags.Software || null,
+              }, 'EXIF_MODIFY_DATE', `EXIF modify date only. Original capture time unknown.`));
+              return;
+            }
+
+            // No EXIF dates found - use fallback
+            console.log('[EXIF] No EXIF timestamp tags found, using fallback...');
+            fallbackToFilename();
+          });
+        } catch (err) {
+          console.error('[EXIF] Library error:', err);
+          fallbackToFilename();
+        }
+      }).catch((err) => {
+        console.error('[EXIF] Failed to load library:', err);
+        fallbackToFilename();
+      });
     });
   }, [extractTimestampFromFilename]);
 

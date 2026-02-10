@@ -701,6 +701,168 @@ serve(async (req) => {
         break;
       }
 
+      case 'populateBradfordHillFast': {
+        // Lightweight Bradford Hill: compute per-aircraft scores from pre-aggregated stats
+        // and write them into master_forensic_events, avoiding the expensive biometric cross-join
+        console.log('populateBradfordHillFast: Computing scores from aggregate stats...');
+
+        // Step 1: Compute per-registration aggregate stats (no cross-join)
+        // Priority aircraft list to avoid full table scan
+        const priorityAircraft = [
+          'N912KC','N913KC','N743AM','N229AM','N790FA','N788FA','N791FA',
+          'N997SE','N2464D','N324CP','VT-TYG','HL8579','B-5546',
+          'STMPD19','N912','N913'
+        ];
+
+        const aircraftStats = await sql.unsafe(`
+          SELECT 
+            registration,
+            COUNT(*) as detection_count,
+            COUNT(DISTINCT DATE(detection_timestamp)) as unique_days,
+            ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as avg_altitude,
+            MIN(COALESCE(altitude, 9999)) as min_altitude,
+            COUNT(*) FILTER (WHERE is_anomaly = true) as anomaly_count,
+            COUNT(*) FILTER (WHERE altitude < 500) as below_500
+          FROM live_flight_detections_rows
+          WHERE registration = ANY($1::text[])
+          GROUP BY registration
+        `, [priorityAircraft]);
+
+        // Step 2: Get total biometric stress events (single count, no join)
+        const bioStats = await sql.unsafe(`
+          SELECT COUNT(*) as total_bio,
+            COUNT(*) FILTER (WHERE heart_rate > 100) as stress_events,
+            MAX(heart_rate) as peak_hr,
+            MIN(NULLIF(hrv, 0)) as min_hrv
+          FROM biometric_monitoring
+        `);
+        const bio = (bioStats as any)[0] || { total_bio: 0, stress_events: 0, peak_hr: 0, min_hrv: 0 };
+
+        // Step 3: Calculate Bradford Hill score per aircraft and build results
+        const scored = (aircraftStats as any[]).map((a: any) => {
+          const detections = Number(a.detection_count) || 0;
+          const days = Number(a.unique_days) || 0;
+          const minAlt = Number(a.min_altitude) || 9999;
+          const anomalies = Number(a.anomaly_count) || 0;
+          const below500 = Number(a.below_500) || 0;
+
+          // Strength of association
+          const strength = Math.min(detections / 10, 20);
+          // Consistency (days present)
+          const consistency = Math.min(days / 5, 10);
+          // Temporality (anomaly ratio as proxy for temporal correlation)
+          const temporality = Math.min(anomalies / 5, 15);
+          // Biological gradient (altitude-based harm proxy)
+          const gradient = minAlt < 500 ? 15 : minAlt < 1000 ? 10 : minAlt < 1500 ? 7 : minAlt < 2000 ? 4 : 2;
+          // Plausibility (below-500 violations)
+          const plausibility = Math.min(below500 / 5, 10);
+          // Coherence (bio stress exists globally)
+          const coherence = Number(bio.stress_events) > 50 ? 10 : Number(bio.stress_events) > 10 ? 5 : 2;
+
+          const score = Math.round((strength + consistency + temporality + gradient + plausibility + coherence) * 10) / 10;
+
+          return { registration: a.registration, detections, days, minAlt, anomalies, below500, score };
+        });
+
+        // Step 4: Write top scores into master_forensic_events (update existing or insert new)
+        let updated = 0;
+        for (const s of scored.slice(0, 50)) {
+          try {
+            // Try to update existing events for this aircraft
+            const upd = await sql.unsafe(`
+              UPDATE master_forensic_events 
+              SET bradford_hill_score = $1, factor_count = GREATEST(factor_count, 2), updated_at = NOW()
+              WHERE primary_entity_id = $2 AND bradford_hill_score IS NULL
+            `, [s.score, s.registration]);
+            updated += (upd as any).count || 0;
+
+            // If no existing events, insert one summary event
+            if (((upd as any).count || 0) === 0) {
+              await sql.unsafe(`
+                INSERT INTO master_forensic_events (event_timestamp, event_type, primary_entity_id, primary_entity_type, bradford_hill_score, factor_count, summary, confidence_score)
+                VALUES (NOW(), 'flight', $1, 'aircraft', $2, 2, $3, $4)
+                ON CONFLICT DO NOTHING
+              `, [s.registration, s.score, 
+                  `Bradford-Hill scored aircraft: ${s.detections} detections over ${s.days} days, min altitude ${s.minAlt}ft, ${s.anomalies} anomalies`,
+                  Math.min(Math.round(s.score / 80 * 100), 100)]);
+              updated++;
+            }
+          } catch (e) {
+            console.warn(`Failed to write score for ${s.registration}:`, e);
+          }
+        }
+
+        result = {
+          message: `Bradford Hill scores calculated and written to master_forensic_events`,
+          aircraftScored: scored.length,
+          eventsUpdated: updated,
+          topScores: scored.slice(0, 20),
+          biometricContext: bio
+        };
+        break;
+      }
+
+      case 'populateFourFactorEvents': {
+        // Write four-factor convergence data into master_forensic_events
+        console.log('populateFourFactorEvents: Finding and writing convergence events...');
+
+        // Find days with multiple factors
+        const tableCheck = await sql`
+          SELECT table_name FROM information_schema.tables 
+          WHERE table_schema = 'public' 
+          AND table_name IN ('live_flight_detections_rows', 'biometric_monitoring', 'josiah_reflections_rows', 'ocr_aircraft_holding_patterns')
+        `;
+        const existingTables = new Set((tableCheck as unknown as Array<{table_name: string}>).map(t => t.table_name));
+
+        const flightCte = `SELECT DATE(detection_timestamp) as day, COUNT(*) as cnt FROM live_flight_detections_rows WHERE detection_timestamp IS NOT NULL GROUP BY 1`;
+        const bioCte = existingTables.has('biometric_monitoring') 
+          ? `SELECT DATE(measurement_timestamp) as day, COUNT(*) as cnt, MAX(heart_rate) as peak_hr FROM biometric_monitoring WHERE measurement_timestamp IS NOT NULL GROUP BY 1`
+          : `SELECT NULL::date as day, 0 as cnt, 0 as peak_hr WHERE false`;
+        const josiahCte = existingTables.has('josiah_reflections_rows')
+          ? `SELECT DATE(created_at) as day, COUNT(*) as cnt FROM josiah_reflections_rows WHERE created_at IS NOT NULL GROUP BY 1`
+          : `SELECT NULL::date as day, 0 as cnt WHERE false`;
+        const ocrCte = existingTables.has('ocr_aircraft_holding_patterns')
+          ? `SELECT DATE(COALESCE(observation_timestamp, imported_at)) as day, COUNT(*) as cnt FROM ocr_aircraft_holding_patterns WHERE observation_timestamp IS NOT NULL OR imported_at IS NOT NULL GROUP BY 1`
+          : `SELECT NULL::date as day, 0 as cnt WHERE false`;
+
+        const convergenceDays = await sql.unsafe(`
+          WITH f AS (${flightCte}), b AS (${bioCte}), j AS (${josiahCte}), o AS (${ocrCte})
+          SELECT f.day,
+            CASE WHEN b.day IS NOT NULL AND j.day IS NOT NULL AND o.day IS NOT NULL THEN 4
+                 WHEN (b.day IS NOT NULL AND j.day IS NOT NULL) OR (b.day IS NOT NULL AND o.day IS NOT NULL) OR (j.day IS NOT NULL AND o.day IS NOT NULL) THEN 3
+                 WHEN b.day IS NOT NULL OR j.day IS NOT NULL OR o.day IS NOT NULL THEN 2
+                 ELSE 1 END as factors,
+            f.cnt as flights, COALESCE(b.cnt,0) as bios, COALESCE(b.peak_hr,0) as peak_hr, COALESCE(j.cnt,0) as josiah, COALESCE(o.cnt,0) as ocr
+          FROM f LEFT JOIN b ON f.day=b.day LEFT JOIN j ON f.day=j.day LEFT JOIN o ON f.day=o.day
+          WHERE (b.day IS NOT NULL OR j.day IS NOT NULL OR o.day IS NOT NULL)
+          ORDER BY factors DESC, f.day DESC LIMIT 100
+        `);
+
+        let inserted = 0;
+        for (const d of convergenceDays as any[]) {
+          if (d.factors >= 3) {
+            try {
+              await sql.unsafe(`
+                INSERT INTO master_forensic_events (event_timestamp, event_type, factor_count, bradford_hill_score, summary, confidence_score)
+                VALUES (($1::date)::timestamptz, 'multi_factor', $2, $3, $4, $5)
+                ON CONFLICT DO NOTHING
+              `, [d.day, d.factors, d.factors * 10, 
+                  `${d.factors}-factor convergence: ${d.flights} flights, ${d.bios} biometric readings (peak HR ${d.peak_hr}), ${d.josiah} Josiah reflections, ${d.ocr} OCR records`,
+                  d.factors * 25]);
+              inserted++;
+            } catch (e) { console.warn('Insert convergence event failed:', e); }
+          }
+        }
+
+        const stats = (convergenceDays as any[]).reduce((acc, d) => {
+          acc[`factor_${d.factors}`] = (acc[`factor_${d.factors}`] || 0) + 1;
+          return acc;
+        }, {} as Record<string, number>);
+
+        result = { message: 'Four-factor convergence events written', inserted, stats, days: (convergenceDays as any[]).slice(0, 20) };
+        break;
+      }
+
       default:
         throw new Error(`Unknown action: ${action}`);
     }

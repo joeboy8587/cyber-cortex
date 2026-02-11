@@ -10,7 +10,7 @@ import { toast } from "sonner";
 import {
   Database, Search, Scale, Award, BookOpen, Target,
   ChevronRight, FileText, AlertTriangle, Shield, Brain,
-  CheckCircle2, Clock, Loader2
+  CheckCircle2, Clock, Loader2, Heart
 } from "lucide-react";
 
 interface NeonStats {
@@ -194,19 +194,21 @@ export function LegalAcademy() {
     try {
       const { data, error } = await supabase.functions.invoke("neon-query", {
         body: {
+          action: "customQuery",
           query: `
             SELECT 
               (SELECT COUNT(*) FROM live_flight_detections_rows) as flights,
               (SELECT COUNT(*) FROM biometric_monitoring) as biometric,
-              (SELECT COUNT(*) FROM master_forensic_events_rows) as forensic,
-              (SELECT COUNT(*) FROM live_flight_detections_rows WHERE altitude_baro < 500) as violations,
-              (SELECT COUNT(*) FROM flagged_anomalies) as anomalies,
-              (SELECT COUNT(*) FROM evidence_chain_links_rows) as chain_links
+              (SELECT COUNT(*) FROM master_forensic_events) as forensic,
+              (SELECT COUNT(*) FROM live_flight_detections_rows WHERE altitude < 500) as violations,
+              (SELECT COUNT(*) FROM flagged_aircraft) as anomalies,
+              (SELECT COUNT(*) FROM evidence_chain_links) as chain_links
           `,
         },
       });
-      if (data?.rows?.[0]) {
-        const r = data.rows[0];
+      const rows = data?.data || data;
+      const r = Array.isArray(rows) ? rows[0] : null;
+      if (r) {
         setStats({
           flights: parseInt(r.flights),
           biometric: parseInt(r.biometric),
@@ -231,20 +233,21 @@ export function LegalAcademy() {
     try {
       let query = "";
       if (table === "flights") {
-        query = `SELECT registration, flight_number, altitude_baro, ground_speed, seen_at, lat, lon FROM live_flight_detections_rows WHERE registration IN ('N912KC','N913KC','N597E','N229AM','N790FA') ORDER BY seen_at DESC LIMIT 10`;
+        query = `SELECT registration, callsign, altitude, speed, detection_timestamp, latitude, longitude FROM live_flight_detections_rows WHERE registration IN ('N912KC','N913KC','N597E','N229AM','N790FA') ORDER BY detection_timestamp DESC LIMIT 10`;
       } else if (table === "biometric") {
-        query = `SELECT timestamp, heart_rate, hrv_ms, stress_level, notes FROM biometric_monitoring ORDER BY timestamp DESC LIMIT 10`;
+        query = `SELECT measurement_timestamp, heart_rate, hrv, stress_level, notes FROM biometric_monitoring ORDER BY measurement_timestamp DESC LIMIT 10`;
       } else if (table === "violations") {
-        query = `SELECT registration, altitude_baro, ground_speed, seen_at, lat, lon FROM live_flight_detections_rows WHERE altitude_baro < 500 AND registration IS NOT NULL ORDER BY seen_at DESC LIMIT 10`;
+        query = `SELECT registration, altitude, speed, detection_timestamp, latitude, longitude FROM live_flight_detections_rows WHERE altitude < 500 AND registration IS NOT NULL ORDER BY detection_timestamp DESC LIMIT 10`;
       } else if (table === "anomalies") {
-        query = `SELECT anomaly_type, description, severity, detected_at FROM flagged_anomalies ORDER BY detected_at DESC LIMIT 10`;
+        query = `SELECT hex, flight, reason, alt, flagged_at FROM flagged_aircraft ORDER BY flagged_at DESC LIMIT 10`;
       } else if (table === "forensic") {
-        query = `SELECT forensic_event_id, event_type, event_timestamp, summary, bradford_hill_score, factor_count FROM master_forensic_events_rows ORDER BY event_timestamp DESC LIMIT 10`;
+        query = `SELECT forensic_event_id, event_type, event_timestamp, summary, bradford_hill_score, factor_count FROM master_forensic_events ORDER BY event_timestamp DESC LIMIT 10`;
       } else if (table === "chain") {
-        query = `SELECT link_id, source_table, link_type, link_confidence, linked_at FROM evidence_chain_links_rows ORDER BY linked_at DESC LIMIT 10`;
+        query = `SELECT link_id, source_table, link_type, link_confidence, linked_at FROM evidence_chain_links ORDER BY linked_at DESC LIMIT 10`;
       }
-      const { data } = await supabase.functions.invoke("neon-query", { body: { query } });
-      setSampleData(data?.rows || []);
+      const { data } = await supabase.functions.invoke("neon-query", { body: { action: "customQuery", query } });
+      const rows = data?.data || data;
+      setSampleData(Array.isArray(rows) ? rows : []);
       setProgress(p => ({ ...p, dataNav: Math.min(100, p.dataNav + 17) }));
     } catch (e) {
       toast.error("Failed to load sample data");
@@ -659,6 +662,3 @@ export function LegalAcademy() {
     </div>
   );
 }
-
-// Re-export Heart for use in the component
-import { Heart } from "lucide-react";

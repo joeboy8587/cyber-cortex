@@ -11,7 +11,8 @@ import {
   LogOut,
   AlertTriangle,
   Radio,
-  PlayCircle
+  PlayCircle,
+  GraduationCap
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useAuth } from "@/hooks/useAuth";
@@ -230,6 +231,27 @@ export function AppSidebar() {
                       <div className="flex flex-col min-w-0">
                         <span className="text-sm font-medium">Simulation</span>
                         <span className="text-[10px] text-muted-foreground">Incident Playback</span>
+                      </div>
+                    )}
+                  </NavLink>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild>
+                  <NavLink 
+                    to="/academy" 
+                    className={cn(
+                      "flex items-center gap-3 px-3 py-2 rounded-md transition-colors",
+                      "hover:bg-muted/50",
+                      collapsed && "justify-center px-2"
+                    )}
+                    activeClassName="bg-primary/10 text-primary border border-primary/30"
+                  >
+                    <GraduationCap className="w-4 h-4 shrink-0" />
+                    {!collapsed && (
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-sm font-medium">Legal Academy</span>
+                        <span className="text-[10px] text-muted-foreground">Pro Se Training</span>
                       </div>
                     )}
                   </NavLink>

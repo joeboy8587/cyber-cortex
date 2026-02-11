@@ -16,6 +16,7 @@ import KCSO from "./pages/KCSO";
 import Josiah from "./pages/Josiah";
 import DataTools from "./pages/DataTools";
 import Simulation from "./pages/Simulation";
+import Academy from "./pages/Academy";
 
 const queryClient = new QueryClient();
 
@@ -88,6 +89,11 @@ const App = () => (
             <Route path="/simulation" element={
               <ProtectedRoute>
                 <Simulation />
+              </ProtectedRoute>
+            } />
+            <Route path="/academy" element={
+              <ProtectedRoute>
+                <Academy />
               </ProtectedRoute>
             } />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}

@@ -101,8 +101,8 @@ serve(async (req) => {
         const existingCorrelations = await client.queryObject<{ count: number }>`
           SELECT COUNT(*) as count
           FROM master_biometric_aircraft_correlations
-          WHERE correlation_timestamp >= ${startDate || '2021-01-01'}
-            AND correlation_timestamp < ${endDate || '2025-01-01'}
+          WHERE biometric_timestamp >= ${startDate || '2021-01-01'}
+            AND biometric_timestamp < ${endDate || '2025-01-01'}
         `;
         existingCorrelationsCount = existingCorrelations.rows[0]?.count || 0;
       } catch {
@@ -239,22 +239,28 @@ serve(async (req) => {
       }
 
       if (action === 'stats') {
-        const stats = await client.queryObject`
-          SELECT 
-            COUNT(*) as total_correlations,
-            AVG(bradford_hill_score) as avg_bh_score,
-            COUNT(DISTINCT registration) as unique_aircraft,
-            MIN(correlation_timestamp) as earliest,
-            MAX(correlation_timestamp) as latest,
-            COUNT(CASE WHEN bradford_hill_score >= 70 THEN 1 END) as high_confidence,
-            COUNT(CASE WHEN bradford_hill_score >= 50 AND bradford_hill_score < 70 THEN 1 END) as medium_confidence,
-            COUNT(CASE WHEN bradford_hill_score < 50 THEN 1 END) as low_confidence
-          FROM master_biometric_aircraft_correlations
-        `;
+        let statsResult: any = { total_correlations: 0, avg_bh_score: 0, unique_aircraft: 0, earliest: null, latest: null, high_confidence: 0, medium_confidence: 0, low_confidence: 0 };
+        try {
+          const stats = await client.queryObject`
+            SELECT 
+              COUNT(*) as total_correlations,
+              AVG(bradford_hill_score) as avg_bh_score,
+              COUNT(DISTINCT registration) as unique_aircraft,
+              MIN(biometric_timestamp) as earliest,
+              MAX(biometric_timestamp) as latest,
+              COUNT(CASE WHEN bradford_hill_score >= 70 THEN 1 END) as high_confidence,
+              COUNT(CASE WHEN bradford_hill_score >= 50 AND bradford_hill_score < 70 THEN 1 END) as medium_confidence,
+              COUNT(CASE WHEN bradford_hill_score < 50 THEN 1 END) as low_confidence
+            FROM master_biometric_aircraft_correlations
+          `;
+          statsResult = stats.rows[0];
+        } catch {
+          // Table may not exist yet
+        }
 
         return new Response(JSON.stringify({
           success: true,
-          stats: stats.rows[0]
+          stats: statsResult
         }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });

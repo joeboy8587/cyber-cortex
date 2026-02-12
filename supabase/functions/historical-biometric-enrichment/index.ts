@@ -74,7 +74,7 @@ serve(async (req) => {
         const biometricStats = await client.queryObject`
           SELECT 
             DATE(measurement_timestamp) as date,
-            COUNT(*) as biometric_count,
+            COUNT(*)::int as biometric_count,
             AVG(heart_rate) as avg_hr,
             AVG(stress_level) as avg_stress
           FROM biometric_monitoring
@@ -87,8 +87,8 @@ serve(async (req) => {
         const flightStats = await client.queryObject`
           SELECT 
             DATE(detection_timestamp) as date,
-            COUNT(*) as flight_count,
-            COUNT(DISTINCT registration) as unique_aircraft
+            COUNT(*)::int as flight_count,
+            COUNT(DISTINCT registration)::int as unique_aircraft
           FROM live_flight_detections_rows
           WHERE detection_timestamp >= ${startDate || '2021-01-01'}
             AND detection_timestamp < ${endDate || '2025-01-01'}
@@ -98,13 +98,13 @@ serve(async (req) => {
 
       let existingCorrelationsCount = 0;
       try {
-        const existingCorrelations = await client.queryObject<{ count: number }>`
-          SELECT COUNT(*) as count
+        const existingCorrelations = await client.queryObject<{ count: string }>`
+          SELECT COUNT(*)::int as count
           FROM master_biometric_aircraft_correlations
           WHERE biometric_timestamp >= ${startDate || '2021-01-01'}
             AND biometric_timestamp < ${endDate || '2025-01-01'}
         `;
-        existingCorrelationsCount = existingCorrelations.rows[0]?.count || 0;
+        existingCorrelationsCount = Number(existingCorrelations.rows[0]?.count || 0);
       } catch {
         // Table may not exist yet
       }
@@ -243,14 +243,14 @@ serve(async (req) => {
         try {
           const stats = await client.queryObject`
             SELECT 
-              COUNT(*) as total_correlations,
+              COUNT(*)::int as total_correlations,
               AVG(bradford_hill_score) as avg_bh_score,
-              COUNT(DISTINCT registration) as unique_aircraft,
+              COUNT(DISTINCT registration)::int as unique_aircraft,
               MIN(biometric_timestamp) as earliest,
               MAX(biometric_timestamp) as latest,
-              COUNT(CASE WHEN bradford_hill_score >= 70 THEN 1 END) as high_confidence,
-              COUNT(CASE WHEN bradford_hill_score >= 50 AND bradford_hill_score < 70 THEN 1 END) as medium_confidence,
-              COUNT(CASE WHEN bradford_hill_score < 50 THEN 1 END) as low_confidence
+              COUNT(CASE WHEN bradford_hill_score >= 70 THEN 1 END)::int as high_confidence,
+              COUNT(CASE WHEN bradford_hill_score >= 50 AND bradford_hill_score < 70 THEN 1 END)::int as medium_confidence,
+              COUNT(CASE WHEN bradford_hill_score < 50 THEN 1 END)::int as low_confidence
             FROM master_biometric_aircraft_correlations
           `;
           statsResult = stats.rows[0];

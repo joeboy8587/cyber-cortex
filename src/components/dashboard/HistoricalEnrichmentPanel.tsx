@@ -175,7 +175,7 @@ export function HistoricalEnrichmentPanel() {
             </div>
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium">Average Bradford-Hill Score</span>
-              <Badge variant="secondary">{(stats.avg_bh_score || 0).toFixed(1)}</Badge>
+              <Badge variant="secondary">{Number(stats.avg_bh_score || 0).toFixed(1)}</Badge>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium">Unique Aircraft</span>

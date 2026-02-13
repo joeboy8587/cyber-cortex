@@ -60,137 +60,204 @@ export const TruthScannerDashboard = () => {
       const tables = tablesData || [];
       setStats(prev => ({ ...prev, totalTables: tables.length }));
       
-      // Step 2: Scan key evidence tables
-      setScanProgress(20);
-      
-      // Flight detections
+      // Step 2: Flight detections
+      setScanProgress(15);
       const { data: flightData } = await supabase.functions.invoke('neon-query', {
         body: { 
           action: 'customQuery',
-          query: `SELECT COUNT(*) as total, COUNT(DISTINCT registration) as unique_aircraft FROM live_flight_detections_rows`
+          query: `SELECT COUNT(*)::int as total, COUNT(DISTINCT registration)::int as unique_aircraft FROM live_flight_detections_rows`
         }
       });
-      const flightCount = parseInt(flightData?.[0]?.total || '0');
+      const flightCount = Number(flightData?.[0]?.total || 0);
+      const uniqueAircraft = Number(flightData?.[0]?.unique_aircraft || 0);
       setStats(prev => ({ ...prev, flightDetections: flightCount }));
       
       if (flightCount > 1000000) {
         newFindings.push({
           category: 'Flight Surveillance',
-          finding: `${(flightCount / 1000000).toFixed(1)} MILLION flight detections recorded`,
+          finding: `${(flightCount / 1000000).toFixed(1)} MILLION flight detections from ${uniqueAircraft} unique aircraft`,
           severity: 'critical',
-          details: `Your location has been overflown and tracked ${flightCount.toLocaleString()} times. This is not normal surveillance of a residential area.`,
-          tableSource: 'live_flight_detections'
+          details: `Your location has been overflown and tracked ${flightCount.toLocaleString()} times by ${uniqueAircraft} distinct aircraft. This is not normal for a residential area.`,
+          tableSource: 'live_flight_detections_rows'
         });
       }
       
-      setScanProgress(35);
+      setScanProgress(25);
       
-      // XXB Mystery Signal
-      const { data: xxbData } = await supabase.functions.invoke('neon-query', {
+      // Step 3: Masked Aircraft Analysis (transponder-off, XXB, no-reg)
+      const { data: maskedData } = await supabase.functions.invoke('neon-query', {
         body: { 
           action: 'customQuery',
-          query: `SELECT COUNT(*) as total, AVG(altitude) as avg_alt FROM live_flight_detections_rows WHERE registration = 'XXB' OR callsign = 'XXB'`
+          query: `SELECT 
+            COUNT(*)::int as total_masked,
+            COUNT(CASE WHEN registration = 'XXB' OR registration ILIKE 'xxb%' THEN 1 END)::int as xxb_count,
+            COUNT(CASE WHEN registration IS NULL OR registration = '' OR registration = 'UNKNOWN' THEN 1 END)::int as no_reg_count,
+            COUNT(CASE WHEN altitude < 500 AND (registration = 'XXB' OR registration IS NULL OR registration = '') THEN 1 END)::int as low_alt_masked,
+            COUNT(DISTINCT callsign)::int as unique_masked_callsigns,
+            ROUND(AVG(CASE WHEN registration = 'XXB' THEN altitude END))::int as avg_xxb_altitude,
+            ROUND(AVG(CASE WHEN registration = 'XXB' THEN speed END))::int as avg_xxb_speed
+          FROM live_flight_detections_rows 
+          WHERE registration = 'XXB' OR registration ILIKE 'xxb%' OR registration IS NULL OR registration = '' OR registration = 'UNKNOWN'`
         }
       });
-      const xxbCount = parseInt(xxbData?.[0]?.total || '0');
+      const maskedTotal = Number(maskedData?.[0]?.total_masked || 0);
+      const xxbCount = Number(maskedData?.[0]?.xxb_count || 0);
+      const noRegCount = Number(maskedData?.[0]?.no_reg_count || 0);
+      const lowAltMasked = Number(maskedData?.[0]?.low_alt_masked || 0);
+      const uniqueMaskedCallsigns = Number(maskedData?.[0]?.unique_masked_callsigns || 0);
+      const avgXxbAlt = Number(maskedData?.[0]?.avg_xxb_altitude || 0);
+      const avgXxbSpeed = Number(maskedData?.[0]?.avg_xxb_speed || 0);
       setStats(prev => ({ ...prev, xxbDetections: xxbCount }));
       
-      if (xxbCount > 100000) {
+      if (xxbCount > 0) {
         newFindings.push({
-          category: 'Anomaly: XXB Signal',
-          finding: `${(xxbCount / 1000000).toFixed(2)} MILLION unidentified "XXB" detections`,
+          category: 'Masked Aircraft: XXB Ghost Network',
+          finding: `${xxbCount.toLocaleString()} detections from identity-masked "XXB" aircraft using ${uniqueMaskedCallsigns} spoofed callsigns`,
           severity: 'critical',
-          details: `An aircraft broadcasting as "XXB" (not a valid registration) was detected ${xxbCount.toLocaleString()} times. This represents deliberate identity masking - aircraft are legally required to broadcast valid registrations.`,
-          tableSource: 'live_flight_detections'
+          details: `Aircraft broadcasting as "XXB" (not a valid FAA registration) were detected ${xxbCount.toLocaleString()} times at avg altitude ${avgXxbAlt}ft / avg speed ${avgXxbSpeed}kts. ${lowAltMasked.toLocaleString()} detections were below 500ft with masked identity — consistent with drone or covert surveillance operations deliberately evading identification (14 CFR § 91.227 violation).`,
+          tableSource: 'live_flight_detections_rows'
         });
       }
       
-      setScanProgress(50);
+      if (noRegCount > 0) {
+        newFindings.push({
+          category: 'Masked Aircraft: No Registration',
+          finding: `${noRegCount.toLocaleString()} detections from aircraft with NO registration broadcast`,
+          severity: 'high',
+          details: `Aircraft operating without broadcasting a valid registration were detected ${noRegCount.toLocaleString()} times. Federal law requires all aircraft to transmit identification. This pattern indicates intentional concealment.`,
+          tableSource: 'live_flight_detections_rows'
+        });
+      }
       
-      // Biometric correlations
-      const { data: bioData } = await supabase.functions.invoke('neon-query', {
+      setScanProgress(40);
+      
+      // Step 4: Masked aircraft correlated with biometric stress
+      const { data: maskedBioData } = await supabase.functions.invoke('neon-query', {
         body: { 
           action: 'customQuery',
-          query: `SELECT COUNT(*) as total, AVG(heart_rate) as avg_hr, COUNT(CASE WHEN hr_spike_detected = true THEN 1 END) as spikes FROM master_biometric_aircraft_correlations`
+          query: `SELECT 
+            COUNT(*)::int as total_correlations,
+            COUNT(CASE WHEN hr_spike_detected = true THEN 1 END)::int as hr_spikes,
+            ROUND(AVG(heart_rate))::int as avg_hr,
+            ROUND(AVG(bradford_hill_score)::numeric, 1) as avg_bh,
+            COUNT(CASE WHEN bradford_hill_score >= 7 THEN 1 END)::int as high_bh_count,
+            COUNT(DISTINCT aircraft_reg)::int as unique_aircraft
+          FROM master_biometric_aircraft_correlations`
         }
       });
-      const bioCount = parseInt(bioData?.[0]?.total || '0');
-      const hrSpikes = parseInt(bioData?.[0]?.spikes || '0');
-      const avgHR = parseFloat(bioData?.[0]?.avg_hr || '0');
-      setStats(prev => ({ ...prev, biometricEvents: bioCount, correlations: hrSpikes }));
+      const bioCorrelations = Number(maskedBioData?.[0]?.total_correlations || 0);
+      const hrSpikes = Number(maskedBioData?.[0]?.hr_spikes || 0);
+      const avgHR = Number(maskedBioData?.[0]?.avg_hr || 0);
+      const avgBH = Number(maskedBioData?.[0]?.avg_bh || 0);
+      const highBHCount = Number(maskedBioData?.[0]?.high_bh_count || 0);
+      const uniqueCorrelatedAircraft = Number(maskedBioData?.[0]?.unique_aircraft || 0);
+      setStats(prev => ({ ...prev, biometricEvents: bioCorrelations, correlations: hrSpikes }));
       
-      if (hrSpikes > 100) {
+      if (bioCorrelations > 0) {
         newFindings.push({
-          category: 'Health Impact',
-          finding: `${hrSpikes} documented heart rate spikes correlated with aircraft`,
-          severity: 'high',
-          details: `Your heart rate elevated significantly ${hrSpikes} times when specific aircraft were overhead. Average HR during these events: ${avgHR.toFixed(0)} BPM. This documents physiological impact.`,
+          category: 'Biometric-Aircraft Causation',
+          finding: `${bioCorrelations.toLocaleString()} correlations documented across ${uniqueCorrelatedAircraft} aircraft (${hrSpikes} HR spikes, avg BH score: ${avgBH})`,
+          severity: highBHCount > 50 ? 'critical' : 'high',
+          details: `Bradford-Hill causation analysis shows ${highBHCount} correlations scoring ≥7/10 (strong causation). Average heart rate during aircraft encounters: ${avgHR} BPM. This quantifies the physiological harm caused by specific aircraft overflights.`,
           tableSource: 'master_biometric_aircraft_correlations'
         });
       }
       
-      setScanProgress(65);
+      setScanProgress(55);
       
-      // KCSO specific detections
+      // Step 5: KCSO fleet detections
       const { data: kcsoData } = await supabase.functions.invoke('neon-query', {
         body: { 
           action: 'customQuery',
-          query: `SELECT COUNT(*) as total FROM live_flight_detections_rows WHERE registration IN ('N912KC', 'N913KC', 'N597E', 'N197E', 'N397E', 'N497E', 'N97E', 'N35438', 'N490KC')`
+          query: `SELECT 
+            COUNT(*)::int as total,
+            COUNT(DISTINCT registration)::int as unique_aircraft,
+            ROUND(AVG(altitude))::int as avg_alt,
+            COUNT(CASE WHEN altitude < 1000 THEN 1 END)::int as low_alt_count
+          FROM live_flight_detections_rows 
+          WHERE registration IN ('N912KC', 'N913KC', 'N597E', 'N197E', 'N397E', 'N497E', 'N97E', 'N35438', 'N490KC', 'N788FA', 'N790FA')`
         }
       });
-      const kcsoCount = parseInt(kcsoData?.[0]?.total || '0');
+      const kcsoCount = Number(kcsoData?.[0]?.total || 0);
+      const kcsoUnique = Number(kcsoData?.[0]?.unique_aircraft || 0);
+      const kcsoAvgAlt = Number(kcsoData?.[0]?.avg_alt || 0);
+      const kcsoLowAlt = Number(kcsoData?.[0]?.low_alt_count || 0);
       setStats(prev => ({ ...prev, kcsoDetections: kcsoCount }));
       
-      if (kcsoCount > 10000) {
+      if (kcsoCount > 0) {
         newFindings.push({
-          category: 'Law Enforcement',
-          finding: `${kcsoCount.toLocaleString()} KCSO aircraft detections over your location`,
-          severity: 'high',
-          details: `Kern County Sheriff's Office helicopters and fixed-wing aircraft were detected ${kcsoCount.toLocaleString()} times. For a disabled person with no criminal record who rarely leaves home, this level of attention requires explanation.`,
-          tableSource: 'live_flight_detections + kcso_fleet'
+          category: 'Law Enforcement Targeting',
+          finding: `${kcsoCount.toLocaleString()} KCSO detections from ${kcsoUnique} aircraft (avg alt: ${kcsoAvgAlt}ft)`,
+          severity: kcsoCount > 10000 ? 'critical' : 'high',
+          details: `${kcsoLowAlt.toLocaleString()} of these were below 1,000ft. For a disabled individual with no criminal record, this level of law enforcement aerial attention constitutes potential civil rights violations under 42 U.S.C. § 1983.`,
+          tableSource: 'live_flight_detections_rows + kcso_fleet'
         });
       }
       
-      setScanProgress(80);
+      setScanProgress(70);
       
-      // Shell companies / enterprise structure
+      // Step 6: Shell company aircraft
       const { data: shellData } = await supabase.functions.invoke('neon-query', {
         body: { 
           action: 'customQuery',
-          query: `SELECT COUNT(*) as total FROM criminal_enterprise_entities WHERE entity_type ILIKE '%shell%' OR entity_type ILIKE '%company%'`
+          query: `SELECT COUNT(*)::int as total FROM criminal_enterprise_entities WHERE entity_type ILIKE '%shell%' OR entity_type ILIKE '%company%'`
         }
       });
-      const shellCount = parseInt(shellData?.[0]?.total || '0');
+      const shellCount = Number(shellData?.[0]?.total || 0);
       setStats(prev => ({ ...prev, shellCompanies: shellCount }));
       
       if (shellCount > 0) {
         newFindings.push({
-          category: 'Corporate Network',
-          finding: `${shellCount} shell companies or corporate entities documented`,
+          category: 'Corporate Concealment Network',
+          finding: `${shellCount} shell companies or opaque corporate entities identified`,
           severity: 'medium',
-          details: `Your investigation has identified ${shellCount} corporate entities that may be connected to the surveillance network. These require further analysis to understand their role.`,
+          details: `These entities obscure the true operators behind surveillance aircraft — a common method to shield government and private surveillance programs from FOIA and accountability.`,
           tableSource: 'criminal_enterprise_entities'
         });
       }
       
-      setScanProgress(90);
+      setScanProgress(85);
       
-      // Calculate total records
+      // Step 7: Invisible fleet (KCSO aircraft never seen on ADS-B)
+      const { data: invisibleData } = await supabase.functions.invoke('neon-query', {
+        body: { 
+          action: 'customQuery',
+          query: `SELECT kf.tail_number, kf.model
+            FROM kcso_fleet kf
+            LEFT JOIN live_flight_detections_rows lfdr ON lfdr.registration = kf.tail_number
+            WHERE lfdr.id IS NULL`
+        }
+      });
+      const invisibleFleet = invisibleData || [];
+      
+      if (invisibleFleet.length > 0) {
+        const names = invisibleFleet.map((a: any) => `${a.tail_number} (${a.model})`).join(', ');
+        newFindings.push({
+          category: 'Invisible Fleet',
+          finding: `${invisibleFleet.length} KCSO aircraft have NEVER appeared on ADS-B tracking`,
+          severity: 'critical',
+          details: `These aircraft exist in the KCSO fleet registry but have zero ADS-B detections: ${names}. This indicates deliberate transponder deactivation to avoid public tracking — evidence of consciousness of guilt.`,
+          tableSource: 'kcso_fleet + live_flight_detections_rows'
+        });
+      }
+      
+      setScanProgress(95);
+      
+      // Total records
       const { data: totalData } = await supabase.functions.invoke('neon-query', {
         body: { 
           action: 'customQuery',
-          query: `SELECT SUM(n_live_tup) as total FROM pg_stat_user_tables`
+          query: `SELECT SUM(n_live_tup)::bigint as total FROM pg_stat_user_tables`
         }
       });
-      const totalRecords = parseInt(totalData?.[0]?.total || '0');
+      const totalRecords = Number(totalData?.[0]?.total || 0);
       setStats(prev => ({ ...prev, totalRecords }));
       
-      // Add summary finding
       newFindings.push({
         category: 'Evidence Inventory',
         finding: `${totalRecords.toLocaleString()} total evidence records across ${tables.length} tables`,
         severity: 'info',
-        details: `Your database contains comprehensive documentation. This represents a substantial evidentiary foundation for any legal or medical review.`,
+        details: `Your database contains comprehensive multimodal documentation — flight telemetry, biometric health data, OCR evidence, and legal filings. This represents a substantial evidentiary foundation.`,
         tableSource: 'All tables'
       });
       

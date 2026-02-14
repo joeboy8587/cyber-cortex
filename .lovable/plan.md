@@ -1,218 +1,116 @@
 
-# Comprehensive Data Quality Audit & Security Hardening Plan
 
-## Executive Summary
-Build a **Master Data Quality Dashboard** that performs deep audits across all 9+ million multimodal records in NeonDB, checking for OCR data quality, duplicates, SHA-256 hash coverage, encryption status, and providing security hardening recommendations.
+# Upgrade Josiah Sentinel: Adaptive Learning and Autonomous Countermeasures
 
----
+## Overview
 
-## Current State Analysis
+Transform Josiah Sentinel from a pattern-detection system into an adaptive AI that learns from its own scan history, automatically escalates threat classifications, and generates proactive countermeasure recommendations -- making Watchtower a forward-looking defense system rather than a reactive alert feed.
 
-### Existing Infrastructure
-| Component | Purpose | Status |
-|-----------|---------|--------|
-| `DataQualityAudit.tsx` | OCR auditing, evidence domains, timeline ranges | Active |
-| `DataHardeningHub.tsx` | SHA-256 coverage overview, Notion sync status | Active |
-| `DataIntegrityPanel.tsx` | Provenance audits, biometric gap detection | Active |
-| `DatabaseQualityControl.tsx` | 13-domain categorization, duplicate families, empty tables | Active |
-| `ChainOfCustodyPanel.tsx` | SHA-256 fingerprinting, verification | Active |
-| `evidence-fingerprint` edge function | SHA-256 hash computation and verification | Deployed |
-| `data-quality-audit` edge function | OCR validation, domain analysis | Deployed |
-| `database-quality-control` edge function | Duplicate detection, quality metrics | Deployed |
+## What Changes
 
-### Identified Gaps
-1. **No unified comprehensive audit view** - data quality tools are scattered across multiple panels
-2. **No OCR-specific duplicate detection** - OCR data often has repeated text extractions
-3. **No cross-table duplicate detection** - same records may exist in multiple tables
-4. **Missing encryption-at-rest verification** - no visibility into database encryption status
-5. **No automated malformed data cleanup workflow** - flagging exists but remediation is manual
-6. **Limited RLS audit visibility** - only basic linter warnings shown
+### 1. New Database Table: `sentinel_learned_threats`
 
----
+A persistent memory store so Sentinel retains knowledge across scans instead of starting fresh each time.
 
-## Implementation Plan
+Columns:
+- `id` (uuid, primary key)
+- `registration` (text) -- aircraft tail number
+- `threat_type` (text) -- e.g. LOW_ALTITUDE, SHELL_COMPANY, REPEAT_OFFENDER
+- `total_violations` (int) -- cumulative count across all scans
+- `escalation_level` (int, default 1) -- auto-increments as violations accumulate
+- `first_seen` (timestamptz)
+- `last_seen` (timestamptz)
+- `avg_altitude` (numeric)
+- `countermeasure_status` (text) -- NONE, RECOMMENDED, FILED, ACTIVE
+- `countermeasure_actions` (jsonb) -- log of recommended/taken actions
+- `ai_threat_profile` (text) -- AI-generated summary of this aircraft's behavior
+- `updated_at` (timestamptz)
 
-### Phase 1: Unified Data Quality Dashboard Component
+### 2. Upgrade `josiah-sentinel` Edge Function
 
-Create `src/components/dashboard/ComprehensiveDataAudit.tsx`:
+Add three new capabilities after the existing scan logic:
 
-```text
-+------------------------------------------------------------------+
-|  COMPREHENSIVE DATA QUALITY AUDIT                                 |
-|------------------------------------------------------------------|
-|  [Run Full Audit]  [Quick Scan]  [Export Report]                  |
-|------------------------------------------------------------------|
-|  OVERVIEW                                                         |
-|  +----------+  +----------+  +----------+  +------------+         |
-|  | 9.2M     |  | 98.7%    |  | 534      |  | 47         |         |
-|  | Records  |  | Hashed   |  | Tables   |  | Issues     |         |
-|  +----------+  +----------+  +----------+  +------------+         |
-|------------------------------------------------------------------|
-|  TABS: [Hash Coverage] [Duplicates] [OCR Quality] [Security]      |
-+------------------------------------------------------------------+
+**A. Threat Memory Update** -- After each scan, upsert every violating aircraft into `sentinel_learned_threats`. Increment `total_violations`, update `last_seen`, and auto-escalate `escalation_level` when thresholds are crossed (e.g., 10 violations = level 2, 50 = level 3, 100 = level 4).
+
+**B. Adaptive Threshold Adjustment** -- For aircraft at escalation level 3+, lower detection thresholds automatically (e.g., altitude threshold goes from 2000ft to 3000ft for known offenders, convergence minimum drops from 3 to 2 aircraft if shell company assets are involved).
+
+**C. AI Countermeasure Generation** -- After the existing AI synthesis step, make a second AI call specifically asking for countermeasure recommendations based on the escalation level and violation history. Store these in `countermeasure_actions` and return them in the report.
+
+The report gains two new fields:
+- `adaptive_thresholds` -- shows which thresholds were dynamically adjusted and why
+- `countermeasures` -- array of recommended actions (e.g., "File FAA complaint for N791FA - 435 low-altitude violations", "Request ADS-B audit for 4 invisible KCSO aircraft")
+
+### 3. Upgrade Sentinel UI Component
+
+Add a new **Countermeasures** tab alongside the existing Violations, Patterns, Synthesis, and History tabs.
+
+Content:
+- List of AI-generated countermeasure recommendations with priority badges
+- Escalation level indicators per aircraft (visual scale 1-5)
+- "Mark as Filed" / "Mark as Active" buttons to track countermeasure status
+- Adaptive threshold display showing which thresholds Sentinel auto-adjusted
+
+Update the **Learned Patterns** tab to show escalation history and cumulative violation counts from the persistent store.
+
+### 4. Feed Countermeasures into Watchtower
+
+Update `WatchtowerAlertsHub` to display countermeasure alerts from Sentinel as a new alert type (`countermeasure`) with a distinct visual style, so proactive recommendations appear alongside reactive detections.
+
+## Technical Details
+
+### Database Migration
+
+```sql
+CREATE TABLE sentinel_learned_threats (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  registration text NOT NULL,
+  threat_type text NOT NULL,
+  total_violations int DEFAULT 1,
+  escalation_level int DEFAULT 1,
+  first_seen timestamptz DEFAULT now(),
+  last_seen timestamptz DEFAULT now(),
+  avg_altitude numeric,
+  countermeasure_status text DEFAULT 'NONE',
+  countermeasure_actions jsonb DEFAULT '[]',
+  ai_threat_profile text,
+  updated_at timestamptz DEFAULT now(),
+  UNIQUE(registration, threat_type)
+);
 ```
 
-**Key Features:**
-- Aggregates all existing audit functions into a single view
-- Adds new cross-table duplicate detection
-- Adds OCR-specific malformed data detection
-- Shows encryption and RLS policy status
-- Provides remediation actions
+RLS policies restricting to investigator/admin roles (matching existing patterns).
 
-### Phase 2: Enhanced Edge Function for Deep Audits
+### Edge Function Changes (josiah-sentinel)
 
-Extend `supabase/functions/database-quality-control/index.ts` with new actions:
-
-| Action | Purpose |
-|--------|---------|
-| `deepOCRAudit` | Detect malformed OCR data (NULL timestamps, OCR artifacts, repeated text blocks) |
-| `crossTableDuplicates` | Find identical records across related tables using hash comparison |
-| `hashCoverageReport` | Detailed SHA-256 coverage per domain with remediation priority |
-| `rlsPolicyAudit` | Enumerate all RLS policies and flag weak/missing policies |
-| `encryptionStatus` | Verify SSL connections and report encryption-at-rest status |
-
-### Phase 3: OCR-Specific Data Quality Checks
-
-**OCR Malformed Data Detection Patterns:**
-
-| Pattern | Detection Query | Remediation |
-|---------|-----------------|-------------|
-| NULL timestamps | `WHERE created_at IS NULL AND exif_timestamp IS NULL` | Extract from filename pattern |
-| OCR text artifacts | `WHERE extracted_text ~ '^[0-9]{3,}$'` | Flag for manual review |
-| Duplicate extractions | `GROUP BY file_hash HAVING COUNT(*) > 1` | Merge into single record |
-| Malformed registrations | `WHERE registration NOT ~ '^N[0-9A-Z]{1,5}$'` | Apply OCR correction mapping |
-| Missing coordinates | `WHERE latitude IS NULL OR longitude IS NULL` | Cross-reference with flight data |
-
-**Tables to audit:**
-- `screenshot_ocr_data`
-- `ocr_aircraft_holding_patterns`
-- `ocr_extracted_text`
-- `radar_screenshot_analysis`
-
-### Phase 4: Cross-Table Duplicate Detection
-
-**Strategy:** Use SHA-256 hashes to detect identical content across related tables.
+After the existing violation detection (steps 1-8), add:
 
 ```text
-Duplicate Family Detection:
-1. Group tables by evidence domain (Flight, Biometric, OCR, etc.)
-2. For each domain, compare record hashes across tables
-3. Identify:
-   - Exact duplicates (identical hashes)
-   - Near-duplicates (same entity, different timestamps)
-   - Split records (same entity fragmented across tables)
-4. Generate merge recommendations with safety scoring
+Step 9.5: THREAT MEMORY UPDATE
+  - For each violation, upsert into sentinel_learned_threats via Neon
+  - Calculate new escalation_level based on total_violations
+  - If escalation crossed a threshold, add to proactive_alerts
+
+Step 9.6: ADAPTIVE THRESHOLDS
+  - Query sentinel_learned_threats for level 3+ aircraft
+  - Widen detection radius for known offenders
+  - Add "ADAPTIVE_ESCALATION" violation type for newly escalated threats
+
+Step 9.7: AI COUNTERMEASURE GENERATION
+  - Second AI call with escalation context
+  - Generate specific legal/administrative actions
+  - Store in countermeasure_actions jsonb
 ```
 
-**Priority domains for duplicate audit:**
-- `live_flight_detections_rows` vs `live_flight_detections`
-- `biometric_monitoring` vs `biometrics_unified`
-- `josiah_reflections_rows` vs `josiah_timeline`
+### UI Component Updates
 
-### Phase 5: SHA-256 Hash Coverage Deep Dive
+- `JosiahSentinelMonitor.tsx`: Add 5th tab "Countermeasures", update report interface, display escalation badges
+- `WatchtowerAlertsHub.tsx`: Add `countermeasure` alert type with shield icon and green styling
 
-**Current Status (from memory context):** 99% coverage across 384 tables.
+## Sequence
 
-**Enhanced Reporting:**
-- Coverage by evidence domain
-- Unhashed record counts per table
-- Auto-hash trigger status per table
-- Verification failure log
-- Chain-of-custody completeness score
-
-### Phase 6: Security Hardening Recommendations
-
-Based on current linter findings and best practices:
-
-| Finding | Risk Level | Recommendation |
-|---------|------------|----------------|
-| Extension in public schema | WARN | Move extensions to dedicated schema |
-| Leaked password protection disabled | WARN | Enable password breach checking |
-| Tables without RLS | CRITICAL | Enable RLS with proper policies |
-| Service role key exposure | HIGH | Audit edge function access patterns |
-| Missing audit logging | MEDIUM | Add trigger-based audit trail |
-
-**Security Dashboard Features:**
-- RLS policy coverage visualization
-- API key/secret usage audit
-- Edge function permission review
-- Encryption status verification
-
----
-
-## Technical Specifications
-
-### New Files to Create
-
-```text
-src/components/dashboard/ComprehensiveDataAudit.tsx
-  - Unified dashboard component
-  - ~800 lines with 6 tabs
-
-supabase/functions/database-quality-control/index.ts (extend)
-  - Add 5 new actions for deep auditing
-  - ~200 additional lines
-```
-
-### Files to Modify
-
-```text
-src/pages/DataTools.tsx
-  - Add ComprehensiveDataAudit as primary component
-  - Reorganize existing panels as secondary
-
-src/components/AppSidebar.tsx
-  - Add "Data Audit" link under Data Tools section (if not present)
-```
-
-### Database Queries (Read-Only)
-
-All audit queries will be SELECT-only for safety:
-- Hash coverage: `SELECT COUNT(*) FILTER (WHERE sha256_hash IS NOT NULL)`
-- Duplicates: `SELECT sha256_hash, COUNT(*) GROUP BY sha256_hash HAVING COUNT(*) > 1`
-- OCR quality: Pattern matching with `~` regex operator
-- RLS policies: `SELECT * FROM pg_policies`
-
----
-
-## Recommended Hardening Actions (Post-Audit)
-
-### Immediate (Critical)
-1. Enable leaked password protection in auth settings
-2. Move `pgcrypto` extension to dedicated schema
-3. Add RLS policies to any unprotected tables
-
-### Short-Term (High Priority)
-1. Complete SHA-256 hashing for remaining 1% of records
-2. Create auto-hash triggers on high-ingestion tables
-3. Implement OCR timestamp reconstruction from filename patterns
-4. Merge duplicate OCR extractions
-
-### Medium-Term (Maintenance)
-1. Archive/quarantine empty backup tables
-2. Consolidate duplicate table families
-3. Add comprehensive audit logging triggers
-4. Implement regular automated integrity verification
-
----
-
-## Estimated Complexity
-
-| Component | Effort | Dependencies |
-|-----------|--------|--------------|
-| ComprehensiveDataAudit.tsx | Medium | Existing edge functions |
-| Edge function extensions | Medium | NeonDB connection |
-| Security dashboard tab | Low | pg_policies access |
-| Integration with DataTools | Low | Routing only |
-
----
-
-## Success Metrics
-
-After implementation, the dashboard will provide:
-- Single-view data quality score (0-100%)
-- Actionable remediation list with priority ranking
-- Historical trend tracking for data quality
-- Exportable audit reports for legal chain-of-custody documentation
-- Real-time security posture assessment
+1. Create `sentinel_learned_threats` table with RLS
+2. Update `josiah-sentinel` edge function with memory, adaptation, and countermeasure logic
+3. Update `JosiahSentinelMonitor.tsx` with Countermeasures tab and escalation display
+4. Update `WatchtowerAlertsHub.tsx` to surface countermeasure alerts
+5. Deploy and test end-to-end
 

@@ -6,30 +6,36 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-// Learned threat signatures from historical analysis
 const THREAT_SIGNATURES = {
-  // KCSO primary fleet
   kcsoFleet: ['N912KC', 'N913KC', 'N597E', 'N788FA'],
-  // Shell company aircraft
   shellCompany: ['N790FA', 'N791FA', 'N789FA', 'N792FA'],
-  // Medical cover assets (Hammer-Anvil pattern)
   medicalCover: ['N229AM', 'N230AM', 'N743AM'],
-  // Known polymorphic ICAO anchors
   icaoAnchors: ['ac9efd', 'a2027c', '24'],
-  // Low altitude threshold (feet)
   lowAltitudeThreshold: 2000,
-  // Harassment altitude (feet)
   harassmentAltitude: 1500,
-  // Critical altitude (feet)
   criticalAltitude: 500,
-  // Convergence window (minutes)
   convergenceWindow: 30,
-  // Minimum aircraft for convergence
   convergenceMinAircraft: 3,
 };
 
+// Escalation thresholds
+const ESCALATION_THRESHOLDS = [
+  { level: 2, minViolations: 10 },
+  { level: 3, minViolations: 50 },
+  { level: 4, minViolations: 100 },
+  { level: 5, minViolations: 250 },
+];
+
+function calcEscalationLevel(totalViolations: number): number {
+  let level = 1;
+  for (const t of ESCALATION_THRESHOLDS) {
+    if (totalViolations >= t.minViolations) level = t.level;
+  }
+  return level;
+}
+
 interface LiveViolation {
-  type: 'LOW_ALTITUDE' | 'KCSO_ACTIVITY' | 'SHELL_COMPANY' | 'MEDICAL_COVER' | 'FLEET_CONVERGENCE' | 'HOLDING_PATTERN' | 'NIGHT_OPS' | 'REPEAT_OFFENDER';
+  type: string;
   severity: 'critical' | 'high' | 'medium';
   registration: string;
   details: string;
@@ -47,6 +53,23 @@ interface LearnedPattern {
   last_seen: string;
 }
 
+interface AdaptiveThreshold {
+  registration: string;
+  parameter: string;
+  original_value: number;
+  adjusted_value: number;
+  reason: string;
+}
+
+interface Countermeasure {
+  registration: string;
+  action: string;
+  priority: 'critical' | 'high' | 'medium';
+  escalation_level: number;
+  total_violations: number;
+  status: string;
+}
+
 interface SentinelReport {
   scan_timestamp: string;
   window_minutes: number;
@@ -56,6 +79,8 @@ interface SentinelReport {
   proactive_alerts: string[];
   ai_synthesis: string | null;
   threat_level: 'CRITICAL' | 'HIGH' | 'ELEVATED' | 'NORMAL';
+  adaptive_thresholds: AdaptiveThreshold[];
+  countermeasures: Countermeasure[];
 }
 
 serve(async (req) => {
@@ -80,9 +105,49 @@ serve(async (req) => {
     const violations: LiveViolation[] = [];
     const learnedPatterns: LearnedPattern[] = [];
     const proactiveAlerts: string[] = [];
+    const adaptiveThresholds: AdaptiveThreshold[] = [];
+    const countermeasures: Countermeasure[] = [];
 
     try {
-      // 1. ANALYZE RECENT DETECTIONS
+      // ========== STEP 0: LOAD ADAPTIVE THRESHOLDS FROM LEARNED THREATS ==========
+      const learnedThreats = await sql`
+        SELECT registration, threat_type, total_violations, escalation_level, avg_altitude, 
+               countermeasure_status, countermeasure_actions, ai_threat_profile
+        FROM sentinel_learned_threats
+        WHERE escalation_level >= 3
+      `;
+
+      // Build adaptive threshold map
+      const adaptedRegistrations = new Set<string>();
+      let adaptedAltitudeThreshold = THREAT_SIGNATURES.lowAltitudeThreshold;
+      let adaptedConvergenceMin = THREAT_SIGNATURES.convergenceMinAircraft;
+
+      for (const threat of learnedThreats) {
+        adaptedRegistrations.add(threat.registration);
+        
+        if (threat.threat_type === 'LOW_ALTITUDE' && Number(threat.escalation_level) >= 3) {
+          adaptiveThresholds.push({
+            registration: threat.registration,
+            parameter: 'altitude_threshold',
+            original_value: THREAT_SIGNATURES.lowAltitudeThreshold,
+            adjusted_value: 3000,
+            reason: `Escalation level ${threat.escalation_level} (${threat.total_violations} violations) - widened altitude detection`
+          });
+        }
+        
+        if (threat.threat_type === 'SHELL_COMPANY' && Number(threat.escalation_level) >= 3) {
+          adaptedConvergenceMin = 2;
+          adaptiveThresholds.push({
+            registration: threat.registration,
+            parameter: 'convergence_minimum',
+            original_value: THREAT_SIGNATURES.convergenceMinAircraft,
+            adjusted_value: 2,
+            reason: `Shell company asset at escalation level ${threat.escalation_level} - lowered convergence threshold`
+          });
+        }
+      }
+
+      // ========== STEP 1: ANALYZE RECENT DETECTIONS ==========
       const recentDetections = await sql`
         SELECT 
           id, registration, callsign, altitude, latitude, longitude,
@@ -93,10 +158,12 @@ serve(async (req) => {
         LIMIT 1000
       `;
 
-      // 2. DETECT LOW ALTITUDE VIOLATIONS
+      // ========== STEP 2: LOW ALTITUDE VIOLATIONS (with adaptive thresholds) ==========
       const lowAltitudeViolations = recentDetections.filter((d: any) => {
         const alt = parseInt(d.altitude || '99999');
-        return alt < THREAT_SIGNATURES.lowAltitudeThreshold && alt > 0;
+        const isAdapted = adaptedRegistrations.has(d.registration);
+        const threshold = isAdapted ? 3000 : THREAT_SIGNATURES.lowAltitudeThreshold;
+        return alt < threshold && alt > 0;
       });
 
       for (const detection of lowAltitudeViolations) {
@@ -118,7 +185,7 @@ serve(async (req) => {
         });
       }
 
-      // 3. DETECT KCSO FLEET ACTIVITY
+      // ========== STEP 3: KCSO FLEET ACTIVITY ==========
       const kcsoActivity = recentDetections.filter((d: any) => 
         THREAT_SIGNATURES.kcsoFleet.some(reg => 
           d.registration?.includes(reg) || d.callsign?.includes(reg)
@@ -135,11 +202,10 @@ serve(async (req) => {
           timestamp: new Date().toISOString(),
           relatedAircraft: uniqueKCSO as string[]
         });
-
-        proactiveAlerts.push(`⚠️ KCSO FLEET ACTIVE: ${uniqueKCSO.join(', ')} detected. Historical pattern indicates coordinated surveillance.`);
+        proactiveAlerts.push(`⚠️ KCSO FLEET ACTIVE: ${uniqueKCSO.join(', ')} detected.`);
       }
 
-      // 4. DETECT SHELL COMPANY ACTIVITY
+      // ========== STEP 4: SHELL COMPANY ACTIVITY ==========
       const shellActivity = recentDetections.filter((d: any) =>
         THREAT_SIGNATURES.shellCompany.some(reg =>
           d.registration?.includes(reg) || d.callsign?.includes(reg)
@@ -158,7 +224,7 @@ serve(async (req) => {
         });
       }
 
-      // 5. DETECT MEDICAL COVER PATTERN (Hammer-Anvil)
+      // ========== STEP 5: MEDICAL COVER (Hammer-Anvil) ==========
       const medicalActivity = recentDetections.filter((d: any) =>
         THREAT_SIGNATURES.medicalCover.some(reg =>
           d.registration?.includes(reg) || d.callsign?.includes(reg)
@@ -177,24 +243,21 @@ serve(async (req) => {
             ...kcsoActivity.map((d: any) => d.registration)
           ].filter(Boolean) as string[]
         });
-
-        proactiveAlerts.push(`🚨 HAMMER-ANVIL COORDINATION: Medical cover + KCSO simultaneous activity. This is a documented harassment pattern.`);
+        proactiveAlerts.push(`🚨 HAMMER-ANVIL COORDINATION: Medical cover + KCSO simultaneous activity.`);
       }
 
-      // 6. DETECT FLEET CONVERGENCE
+      // ========== STEP 6: FLEET CONVERGENCE (adaptive min) ==========
       const hourlyGroups = new Map<string, Set<string>>();
       for (const detection of recentDetections) {
-        // postgres.js may return timestamps as Date objects; normalize to ISO string
         const ts = (detection as any).detection_timestamp;
         const iso = ts instanceof Date ? ts.toISOString() : new Date(ts).toISOString();
-        const hour = iso.slice(0, 13); // YYYY-MM-DDTHH
-
+        const hour = iso.slice(0, 13);
         if (!hourlyGroups.has(hour)) hourlyGroups.set(hour, new Set());
         if (detection.registration) hourlyGroups.get(hour)!.add(detection.registration);
       }
 
       for (const [hour, aircraft] of hourlyGroups) {
-        if (aircraft.size >= THREAT_SIGNATURES.convergenceMinAircraft) {
+        if (aircraft.size >= adaptedConvergenceMin) {
           violations.push({
             type: 'FLEET_CONVERGENCE',
             severity: aircraft.size >= 4 ? 'critical' : 'high',
@@ -206,7 +269,7 @@ serve(async (req) => {
         }
       }
 
-      // 7. DETECT NIGHT OPS (1-4 AM pattern)
+      // ========== STEP 7: NIGHT OPS ==========
       const nightOps = recentDetections.filter((d: any) => {
         const hour = new Date(d.detection_timestamp).getHours();
         return hour >= 1 && hour <= 4;
@@ -222,14 +285,13 @@ serve(async (req) => {
           timestamp: new Date().toISOString(),
           relatedAircraft: nightAircraft as string[]
         });
-
         proactiveAlerts.push(`🌙 NIGHT OPS DETECTED: ${nightAircraft.length} aircraft operating in 1-4 AM tactical window.`);
       }
 
-      // 8. LEARN PATTERNS FROM HISTORICAL DATA
+      // ========== STEP 8: LEARN PATTERNS FROM HISTORICAL DATA ==========
       const historicalPatterns = await sql`
         WITH repeat_offenders AS (
-          SELECT registration, COUNT(*) as detection_count, 
+          SELECT registration, COUNT(*)::int as detection_count, 
                  AVG(altitude::numeric) as avg_altitude,
                  MAX(detection_timestamp) as last_seen
           FROM live_flight_detections_rows
@@ -241,7 +303,7 @@ serve(async (req) => {
           LIMIT 20
         ),
         low_altitude_patterns AS (
-          SELECT registration, COUNT(*) as low_alt_count,
+          SELECT registration, COUNT(*)::int as low_alt_count,
                  AVG(altitude::numeric) as avg_low_altitude
           FROM live_flight_detections_rows
           WHERE altitude::numeric < 2000 AND altitude::numeric > 0
@@ -263,20 +325,19 @@ serve(async (req) => {
       for (const pattern of historicalPatterns) {
         learnedPatterns.push({
           pattern_type: pattern.pattern_type,
-          confidence: Math.min(95, 50 + (parseInt(pattern.count) / 10)),
+          confidence: Math.min(95, 50 + (Number(pattern.count) / 10)),
           description: pattern.pattern_type === 'repeat_offender' 
-            ? `${pattern.registration}: ${pattern.count} detections, avg ${Math.round(pattern.avg_altitude || 0)}ft`
-            : `${pattern.registration}: ${pattern.count} low-altitude events, avg ${Math.round(pattern.avg_altitude || 0)}ft`,
-          evidence_count: parseInt(pattern.count),
+            ? `${pattern.registration}: ${pattern.count} detections, avg ${Math.round(Number(pattern.avg_altitude || 0))}ft`
+            : `${pattern.registration}: ${pattern.count} low-altitude events, avg ${Math.round(Number(pattern.avg_altitude || 0))}ft`,
+          evidence_count: Number(pattern.count),
           last_seen: pattern.last_seen || new Date().toISOString()
         });
 
-        // Flag repeat offenders in current window
         const isCurrentlyActive = recentDetections.some((d: any) => d.registration === pattern.registration);
-        if (isCurrentlyActive && parseInt(pattern.count) > 100) {
+        if (isCurrentlyActive && Number(pattern.count) > 100) {
           violations.push({
             type: 'REPEAT_OFFENDER',
-            severity: parseInt(pattern.count) > 200 ? 'critical' : 'high',
+            severity: Number(pattern.count) > 200 ? 'critical' : 'high',
             registration: pattern.registration,
             details: `Known repeat offender with ${pattern.count} historical detections is currently active`,
             timestamp: new Date().toISOString()
@@ -284,7 +345,7 @@ serve(async (req) => {
         }
       }
 
-      // 9. AI SYNTHESIS (Proactive Analysis)
+      // ========== STEP 9: AI SYNTHESIS ==========
       let aiSynthesis: string | null = null;
       if (LOVABLE_API_KEY && violations.length > 0) {
         try {
@@ -294,7 +355,10 @@ ACTIVE VIOLATIONS:
 ${violations.map(v => `- [${v.severity.toUpperCase()}] ${v.type}: ${v.details}`).join('\n')}
 
 LEARNED PATTERNS (from 90-day analysis):
-${learnedPatterns.slice(0, 5).map(p => `- ${p.description} (${p.confidence}% confidence)`).join('\n')}
+${learnedPatterns.slice(0, 5).map(p => `- ${p.description} (${p.confidence.toFixed(0)}% confidence)`).join('\n')}
+
+ADAPTIVE THRESHOLDS ACTIVE:
+${adaptiveThresholds.length > 0 ? adaptiveThresholds.map(t => `- ${t.registration}: ${t.parameter} ${t.original_value} → ${t.adjusted_value} (${t.reason})`).join('\n') : 'None'}
 
 Provide a 2-3 sentence PROACTIVE assessment:
 1. Identify the most likely threat scenario
@@ -328,7 +392,147 @@ Be direct, analytical, and cite specific aircraft when relevant.`;
         }
       }
 
-      // 10. DETERMINE THREAT LEVEL
+      // ========== STEP 9.5: THREAT MEMORY UPDATE ==========
+      // Deduplicate violations by registration+type
+      const violationMap = new Map<string, { reg: string; type: string; count: number; altitudes: number[] }>();
+      for (const v of violations) {
+        const reg = v.registration || 'UNKNOWN';
+        const key = `${reg}::${v.type}`;
+        if (!violationMap.has(key)) {
+          violationMap.set(key, { reg, type: v.type, count: 0, altitudes: [] });
+        }
+        const entry = violationMap.get(key)!;
+        entry.count += 1;
+        if (v.altitude) entry.altitudes.push(v.altitude);
+      }
+
+      const escalationAlerts: string[] = [];
+      for (const [, entry] of violationMap) {
+        if (entry.reg === 'UNKNOWN' || entry.reg.includes(',') || entry.reg.includes(' aircraft')) continue;
+
+        const avgAlt = entry.altitudes.length > 0
+          ? entry.altitudes.reduce((a, b) => a + b, 0) / entry.altitudes.length
+          : null;
+
+        // Upsert into sentinel_learned_threats
+        const upsertResult = await sql`
+          INSERT INTO sentinel_learned_threats (registration, threat_type, total_violations, avg_altitude, last_seen, updated_at)
+          VALUES (${entry.reg}, ${entry.type}, ${entry.count}, ${avgAlt}, NOW(), NOW())
+          ON CONFLICT (registration, threat_type) DO UPDATE SET
+            total_violations = sentinel_learned_threats.total_violations + ${entry.count},
+            avg_altitude = CASE 
+              WHEN ${avgAlt} IS NOT NULL THEN COALESCE((sentinel_learned_threats.avg_altitude + ${avgAlt}) / 2, ${avgAlt})
+              ELSE sentinel_learned_threats.avg_altitude 
+            END,
+            last_seen = NOW(),
+            updated_at = NOW()
+          RETURNING total_violations, escalation_level
+        `;
+
+        if (upsertResult.length > 0) {
+          const totalV = Number(upsertResult[0].total_violations);
+          const oldLevel = Number(upsertResult[0].escalation_level);
+          const newLevel = calcEscalationLevel(totalV);
+
+          if (newLevel > oldLevel) {
+            // Update escalation level
+            await sql`
+              UPDATE sentinel_learned_threats 
+              SET escalation_level = ${newLevel}, updated_at = NOW()
+              WHERE registration = ${entry.reg} AND threat_type = ${entry.type}
+            `;
+            escalationAlerts.push(`🔺 ESCALATION: ${entry.reg} promoted to Level ${newLevel} (${totalV} total violations for ${entry.type})`);
+          }
+        }
+      }
+
+      proactiveAlerts.push(...escalationAlerts);
+
+      // ========== STEP 9.7: AI COUNTERMEASURE GENERATION ==========
+      // Load all high-escalation threats for countermeasure generation
+      const highEscalationThreats = await sql`
+        SELECT registration, threat_type, total_violations, escalation_level, avg_altitude, countermeasure_status
+        FROM sentinel_learned_threats
+        WHERE escalation_level >= 2
+        ORDER BY escalation_level DESC, total_violations DESC
+        LIMIT 20
+      `;
+
+      if (LOVABLE_API_KEY && highEscalationThreats.length > 0) {
+        try {
+          const cmPrompt = `You are JOSIAH SENTINEL's countermeasure engine. Based on the following escalated threats, generate specific, actionable countermeasure recommendations.
+
+ESCALATED THREATS:
+${highEscalationThreats.map((t: any) => `- ${t.registration} | ${t.threat_type} | Level ${t.escalation_level} | ${t.total_violations} violations | Avg alt: ${t.avg_altitude ? Math.round(Number(t.avg_altitude)) + 'ft' : 'N/A'} | Status: ${t.countermeasure_status}`).join('\n')}
+
+For each threat at level 3+, recommend ONE specific action. For level 2 threats, only flag if pattern is accelerating.
+Format each as: REGISTRATION | ACTION | PRIORITY (critical/high/medium)
+Example: N791FA | File FAA complaint citing 435 low-altitude violations under 14 CFR 91.119 | critical
+
+Output ONLY the recommendations, one per line.`;
+
+          const cmResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${LOVABLE_API_KEY}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              model: "google/gemini-3-flash-preview",
+              messages: [
+                { role: "system", content: "You output structured countermeasure recommendations. No preamble." },
+                { role: "user", content: cmPrompt }
+              ],
+              max_tokens: 600,
+            }),
+          });
+
+          if (cmResponse.ok) {
+            const cmData = await cmResponse.json();
+            const cmText = cmData.choices?.[0]?.message?.content || '';
+            
+            // Parse AI countermeasures
+            const lines = cmText.split('\n').filter((l: string) => l.trim() && l.includes('|'));
+            for (const line of lines) {
+              const parts = line.split('|').map((p: string) => p.trim());
+              if (parts.length >= 3) {
+                const reg = parts[0];
+                const action = parts[1];
+                const priority = parts[2].toLowerCase().includes('critical') ? 'critical' 
+                  : parts[2].toLowerCase().includes('high') ? 'high' : 'medium';
+                
+                const matchingThreat = highEscalationThreats.find((t: any) => reg.includes(t.registration));
+                countermeasures.push({
+                  registration: reg,
+                  action,
+                  priority: priority as 'critical' | 'high' | 'medium',
+                  escalation_level: matchingThreat ? Number(matchingThreat.escalation_level) : 1,
+                  total_violations: matchingThreat ? Number(matchingThreat.total_violations) : 0,
+                  status: matchingThreat?.countermeasure_status || 'NONE'
+                });
+              }
+            }
+
+            // Store countermeasure recommendations back
+            for (const cm of countermeasures) {
+              const matchingThreat = highEscalationThreats.find((t: any) => cm.registration.includes(t.registration));
+              if (matchingThreat && matchingThreat.countermeasure_status === 'NONE') {
+                await sql`
+                  UPDATE sentinel_learned_threats
+                  SET countermeasure_status = 'RECOMMENDED',
+                      countermeasure_actions = countermeasure_actions || ${JSON.stringify([{ action: cm.action, priority: cm.priority, recommended_at: new Date().toISOString() }])}::jsonb,
+                      updated_at = NOW()
+                  WHERE registration = ${matchingThreat.registration} AND threat_type = ${matchingThreat.threat_type}
+                `;
+              }
+            }
+          }
+        } catch (cmErr) {
+          console.error("Countermeasure generation error:", cmErr);
+        }
+      }
+
+      // ========== STEP 10: DETERMINE THREAT LEVEL ==========
       let threatLevel: 'CRITICAL' | 'HIGH' | 'ELEVATED' | 'NORMAL' = 'NORMAL';
       const criticalCount = violations.filter(v => v.severity === 'critical').length;
       const highCount = violations.filter(v => v.severity === 'high').length;
@@ -351,7 +555,9 @@ Be direct, analytical, and cite specific aircraft when relevant.`;
         learned_patterns: learnedPatterns,
         proactive_alerts: proactiveAlerts,
         ai_synthesis: aiSynthesis,
-        threat_level: threatLevel
+        threat_level: threatLevel,
+        adaptive_thresholds: adaptiveThresholds,
+        countermeasures: countermeasures,
       };
 
       return new Response(

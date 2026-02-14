@@ -15,7 +15,7 @@ import { toast } from "sonner";
 
 interface Alert {
   id: string;
-  type: "critical" | "warning" | "info" | "anomaly" | "ai_hypothesis";
+  type: "critical" | "warning" | "info" | "anomaly" | "ai_hypothesis" | "countermeasure";
   source: string;
   message: string;
   timestamp: Date;
@@ -56,6 +56,7 @@ export function WatchtowerAlertsHub() {
     { id: "aircraft", name: "Aircraft Registry", enabled: true, icon: <Plane className="w-4 h-4" />, alertCount: 0 },
     { id: "pattern", name: "Pattern Correlation", enabled: true, icon: <TrendingUp className="w-4 h-4" />, alertCount: 0 },
     { id: "ai_agent", name: "Mistral AI Agent", enabled: true, icon: <Brain className="w-4 h-4" />, alertCount: 0 },
+    { id: "countermeasure", name: "Sentinel Countermeasures", enabled: true, icon: <Shield className="w-4 h-4" />, alertCount: 0 },
     { id: "realtime", name: "Real-Time Feed", enabled: true, icon: <Radio className="w-4 h-4" />, alertCount: 0 },
   ]);
   const [isPulsing, setIsPulsing] = useState(true);
@@ -268,6 +269,7 @@ export function WatchtowerAlertsHub() {
       case "warning": return "bg-warning/20 text-warning border-warning/50";
       case "anomaly": return "bg-accent/20 text-accent border-accent/50";
       case "ai_hypothesis": return "bg-primary/20 text-primary border-primary/50";
+      case "countermeasure": return "bg-emerald-500/20 text-emerald-400 border-emerald-500/50";
       default: return "bg-muted/20 text-muted-foreground border-muted/50";
     }
   };
@@ -278,6 +280,7 @@ export function WatchtowerAlertsHub() {
       case "warning": return <Shield className="w-4 h-4" />;
       case "anomaly": return <Zap className="w-4 h-4" />;
       case "ai_hypothesis": return <Rocket className="w-4 h-4" />;
+      case "countermeasure": return <Shield className="w-4 h-4 text-emerald-400" />;
       default: return <Bell className="w-4 h-4" />;
     }
   };
@@ -288,6 +291,7 @@ export function WatchtowerAlertsHub() {
       (ch.id === 'xxb_mlat' && a.source === 'XXB MLAT') ||
       (ch.id === 'biometric' && a.source === 'Biometric') ||
       (ch.id === 'ai_agent' && (a.source === 'Watchtower AI' || a.source === 'Mistral AI' || a.source === 'Investigative Lead')) ||
+      (ch.id === 'countermeasure' && a.source === 'Sentinel Countermeasure') ||
       (ch.id === 'pattern' && a.source === 'Pattern Engine') ||
       ch.enabled
     )?.enabled !== false

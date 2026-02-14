@@ -7,7 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { 
   Shield, AlertTriangle, Eye, Brain, Radio, 
   Play, Pause, RefreshCw, Zap, Clock, Plane,
-  Target, TrendingUp, Activity
+  Target, TrendingUp, Activity, Swords, CheckCircle, FileText
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -30,6 +30,23 @@ interface LearnedPattern {
   last_seen: string;
 }
 
+interface AdaptiveThreshold {
+  registration: string;
+  parameter: string;
+  original_value: number;
+  adjusted_value: number;
+  reason: string;
+}
+
+interface Countermeasure {
+  registration: string;
+  action: string;
+  priority: 'critical' | 'high' | 'medium';
+  escalation_level: number;
+  total_violations: number;
+  status: string;
+}
+
 interface SentinelReport {
   scan_timestamp: string;
   window_minutes: number;
@@ -39,6 +56,8 @@ interface SentinelReport {
   proactive_alerts: string[];
   ai_synthesis: string | null;
   threat_level: 'CRITICAL' | 'HIGH' | 'ELEVATED' | 'NORMAL';
+  adaptive_thresholds: AdaptiveThreshold[];
+  countermeasures: Countermeasure[];
 }
 
 export function JosiahSentinelMonitor() {
@@ -61,7 +80,6 @@ export function JosiahSentinelMonitor() {
         setReport(data.report);
         setScanHistory(prev => [data.report, ...prev].slice(0, 10));
 
-        // Show toast for critical threats
         if (data.report.threat_level === 'CRITICAL') {
           toast.error(`🚨 CRITICAL THREAT DETECTED`, {
             description: `${data.report.violations.length} violations identified`,
@@ -82,16 +100,13 @@ export function JosiahSentinelMonitor() {
     }
   }, [windowMinutes]);
 
-  // Auto-monitor interval
   useEffect(() => {
     let interval: NodeJS.Timeout;
     if (isAutoMonitor) {
       runScan();
-      interval = setInterval(runScan, 60000); // Every minute
+      interval = setInterval(runScan, 60000);
     }
-    return () => {
-      if (interval) clearInterval(interval);
-    };
+    return () => { if (interval) clearInterval(interval); };
   }, [isAutoMonitor, runScan]);
 
   const getThreatLevelColor = (level: string) => {
@@ -120,6 +135,22 @@ export function JosiahSentinelMonitor() {
       case 'FLEET_CONVERGENCE': return <Radio className="h-4 w-4 text-yellow-400" />;
       case 'NIGHT_OPS': return <Eye className="h-4 w-4 text-blue-400" />;
       default: return <AlertTriangle className="h-4 w-4 text-muted-foreground" />;
+    }
+  };
+
+  const getEscalationColor = (level: number) => {
+    if (level >= 5) return 'bg-red-600 text-white';
+    if (level >= 4) return 'bg-orange-500 text-white';
+    if (level >= 3) return 'bg-yellow-500 text-black';
+    if (level >= 2) return 'bg-blue-500 text-white';
+    return 'bg-muted text-muted-foreground';
+  };
+
+  const getPriorityBadge = (priority: string) => {
+    switch (priority) {
+      case 'critical': return <Badge variant="destructive">CRITICAL</Badge>;
+      case 'high': return <Badge className="bg-orange-500 text-white">HIGH</Badge>;
+      default: return <Badge variant="secondary">MEDIUM</Badge>;
     }
   };
 
@@ -153,12 +184,7 @@ export function JosiahSentinelMonitor() {
                 {isAutoMonitor ? <Pause className="h-4 w-4 mr-1" /> : <Play className="h-4 w-4 mr-1" />}
                 {isAutoMonitor ? 'Stop' : 'Auto-Monitor'}
               </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={runScan}
-                disabled={isScanning}
-              >
+              <Button variant="outline" size="sm" onClick={runScan} disabled={isScanning}>
                 {isScanning ? <RefreshCw className="h-4 w-4 mr-1 animate-spin" /> : <Zap className="h-4 w-4 mr-1" />}
                 Scan Now
               </Button>
@@ -192,12 +218,19 @@ export function JosiahSentinelMonitor() {
 
       {/* Main Content Tabs */}
       <Tabs defaultValue="violations" className="space-y-4">
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="grid w-full grid-cols-5">
           <TabsTrigger value="violations" className="flex items-center gap-1">
             <AlertTriangle className="h-4 w-4" />
             Live Violations
             {report && report.violations.length > 0 && (
               <Badge variant="destructive" className="ml-1">{report.violations.length}</Badge>
+            )}
+          </TabsTrigger>
+          <TabsTrigger value="countermeasures" className="flex items-center gap-1">
+            <Swords className="h-4 w-4" />
+            Countermeasures
+            {report && report.countermeasures && report.countermeasures.length > 0 && (
+              <Badge className="ml-1 bg-emerald-600">{report.countermeasures.length}</Badge>
             )}
           </TabsTrigger>
           <TabsTrigger value="patterns" className="flex items-center gap-1">
@@ -293,6 +326,105 @@ export function JosiahSentinelMonitor() {
           )}
         </TabsContent>
 
+        {/* Countermeasures Tab */}
+        <TabsContent value="countermeasures">
+          <div className="space-y-4">
+            {/* Adaptive Thresholds */}
+            {report?.adaptive_thresholds && report.adaptive_thresholds.length > 0 && (
+              <Card className="border-blue-500/30">
+                <CardHeader>
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <TrendingUp className="h-5 w-5 text-blue-400" />
+                    Adaptive Thresholds Active
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    {report.adaptive_thresholds.map((t, idx) => (
+                      <div key={idx} className="p-3 rounded-lg border border-blue-500/20 bg-blue-500/5 flex items-center justify-between">
+                        <div>
+                          <span className="font-mono font-semibold text-sm">{t.registration}</span>
+                          <span className="text-xs text-muted-foreground ml-2">
+                            {t.parameter.replace(/_/g, ' ')}:
+                          </span>
+                          <span className="text-xs ml-1 line-through text-muted-foreground">{t.original_value}</span>
+                          <span className="text-xs ml-1 text-blue-400 font-semibold">→ {t.adjusted_value}</span>
+                        </div>
+                        <span className="text-xs text-muted-foreground max-w-[40%] text-right">{t.reason}</span>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Countermeasure Recommendations */}
+            <Card className="border-emerald-500/30">
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Swords className="h-5 w-5 text-emerald-400" />
+                  AI Countermeasure Recommendations
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ScrollArea className="h-[350px]">
+                  {(!report?.countermeasures || report.countermeasures.length === 0) && (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <Swords className="h-12 w-12 mx-auto mb-2 opacity-50" />
+                      <p>Run a scan to generate countermeasures</p>
+                    </div>
+                  )}
+                  <div className="space-y-3">
+                    {report?.countermeasures?.map((cm, idx) => (
+                      <div key={idx} className="p-4 rounded-lg border border-emerald-500/20 bg-emerald-500/5">
+                        <div className="flex items-start justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-bold">{cm.registration}</span>
+                            {getPriorityBadge(cm.priority)}
+                            <Badge className={getEscalationColor(cm.escalation_level)}>
+                              Level {cm.escalation_level}
+                            </Badge>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            {cm.status === 'NONE' && (
+                              <Badge variant="outline" className="text-xs">NEW</Badge>
+                            )}
+                            {cm.status === 'RECOMMENDED' && (
+                              <Badge className="bg-yellow-500/20 text-yellow-400 text-xs">RECOMMENDED</Badge>
+                            )}
+                            {cm.status === 'FILED' && (
+                              <Badge className="bg-blue-500/20 text-blue-400 text-xs">
+                                <FileText className="h-3 w-3 mr-1" />FILED
+                              </Badge>
+                            )}
+                            {cm.status === 'ACTIVE' && (
+                              <Badge className="bg-emerald-500/20 text-emerald-400 text-xs">
+                                <CheckCircle className="h-3 w-3 mr-1" />ACTIVE
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+                        <p className="text-sm">{cm.action}</p>
+                        <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
+                          <span>{cm.total_violations} total violations</span>
+                          <div className="flex gap-1">
+                            {Array.from({ length: 5 }).map((_, i) => (
+                              <div
+                                key={i}
+                                className={`w-3 h-3 rounded-sm ${i < cm.escalation_level ? getEscalationColor(cm.escalation_level) : 'bg-muted'}`}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </ScrollArea>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
         {/* Learned Patterns Tab */}
         <TabsContent value="patterns">
           <Card>
@@ -313,15 +445,10 @@ export function JosiahSentinelMonitor() {
                         </Badge>
                         <div className="flex items-center gap-2">
                           <div className="text-xs text-muted-foreground">
-                            Confidence: {pattern.confidence.toFixed(0)}%
+                            Confidence: {Number(pattern.confidence).toFixed(0)}%
                           </div>
-                          <div 
-                            className="h-2 w-16 bg-muted rounded-full overflow-hidden"
-                          >
-                            <div 
-                              className="h-full bg-primary" 
-                              style={{ width: `${pattern.confidence}%` }}
-                            />
+                          <div className="h-2 w-16 bg-muted rounded-full overflow-hidden">
+                            <div className="h-full bg-primary" style={{ width: `${pattern.confidence}%` }} />
                           </div>
                         </div>
                       </div>
@@ -382,6 +509,7 @@ export function JosiahSentinelMonitor() {
                         </Badge>
                         <span className="text-sm">
                           {scan.violations.length} violations • {scan.detections_analyzed} analyzed
+                          {scan.countermeasures?.length > 0 && ` • ${scan.countermeasures.length} countermeasures`}
                         </span>
                       </div>
                       <span className="text-xs text-muted-foreground">

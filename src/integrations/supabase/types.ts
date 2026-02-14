@@ -407,6 +407,51 @@ export type Database = {
         }
         Relationships: []
       }
+      sentinel_learned_threats: {
+        Row: {
+          ai_threat_profile: string | null
+          avg_altitude: number | null
+          countermeasure_actions: Json | null
+          countermeasure_status: string | null
+          escalation_level: number | null
+          first_seen: string | null
+          id: string
+          last_seen: string | null
+          registration: string
+          threat_type: string
+          total_violations: number | null
+          updated_at: string | null
+        }
+        Insert: {
+          ai_threat_profile?: string | null
+          avg_altitude?: number | null
+          countermeasure_actions?: Json | null
+          countermeasure_status?: string | null
+          escalation_level?: number | null
+          first_seen?: string | null
+          id?: string
+          last_seen?: string | null
+          registration: string
+          threat_type: string
+          total_violations?: number | null
+          updated_at?: string | null
+        }
+        Update: {
+          ai_threat_profile?: string | null
+          avg_altitude?: number | null
+          countermeasure_actions?: Json | null
+          countermeasure_status?: string | null
+          escalation_level?: number | null
+          first_seen?: string | null
+          id?: string
+          last_seen?: string | null
+          registration?: string
+          threat_type?: string
+          total_violations?: number | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       user_roles: {
         Row: {
           granted_at: string | null

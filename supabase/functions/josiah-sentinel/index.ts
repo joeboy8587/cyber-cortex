@@ -102,6 +102,10 @@ serve(async (req) => {
     }
 
     const sql = postgres(NEON_DATABASE_URL, { ssl: "require", max: 1 });
+    
+    // Supabase DB connection for sentinel_learned_threats table
+    const SUPABASE_DB_URL = Deno.env.get("SUPABASE_DB_URL");
+    const sbSql = SUPABASE_DB_URL ? postgres(SUPABASE_DB_URL, { ssl: "require", max: 1 }) : null;
     const violations: LiveViolation[] = [];
     const learnedPatterns: LearnedPattern[] = [];
     const proactiveAlerts: string[] = [];
@@ -110,16 +114,19 @@ serve(async (req) => {
 
     try {
       // ========== STEP 0: LOAD ADAPTIVE THRESHOLDS FROM LEARNED THREATS ==========
-      const learnedThreats = await sql`
-        SELECT registration, threat_type, total_violations, escalation_level, avg_altitude, 
-               countermeasure_status, countermeasure_actions, ai_threat_profile
-        FROM sentinel_learned_threats
-        WHERE escalation_level >= 3
-      `;
-
-      // Build adaptive threshold map
+      let learnedThreats: any[] = [];
+      if (sbSql) {
+        try {
+          learnedThreats = await sbSql`
+            SELECT registration, threat_type, total_violations, escalation_level, avg_altitude, 
+                   countermeasure_status, countermeasure_actions, ai_threat_profile
+            FROM sentinel_learned_threats
+            WHERE escalation_level >= 3
+          `;
+        } catch (e) { console.warn("Could not load learned threats:", e); }
+      }
       const adaptedRegistrations = new Set<string>();
-      let adaptedAltitudeThreshold = THREAT_SIGNATURES.lowAltitudeThreshold;
+      // Build adaptive threshold map
       let adaptedConvergenceMin = THREAT_SIGNATURES.convergenceMinAircraft;
 
       for (const threat of learnedThreats) {
@@ -414,20 +421,24 @@ Be direct, analytical, and cite specific aircraft when relevant.`;
           ? entry.altitudes.reduce((a, b) => a + b, 0) / entry.altitudes.length
           : null;
 
-        // Upsert into sentinel_learned_threats
-        const upsertResult = await sql`
-          INSERT INTO sentinel_learned_threats (registration, threat_type, total_violations, avg_altitude, last_seen, updated_at)
-          VALUES (${entry.reg}, ${entry.type}, ${entry.count}, ${avgAlt}, NOW(), NOW())
-          ON CONFLICT (registration, threat_type) DO UPDATE SET
-            total_violations = sentinel_learned_threats.total_violations + ${entry.count},
-            avg_altitude = CASE 
-              WHEN ${avgAlt} IS NOT NULL THEN COALESCE((sentinel_learned_threats.avg_altitude + ${avgAlt}) / 2, ${avgAlt})
-              ELSE sentinel_learned_threats.avg_altitude 
-            END,
-            last_seen = NOW(),
-            updated_at = NOW()
-          RETURNING total_violations, escalation_level
-        `;
+        if (!sbSql) continue;
+        
+        let upsertResult: any[] = [];
+        try {
+          upsertResult = await sbSql`
+            INSERT INTO sentinel_learned_threats (registration, threat_type, total_violations, avg_altitude, last_seen, updated_at)
+            VALUES (${entry.reg}, ${entry.type}, ${entry.count}, ${avgAlt}, NOW(), NOW())
+            ON CONFLICT (registration, threat_type) DO UPDATE SET
+              total_violations = sentinel_learned_threats.total_violations + ${entry.count},
+              avg_altitude = CASE 
+                WHEN ${avgAlt} IS NOT NULL THEN COALESCE((sentinel_learned_threats.avg_altitude + ${avgAlt}) / 2, ${avgAlt})
+                ELSE sentinel_learned_threats.avg_altitude 
+              END,
+              last_seen = NOW(),
+              updated_at = NOW()
+            RETURNING total_violations, escalation_level
+          `;
+        } catch (e) { console.warn("Upsert threat error:", e); }
 
         if (upsertResult.length > 0) {
           const totalV = Number(upsertResult[0].total_violations);
@@ -435,12 +446,13 @@ Be direct, analytical, and cite specific aircraft when relevant.`;
           const newLevel = calcEscalationLevel(totalV);
 
           if (newLevel > oldLevel) {
-            // Update escalation level
-            await sql`
-              UPDATE sentinel_learned_threats 
-              SET escalation_level = ${newLevel}, updated_at = NOW()
-              WHERE registration = ${entry.reg} AND threat_type = ${entry.type}
-            `;
+            try {
+              await sbSql`
+                UPDATE sentinel_learned_threats 
+                SET escalation_level = ${newLevel}, updated_at = NOW()
+                WHERE registration = ${entry.reg} AND threat_type = ${entry.type}
+              `;
+            } catch (e) { console.warn("Escalation update error:", e); }
             escalationAlerts.push(`🔺 ESCALATION: ${entry.reg} promoted to Level ${newLevel} (${totalV} total violations for ${entry.type})`);
           }
         }
@@ -450,14 +462,18 @@ Be direct, analytical, and cite specific aircraft when relevant.`;
 
       // ========== STEP 9.7: AI COUNTERMEASURE GENERATION ==========
       // Load all high-escalation threats for countermeasure generation
-      const highEscalationThreats = await sql`
-        SELECT registration, threat_type, total_violations, escalation_level, avg_altitude, countermeasure_status
-        FROM sentinel_learned_threats
-        WHERE escalation_level >= 2
-        ORDER BY escalation_level DESC, total_violations DESC
-        LIMIT 20
-      `;
-
+      let highEscalationThreats: any[] = [];
+      if (sbSql) {
+        try {
+          highEscalationThreats = await sbSql`
+            SELECT registration, threat_type, total_violations, escalation_level, avg_altitude, countermeasure_status
+            FROM sentinel_learned_threats
+            WHERE escalation_level >= 2
+            ORDER BY escalation_level DESC, total_violations DESC
+            LIMIT 20
+          `;
+        } catch (e) { console.warn("Load escalated threats error:", e); }
+      }
       if (LOVABLE_API_KEY && highEscalationThreats.length > 0) {
         try {
           const cmPrompt = `You are JOSIAH SENTINEL's countermeasure engine. Based on the following escalated threats, generate specific, actionable countermeasure recommendations.
@@ -517,13 +533,17 @@ Output ONLY the recommendations, one per line.`;
             for (const cm of countermeasures) {
               const matchingThreat = highEscalationThreats.find((t: any) => cm.registration.includes(t.registration));
               if (matchingThreat && matchingThreat.countermeasure_status === 'NONE') {
-                await sql`
-                  UPDATE sentinel_learned_threats
-                  SET countermeasure_status = 'RECOMMENDED',
-                      countermeasure_actions = countermeasure_actions || ${JSON.stringify([{ action: cm.action, priority: cm.priority, recommended_at: new Date().toISOString() }])}::jsonb,
-                      updated_at = NOW()
-                  WHERE registration = ${matchingThreat.registration} AND threat_type = ${matchingThreat.threat_type}
-                `;
+                if (sbSql) {
+                  try {
+                    await sbSql`
+                      UPDATE sentinel_learned_threats
+                      SET countermeasure_status = 'RECOMMENDED',
+                          countermeasure_actions = countermeasure_actions || ${JSON.stringify([{ action: cm.action, priority: cm.priority, recommended_at: new Date().toISOString() }])}::jsonb,
+                          updated_at = NOW()
+                      WHERE registration = ${matchingThreat.registration} AND threat_type = ${matchingThreat.threat_type}
+                    `;
+                  } catch (e) { console.warn("Store countermeasure error:", e); }
+                }
               }
             }
           }
@@ -546,6 +566,7 @@ Output ONLY the recommendations, one per line.`;
       }
 
       await sql.end();
+      if (sbSql) await sbSql.end();
 
       const report: SentinelReport = {
         scan_timestamp: new Date().toISOString(),
@@ -567,6 +588,7 @@ Output ONLY the recommendations, one per line.`;
 
     } catch (dbErr) {
       await sql.end();
+      if (sbSql) try { await sbSql.end(); } catch (e2) { /* ignore */ }
       throw dbErr;
     }
 

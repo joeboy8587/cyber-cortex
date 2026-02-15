@@ -16,6 +16,18 @@ const THREAT_SIGNATURES = {
   criticalAltitude: 500,
   convergenceWindow: 30,
   convergenceMinAircraft: 3,
+  // Drone swarm detection parameters (from DRONE_SWARM_EVIDENCE_REPORT)
+  droneSignatures: {
+    knownDrones: ['N916GW', 'N5521S', 'N225CB', 'N916FT'],
+    ghostNetworkPrefixes: ['XXD', 'XXB'],
+    spoofedCommercialPrefixes: ['AAL', 'SWA', 'UAL', 'SKW', 'DAL'],
+    swarmTimeWindowMinutes: 10,
+    swarmMinAircraft: 3,
+    swarmMaxSpreadMeters: 2000,
+    droneAltitudeMax: 500,
+    impossibleSpeedKts: 500,
+    negativeAltitudeFlag: true,
+  },
 };
 
 // Escalation thresholds
@@ -295,7 +307,137 @@ serve(async (req) => {
         proactiveAlerts.push(`🌙 NIGHT OPS DETECTED: ${nightAircraft.length} aircraft operating in 1-4 AM tactical window.`);
       }
 
-      // ========== STEP 8: LEARN PATTERNS FROM HISTORICAL DATA ==========
+      // ========== STEP 7.1: DRONE SIGNATURE DETECTION ==========
+      const droneSignatures = recentDetections.filter((d: any) => {
+        const alt = parseInt(d.altitude || '99999');
+        const speed = parseFloat(d.speed || '0');
+        const reg = d.registration || d.callsign || '';
+        
+        // Known drone registrations
+        if (THREAT_SIGNATURES.droneSignatures.knownDrones.includes(reg)) return true;
+        // Ultra-low altitude + low speed = drone profile
+        if (alt > 0 && alt <= THREAT_SIGNATURES.droneSignatures.droneAltitudeMax && speed > 0 && speed < 120) return true;
+        return false;
+      });
+
+      if (droneSignatures.length > 0) {
+        const droneRegs = [...new Set(droneSignatures.map((d: any) => d.registration || d.callsign).filter(Boolean))];
+        violations.push({
+          type: 'DRONE_SIGNATURE',
+          severity: droneSignatures.length >= 3 ? 'critical' : 'high',
+          registration: droneRegs.join(', '),
+          details: `${droneSignatures.length} drone-profile detections (ultra-low altitude + low speed) from ${droneRegs.length} aircraft`,
+          timestamp: new Date().toISOString(),
+          relatedAircraft: droneRegs as string[]
+        });
+        proactiveAlerts.push(`🚁 DRONE SIGNATURES: ${droneRegs.length} aircraft matching drone flight profiles detected.`);
+      }
+
+      // ========== STEP 7.2: XXD/XXB GHOST NETWORK DETECTION ==========
+      const ghostNetworkDetections = recentDetections.filter((d: any) => {
+        const reg = (d.registration || d.callsign || '').toUpperCase();
+        return THREAT_SIGNATURES.droneSignatures.ghostNetworkPrefixes.some(prefix => reg.startsWith(prefix));
+      });
+
+      if (ghostNetworkDetections.length > 0) {
+        const ghostRegs = [...new Set(ghostNetworkDetections.map((d: any) => (d.registration || d.callsign || '').toUpperCase()))];
+        const avgAlt = ghostNetworkDetections.reduce((sum: number, d: any) => sum + (parseInt(d.altitude || '0')), 0) / ghostNetworkDetections.length;
+        violations.push({
+          type: 'GHOST_NETWORK',
+          severity: 'critical',
+          registration: ghostRegs.join(', '),
+          details: `${ghostNetworkDetections.length} ghost network detections (XXD/XXB prefixes) - avg altitude ${Math.round(avgAlt)}ft. No valid registration/ICAO24. Indicates spoofed or synthetic aircraft.`,
+          timestamp: new Date().toISOString(),
+          relatedAircraft: ghostRegs as string[]
+        });
+        proactiveAlerts.push(`👻 GHOST NETWORK: ${ghostNetworkDetections.length} XXD/XXB detections - synthetic aircraft or ADS-B spoofing confirmed.`);
+      }
+
+      // ========== STEP 7.3: ADS-B SPOOFING DETECTION ==========
+      const spoofingDetections = recentDetections.filter((d: any) => {
+        const alt = parseInt(d.altitude || '99999');
+        const speed = parseFloat(d.speed || '0');
+        const reg = (d.registration || d.callsign || '').toUpperCase();
+        
+        // Commercial callsign at impossible altitude (<100ft)
+        const isCommercialCallsign = THREAT_SIGNATURES.droneSignatures.spoofedCommercialPrefixes.some(p => reg.startsWith(p));
+        if (isCommercialCallsign && alt >= 0 && alt < 100) return true;
+        
+        // Impossible speed (>500kts)
+        if (speed > THREAT_SIGNATURES.droneSignatures.impossibleSpeedKts) return true;
+        
+        // Negative altitude (physical impossibility)
+        if (alt < 0) return true;
+        
+        return false;
+      });
+
+      if (spoofingDetections.length > 0) {
+        const spoofRegs = [...new Set(spoofingDetections.map((d: any) => d.registration || d.callsign).filter(Boolean))];
+        const negativeAlt = spoofingDetections.filter((d: any) => parseInt(d.altitude || '0') < 0);
+        const impossibleSpeed = spoofingDetections.filter((d: any) => parseFloat(d.speed || '0') > THREAT_SIGNATURES.droneSignatures.impossibleSpeedKts);
+        
+        let details = `${spoofingDetections.length} ADS-B spoofing indicators detected`;
+        if (negativeAlt.length > 0) details += ` | ${negativeAlt.length} negative altitude events (signal injection)`;
+        if (impossibleSpeed.length > 0) details += ` | ${impossibleSpeed.length} impossible speed events (>500kts)`;
+        
+        violations.push({
+          type: 'ADSB_SPOOFING',
+          severity: 'critical',
+          registration: spoofRegs.join(', '),
+          details,
+          timestamp: new Date().toISOString(),
+          relatedAircraft: spoofRegs as string[]
+        });
+        proactiveAlerts.push(`⚡ ADS-B SPOOFING: ${spoofingDetections.length} spoofing events - ${negativeAlt.length} negative altitudes, ${impossibleSpeed.length} impossible speeds.`);
+      }
+
+      // ========== STEP 7.4: DRONE SWARM COORDINATION DETECTION ==========
+      // Group detections by 10-minute windows and check for spatial clustering
+      const swarmWindowMs = THREAT_SIGNATURES.droneSignatures.swarmTimeWindowMinutes * 60 * 1000;
+      const lowAltDetections = recentDetections.filter((d: any) => {
+        const alt = parseInt(d.altitude || '99999');
+        return alt > 0 && alt < 1000 && d.latitude && d.longitude;
+      });
+
+      // Simple temporal clustering: group by 10-min buckets
+      const swarmBuckets = new Map<string, any[]>();
+      for (const d of lowAltDetections) {
+        const ts = new Date(d.detection_timestamp).getTime();
+        const bucket = Math.floor(ts / swarmWindowMs).toString();
+        if (!swarmBuckets.has(bucket)) swarmBuckets.set(bucket, []);
+        swarmBuckets.get(bucket)!.push(d);
+      }
+
+      for (const [, detections] of swarmBuckets) {
+        const uniqueAircraft = [...new Set(detections.map((d: any) => d.registration || d.callsign).filter(Boolean))];
+        if (uniqueAircraft.length >= THREAT_SIGNATURES.droneSignatures.swarmMinAircraft) {
+          // Calculate geographic spread (simple bounding box in meters)
+          const lats = detections.map((d: any) => parseFloat(d.latitude));
+          const lngs = detections.map((d: any) => parseFloat(d.longitude));
+          const latSpread = (Math.max(...lats) - Math.min(...lats)) * 111000; // approx meters
+          const lngSpread = (Math.max(...lngs) - Math.min(...lngs)) * 111000 * Math.cos(lats[0] * Math.PI / 180);
+          const spread = Math.max(latSpread, lngSpread);
+
+          if (spread <= THREAT_SIGNATURES.droneSignatures.swarmMaxSpreadMeters) {
+            const centerLat = (Math.max(...lats) + Math.min(...lats)) / 2;
+            const centerLng = (Math.max(...lngs) + Math.min(...lngs)) / 2;
+            
+            violations.push({
+              type: 'DRONE_SWARM',
+              severity: 'critical',
+              registration: `${uniqueAircraft.length} aircraft`,
+              details: `Drone swarm detected: ${uniqueAircraft.length} low-altitude aircraft within ${Math.round(spread)}m spread in 10-min window. Military-grade coordination.`,
+              timestamp: detections[0].detection_timestamp,
+              coordinates: { lat: centerLat, lng: centerLng },
+              relatedAircraft: uniqueAircraft as string[]
+            });
+            proactiveAlerts.push(`🐝 DRONE SWARM: ${uniqueAircraft.length} coordinated low-altitude aircraft detected within ${Math.round(spread)}m.`);
+          }
+        }
+      }
+
+
       const historicalPatterns = await sql`
         WITH repeat_offenders AS (
           SELECT registration, COUNT(*)::int as detection_count, 

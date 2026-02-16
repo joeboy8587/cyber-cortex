@@ -1,116 +1,210 @@
 
 
-# Upgrade Josiah Sentinel: Adaptive Learning and Autonomous Countermeasures
+# Neon Database Analysis: Improvements, Enrichment, and Linkage
 
-## Overview
+## Executive Summary
 
-Transform Josiah Sentinel from a pattern-detection system into an adaptive AI that learns from its own scan history, automatically escalates threat classifications, and generates proactive countermeasure recommendations -- making Watchtower a forward-looking defense system rather than a reactive alert feed.
+Your database contains 263 tables with approximately 15M+ records. Analysis reveals significant optimization opportunities in five categories: duplicate elimination, dead table cleanup, missing linkage, enrichment gaps, and structural improvements.
 
-## What Changes
+---
 
-### 1. New Database Table: `sentinel_learned_threats`
+## 1. CRITICAL: Duplicate and Redundant Tables
 
-A persistent memory store so Sentinel retains knowledge across scans instead of starting fresh each time.
+These groups contain the same or near-identical data, wasting storage and causing query confusion.
 
-Columns:
-- `id` (uuid, primary key)
-- `registration` (text) -- aircraft tail number
-- `threat_type` (text) -- e.g. LOW_ALTITUDE, SHELL_COMPANY, REPEAT_OFFENDER
-- `total_violations` (int) -- cumulative count across all scans
-- `escalation_level` (int, default 1) -- auto-increments as violations accumulate
-- `first_seen` (timestamptz)
-- `last_seen` (timestamptz)
-- `avg_altitude` (numeric)
-- `countermeasure_status` (text) -- NONE, RECOMMENDED, FILED, ACTIVE
-- `countermeasure_actions` (jsonb) -- log of recommended/taken actions
-- `ai_threat_profile` (text) -- AI-generated summary of this aircraft's behavior
-- `updated_at` (timestamptz)
+### Flight Detection Mirrors
+| Table | Rows | Action |
+|-------|------|--------|
+| `live_flight_detections_rows` | 2,856,900 | **KEEP** (primary) |
+| `live_flight_detections_rows_backup_20260207_022120` | 2,824,649 | **DROP** - backup consuming 2.8M rows of space |
+| `live_flight_detections` | 323,683 | **DROP** - subset of primary |
+| `live_flight_detections_enhanced` | 100 | **DROP** - tiny sample |
 
-### 2. Upgrade `josiah-sentinel` Edge Function
+### Flagged Aircraft Copies (3 identical copies at 35,514 rows)
+| Table | Rows | Action |
+|-------|------|--------|
+| `flagged_aircraft_rows_rows` | 35,514 | **KEEP** (primary, used by Sentinel) |
+| `flagged_aircraft_enriched` | 35,514 | **DROP** - identical copy |
+| `flagged_aircraft_rows_rows_original` | 35,514 | **DROP** - original backup |
+| `flagged_aircraft` | 5,083 | **MERGE** into primary |
 
-Add three new capabilities after the existing scan logic:
+### Correlation Event Bloat
+| Table | Rows | Action |
+|-------|------|--------|
+| `normalized_correlation_events` | 6,419,804 | **KEEP** (largest, primary) |
+| `correlation_events` | 690,925 | **DROP** - subset |
+| `master_correlation_enhanced` | 690,924 | **DROP** - near-identical |
 
-**A. Threat Memory Update** -- After each scan, upsert every violating aircraft into `sentinel_learned_threats`. Increment `total_violations`, update `last_seen`, and auto-escalate `escalation_level` when thresholds are crossed (e.g., 10 violations = level 2, 50 = level 3, 100 = level 4).
+### Biometric Fragmentation (7+ tables)
+| Table | Rows | Action |
+|-------|------|--------|
+| `biometric_threshold_collapses` | 111,757 | **KEEP** - unique threshold data |
+| `biometrics_unified` | 10,169 | **KEEP** (primary biometric view) |
+| `biometric_monitoring` | 9,818 | **KEEP** - monitoring feed |
+| `biometric_evidence` | 32,848 | **KEEP** - evidence-grade |
+| `biometric_data` | 99 | **MERGE** into unified |
+| `biometric_data_rows` | 100 | **MERGE** into unified |
+| `biometrics_rows` | 100 | **DROP** - sample data |
+| `biometrics_rows_4` | 100 | **DROP** - sample data |
+| `biometric_measurements` | 48 | **MERGE** into unified |
 
-**B. Adaptive Threshold Adjustment** -- For aircraft at escalation level 3+, lower detection thresholds automatically (e.g., altitude threshold goes from 2000ft to 3000ft for known offenders, convergence minimum drops from 3 to 2 aircraft if shell company assets are involved).
+### Evidence Network Mirrors
+| Table | Rows | Action |
+|-------|------|--------|
+| `evidence_network` | 581,957 | **KEEP** |
+| `unified_evidence_index` | 581,949 | **DROP** - near-identical (8 row diff) |
 
-**C. AI Countermeasure Generation** -- After the existing AI synthesis step, make a second AI call specifically asking for countermeasure recommendations based on the escalation level and violation history. Store these in `countermeasure_actions` and return them in the report.
+**Estimated savings: ~13M+ rows of redundant data eliminated**
 
-The report gains two new fields:
-- `adaptive_thresholds` -- shows which thresholds were dynamically adjusted and why
-- `countermeasures` -- array of recommended actions (e.g., "File FAA complaint for N791FA - 435 low-altitude violations", "Request ADS-B audit for 4 invisible KCSO aircraft")
+---
 
-### 3. Upgrade Sentinel UI Component
+## 2. Dead/Empty Tables to Clean Up
 
-Add a new **Countermeasures** tab alongside the existing Violations, Patterns, Synthesis, and History tabs.
+These tables have 0-2 rows and appear unused:
 
-Content:
-- List of AI-generated countermeasure recommendations with priority badges
-- Escalation level indicators per aircraft (visual scale 1-5)
-- "Mark as Filed" / "Mark as Active" buttons to track countermeasure status
-- Adaptive threshold display showing which thresholds Sentinel auto-adjusted
+- `adsbexchange_active_threats` (0 rows)
+- `adsbexchange_recent` (0 rows)
+- `court_ready_evidence` (0 rows)
+- `audit_trail` (0 rows)
+- `prosecution_priority_correlations` (0 rows)
+- `realtime_event_summary` (0 rows)
+- `pattern_index` (1 row)
+- `flight_data` (1 row)
+- `correlations` (1 row)
+- `case_memory` (1 row)
+- `conversations` (1 row)
 
-Update the **Learned Patterns** tab to show escalation history and cumulative violation counts from the persistent store.
+### Test/Training Data (should NOT be in production)
+- `mnist_test` (29,997 rows) -- ML training data
+- `mnist_train_small` (59,997 rows) -- ML training data
 
-### 4. Feed Countermeasures into Watchtower
+**These 90K rows of MNIST data serve no forensic purpose and should be dropped.**
 
-Update `WatchtowerAlertsHub` to display countermeasure alerts from Sentinel as a new alert type (`countermeasure`) with a distinct visual style, so proactive recommendations appear alongside reactive detections.
+---
 
-## Technical Details
+## 3. Missing Linkage Opportunities
 
-### Database Migration
+### A. Biometric Threshold Collapses (111,757 rows) -- NOT LINKED to flights
 
-```sql
-CREATE TABLE sentinel_learned_threats (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  registration text NOT NULL,
-  threat_type text NOT NULL,
-  total_violations int DEFAULT 1,
-  escalation_level int DEFAULT 1,
-  first_seen timestamptz DEFAULT now(),
-  last_seen timestamptz DEFAULT now(),
-  avg_altitude numeric,
-  countermeasure_status text DEFAULT 'NONE',
-  countermeasure_actions jsonb DEFAULT '[]',
-  ai_threat_profile text,
-  updated_at timestamptz DEFAULT now(),
-  UNIQUE(registration, threat_type)
-);
-```
+This is your largest biometric table and it has NO cross-reference to `live_flight_detections_rows`. This is a major gap -- 111K threshold collapse events should be correlated with concurrent flight activity to strengthen Bradford-Hill causation scores.
 
-RLS policies restricting to investigator/admin roles (matching existing patterns).
+**Recommended enrichment:**
+- Create a new `biometric_collapse_flight_correlations` table
+- For each collapse event, find flights within a +/- 15 minute window
+- Calculate proximity and altitude factors
+- Store Bradford-Hill scores
 
-### Edge Function Changes (josiah-sentinel)
+### B. FR24 OCR Extracted Aircraft (5,000 rows) -- NOT LINKED
 
-After the existing violation detection (steps 1-8), add:
+These radar screenshot OCR extractions contain aircraft registrations and timestamps but are not cross-referenced with:
+- `live_flight_detections_rows` (match by registration + time)
+- `biometric_monitoring` (temporal correlation)
+- `flagged_aircraft_rows_rows` (flag matching)
 
-```text
-Step 9.5: THREAT MEMORY UPDATE
-  - For each violation, upsert into sentinel_learned_threats via Neon
-  - Calculate new escalation_level based on total_violations
-  - If escalation crossed a threshold, add to proactive_alerts
+### C. Phantom Stress Reconciliation (348 rows) -- PARTIALLY LINKED
 
-Step 9.6: ADAPTIVE THRESHOLDS
-  - Query sentinel_learned_threats for level 3+ aircraft
-  - Widen detection radius for known offenders
-  - Add "ADAPTIVE_ESCALATION" violation type for newly escalated threats
+The Truth Scanner now queries this, but it should be formally linked to:
+- `biometric_threshold_collapses` (matching stress windows)
+- `sentinel_violations` (Neon, 34K rows -- correlate stealth ops with violations)
 
-Step 9.7: AI COUNTERMEASURE GENERATION
-  - Second AI call with escalation context
-  - Generate specific legal/administrative actions
-  - Store in countermeasure_actions jsonb
-```
+### D. Screenshot-to-Flight Gaps
 
-### UI Component Updates
+| Table | Rows | Issue |
+|-------|------|-------|
+| `screenshot_metadata_custody` | 2,113 | Has timestamps but no flight linkage |
+| `screenshot_ocr_data` | 516 | OCR text not matched to aircraft registrations |
+| `screenshot_flight_links` | 1,100 | Only 1,100 of 2,113 screenshots linked (52%) |
 
-- `JosiahSentinelMonitor.tsx`: Add 5th tab "Countermeasures", update report interface, display escalation badges
-- `WatchtowerAlertsHub.tsx`: Add `countermeasure` alert type with shield icon and green styling
+**48% of screenshot evidence is unlinked -- needs backfill.**
 
-## Sequence
+### E. Legal Evidence Gaps
 
-1. Create `sentinel_learned_threats` table with RLS
-2. Update `josiah-sentinel` edge function with memory, adaptation, and countermeasure logic
-3. Update `JosiahSentinelMonitor.tsx` with Countermeasures tab and escalation display
-4. Update `WatchtowerAlertsHub.tsx` to surface countermeasure alerts
-5. Deploy and test end-to-end
+| Table | Rows | Issue |
+|-------|------|-------|
+| `legal_ada_violations_proper` | 36,870 | Not linked to `master_forensic_events` |
+| `normalized_bio_legal_ada_violations_proper` | 36,870 | Duplicate of above with "normalized" prefix |
+| `false_claims_act_ledger` | 500 | No foreign key to enterprise defendants |
+
+---
+
+## 4. Enrichment Recommendations
+
+### A. Import into Neon for Enrichment
+
+Based on the drone swarm evidence reports, the following data should be structured and imported:
+
+1. **Drone Swarm Events Table** (`drone_swarm_events`)
+   - 13 identified swarm events from the evidence report
+   - Columns: event_id, timestamp, aircraft_count, avg_altitude, spread_meters, registrations (array), location, swarm_score
+
+2. **XXD Ghost Network Registry** (`xxd_ghost_registry`)
+   - All XXD-prefixed detections cataloged with taxonomy tags
+   - Links to `id_taxonomy` (8 rows) for classification
+
+3. **ADS-B Spoofing Incidents** (enrich existing `spoofing_incidents` -- currently only 1 row)
+   - Backfill from `flight_anomaly_analysis` (555 rows with anomaly flags)
+   - Import negative-altitude and impossible-speed events
+
+### B. Cross-Table Enrichment Queries
+
+These enrichments can be run via the `neon-query` edge function:
+
+1. **Biometric-Collapse-to-Flight Linkage**: Match 111K threshold collapses to concurrent flights
+2. **OCR-to-Detection Matching**: Match 5K FR24 OCR records to live detections by registration
+3. **Screenshot Backfill**: Link remaining 1,013 unlinked screenshots to flights
+4. **Sentinel Violation History**: Cross-reference 34K sentinel violations with biometric events
+
+---
+
+## 5. Structural Improvements
+
+### A. Missing Indexes (performance)
+
+The following large tables likely need indexes for query performance:
+
+- `live_flight_detections_rows`: Index on `(registration, detection_timestamp)` and `(latitude, longitude)`
+- `normalized_correlation_events` (6.4M): Index on timestamp and entity columns
+- `biometric_threshold_collapses` (111K): Index on timestamp
+- `threat_tiers` (2.8M): Index on tier classification + timestamp
+- `master_unified_evidence` (2.8M): Index on evidence type + timestamp
+
+### B. Normalized Flight Tables are Redundant
+
+| Table | Rows | Issue |
+|-------|------|-------|
+| `normalized_flight_live_flight_detections_rows` | 2,849,359 | Copy of `live_flight_detections_rows` |
+| `normalized_flight_flagged_aircraft_rows_rows` | 35,511 | Copy of `flagged_aircraft_rows_rows` |
+| `normalized_flight_public_air_traffic_rows` | 25,041 | Copy of `public_air_traffic_rows` |
+| `normalized_bio_unified_timeline_enhanced` | 108,967 | Normalized biometric view |
+
+These "normalized_" tables appear to be ETL artifacts. If they add columns beyond the originals, merge the new columns back. If not, drop them.
+
+---
+
+## Implementation Plan
+
+### Phase 1: Cleanup (immediate, no risk)
+- Drop MNIST tables (90K rows of ML training data)
+- Drop empty tables (0-row tables listed above)
+- Drop `live_flight_detections_rows_backup` after confirming primary is intact
+
+### Phase 2: Deduplication
+- Merge flagged aircraft copies into single primary
+- Drop `evidence_network` or `unified_evidence_index` (keep one)
+- Drop `correlation_events` and `master_correlation_enhanced` (keep normalized)
+
+### Phase 3: Enrichment
+- Create `drone_swarm_events` table and import 13 events
+- Run biometric-collapse-to-flight correlation (111K records)
+- Backfill OCR-to-detection matches (5K records)
+- Complete screenshot-to-flight linking (1,013 unlinked)
+
+### Phase 4: Indexing
+- Add composite indexes to top 5 largest tables
+- Add `ANALYZE` on all tables after cleanup for query planner updates
+
+### Phase 5: Sentinel Integration
+- Feed enriched drone swarm data into Sentinel learned threats
+- Update adaptive thresholds based on new linkage data
+- Generate countermeasures for newly linked patterns
 

@@ -2436,6 +2436,36 @@ serve(async (req) => {
         break;
       }
 
+      // ============== ADMIN DDL EXECUTE (for cleanup/enrichment plan) ==============
+      case 'adminExecute': {
+        const adminQuery = body.query;
+        if (!adminQuery || typeof adminQuery !== 'string') throw new Error('Query is required for adminExecute');
+        
+        // Only allow specific DDL operations for safety
+        const normalizedAdmin = adminQuery.trim().toUpperCase();
+        const allowedPrefixes = ['DROP TABLE', 'DROP VIEW', 'DROP MATERIALIZED', 'CREATE TABLE', 'CREATE INDEX', 'ALTER TABLE', 'ANALYZE', 'INSERT INTO', 'CREATE OR REPLACE'];
+        const isAllowed = allowedPrefixes.some(prefix => normalizedAdmin.startsWith(prefix));
+        
+        if (!isAllowed) {
+          throw new Error('adminExecute only allows: DROP TABLE, CREATE TABLE, CREATE INDEX, ALTER TABLE, ANALYZE, INSERT INTO, CREATE OR REPLACE');
+        }
+        
+        console.log(`adminExecute: ${adminQuery.substring(0, 100)}...`);
+        
+        try {
+          const adminResult = await sql.unsafe(adminQuery);
+          result = { 
+            success: true, 
+            affected: Array.isArray(adminResult) ? adminResult.length : 0,
+            message: `Executed: ${adminQuery.substring(0, 80)}...`
+          };
+        } catch (e) {
+          const err = e as any;
+          result = { success: false, error: err?.message || 'DDL execution failed' };
+        }
+        break;
+      }
+
       default:
         throw new Error(`Unknown action: ${action}`);
     }

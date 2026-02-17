@@ -203,7 +203,7 @@ export function JosiahSentinelMonitor() {
                 <div>
                   <div className="text-2xl font-bold">THREAT LEVEL: {report.threat_level}</div>
                   <div className="text-sm opacity-90">
-                    {report.detections_analyzed} detections analyzed • {report.violations.length} violations • Last scan: {new Date(report.scan_timestamp).toLocaleTimeString()}
+                    {report.detections_analyzed} detections analyzed • {report.violations.length} violations • Last scan: {new Date(report.scan_timestamp).toLocaleString()}
                   </div>
                 </div>
               </div>
@@ -294,7 +294,7 @@ export function JosiahSentinelMonitor() {
                           </div>
                         </div>
                         <span className="text-xs text-muted-foreground">
-                          {new Date(violation.timestamp).toLocaleTimeString()}
+                          {new Date(violation.timestamp).toLocaleString()}
                         </span>
                       </div>
                     </div>

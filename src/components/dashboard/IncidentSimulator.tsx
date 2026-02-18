@@ -355,15 +355,6 @@ export function IncidentSimulator() {
     );
   }
 
-  // Map loading fallback
-  const MapFallback = (
-    <div className="h-full flex items-center justify-center bg-muted/20">
-      <div className="text-center">
-        <Loader2 className="h-8 w-8 animate-spin text-primary mx-auto mb-2" />
-        <p className="text-sm text-muted-foreground">Loading map...</p>
-      </div>
-    </div>
-  );
 
   return (
     <div className="h-full flex flex-col bg-background">
@@ -444,7 +435,14 @@ export function IncidentSimulator() {
               </Button>
             </div>
           ) : (
-            <Suspense fallback={MapFallback}>
+            <Suspense fallback={
+              <div className="h-full flex items-center justify-center bg-muted/20">
+                <div className="text-center">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary mx-auto mb-2" />
+                  <p className="text-sm text-muted-foreground">Loading map...</p>
+                </div>
+              </div>
+            }>
               <SimulationMapView 
                 mapCenter={mapCenter} 
                 visibleFlights={visibleFlights} 

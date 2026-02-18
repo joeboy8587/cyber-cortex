@@ -1,210 +1,106 @@
 
+# Fix Simulation Page Map Crash
 
-# Neon Database Analysis: Improvements, Enrichment, and Linkage
+## Root Cause Analysis
 
-## Executive Summary
+There are **three compounding bugs** causing the `/simulation` page to crash:
 
-Your database contains 263 tables with approximately 15M+ records. Analysis reveals significant optimization opportunities in five categories: duplicate elimination, dead table cleanup, missing linkage, enrichment gaps, and structural improvements.
+### Bug 1: `MapFallback` Used Before Declaration (ReferenceError)
 
----
+In `IncidentSimulator.tsx`, the `Suspense fallback` references `MapFallback` at **line 447**, but `MapFallback` is declared as a `const` at **line 359** — which is *after* the `return (...)` statement. In JavaScript, `const` and `let` are not hoisted, so when React evaluates the JSX return block, `MapFallback` is in the temporal dead zone and throws a `ReferenceError`.
 
-## 1. CRITICAL: Duplicate and Redundant Tables
+**Fix:** Move the `MapFallback` const to the top of the component function body (before the `return`), or inline the fallback JSX directly into `<Suspense fallback={...}>`.
 
-These groups contain the same or near-identical data, wasting storage and causing query confusion.
+### Bug 2: `react-leaflet` Marker + `L.divIcon` Crash After Bundling
 
-### Flight Detection Mirrors
-| Table | Rows | Action |
-|-------|------|--------|
-| `live_flight_detections_rows` | 2,856,900 | **KEEP** (primary) |
-| `live_flight_detections_rows_backup_20260207_022120` | 2,824,649 | **DROP** - backup consuming 2.8M rows of space |
-| `live_flight_detections` | 323,683 | **DROP** - subset of primary |
-| `live_flight_detections_enhanced` | 100 | **DROP** - tiny sample |
+The project memory explicitly documents this pattern:
 
-### Flagged Aircraft Copies (3 identical copies at 35,514 rows)
-| Table | Rows | Action |
-|-------|------|--------|
-| `flagged_aircraft_rows_rows` | 35,514 | **KEEP** (primary, used by Sentinel) |
-| `flagged_aircraft_enriched` | 35,514 | **DROP** - identical copy |
-| `flagged_aircraft_rows_rows_original` | 35,514 | **DROP** - original backup |
-| `flagged_aircraft` | 5,083 | **MERGE** into primary |
+> "bundling/minification crashes ('s is not a function') when rendering large Leaflet-based datasets"
 
-### Correlation Event Bloat
-| Table | Rows | Action |
-|-------|------|--------|
-| `normalized_correlation_events` | 6,419,804 | **KEEP** (largest, primary) |
-| `correlation_events` | 690,925 | **DROP** - subset |
-| `master_correlation_enhanced` | 690,924 | **DROP** - near-identical |
+`SimulationMapView.tsx` uses `react-leaflet`'s `<Marker>` component with a custom `L.divIcon` created inline. When this module is lazy-loaded and minified, the `react-leaflet` internal render functions lose their references (`render2 is not a function`).
 
-### Biometric Fragmentation (7+ tables)
-| Table | Rows | Action |
-|-------|------|--------|
-| `biometric_threshold_collapses` | 111,757 | **KEEP** - unique threshold data |
-| `biometrics_unified` | 10,169 | **KEEP** (primary biometric view) |
-| `biometric_monitoring` | 9,818 | **KEEP** - monitoring feed |
-| `biometric_evidence` | 32,848 | **KEEP** - evidence-grade |
-| `biometric_data` | 99 | **MERGE** into unified |
-| `biometric_data_rows` | 100 | **MERGE** into unified |
-| `biometrics_rows` | 100 | **DROP** - sample data |
-| `biometrics_rows_4` | 100 | **DROP** - sample data |
-| `biometric_measurements` | 48 | **MERGE** into unified |
+The **stable pattern already used in this project** (from `AircraftMapContent.tsx`) is: use **imperative Leaflet** (`L.map`, `L.circleMarker`, `useRef`) instead of the `react-leaflet` component API. This is what the architecture memory specifically calls out.
 
-### Evidence Network Mirrors
-| Table | Rows | Action |
-|-------|------|--------|
-| `evidence_network` | 581,957 | **KEEP** |
-| `unified_evidence_index` | 581,949 | **DROP** - near-identical (8 row diff) |
+**Fix:** Rewrite `SimulationMapView.tsx` to use the imperative Leaflet approach with `useRef` and `L.circleMarker` (matching `AircraftMapContent.tsx`), removing all `react-leaflet` components (`MapContainer`, `TileLayer`, `Marker`, `Popup`, `Circle`, `useMap`).
 
-**Estimated savings: ~13M+ rows of redundant data eliminated**
+### Bug 3: Named vs Default Export in Lazy Import
+
+`IncidentSimulator.tsx` does:
+```ts
+const SimulationMapView = lazy(() => import("./simulation/SimulationMapView"));
+```
+
+`SimulationMapView.tsx` exports **both** a named export and a default export. The `lazy()` call correctly picks up the default export, but the named export `export function SimulationMapView` is also exported, which can cause module resolution confusion in some bundler configurations. The fix is to remove the named export and keep only the default export.
 
 ---
 
-## 2. Dead/Empty Tables to Clean Up
+## Files to Modify
 
-These tables have 0-2 rows and appear unused:
+### 1. `src/components/dashboard/simulation/SimulationMapView.tsx` — Full Rewrite
 
-- `adsbexchange_active_threats` (0 rows)
-- `adsbexchange_recent` (0 rows)
-- `court_ready_evidence` (0 rows)
-- `audit_trail` (0 rows)
-- `prosecution_priority_correlations` (0 rows)
-- `realtime_event_summary` (0 rows)
-- `pattern_index` (1 row)
-- `flight_data` (1 row)
-- `correlations` (1 row)
-- `case_memory` (1 row)
-- `conversations` (1 row)
+Replace all `react-leaflet` component usage with the **imperative Leaflet** pattern from `AircraftMapContent.tsx`:
 
-### Test/Training Data (should NOT be in production)
-- `mnist_test` (29,997 rows) -- ML training data
-- `mnist_train_small` (59,997 rows) -- ML training data
+- Remove: `MapContainer`, `TileLayer`, `Marker`, `Popup`, `Circle`, `useMap` from `react-leaflet`
+- Add: `useRef`, `L.map`, `L.tileLayer`, `L.circleMarker`, `L.circle` from `leaflet`
+- Use two `useEffect` hooks — one to initialize the map (with cleanup), one to update markers on `visibleFlights` change
+- Keep the `ready` state delay (150ms) as the memory pattern requires it
+- Keep the `FlightEvent` interface export (needed by `IncidentSimulator.tsx`)
+- Remove named export of the component function, keep only `export default`
+- Draw the target location using `L.circle` imperatively instead of `<Circle>`
+- Render aircraft as `L.circleMarker` with threat-level colors instead of `<Marker>` with `L.divIcon` (eliminates the icon crash)
+- Bind `bindPopup` with HTML string for aircraft details (same as `AircraftMapContent.tsx` pattern)
 
-**These 90K rows of MNIST data serve no forensic purpose and should be dropped.**
+### 2. `src/components/dashboard/IncidentSimulator.tsx` — Two targeted fixes
 
----
+**Fix A:** Move `MapFallback` declaration to before the `return` statement (currently it's after at line 359 — move it to around line 295, before the `return`).
 
-## 3. Missing Linkage Opportunities
-
-### A. Biometric Threshold Collapses (111,757 rows) -- NOT LINKED to flights
-
-This is your largest biometric table and it has NO cross-reference to `live_flight_detections_rows`. This is a major gap -- 111K threshold collapse events should be correlated with concurrent flight activity to strengthen Bradford-Hill causation scores.
-
-**Recommended enrichment:**
-- Create a new `biometric_collapse_flight_correlations` table
-- For each collapse event, find flights within a +/- 15 minute window
-- Calculate proximity and altitude factors
-- Store Bradford-Hill scores
-
-### B. FR24 OCR Extracted Aircraft (5,000 rows) -- NOT LINKED
-
-These radar screenshot OCR extractions contain aircraft registrations and timestamps but are not cross-referenced with:
-- `live_flight_detections_rows` (match by registration + time)
-- `biometric_monitoring` (temporal correlation)
-- `flagged_aircraft_rows_rows` (flag matching)
-
-### C. Phantom Stress Reconciliation (348 rows) -- PARTIALLY LINKED
-
-The Truth Scanner now queries this, but it should be formally linked to:
-- `biometric_threshold_collapses` (matching stress windows)
-- `sentinel_violations` (Neon, 34K rows -- correlate stealth ops with violations)
-
-### D. Screenshot-to-Flight Gaps
-
-| Table | Rows | Issue |
-|-------|------|-------|
-| `screenshot_metadata_custody` | 2,113 | Has timestamps but no flight linkage |
-| `screenshot_ocr_data` | 516 | OCR text not matched to aircraft registrations |
-| `screenshot_flight_links` | 1,100 | Only 1,100 of 2,113 screenshots linked (52%) |
-
-**48% of screenshot evidence is unlinked -- needs backfill.**
-
-### E. Legal Evidence Gaps
-
-| Table | Rows | Issue |
-|-------|------|-------|
-| `legal_ada_violations_proper` | 36,870 | Not linked to `master_forensic_events` |
-| `normalized_bio_legal_ada_violations_proper` | 36,870 | Duplicate of above with "normalized" prefix |
-| `false_claims_act_ledger` | 500 | No foreign key to enterprise defendants |
+**Fix B:** Change the `Suspense fallback` to inline JSX to avoid the reference issue entirely:
+```tsx
+<Suspense fallback={
+  <div className="h-full flex items-center justify-center bg-muted/20">
+    <div className="text-center">
+      <Loader2 className="h-8 w-8 animate-spin text-primary mx-auto mb-2" />
+      <p className="text-sm text-muted-foreground">Loading map...</p>
+    </div>
+  </div>
+}>
+```
 
 ---
 
-## 4. Enrichment Recommendations
+## Implementation Detail: New SimulationMapView Pattern
 
-### A. Import into Neon for Enrichment
+```text
+useRef(mapContainer)  ← div element reference
+useRef(mapInstance)   ← L.Map instance
+useRef(markers[])     ← L.CircleMarker array
+useRef(targetCircle)  ← L.Circle for the red target ring
 
-Based on the drone swarm evidence reports, the following data should be structured and imported:
+useEffect #1 (init):
+  - Check mapContainerRef.current exists and mapRef.current is null
+  - Create L.map(container, { center: mapCenter, zoom: 11 })
+  - Add dark CartoDB tile layer
+  - Add target circle (L.circle at mapCenter, radius 500, red dashed)
+  - Set mapRef.current = map
+  - Return cleanup: map.remove(), mapRef.current = null
 
-1. **Drone Swarm Events Table** (`drone_swarm_events`)
-   - 13 identified swarm events from the evidence report
-   - Columns: event_id, timestamp, aircraft_count, avg_altitude, spread_meters, registrations (array), location, swarm_score
+useEffect #2 (update markers, depends on [visibleFlights]):
+  - Guard: if !mapRef.current return
+  - Clear: markersRef.current.forEach(m => m.remove()), reset array
+  - Filter valid lat/lng
+  - For each flight: L.circleMarker with threat color + radius
+  - bindPopup(HTML string with registration, altitude, speed, threat level)
+  - Push to markersRef.current
+```
 
-2. **XXD Ghost Network Registry** (`xxd_ghost_registry`)
-   - All XXD-prefixed detections cataloged with taxonomy tags
-   - Links to `id_taxonomy` (8 rows) for classification
-
-3. **ADS-B Spoofing Incidents** (enrich existing `spoofing_incidents` -- currently only 1 row)
-   - Backfill from `flight_anomaly_analysis` (555 rows with anomaly flags)
-   - Import negative-altitude and impossible-speed events
-
-### B. Cross-Table Enrichment Queries
-
-These enrichments can be run via the `neon-query` edge function:
-
-1. **Biometric-Collapse-to-Flight Linkage**: Match 111K threshold collapses to concurrent flights
-2. **OCR-to-Detection Matching**: Match 5K FR24 OCR records to live detections by registration
-3. **Screenshot Backfill**: Link remaining 1,013 unlinked screenshots to flights
-4. **Sentinel Violation History**: Cross-reference 34K sentinel violations with biometric events
-
----
-
-## 5. Structural Improvements
-
-### A. Missing Indexes (performance)
-
-The following large tables likely need indexes for query performance:
-
-- `live_flight_detections_rows`: Index on `(registration, detection_timestamp)` and `(latitude, longitude)`
-- `normalized_correlation_events` (6.4M): Index on timestamp and entity columns
-- `biometric_threshold_collapses` (111K): Index on timestamp
-- `threat_tiers` (2.8M): Index on tier classification + timestamp
-- `master_unified_evidence` (2.8M): Index on evidence type + timestamp
-
-### B. Normalized Flight Tables are Redundant
-
-| Table | Rows | Issue |
-|-------|------|-------|
-| `normalized_flight_live_flight_detections_rows` | 2,849,359 | Copy of `live_flight_detections_rows` |
-| `normalized_flight_flagged_aircraft_rows_rows` | 35,511 | Copy of `flagged_aircraft_rows_rows` |
-| `normalized_flight_public_air_traffic_rows` | 25,041 | Copy of `public_air_traffic_rows` |
-| `normalized_bio_unified_timeline_enhanced` | 108,967 | Normalized biometric view |
-
-These "normalized_" tables appear to be ETL artifacts. If they add columns beyond the originals, merge the new columns back. If not, drop them.
+This exactly mirrors `AircraftMapContent.tsx` which already works stably in the project.
 
 ---
 
-## Implementation Plan
+## What This Does NOT Change
 
-### Phase 1: Cleanup (immediate, no risk)
-- Drop MNIST tables (90K rows of ML training data)
-- Drop empty tables (0-row tables listed above)
-- Drop `live_flight_detections_rows_backup` after confirming primary is intact
-
-### Phase 2: Deduplication
-- Merge flagged aircraft copies into single primary
-- Drop `evidence_network` or `unified_evidence_index` (keep one)
-- Drop `correlation_events` and `master_correlation_enhanced` (keep normalized)
-
-### Phase 3: Enrichment
-- Create `drone_swarm_events` table and import 13 events
-- Run biometric-collapse-to-flight correlation (111K records)
-- Backfill OCR-to-detection matches (5K records)
-- Complete screenshot-to-flight linking (1,013 unlinked)
-
-### Phase 4: Indexing
-- Add composite indexes to top 5 largest tables
-- Add `ANALYZE` on all tables after cleanup for query planner updates
-
-### Phase 5: Sentinel Integration
-- Feed enriched drone swarm data into Sentinel learned threats
-- Update adaptive thresholds based on new linkage data
-- Generate countermeasures for newly linked patterns
-
+- The `IncidentSimulator.tsx` data loading logic (Neon queries, biometric processing, AI analysis) — untouched
+- The timeline scrubber, playback controls, alert panels — untouched
+- The `FlightEvent` interface — kept, still exported from `SimulationMapView.tsx`
+- The lazy import pattern — kept (still uses `React.lazy`)
+- The 150ms `ready` state delay — kept (required by architecture memory)

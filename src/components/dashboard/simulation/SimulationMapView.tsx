@@ -1,7 +1,5 @@
-import { useEffect, useState, useCallback } from "react";
-import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from "react-leaflet";
+import { useEffect, useState, useRef } from "react";
 import L from "leaflet";
-import { Badge } from "@/components/ui/badge";
 import "leaflet/dist/leaflet.css";
 
 export interface FlightEvent {
@@ -20,17 +18,6 @@ export interface FlightEvent {
   isShellCo: boolean;
 }
 
-// Custom aircraft icon creator
-function createAircraftIcon(color: string, heading: number = 0): L.DivIcon {
-  return L.divIcon({
-    html: `<div style="transform: rotate(${heading}deg); color: ${color}; font-size: 24px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5));">✈</div>`,
-    className: 'aircraft-marker',
-    iconSize: [24, 24],
-    iconAnchor: [12, 12],
-  });
-}
-
-// Get color for threat level
 function getThreatColor(level: string): string {
   switch (level) {
     case "critical": return "#ef4444";
@@ -40,17 +27,13 @@ function getThreatColor(level: string): string {
   }
 }
 
-// Component to handle map center updates
-function MapCenterUpdater({ center }: { center: [number, number] }) {
-  const map = useMap();
-  
-  useEffect(() => {
-    if (center && center[0] !== 0 && center[1] !== 0) {
-      map.setView(center, map.getZoom());
-    }
-  }, [center, map]);
-  
-  return null;
+function getThreatRadius(level: string): number {
+  switch (level) {
+    case "critical": return 12;
+    case "high": return 10;
+    case "medium": return 8;
+    default: return 6;
+  }
 }
 
 interface SimulationMapViewProps {
@@ -58,28 +41,102 @@ interface SimulationMapViewProps {
   visibleFlights: FlightEvent[];
 }
 
-export function SimulationMapView({ mapCenter, visibleFlights }: SimulationMapViewProps) {
+function SimulationMapView({ mapCenter, visibleFlights }: SimulationMapViewProps) {
   const [ready, setReady] = useState(false);
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<L.Map | null>(null);
+  const markersRef = useRef<L.CircleMarker[]>([]);
+  const targetCircleRef = useRef<L.Circle | null>(null);
 
-  // Initialize Leaflet icons on mount
+  // 150ms delay before rendering map (required by architecture pattern)
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    
-    try {
-      delete (L.Icon.Default.prototype as any)._getIconUrl;
-      L.Icon.Default.mergeOptions({
-        iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
-        iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
-        shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
-      });
-    } catch (e) {
-      console.warn("Leaflet icon init failed:", e);
-    }
-    
-    // Small delay to ensure DOM is ready
     const timer = setTimeout(() => setReady(true), 150);
     return () => clearTimeout(timer);
   }, []);
+
+  // Initialize map imperatively (mirrors AircraftMapContent.tsx pattern)
+  useEffect(() => {
+    if (!ready || !mapContainerRef.current || mapRef.current) return;
+
+    mapRef.current = L.map(mapContainerRef.current, {
+      center: mapCenter,
+      zoom: 11,
+    });
+
+    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+      attribution: '&copy; <a href="https://carto.com/">CARTO</a>',
+    }).addTo(mapRef.current);
+
+    // Target location circle (red dashed ring)
+    targetCircleRef.current = L.circle(mapCenter, {
+      radius: 500,
+      color: "#ef4444",
+      fillColor: "#ef4444",
+      fillOpacity: 0.2,
+      weight: 2,
+      dashArray: "5, 5",
+    }).addTo(mapRef.current);
+
+    return () => {
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+      }
+    };
+  }, [ready, mapCenter]);
+
+  // Update markers when visibleFlights changes
+  useEffect(() => {
+    if (!mapRef.current) return;
+
+    // Clear existing markers
+    markersRef.current.forEach(m => m.remove());
+    markersRef.current = [];
+
+    // Filter valid coordinates
+    const validFlights = visibleFlights.filter(
+      f =>
+        f.latitude != null &&
+        f.longitude != null &&
+        !isNaN(f.latitude) &&
+        !isNaN(f.longitude) &&
+        Math.abs(f.latitude) <= 90 &&
+        Math.abs(f.longitude) <= 180
+    );
+
+    validFlights.forEach(flight => {
+      const color = getThreatColor(flight.threatLevel);
+      const radius = getThreatRadius(flight.threatLevel);
+
+      const marker = L.circleMarker([flight.latitude, flight.longitude], {
+        radius,
+        fillColor: color,
+        fillOpacity: 0.85,
+        color: "#fff",
+        weight: 1,
+      });
+
+      const popupContent = `
+        <div style="min-width: 180px; font-size: 13px; color: #222;">
+          <div style="font-weight: bold; font-size: 15px; margin-bottom: 4px;">${flight.registration}</div>
+          ${flight.callsign ? `<div style="color: #555; margin-bottom: 2px;">Callsign: ${flight.callsign}</div>` : ""}
+          <div style="color: #555;">Altitude: ${flight.altitude} ft</div>
+          <div style="color: #555;">Speed: ${flight.speed ?? "N/A"} kts</div>
+          <div style="color: #555;">Heading: ${flight.heading}°</div>
+          <div style="margin-top: 6px;">
+            Threat: <span style="color: ${color}; font-weight: bold;">${flight.threatLevel.toUpperCase()}</span>
+          </div>
+          ${flight.isMilitary ? `<div style="color: #ef4444; font-size: 11px; margin-top: 4px;">⚠ MILITARY</div>` : ""}
+          ${flight.isShellCo ? `<div style="color: #a855f7; font-size: 11px; margin-top: 2px;">⚠ SHELL CO</div>` : ""}
+          ${flight.isLowAltitude ? `<div style="color: #f97316; font-size: 11px; margin-top: 2px;">⚠ LOW ALTITUDE</div>` : ""}
+        </div>
+      `;
+
+      marker.bindPopup(popupContent);
+      marker.addTo(mapRef.current!);
+      markersRef.current.push(marker);
+    });
+  }, [visibleFlights]);
 
   if (!ready) {
     return (
@@ -90,56 +147,11 @@ export function SimulationMapView({ mapCenter, visibleFlights }: SimulationMapVi
   }
 
   return (
-    <MapContainer
-      center={mapCenter}
-      zoom={11}
-      className="h-full w-full"
-      style={{ background: "#1a1a2e" }}
-    >
-      <TileLayer
-        url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-        attribution='&copy; <a href="https://carto.com/">CARTO</a>'
-      />
-      
-      <MapCenterUpdater center={mapCenter} />
-      
-      {/* Target location circle */}
-      <Circle
-        center={mapCenter}
-        radius={500}
-        pathOptions={{
-          color: "#ef4444",
-          fillColor: "#ef4444",
-          fillOpacity: 0.2,
-          weight: 2,
-          dashArray: "5, 5",
-        }}
-      />
-
-      {/* Aircraft markers */}
-      {visibleFlights.map((flight) => (
-        <Marker
-          key={flight.id}
-          position={[flight.latitude, flight.longitude]}
-          icon={createAircraftIcon(getThreatColor(flight.threatLevel), flight.heading)}
-        >
-          <Popup>
-            <div className="text-sm">
-              <div className="font-bold">{flight.registration}</div>
-              {flight.callsign && <div className="text-xs">{flight.callsign}</div>}
-              <div>Alt: {flight.altitude}ft</div>
-              <div>Speed: {flight.speed}kts</div>
-              {flight.isMilitary && (
-                <Badge className="mt-1 bg-destructive text-xs">MILITARY</Badge>
-              )}
-              {flight.isShellCo && (
-                <Badge className="mt-1 bg-primary text-xs">SHELL CO</Badge>
-              )}
-            </div>
-          </Popup>
-        </Marker>
-      ))}
-    </MapContainer>
+    <div
+      ref={mapContainerRef}
+      style={{ height: "100%", width: "100%", background: "#1a1a2e" }}
+      className="z-0"
+    />
   );
 }
 

@@ -336,7 +336,7 @@ export function LiveAlertBanner({
                       <span className="text-primary">{alert.entity}</span>
                       <span className="flex items-center gap-1">
                         <Clock className="w-3 h-3" />
-                        {new Date(alert.detected_at).toLocaleTimeString()}
+                        {new Date(alert.detected_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                       </span>
                     </div>
                     {alert.flagged_reasons.length > 0 && (

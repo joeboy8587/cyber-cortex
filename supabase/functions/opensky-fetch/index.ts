@@ -327,12 +327,14 @@ serve(async (req) => {
   console.log(`OpenSky Network action: ${action}`);
 
   try {
-    // Kern County bounding box (expanded to catch more aircraft)
+    // Bakersfield/Oildale tightly focused bounding box
+    // Oildale: ~35.43°N, 119.02°W  |  Bakersfield: ~35.37°N, 119.02°W
+    // Box: ~15mi radius centered on Oildale to catch low-altitude surveillance
     const KERN_BOUNDS = {
-      lamin: 34.5,
-      lamax: 36.5,
-      lomin: -120.5,
-      lomax: -117.5
+      lamin: 35.20,
+      lamax: 35.60,
+      lomin: -119.25,
+      lomax: -118.75
     };
 
     if (action === 'fetchKernCounty' || action === 'fetchFlights') {

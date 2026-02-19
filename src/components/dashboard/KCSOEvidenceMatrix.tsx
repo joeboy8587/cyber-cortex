@@ -151,6 +151,9 @@ export function KCSOEvidenceMatrix() {
 
   useEffect(() => {
     loadKCSOData();
+    // Auto-refresh every 5 minutes so data stays current
+    const interval = setInterval(() => loadKCSOData(), 5 * 60 * 1000);
+    return () => clearInterval(interval);
   }, [loadKCSOData]);
 
   const getSeverityColor = (severity: string) => {

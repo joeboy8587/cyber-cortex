@@ -655,36 +655,53 @@ serve(async (req) => {
 
       // ============== EXISTING ACTIONS ==============
       case 'getLegalAnalysisStats': {
-        // Comprehensive flight detection stats for Legal Analysis AI
-        const flightStats = await sql`
-          SELECT 
-            COUNT(*) as total_detections,
-            COUNT(DISTINCT registration) as unique_aircraft,
-            COUNT(CASE WHEN taxonomy_tag IN ('xxb_kcso', 'xxb_kcso_shell', 'xxb_tier2_shell', 'xxb_shell') THEN 1 END) as kcso_shell_count,
-            COUNT(CASE WHEN taxonomy_tag = 'xxb_military' OR registration ~ '^[0-9]{2}-[0-9]{5}$' THEN 1 END) as military_count,
-            COUNT(CASE WHEN taxonomy_tag = 'xxb_medical_air' OR callsign ~ '^(PHI|CAL|CARE|AIR1|LIFE|EVAC|N[0-9]+AM)' THEN 1 END) as medical_count,
-            COUNT(CASE WHEN callsign ~ '^(CFC|RCAF|RAF|GAF)' OR registration ~ '^(C-|G-|D-)' THEN 1 END) as foreign_military_count,
-            ROUND(AVG(NULLIF(altitude, 0))::numeric, 0) as avg_altitude
-          FROM live_flight_detections_rows
-          WHERE created_at > NOW() - INTERVAL '90 days'
-        `;
-        
-        const enterpriseStats = await sql`
-          SELECT COUNT(DISTINCT entity_name) as enterprise_count 
-          FROM criminal_enterprise_command_structure
-        `;
-        
-        const shellStats = await sql`SELECT COUNT(*) as total FROM shell_companies`;
-        
+        // Comprehensive live stats — no time cap, pulls from all major tables
+        const [flightStats, enterpriseStats, shellStats, watchtowerStats, biometricStats, josiahStats, ecgStats, chainStats] = await Promise.all([
+          sql`
+            SELECT 
+              COUNT(*)::int as total_detections,
+              COUNT(DISTINCT registration)::int as unique_aircraft,
+              COUNT(CASE WHEN taxonomy_tag IN ('xxb_kcso', 'xxb_kcso_shell', 'xxb_tier2_shell', 'xxb_shell') THEN 1 END)::int as kcso_shell_count,
+              COUNT(CASE WHEN taxonomy_tag = 'xxb_military' OR registration ~ '^[0-9]{2}-[0-9]{5}$' THEN 1 END)::int as military_count,
+              COUNT(CASE WHEN taxonomy_tag = 'xxb_medical_air' OR callsign ~ '^(PHI|CAL|CARE|AIR1|LIFE|EVAC|N[0-9]+AM)' THEN 1 END)::int as medical_count,
+              COUNT(CASE WHEN callsign ~ '^(CFC|RCAF|RAF|GAF)' OR registration ~ '^(C-|G-|D-)' THEN 1 END)::int as foreign_military_count,
+              ROUND(AVG(NULLIF(altitude, 0))::numeric, 0)::int as avg_altitude,
+              COUNT(CASE WHEN registration IN ('N912KC','N913KC') THEN 1 END)::int as kcso_primary_count,
+              COUNT(CASE WHEN icao_address IS NULL OR icao_address = '' THEN 1 END)::int as null_icao_count,
+              COUNT(CASE WHEN taxonomy_tag LIKE 'xxb_%' THEN 1 END)::int as xxb_tagged_count,
+              MAX(detection_timestamp) as last_detection
+            FROM live_flight_detections_rows
+          `.catch(() => [{ total_detections: 0, unique_aircraft: 0, kcso_shell_count: 0, military_count: 0, medical_count: 0, foreign_military_count: 0, avg_altitude: 0, kcso_primary_count: 0, null_icao_count: 0, xxb_tagged_count: 0, last_detection: null }]),
+
+          sql`SELECT COUNT(DISTINCT entity_name)::int as enterprise_count FROM criminal_enterprise_command_structure`.catch(() => [{ enterprise_count: 0 }]),
+          sql`SELECT COUNT(*)::int as total FROM shell_companies`.catch(() => [{ total: 0 }]),
+          sql`SELECT COUNT(*)::int as total FROM watchtower_unified_master`.catch(() => [{ total: 0 }]),
+          sql`SELECT COUNT(*)::int as total, ROUND(AVG(NULLIF(hr_avg,0))::numeric,0)::int as avg_hr FROM biometric_monitoring`.catch(() => [{ total: 0, avg_hr: 0 }]),
+          sql`SELECT COUNT(*)::int as total FROM josiah_reflections_rows`.catch(() => [{ total: 0 }]),
+          sql`SELECT COUNT(*)::int as total FROM physician_verified_ecgs`.catch(() => [{ total: 0 }]),
+          sql`SELECT COUNT(*)::int as total FROM evidence_chain_links`.catch(() => [{ total: 0 }]),
+        ]);
+
         result = {
-          totalDetections: parseInt(flightStats[0]?.total_detections || '0'),
-          uniqueAircraft: parseInt(flightStats[0]?.unique_aircraft || '0'),
-          kcsoShellCount: parseInt(flightStats[0]?.kcso_shell_count || '0') + parseInt(shellStats[0]?.total || '0'),
-          militaryCount: parseInt(flightStats[0]?.military_count || '0'),
-          medicalCount: parseInt(flightStats[0]?.medical_count || '0'),
-          avgAltitude: parseInt(flightStats[0]?.avg_altitude || '0'),
-          enterpriseEntities: parseInt(enterpriseStats[0]?.enterprise_count || '0'),
-          foreignMilitaryCount: parseInt(flightStats[0]?.foreign_military_count || '0')
+          totalDetections: flightStats[0]?.total_detections ?? 0,
+          uniqueAircraft: flightStats[0]?.unique_aircraft ?? 0,
+          kcsoShellCount: (flightStats[0]?.kcso_shell_count ?? 0) + (shellStats[0]?.total ?? 0),
+          militaryCount: flightStats[0]?.military_count ?? 0,
+          medicalCount: flightStats[0]?.medical_count ?? 0,
+          avgAltitude: flightStats[0]?.avg_altitude ?? 0,
+          enterpriseEntities: enterpriseStats[0]?.enterprise_count ?? 0,
+          foreignMilitaryCount: flightStats[0]?.foreign_military_count ?? 0,
+          kcsoAircraftDetections: flightStats[0]?.kcso_primary_count ?? 0,
+          nullIcaoCount: flightStats[0]?.null_icao_count ?? 0,
+          xxbTaggedCount: flightStats[0]?.xxb_tagged_count ?? 0,
+          watchtowerEvents: watchtowerStats[0]?.total ?? 0,
+          biometricEvents: biometricStats[0]?.total ?? 0,
+          avgHeartRate: biometricStats[0]?.avg_hr ?? 0,
+          josiahReflections: josiahStats[0]?.total ?? 0,
+          verifiedECGs: ecgStats[0]?.total ?? 0,
+          chainLinks: chainStats[0]?.total ?? 0,
+          lastDetection: flightStats[0]?.last_detection ?? null,
+          dataFetchedAt: new Date().toISOString(),
         };
         break;
       }

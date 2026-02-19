@@ -33,6 +33,17 @@ interface LiveStats {
   avgAltitude: number;
   enterpriseEntities: number;
   foreignMilitaryCount: number;
+  kcsoAircraftDetections: number;
+  nullIcaoCount: number;
+  xxbTaggedCount: number;
+  watchtowerEvents: number;
+  biometricEvents: number;
+  avgHeartRate: number;
+  josiahReflections: number;
+  verifiedECGs: number;
+  chainLinks: number;
+  lastDetection: string | null;
+  dataFetchedAt: string | null;
 }
 
 interface ConvergenceSummary {
@@ -71,10 +82,14 @@ export function LegalAnalysisAI() {
   const [isLoadingConvergence, setIsLoadingConvergence] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  // Fetch live database stats on mount
+  // Fetch live database stats on mount + auto-refresh every 5 minutes
   useEffect(() => {
     fetchLiveStats();
     fetchConvergenceStats();
+    const interval = setInterval(() => {
+      fetchLiveStats();
+    }, 5 * 60 * 1000);
+    return () => clearInterval(interval);
   }, []);
 
   const fetchLiveStats = async () => {
@@ -94,16 +109,28 @@ export function LegalAnalysisAI() {
       
       if (response.ok) {
         const data = await response.json();
-        if (data.data) {
+        const d = data.data || data; // handle both wrapped and unwrapped
+        if (d && (d.totalDetections !== undefined || d.uniqueAircraft !== undefined)) {
           setLiveStats({
-            totalDetections: data.data.totalDetections || 0,
-            uniqueAircraft: data.data.uniqueAircraft || 0,
-            kcsoShellCount: data.data.kcsoShellCount || 0,
-            militaryCount: data.data.militaryCount || 0,
-            medicalCount: data.data.medicalCount || 0,
-            avgAltitude: data.data.avgAltitude || 0,
-            enterpriseEntities: data.data.enterpriseEntities || 0,
-            foreignMilitaryCount: data.data.foreignMilitaryCount || 0,
+            totalDetections: d.totalDetections ?? 0,
+            uniqueAircraft: d.uniqueAircraft ?? 0,
+            kcsoShellCount: d.kcsoShellCount ?? 0,
+            militaryCount: d.militaryCount ?? 0,
+            medicalCount: d.medicalCount ?? 0,
+            avgAltitude: d.avgAltitude ?? 0,
+            enterpriseEntities: d.enterpriseEntities ?? 0,
+            foreignMilitaryCount: d.foreignMilitaryCount ?? 0,
+            kcsoAircraftDetections: d.kcsoAircraftDetections ?? 0,
+            nullIcaoCount: d.nullIcaoCount ?? 0,
+            xxbTaggedCount: d.xxbTaggedCount ?? 0,
+            watchtowerEvents: d.watchtowerEvents ?? 0,
+            biometricEvents: d.biometricEvents ?? 0,
+            avgHeartRate: d.avgHeartRate ?? 0,
+            josiahReflections: d.josiahReflections ?? 0,
+            verifiedECGs: d.verifiedECGs ?? 0,
+            chainLinks: d.chainLinks ?? 0,
+            lastDetection: d.lastDetection ?? null,
+            dataFetchedAt: d.dataFetchedAt ?? new Date().toISOString(),
           });
         }
       }
@@ -270,40 +297,82 @@ export function LegalAnalysisAI() {
           </div>
           
           {liveStats ? (
-            <div className="grid grid-cols-4 md:grid-cols-8 gap-2 text-xs">
-              <div className="text-center p-2 bg-background/50 rounded">
-                <div className="text-primary font-mono font-bold">{(liveStats.totalDetections ?? 0).toLocaleString()}</div>
-                <div className="text-muted-foreground">Detections</div>
+            <>
+              <div className="grid grid-cols-4 md:grid-cols-8 gap-2 text-xs mb-2">
+                <div className="text-center p-2 bg-background/50 rounded">
+                  <div className="text-primary font-mono font-bold">{(liveStats.totalDetections ?? 0).toLocaleString()}</div>
+                  <div className="text-muted-foreground">Detections</div>
+                </div>
+                <div className="text-center p-2 bg-background/50 rounded">
+                  <div className="text-secondary font-mono font-bold">{(liveStats.uniqueAircraft ?? 0).toLocaleString()}</div>
+                  <div className="text-muted-foreground">Aircraft</div>
+                </div>
+                <div className="text-center p-2 bg-background/50 rounded border border-destructive/30">
+                  <div className="text-destructive font-mono font-bold">{(liveStats.kcsoShellCount ?? 0).toLocaleString()}</div>
+                  <div className="text-muted-foreground">KCSO/Shell</div>
+                </div>
+                <div className="text-center p-2 bg-background/50 rounded border border-warning/30">
+                  <div className="text-warning font-mono font-bold">{(liveStats.militaryCount ?? 0).toLocaleString()}</div>
+                  <div className="text-muted-foreground">Military</div>
+                </div>
+                <div className="text-center p-2 bg-background/50 rounded border border-secondary/30">
+                  <div className="text-secondary font-mono font-bold">{(liveStats.foreignMilitaryCount ?? 0).toLocaleString()}</div>
+                  <div className="text-muted-foreground">Foreign Mil</div>
+                </div>
+                <div className="text-center p-2 bg-background/50 rounded">
+                  <div className="text-accent font-mono font-bold">{(liveStats.medicalCount ?? 0).toLocaleString()}</div>
+                  <div className="text-muted-foreground">Medical</div>
+                </div>
+                <div className="text-center p-2 bg-background/50 rounded border border-primary/30">
+                  <div className="text-primary font-mono font-bold">{liveStats.enterpriseEntities ?? 0}</div>
+                  <div className="text-muted-foreground">Enterprise</div>
+                </div>
+                <div className="text-center p-2 bg-background/50 rounded">
+                  <div className="text-foreground font-mono font-bold">{(liveStats.avgAltitude ?? 0).toLocaleString()} ft</div>
+                  <div className="text-muted-foreground">Avg Alt</div>
+                </div>
               </div>
-              <div className="text-center p-2 bg-background/50 rounded">
-                <div className="text-secondary font-mono font-bold">{(liveStats.uniqueAircraft ?? 0).toLocaleString()}</div>
-                <div className="text-muted-foreground">Aircraft</div>
+              {/* Extended live stats row */}
+              <div className="grid grid-cols-4 md:grid-cols-8 gap-2 text-xs">
+                <div className="text-center p-2 bg-background/50 rounded border border-destructive/20">
+                  <div className="text-destructive font-mono font-bold">{(liveStats.kcsoAircraftDetections ?? 0).toLocaleString()}</div>
+                  <div className="text-muted-foreground">N912/13KC</div>
+                </div>
+                <div className="text-center p-2 bg-background/50 rounded border border-warning/20">
+                  <div className="text-warning font-mono font-bold">{(liveStats.nullIcaoCount ?? 0).toLocaleString()}</div>
+                  <div className="text-muted-foreground">Null ICAO</div>
+                </div>
+                <div className="text-center p-2 bg-background/50 rounded">
+                  <div className="text-primary font-mono font-bold">{(liveStats.xxbTaggedCount ?? 0).toLocaleString()}</div>
+                  <div className="text-muted-foreground">XXB Tagged</div>
+                </div>
+                <div className="text-center p-2 bg-background/50 rounded">
+                  <div className="text-secondary font-mono font-bold">{(liveStats.watchtowerEvents ?? 0).toLocaleString()}</div>
+                  <div className="text-muted-foreground">Watchtower</div>
+                </div>
+                <div className="text-center p-2 bg-background/50 rounded">
+                  <div className="text-accent font-mono font-bold">{(liveStats.biometricEvents ?? 0).toLocaleString()}</div>
+                  <div className="text-muted-foreground">Biometrics</div>
+                </div>
+                <div className="text-center p-2 bg-background/50 rounded border border-destructive/20">
+                  <div className="text-destructive font-mono font-bold">{(liveStats.avgHeartRate ?? 0)} bpm</div>
+                  <div className="text-muted-foreground">Avg HR</div>
+                </div>
+                <div className="text-center p-2 bg-background/50 rounded">
+                  <div className="text-foreground font-mono font-bold">{(liveStats.josiahReflections ?? 0).toLocaleString()}</div>
+                  <div className="text-muted-foreground">Josiah Logs</div>
+                </div>
+                <div className="text-center p-2 bg-background/50 rounded border border-primary/20">
+                  <div className="text-primary font-mono font-bold">{(liveStats.chainLinks ?? 0).toLocaleString()}</div>
+                  <div className="text-muted-foreground">Chain Links</div>
+                </div>
               </div>
-              <div className="text-center p-2 bg-background/50 rounded border border-destructive/30">
-                <div className="text-destructive font-mono font-bold">{(liveStats.kcsoShellCount ?? 0).toLocaleString()}</div>
-                <div className="text-muted-foreground">KCSO/Shell</div>
-              </div>
-              <div className="text-center p-2 bg-background/50 rounded border border-warning/30">
-                <div className="text-warning font-mono font-bold">{(liveStats.militaryCount ?? 0).toLocaleString()}</div>
-                <div className="text-muted-foreground">Military</div>
-              </div>
-              <div className="text-center p-2 bg-background/50 rounded border border-secondary/30">
-                <div className="text-secondary font-mono font-bold">{(liveStats.foreignMilitaryCount ?? 0).toLocaleString()}</div>
-                <div className="text-muted-foreground">Foreign Mil</div>
-              </div>
-              <div className="text-center p-2 bg-background/50 rounded">
-                <div className="text-accent font-mono font-bold">{(liveStats.medicalCount ?? 0).toLocaleString()}</div>
-                <div className="text-muted-foreground">Medical</div>
-              </div>
-              <div className="text-center p-2 bg-background/50 rounded border border-primary/30">
-                <div className="text-primary font-mono font-bold">{liveStats.enterpriseEntities ?? 0}</div>
-                <div className="text-muted-foreground">Enterprise</div>
-              </div>
-              <div className="text-center p-2 bg-background/50 rounded">
-                <div className="text-foreground font-mono font-bold">{(liveStats.avgAltitude ?? 0).toLocaleString()} ft</div>
-                <div className="text-muted-foreground">Avg Alt</div>
-              </div>
-            </div>
+              {liveStats.dataFetchedAt && (
+                <div className="text-[10px] text-muted-foreground mt-1 text-right">
+                  Updated: {new Date(liveStats.dataFetchedAt).toLocaleString()} · Auto-refreshes every 5 min
+                </div>
+              )}
+            </>
           ) : (
             <div className="text-xs text-muted-foreground text-center py-2">
               {isLoadingStats ? "Loading live stats..." : "No flight data available"}
@@ -398,15 +467,17 @@ export function LegalAnalysisAI() {
         </div>
 
         {/* Status indicator */}
-        <div className="flex items-center gap-2 mb-3 text-xs">
+        <div className="flex items-center gap-2 mb-3 text-xs flex-wrap">
           <Database className="w-3 h-3 text-primary" />
-          <span className="text-muted-foreground">Connected to NeonDB (270+ tables, 7.5M records)</span>
+          <span className="text-muted-foreground">
+            NeonDB: {liveStats ? `${(liveStats.totalDetections).toLocaleString()} detections · ${(liveStats.uniqueAircraft).toLocaleString()} aircraft · 330+ tables` : "330+ tables, 15M+ records"}
+          </span>
           <span className="text-primary">•</span>
           <Brain className="w-3 h-3 text-secondary" />
           <span className="text-muted-foreground">Gemini 3 Flash Preview</span>
           <span className="text-primary">•</span>
           <Activity className="w-3 h-3 text-success" />
-          <span className="text-success">LIVE</span>
+          <span className="text-success">LIVE · auto-refresh 5m</span>
         </div>
 
         {/* Query input */}

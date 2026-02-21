@@ -383,7 +383,7 @@ export function JosiahAutonomousHypothesis() {
         }
       });
 
-      const maskedAircraft = maskedData?.data || [];
+      const maskedAircraft = Array.isArray(maskedData) ? maskedData : (maskedData?.data || []);
       if (maskedAircraft.length > 0) {
         const maskedHypothesis: Hypothesis = {
           id: `hyp-masked-${Date.now()}`,
@@ -435,7 +435,8 @@ export function JosiahAutonomousHypothesis() {
       });
 
       setScanProgress(50);
-      const gapStats = gapData?.data?.[0] || { phantom_events: 0, correlated_events: 0, total_events: 0 };
+      const gapResults = Array.isArray(gapData) ? gapData : (gapData?.data || []);
+      const gapStats = gapResults[0] || { phantom_events: 0, correlated_events: 0, total_events: 0 };
       const phantomRatio = gapStats.total_events > 0 
         ? (parseInt(gapStats.phantom_events) / parseInt(gapStats.total_events)) * 100 
         : 0;
@@ -483,7 +484,7 @@ export function JosiahAutonomousHypothesis() {
         }
       });
 
-      const convergenceEvents = convergenceData?.data || [];
+      const convergenceEvents = Array.isArray(convergenceData) ? convergenceData : (convergenceData?.data || []);
       if (convergenceEvents.length > 0) {
         const maxConvergence = convergenceEvents[0];
         const fleetHypothesis: Hypothesis = {
@@ -514,15 +515,15 @@ export function JosiahAutonomousHypothesis() {
           query: `
             SELECT 
               entity_name, entity_type, tier, role, 
-              prosecution_priority, estimated_damages_min, estimated_damages_max
+              prosecution_priority
             FROM criminal_enterprise_command_structure
-            ORDER BY tier, prosecution_priority DESC
+            ORDER BY tier ASC
             LIMIT 20
           `
         }
       });
 
-      const enterpriseEntities = ricoData?.data || [];
+      const enterpriseEntities = Array.isArray(ricoData) ? ricoData : (ricoData?.data || []);
       if (enterpriseEntities.length >= 3) {
         const tier1Count = enterpriseEntities.filter((e: Record<string, unknown>) => e.tier === 1).length;
         const ricoHypothesis: Hypothesis = {

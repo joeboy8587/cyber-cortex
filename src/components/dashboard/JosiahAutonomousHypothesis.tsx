@@ -495,9 +495,15 @@ export function JosiahAutonomousHypothesis() {
           evidence_count: convergenceEvents.length,
           status: 'confirmed',
           summary: `${convergenceEvents.length} hours with 4+ aircraft simultaneously detected over target area. Maximum convergence: ${maxConvergence.unique_aircraft} aircraft in single hour. Pattern indicates coordinated multi-asset targeting.`,
-          supporting_evidence: convergenceEvents.slice(0, 5).map((e: Record<string, unknown>) => 
-            `${new Date(e.hour as string).toLocaleDateString()}: ${e.unique_aircraft} aircraft (${((e.aircraft_list as string[]) || []).slice(0, 3).join(', ')}...)`
-          ),
+          supporting_evidence: convergenceEvents.slice(0, 5).map((e: Record<string, unknown>) => {
+            let aircraftStr = '';
+            try {
+              const list = Array.isArray(e.aircraft_list) ? e.aircraft_list : 
+                typeof e.aircraft_list === 'string' ? (e.aircraft_list as string).replace(/[{}]/g, '').split(',').map((s: string) => s.trim()) : [];
+              aircraftStr = list.slice(0, 3).join(', ');
+            } catch { aircraftStr = String(e.aircraft_list || ''); }
+            return `${new Date(e.hour as string).toLocaleDateString()}: ${e.unique_aircraft} aircraft (${aircraftStr}...)`;
+          }),
           contrary_evidence: ['Could be coincidental airspace congestion', 'Training exercises possible'],
           generated_at: new Date().toISOString(),
           last_updated: new Date().toISOString(),

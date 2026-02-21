@@ -187,11 +187,11 @@ export function FlightSaturationAnalyzer() {
                         </div>
                         <div className="bg-muted/50 p-2 rounded">
                           <p className="text-muted-foreground">Baseline Avg</p>
-                          <p className="font-bold text-lg">{anomaly.baseline_avg.toFixed(1)}</p>
+                          <p className="font-bold text-lg">{Number(anomaly.baseline_avg || 0).toFixed(1)}</p>
                         </div>
                         <div className="bg-muted/50 p-2 rounded">
                           <p className="text-muted-foreground">Variance</p>
-                          <p className="font-bold text-lg text-destructive">+{((anomaly.multiplier - 1) * 100).toFixed(0)}%</p>
+                          <p className="font-bold text-lg text-destructive">+{((Number(anomaly.multiplier || 1) - 1) * 100).toFixed(0)}%</p>
                         </div>
                       </div>
                       {anomaly.top_aircraft && anomaly.top_aircraft.length > 0 && (

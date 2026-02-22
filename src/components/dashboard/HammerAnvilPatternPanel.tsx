@@ -151,23 +151,12 @@ export function HammerAnvilPatternPanel() {
   }, []);
 
   const simulateLiveData = () => {
-    setTrackedAircraft(prev => prev.map(aircraft => {
-      const isActive = Math.random() > 0.3;
-      const baseAlt = aircraft.role === "hammer" ? 1200 : 550;
-      const altVariation = (Math.random() - 0.5) * 200;
-      
-      return {
-        ...aircraft,
-        status: isActive ? "active" : "last_seen",
-        altitude: isActive ? Math.round(baseAlt + altVariation) : aircraft.altitude,
-        groundSpeed: isActive ? Math.round(60 + Math.random() * 40) : null,
-        heading: isActive ? Math.round(Math.random() * 360) : null,
-        latitude: isActive ? 35.445 + (Math.random() - 0.5) * 0.02 : aircraft.latitude,
-        longitude: isActive ? -119.020 + (Math.random() - 0.5) * 0.02 : aircraft.longitude,
-        lastUpdate: isActive ? new Date().toISOString() : aircraft.lastUpdate,
-        signalStrength: isActive ? Math.round(70 + Math.random() * 30) : Math.max(0, (aircraft.signalStrength || 50) - 10)
-      };
-    }));
+    // No simulation - mark aircraft as offline when no real data
+    setTrackedAircraft(prev => prev.map(aircraft => ({
+      ...aircraft,
+      status: "offline" as const,
+      signalStrength: 0
+    })));
   };
 
   const updateTrackedAircraft = (results: any[]) => {
@@ -216,74 +205,111 @@ export function HammerAnvilPatternPanel() {
   const fetchPatterns = async () => {
     setLoading(true);
     try {
-      // Fetch N597E and N229AM data from aircraft_registry
-      const { data: registryData, error: registryError } = await supabase
-        .from('aircraft_registry')
-        .select('*')
-        .in('n_number', ['N597E', 'N229AM']);
-
-      if (registryError) throw registryError;
-
-      // Generate simulated coordinated patterns based on registry data
-      const simulatedPatterns: CoordinatedPattern[] = [
-        {
-          id: "pattern-001",
-          timestamp: new Date().toISOString(),
-          hammer_aircraft: "N597E",
-          hammer_altitude: 1225,
-          hammer_position: { lat: 35.445, lng: -119.020 },
-          anvil_aircraft: "N229AM",
-          anvil_altitude: 407,
-          anvil_position: { lat: 35.438, lng: -119.032 },
-          altitude_delta: 818,
-          coordination_score: 94,
-          biometric_spike: true,
-          heart_rate: 114
-        },
-        {
-          id: "pattern-002",
-          timestamp: new Date(Date.now() - 3600000).toISOString(),
-          hammer_aircraft: "N597E",
-          hammer_altitude: 1150,
-          hammer_position: { lat: 35.447, lng: -119.018 },
-          anvil_aircraft: "N229AM",
-          anvil_altitude: 715,
-          anvil_position: { lat: 35.441, lng: -119.025 },
-          altitude_delta: 435,
-          coordination_score: 87,
-          biometric_spike: true,
-          heart_rate: 108
-        },
-        {
-          id: "pattern-003",
-          timestamp: new Date(Date.now() - 7200000).toISOString(),
-          hammer_aircraft: "N597E",
-          hammer_altitude: 1300,
-          hammer_position: { lat: 35.443, lng: -119.022 },
-          anvil_aircraft: "N229AM",
-          anvil_altitude: 520,
-          anvil_position: { lat: 35.435, lng: -119.030 },
-          altitude_delta: 780,
-          coordination_score: 91,
-          biometric_spike: false
+      // Query real coordinated flight events from NeonDB
+      const { data: coordData } = await supabase.functions.invoke('neon-query', {
+        body: {
+          action: 'customQuery',
+          query: `
+            WITH hammer AS (
+              SELECT registration, altitude, latitude, longitude, detection_timestamp, speed
+              FROM live_flight_detections_rows
+              WHERE registration = 'N597E'
+                AND altitude IS NOT NULL AND altitude > 0
+              ORDER BY detection_timestamp DESC
+              LIMIT 50
+            ),
+            anvil AS (
+              SELECT registration, altitude, latitude, longitude, detection_timestamp, speed
+              FROM live_flight_detections_rows
+              WHERE registration = 'N229AM'
+                AND altitude IS NOT NULL AND altitude > 0
+              ORDER BY detection_timestamp DESC
+              LIMIT 50
+            ),
+            paired AS (
+              SELECT 
+                h.registration as hammer_reg,
+                h.altitude as hammer_alt,
+                h.latitude as hammer_lat,
+                h.longitude as hammer_lng,
+                h.detection_timestamp as hammer_time,
+                a.registration as anvil_reg,
+                a.altitude as anvil_alt,
+                a.latitude as anvil_lat,
+                a.longitude as anvil_lng,
+                a.detection_timestamp as anvil_time,
+                ABS(h.altitude - a.altitude) as alt_delta,
+                ABS(EXTRACT(EPOCH FROM (h.detection_timestamp - a.detection_timestamp))) as time_diff_sec
+              FROM hammer h
+              CROSS JOIN anvil a
+              WHERE ABS(EXTRACT(EPOCH FROM (h.detection_timestamp - a.detection_timestamp))) < 1800
+            )
+            SELECT * FROM paired
+            ORDER BY time_diff_sec ASC
+            LIMIT 20
+          `
         }
-      ];
+      });
 
-      setPatterns(simulatedPatterns);
+      // Also get biometric spikes for correlation
+      const { data: bioData } = await supabase.functions.invoke('neon-query', {
+        body: {
+          action: 'customQuery',
+          query: `
+            SELECT heart_rate, hrv, measurement_timestamp
+            FROM biometric_monitoring
+            WHERE heart_rate > 90
+            ORDER BY measurement_timestamp DESC
+            LIMIT 100
+          `
+        }
+      });
+
+      const rawPatterns = Array.isArray(coordData) ? coordData : [];
+      const bioEvents = Array.isArray(bioData) ? bioData : [];
+
+      const realPatterns: CoordinatedPattern[] = rawPatterns.map((row: any, i: number) => {
+        // Check if a biometric spike occurred within 30 min of this pattern
+        const patternTime = new Date(row.hammer_time).getTime();
+        const matchedBio = bioEvents.find((b: any) => {
+          const bioTime = new Date(b.measurement_timestamp).getTime();
+          return Math.abs(bioTime - patternTime) < 30 * 60 * 1000;
+        });
+
+        return {
+          id: `pattern-${i}`,
+          timestamp: row.hammer_time,
+          hammer_aircraft: row.hammer_reg || 'N597E',
+          hammer_altitude: Number(row.hammer_alt) || 0,
+          hammer_position: { lat: Number(row.hammer_lat) || 35.445, lng: Number(row.hammer_lng) || -119.020 },
+          anvil_aircraft: row.anvil_reg || 'N229AM',
+          anvil_altitude: Number(row.anvil_alt) || 0,
+          anvil_position: { lat: Number(row.anvil_lat) || 35.438, lng: Number(row.anvil_lng) || -119.032 },
+          altitude_delta: Number(row.alt_delta) || 0,
+          coordination_score: Math.max(50, Math.round(100 - Number(row.time_diff_sec) / 18)),
+          biometric_spike: !!matchedBio,
+          heart_rate: matchedBio ? Number(matchedBio.heart_rate) : undefined
+        };
+      });
+
+      setPatterns(realPatterns);
       
-      // Calculate stats
-      const biometricCorrelated = simulatedPatterns.filter(p => p.biometric_spike).length;
-      const avgDelta = simulatedPatterns.reduce((sum, p) => sum + p.altitude_delta, 0) / simulatedPatterns.length;
-      const peakScore = Math.max(...simulatedPatterns.map(p => p.coordination_score));
+      const biometricCorrelated = realPatterns.filter(p => p.biometric_spike).length;
+      const avgDelta = realPatterns.length > 0 
+        ? realPatterns.reduce((sum, p) => sum + p.altitude_delta, 0) / realPatterns.length 
+        : 0;
+      const peakScore = realPatterns.length > 0 
+        ? Math.max(...realPatterns.map(p => p.coordination_score)) 
+        : 0;
 
       setStats({
-        totalPatterns: simulatedPatterns.length,
+        totalPatterns: realPatterns.length,
         biometricCorrelated,
         avgAltitudeDelta: Math.round(avgDelta),
         peakCoordinationScore: peakScore
       });
 
-      toast.success("Hammer-Anvil patterns analyzed");
+      toast.success(`Hammer-Anvil: ${realPatterns.length} real patterns from NeonDB`);
     } catch (error) {
       console.error("Error fetching patterns:", error);
       toast.error("Failed to fetch pattern data");

@@ -127,8 +127,9 @@ export function MilitaryAircraftPanel() {
           }
         });
 
-        const militaryEvents = militaryData?.data || [];
-        const totalEvents = parseInt(totalCount?.data?.[0]?.count || "0");
+        const militaryEvents = Array.isArray(militaryData) ? militaryData : (militaryData?.data || []);
+        const totalCountArr = Array.isArray(totalCount) ? totalCount : (totalCount?.data || []);
+        const totalEvents = parseInt(totalCountArr[0]?.count || "0");
 
         // Assign agencies to registrations
         const topMilitaryAircraft: MilitaryEvent[] = militaryEvents.slice(0, 15).map((event: { registration: string; callsign: string; detection_count: string; avg_altitude: string }) => {
@@ -143,18 +144,17 @@ export function MilitaryAircraftPanel() {
         });
 
         setStats({
-          totalMilitaryEvents: totalEvents || 4339, // Fallback from user's data
-          uniqueRegistrations: militaryEvents.length || 25,
+          totalMilitaryEvents: totalEvents,
+          uniqueRegistrations: militaryEvents.length,
           agenciesIdentified: ["USAF", "US Navy", "Point Mugu Naval Base", "DOD Contractors", "US Coast Guard"],
           topMilitaryAircraft
         });
       } catch (error) {
         console.error("Failed to fetch military data:", error);
-        // Use user's provided data as fallback
         setStats({
-          totalMilitaryEvents: 4339,
-          uniqueRegistrations: 25,
-          agenciesIdentified: ["USAF", "US Navy", "Point Mugu Naval Base", "DOD Contractors", "US Coast Guard"],
+          totalMilitaryEvents: 0,
+          uniqueRegistrations: 0,
+          agenciesIdentified: [],
           topMilitaryAircraft: []
         });
       } finally {

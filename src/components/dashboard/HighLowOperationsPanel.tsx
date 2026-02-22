@@ -81,52 +81,47 @@ export const HighLowOperationsPanel = () => {
 
       if (error) throw error;
 
-      const rawData = data?.data || [];
+      const rawData = Array.isArray(data) ? data : (data?.data || []);
       
-      // Enrich with simulated biometric correlations
-      // In production, this would join with biometric_monitoring table
-      const processed: HighLowOperation[] = rawData.map((row: Record<string, unknown>, idx: number) => ({
-        timestamp: (row.timestamp as string) || '',
-        high_aircraft: (row.high_aircraft as string) || 'Unknown',
-        high_altitude: parseFloat(row.high_altitude as string) || 0,
-        low_aircraft: (row.low_aircraft as string) || 'Unknown',
-        low_altitude: parseFloat(row.low_altitude as string) || 0,
-        altitude_delta: parseFloat(row.altitude_delta as string) || 0,
-        biometric_spike: Math.random() > 0.4, // Simulated - 60% correlation
-        heart_rate: 80 + Math.floor(Math.random() * 40), // 80-120 bpm simulated
-        hrv: 30 + Math.floor(Math.random() * 40), // 30-70ms simulated
-        location: `${parseFloat(row.latitude as string || '35.45').toFixed(2)}°N, ${Math.abs(parseFloat(row.longitude as string || '-119.05')).toFixed(2)}°W`
-      }));
-
-      // Add known operations from Dec 23 report
-      const knownOps: HighLowOperation[] = [
-        {
-          timestamp: '2024-12-23T19:28:00Z',
-          high_aircraft: 'US Navy E-2D Hawkeye',
-          high_altitude: 25000,
-          low_aircraft: 'N912KC',
-          low_altitude: 1200,
-          altitude_delta: 23800,
-          biometric_spike: true,
-          heart_rate: 112,
-          hrv: 57,
-          location: '35.45°N, 119.02°W'
-        },
-        {
-          timestamp: '2024-12-24T14:00:00Z',
-          high_aircraft: 'CFVWA',
-          high_altitude: 18500,
-          low_aircraft: 'N9963H',
-          low_altitude: 1800,
-          altitude_delta: 16700,
-          biometric_spike: true,
-          heart_rate: 103,
-          hrv: 43,
-          location: '35.48°N, 119.05°W'
+      // Fetch real biometric data to correlate
+      const { data: bioData } = await supabase.functions.invoke('neon-query', {
+        body: {
+          action: 'customQuery',
+          query: `
+            SELECT heart_rate, hrv, measurement_timestamp
+            FROM biometric_monitoring
+            WHERE heart_rate > 80
+            ORDER BY measurement_timestamp DESC
+            LIMIT 200
+          `
         }
-      ];
+      });
+      const bioEvents = Array.isArray(bioData) ? bioData : [];
 
-      const allOps = [...knownOps, ...processed];
+      const processed: HighLowOperation[] = rawData.map((row: Record<string, unknown>) => {
+        const ts = (row.timestamp as string) || '';
+        const opTime = new Date(ts).getTime();
+        // Find real biometric correlation within 30 min
+        const matchedBio = bioEvents.find((b: any) => {
+          const bioTime = new Date(b.measurement_timestamp).getTime();
+          return Math.abs(bioTime - opTime) < 30 * 60 * 1000;
+        });
+
+        return {
+          timestamp: ts,
+          high_aircraft: (row.high_aircraft as string) || 'Unknown',
+          high_altitude: parseFloat(row.high_altitude as string) || 0,
+          low_aircraft: (row.low_aircraft as string) || 'Unknown',
+          low_altitude: parseFloat(row.low_altitude as string) || 0,
+          altitude_delta: parseFloat(row.altitude_delta as string) || 0,
+          biometric_spike: !!matchedBio,
+          heart_rate: matchedBio ? Number(matchedBio.heart_rate) : 0,
+          hrv: matchedBio ? Number(matchedBio.hrv) : 0,
+          location: `${parseFloat(row.latitude as string || '35.45').toFixed(2)}°N, ${Math.abs(parseFloat(row.longitude as string || '-119.05')).toFixed(2)}°W`
+        };
+      });
+
+      const allOps = processed;
       setOperations(allOps);
 
       // Calculate stats

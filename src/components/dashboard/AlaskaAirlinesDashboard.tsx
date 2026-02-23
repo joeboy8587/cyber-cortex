@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { supabase } from '@/integrations/supabase/client';
+import { extractNeonData } from '@/lib/formatters';
 import { 
   Plane, RefreshCw, Target, Clock, MapPin, 
   AlertTriangle, Eye, Calendar, TrendingUp, ArrowUpDown
@@ -98,7 +99,7 @@ export const AlaskaAirlinesDashboard = () => {
 
       if (error) throw error;
 
-      const rawData = data?.data || [];
+      const rawData = extractNeonData(data);
       
       // Process flights
       const processed: AlaskaFlight[] = rawData.map((row: Record<string, unknown>) => {
@@ -134,7 +135,7 @@ export const AlaskaAirlinesDashboard = () => {
         }
       });
 
-      const temporalRaw = temporalData?.data || [];
+      const temporalRaw = extractNeonData(temporalData);
       const totalTemporal = temporalRaw.reduce((sum: number, r: { count: string }) => 
         sum + parseInt(r.count || '0'), 0);
       

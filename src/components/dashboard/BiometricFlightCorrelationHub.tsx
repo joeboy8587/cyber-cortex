@@ -9,6 +9,7 @@ import {
   AlertTriangle, Clock, Activity, Stethoscope
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { extractNeonData, safeNumber } from '@/lib/formatters';
 
 interface BiometricCorrelation {
   id: string;
@@ -94,8 +95,9 @@ export function BiometricFlightCorrelationHub() {
       console.log('Biometric Correlation Results:', { correlationResult, ecgResult, statsResult });
 
       // Process correlations - map from confirmed_biometric_correlations_rows_1 schema
-      if (correlationResult.data && Array.isArray(correlationResult.data)) {
-        setCorrelations(correlationResult.data.map((c: any) => {
+      const corrRows = extractNeonData(correlationResult.data);
+      if (corrRows.length > 0) {
+        setCorrelations(corrRows.map((c: any) => {
           const score = parseFloat(c.correlation_score) || 0;
           let strength: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' = 'MEDIUM';
           if (score >= 90 || c.threat_level === 'critical') strength = 'CRITICAL';
@@ -119,8 +121,9 @@ export function BiometricFlightCorrelationHub() {
       }
 
       // Process ECGs
-      if (ecgResult.data && Array.isArray(ecgResult.data)) {
-        setVerifiedECGs(ecgResult.data.map((e: any) => ({
+      const ecgRows = extractNeonData(ecgResult.data);
+      if (ecgRows.length > 0) {
+        setVerifiedECGs(ecgRows.map((e: any) => ({
           id: e.id || String(Math.random()),
           verification_date: e.verification_date || e.created_at || 'Unknown',
           physician_name: e.physician_name || e.physician || 'Dr. Verified',
@@ -131,10 +134,11 @@ export function BiometricFlightCorrelationHub() {
       }
 
       // Process stats
-      if (statsResult.data && Array.isArray(statsResult.data) && statsResult.data[0]) {
-        const s = statsResult.data[0];
+      const statsRows = extractNeonData(statsResult.data);
+      if (statsRows.length > 0 && statsRows[0]) {
+        const s = statsRows[0];
         setStats({
-          totalCorrelations: parseInt(s.total) || correlationResult.data?.length || 0,
+          totalCorrelations: parseInt(s.total) || corrRows.length || 0,
           criticalCount: parseInt(s.critical_count) || 0,
           highCount: parseInt(s.high_count) || 0,
           avgBradfordHill: parseFloat(s.avg_bh) || 0,
@@ -142,13 +146,12 @@ export function BiometricFlightCorrelationHub() {
         });
       } else {
         // Fallback stats from loaded data
-        const loadedCorrs = correlationResult.data || [];
         setStats({
-          totalCorrelations: loadedCorrs.length,
-          criticalCount: loadedCorrs.filter((c: any) => parseFloat(c.correlation_score) >= 90).length,
-          highCount: loadedCorrs.filter((c: any) => parseFloat(c.correlation_score) >= 70 && parseFloat(c.correlation_score) < 90).length,
-          avgBradfordHill: loadedCorrs.reduce((acc: number, c: any) => acc + (parseFloat(c.correlation_score) || 0), 0) / Math.max(loadedCorrs.length, 1) / 10,
-          verifiedECGCount: ecgResult.data?.length || 0
+          totalCorrelations: corrRows.length,
+          criticalCount: corrRows.filter((c: any) => parseFloat(c.correlation_score) >= 90).length,
+          highCount: corrRows.filter((c: any) => parseFloat(c.correlation_score) >= 70 && parseFloat(c.correlation_score) < 90).length,
+          avgBradfordHill: corrRows.reduce((acc: number, c: any) => acc + (parseFloat(c.correlation_score) || 0), 0) / Math.max(corrRows.length, 1) / 10,
+          verifiedECGCount: ecgRows.length
         });
       }
 
@@ -224,7 +227,7 @@ export function BiometricFlightCorrelationHub() {
                 <p className="text-[10px] text-muted-foreground">High</p>
               </div>
               <div className="p-2 bg-blue-500/10 rounded-lg border border-blue-500/30 text-center">
-                <p className="text-xl font-bold text-blue-400">{stats.avgBradfordHill.toFixed(2)}</p>
+                <p className="text-xl font-bold text-blue-400">{safeNumber(stats.avgBradfordHill).toFixed(2)}</p>
                 <p className="text-[10px] text-muted-foreground">Avg B-H Score</p>
               </div>
               <div className="p-2 bg-green-500/10 rounded-lg border border-green-500/30 text-center">
@@ -233,7 +236,7 @@ export function BiometricFlightCorrelationHub() {
               </div>
               <div className="p-2 bg-purple-500/10 rounded-lg border border-purple-500/30 text-center">
                 <p className="text-xl font-bold text-purple-400">
-                  {((stats.criticalCount + stats.highCount) / Math.max(stats.totalCorrelations, 1) * 100).toFixed(0)}%
+                  {safeNumber((stats.criticalCount + stats.highCount) / Math.max(stats.totalCorrelations, 1) * 100).toFixed(0)}%
                 </p>
                 <p className="text-[10px] text-muted-foreground">High Priority</p>
               </div>
@@ -303,14 +306,14 @@ export function BiometricFlightCorrelationHub() {
                         </div>
                         <div className="flex items-center gap-1">
                           <Activity className="w-3 h-3 text-orange-400" />
-                          <span>Stress: {corr.stress_index.toFixed(1)}</span>
+                          <span>Stress: {safeNumber(corr.stress_index).toFixed(1)}</span>
                         </div>
                         <div className="flex items-center gap-1">
                           <TrendingUp className="w-3 h-3 text-blue-400" />
-                          <span>B-H: {corr.bradford_hill_score.toFixed(2)}</span>
+                          <span>B-H: {safeNumber(corr.bradford_hill_score).toFixed(2)}</span>
                         </div>
                         <div className="flex items-center gap-1">
-                          <span>{corr.altitude_at_detection.toLocaleString()}ft</span>
+                          <span>{safeNumber(corr.altitude_at_detection).toLocaleString()}ft</span>
                         </div>
                       </div>
 
@@ -318,7 +321,7 @@ export function BiometricFlightCorrelationHub() {
                       <div className="mt-2">
                         <div className="flex justify-between text-[10px] text-muted-foreground mb-1">
                           <span>Bradford-Hill Causation</span>
-                          <span>{(corr.bradford_hill_score * 10).toFixed(0)}%</span>
+                          <span>{safeNumber(corr.bradford_hill_score * 10).toFixed(0)}%</span>
                         </div>
                         <Progress 
                           value={corr.bradford_hill_score * 10} 

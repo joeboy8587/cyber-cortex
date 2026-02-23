@@ -273,112 +273,114 @@ export function useNeonDatabase() {
     return queryDatabase('getDataSourceStatus');
   }, [queryDatabase]);
 
-  // Get top tables by record count for threat matrix (uses actual existing tables)
+  // Get real threat data from sentinel tables
   const getThreatMatrix = useCallback(async (): Promise<ThreatData[]> => {
     try {
-      const tables = await getTables();
+      const data = await customQuery(`
+        SELECT registration, threat_type, total_violations, avg_altitude, escalation_level
+        FROM sentinel_learned_threats_rows
+        ORDER BY escalation_level DESC, total_violations DESC
+        LIMIT 10
+      `);
       
-      if (!tables || tables.length === 0) {
-        return [];
-      }
+      if (!data || (Array.isArray(data) && data.length === 0)) return [];
+      const rows = Array.isArray(data) ? data : [];
 
-      return tables.slice(0, 10).map((table: TableInfo, i: number) => {
-        const rowCount = Number(table.row_count) || 0;
+      return rows.map((row: any, i: number) => {
+        const violations = Number(row.total_violations) || 0;
+        const escalation = Number(row.escalation_level) || 1;
         return {
-          id: `TBL-${String(i + 1).padStart(3, '0')}`,
-          name: table.tablename,
-          level: (rowCount > 50000 ? 'critical' : rowCount > 10000 ? 'high' : rowCount > 1000 ? 'medium' : 'low') as ThreatData['level'],
-          detections: rowCount,
-          avgAltitude: 'N/A',
-          violations: Math.floor(rowCount * 0.1),
-          enrichment: `${Math.max(1, Math.floor(rowCount / 1000))}×`,
+          id: row.registration || `THREAT-${i}`,
+          name: row.threat_type || 'Unknown',
+          level: (escalation >= 4 ? 'critical' : escalation >= 3 ? 'high' : escalation >= 2 ? 'medium' : 'low') as ThreatData['level'],
+          detections: violations,
+          avgAltitude: row.avg_altitude ? `${Number(row.avg_altitude).toFixed(0)}ft` : 'N/A',
+          violations,
+          enrichment: `L${escalation}`,
         };
       });
     } catch {
       return [];
     }
-  }, [getTables]);
+  }, [customQuery]);
 
-  // Get data stream record counts from actual tables
+  // Get data stream record counts from specific evidence tables
   const getDataStreamCounts = useCallback(async (): Promise<DataStreamInfo[]> => {
     try {
-      const tables = await getTables();
-      
-      if (!tables || tables.length === 0) {
-        return [];
-      }
+      const data = await customQuery(`
+        SELECT 
+          'Flight Tracking' as name, 'live_flight_detections_rows' as table_name,
+          (SELECT COUNT(*)::int FROM live_flight_detections_rows) as records
+        UNION ALL SELECT 'Biometric Data', 'biometric_monitoring',
+          (SELECT COUNT(*)::int FROM biometric_monitoring)
+        UNION ALL SELECT 'Evidence Registry', 'master_unified_evidence',
+          (SELECT COUNT(*)::int FROM master_unified_evidence)
+        UNION ALL SELECT 'Radar & Visual', 'radar_screenshot_analysis',
+          (SELECT COUNT(*)::int FROM radar_screenshot_analysis)
+        UNION ALL SELECT 'Violations', 'ada_violation_evidence_rows',
+          (SELECT COUNT(*)::int FROM ada_violation_evidence_rows)
+      `);
 
-      const streamPatterns = [
-        { pattern: /flight|adsb|aircraft|plane/i, name: 'Aircraft Tracking', description: 'Flight data streams' },
-        { pattern: /bio|heart|hrv|stress|medical/i, name: 'Biometric Data', description: 'Medical-grade monitoring' },
-        { pattern: /radar|screen|visual/i, name: 'Radar & Visual', description: 'Visual documentation' },
-        { pattern: /viola|ada|legal/i, name: 'Violations', description: 'Legal evidence' },
-        { pattern: /evid|file|hash|doc/i, name: 'Evidence Registry', description: 'Hash-verified files' },
-      ];
+      if (!data || (Array.isArray(data) && data.length === 0)) return [];
+      const rows = Array.isArray(data) ? data : [];
 
-      const results: DataStreamInfo[] = [];
-      const usedTables = new Set<string>();
-
-      for (const stream of streamPatterns) {
-        const matchingTables = tables.filter(t => stream.pattern.test(t.tablename) && !usedTables.has(t.tablename));
-        const totalRecords = matchingTables.reduce((sum, t) => sum + (Number(t.row_count) || 0), 0);
-        
-        if (matchingTables.length > 0) {
-          matchingTables.forEach(t => usedTables.add(t.tablename));
-          results.push({
-            name: stream.name,
-            tableName: matchingTables.map(t => t.tablename).join(', '),
-            records: totalRecords,
-            description: `${stream.description} (${matchingTables.length} tables)`,
-          });
-        }
-      }
-
-      const remaining = tables.filter(t => !usedTables.has(t.tablename));
-      if (remaining.length > 0) {
-        results.push({
-          name: 'Other Data',
-          tableName: `${remaining.length} tables`,
-          records: remaining.reduce((sum, t) => sum + (Number(t.row_count) || 0), 0),
-          description: 'Additional data sources',
-        });
-      }
-
-      return results;
+      return rows.map((row: any) => ({
+        name: row.name,
+        tableName: row.table_name,
+        records: Number(row.records) || 0,
+        description: `${row.table_name} data source`,
+      }));
     } catch {
       return [];
     }
-  }, [getTables]);
+  }, [customQuery]);
 
-  // Get recent events for timeline
+  // Get real recent events from event log tables
   const getRecentEvents = useCallback(async (): Promise<TimelineEvent[]> => {
     try {
-      const tables = await getTables();
+      let data = await customQuery(`
+        SELECT event_timestamp, event_type, summary, confidence_score
+        FROM unified_timeline_enhanced
+        ORDER BY event_timestamp DESC
+        LIMIT 10
+      `).catch(() => []);
+
+      let rows = Array.isArray(data) ? data : [];
       
-      if (!tables || tables.length === 0) {
-        return [];
+      if (rows.length === 0) {
+        data = await customQuery(`
+          SELECT created_at as event_timestamp, event_type, event_summary as summary, confidence as confidence_score
+          FROM josiah_event_log
+          ORDER BY created_at DESC
+          LIMIT 10
+        `).catch(() => []);
+        rows = Array.isArray(data) ? data : [];
       }
 
       const types: TimelineEvent['type'][] = ['aircraft', 'biometric', 'evidence', 'acoustic'];
-      const now = new Date();
       
-      return tables.slice(0, 10).map((table: TableInfo, i: number) => {
-        const rowCount = Number(table.row_count) || 0;
-        const eventDate = new Date(now.getTime() - i * 3600000);
-        
+      return rows.map((row: any, i: number) => {
+        const eventType = String(row.event_type || '').toLowerCase();
+        let type: TimelineEvent['type'] = types[i % types.length];
+        if (eventType.includes('flight') || eventType.includes('aircraft')) type = 'aircraft';
+        else if (eventType.includes('bio') || eventType.includes('health')) type = 'biometric';
+        else if (eventType.includes('evidence') || eventType.includes('legal')) type = 'evidence';
+
+        const score = Number(row.confidence_score) || 0;
+
         return {
           id: i + 1,
-          timestamp: eventDate.toISOString(),
-          type: types[i % types.length],
-          title: table.tablename.replace(/_/g, ' ').toUpperCase(),
-          description: `${rowCount.toLocaleString()} records in ${table.schemaname}.${table.tablename}`,
-          severity: (rowCount > 50000 ? 'critical' : rowCount > 10000 ? 'high' : rowCount > 1000 ? 'medium' : 'low') as TimelineEvent['severity'],
+          timestamp: row.event_timestamp || '',
+          type,
+          title: row.summary || row.event_type || 'Event',
+          description: row.event_type || type,
+          severity: (score >= 80 ? 'critical' : score >= 60 ? 'high' : score >= 30 ? 'medium' : 'low') as TimelineEvent['severity'],
         };
       });
     } catch {
       return [];
     }
-  }, [getTables]);
+  }, [customQuery]);
 
   return {
     isLoading,

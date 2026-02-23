@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { extractNeonData, safeNumber } from '@/lib/formatters';
 
 interface NarrativeSection {
   title: string;
@@ -243,24 +244,24 @@ export const LegalNarrativeGenerator: React.FC = () => {
         }
       });
 
-      const stats = statsData?.rows?.[0] || {};
-      const shellCompanies = shellData?.rows || [];
-      const kcsoAircraft = kcsoData?.rows || [];
-      const medicalAircraft = medicalData?.rows || [];
+      const stats = extractNeonData(statsData)[0] || {};
+      const shellCompanies = extractNeonData(shellData);
+      const kcsoAircraft = extractNeonData(kcsoData);
+      const medicalAircraft = extractNeonData(medicalData);
 
       const databaseContext = `
 DATABASE EVIDENCE SUMMARY (2.2 Million Records):
-- Flight Detections: ${stats.flight_count?.toLocaleString() || 'N/A'} records
-- Biometric Monitoring: ${stats.biometric_count?.toLocaleString() || 'N/A'} records
-- Josiah AI Witness Logs: ${stats.josiah_count?.toLocaleString() || 'N/A'} records
-- Criminal Enterprise Entities: ${stats.enterprise_count || 'N/A'} identified
-- Physician-Verified ECGs: ${stats.ecg_count || 'N/A'} (Sinus Tachycardia documented)
+- Flight Detections: ${safeNumber(stats.flight_count).toLocaleString()} records
+- Biometric Monitoring: ${safeNumber(stats.biometric_count).toLocaleString()} records
+- Josiah AI Witness Logs: ${safeNumber(stats.josiah_count).toLocaleString()} records
+- Criminal Enterprise Entities: ${safeNumber(stats.enterprise_count)} identified
+- Physician-Verified ECGs: ${safeNumber(stats.ecg_count)} (Sinus Tachycardia documented)
 
 SHELL COMPANY EVIDENCE:
 ${shellCompanies.map((s: any) => `- ${s.company_name}: Aircraft ${s.aircraft_list || 'N/A'}, Risk Level: ${s.risk_level}`).join('\n')}
 
 KCSO PRIMARY AIRCRAFT:
-${kcsoAircraft.map((k: any) => `- ${k.registration}: ${k.detections} detections, avg altitude ${Math.round(k.avg_altitude || 0)} ft`).join('\n')}
+${kcsoAircraft.map((k: any) => `- ${k.registration}: ${k.detections} detections, avg altitude ${Math.round(safeNumber(k.avg_altitude))} ft`).join('\n')}
 
 MEDICAL AVIATION ASSETS (Potential False Claims):
 ${medicalAircraft.map((m: any) => `- ${m.registration}: ${m.detections} detections`).join('\n')}

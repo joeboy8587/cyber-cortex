@@ -1,15 +1,16 @@
 import { useEffect, useState } from "react";
 import { CyberPanel } from "@/components/ui/cyber-panel";
 import { Layers, CheckCircle2, Database, Radio, FileImage, Stethoscope, Scale, RefreshCw, XCircle } from "lucide-react";
-import { useNeonDatabase, TableInfo } from "@/hooks/useNeonDatabase";
+import { useNeonDatabase } from "@/hooks/useNeonDatabase";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { LucideIcon } from "lucide-react";
+import { extractNeonData, safeNumber } from "@/lib/formatters";
 
 interface StreamConfig {
   name: string;
   icon: LucideIcon;
-  patterns: string[];
+  query: string;
   description: string;
 }
 
@@ -17,31 +18,31 @@ const streamConfigs: StreamConfig[] = [
   {
     name: "ADS-B Flight Tracking",
     icon: Radio,
-    patterns: ['adsb', 'flight', 'aircraft', 'plane'],
+    query: "SELECT COUNT(*)::int as cnt, MAX(detection_timestamp) as last_update FROM live_flight_detections_rows",
     description: "Automated aircraft positions",
   },
   {
     name: "Biometric Monitoring",
     icon: Stethoscope,
-    patterns: ['biometric', 'hrv', 'health', 'stress'],
+    query: "SELECT COUNT(*)::int as cnt, MAX(created_at) as last_update FROM biometric_monitoring",
     description: "Medical-grade HRV/stress data",
   },
   {
     name: "Radar Screenshots",
     icon: FileImage,
-    patterns: ['radar', 'screenshot', 'image'],
+    query: "SELECT COUNT(*)::int as cnt, MAX(analyzed_at) as last_update FROM radar_screenshot_analysis",
     description: "Visual documentation",
   },
   {
     name: "Violations Registry",
     icon: Scale,
-    patterns: ['violation', 'ada', 'complaint'],
+    query: "SELECT COUNT(*)::int as cnt, MAX(created_at) as last_update FROM ada_violation_evidence_rows",
     description: "Documented violations",
   },
   {
     name: "Evidence Registry",
     icon: Database,
-    patterns: ['evidence', 'forensic', 'file'],
+    query: "SELECT COUNT(*)::int as cnt, MAX(created_at) as last_update FROM master_unified_evidence",
     description: "Hash-verified files",
   },
 ];
@@ -52,11 +53,11 @@ interface DataStreamDisplay {
   records: number;
   status: 'active' | 'inactive';
   description: string;
-  tables: string[];
+  lastUpdate: string | null;
 }
 
 export function DataStreams() {
-  const { getTables, isLoading } = useNeonDatabase();
+  const { customQuery, isLoading } = useNeonDatabase();
   const [streams, setStreams] = useState<DataStreamDisplay[]>([]);
   const [loading, setLoading] = useState(true);
   const [totalRecords, setTotalRecords] = useState(0);
@@ -64,46 +65,36 @@ export function DataStreams() {
   const fetchStreams = async () => {
     setLoading(true);
     try {
-      const tables = await getTables();
-      
-      // Group tables by stream patterns
-      const streamData: DataStreamDisplay[] = streamConfigs.map(config => {
-        const matchingTables = tables.filter((t: TableInfo) => 
-          config.patterns.some(pattern => 
-            t.tablename.toLowerCase().includes(pattern)
-          )
-        );
-        
-        const totalCount = matchingTables.reduce((sum: number, t: TableInfo) => sum + (t.row_count || 0), 0);
-        
-        return {
-          name: config.name,
-          icon: config.icon,
-          records: totalCount,
-          status: (matchingTables.length > 0 ? 'active' : 'inactive') as 'active' | 'inactive',
-          description: config.description,
-          tables: matchingTables.map((t: TableInfo) => t.tablename),
-        };
-      });
+      const results = await Promise.all(
+        streamConfigs.map(async (config) => {
+          try {
+            const data = await customQuery(config.query);
+            const rows = extractNeonData(data);
+            const row = rows[0] || {};
+            const cnt = safeNumber(row.cnt);
+            return {
+              name: config.name,
+              icon: config.icon,
+              records: cnt,
+              status: (cnt > 0 ? 'active' : 'inactive') as 'active' | 'inactive',
+              description: config.description,
+              lastUpdate: row.last_update || null,
+            };
+          } catch {
+            return {
+              name: config.name,
+              icon: config.icon,
+              records: 0,
+              status: 'inactive' as const,
+              description: config.description,
+              lastUpdate: null,
+            };
+          }
+        })
+      );
 
-      // Add "Other Tables" stream for unmatched tables
-      const matchedTables = new Set(streamData.flatMap(s => s.tables));
-      const otherTables = tables.filter((t: TableInfo) => !matchedTables.has(t.tablename));
-      const otherRecords = otherTables.reduce((sum: number, t: TableInfo) => sum + (t.row_count || 0), 0);
-      
-      if (otherTables.length > 0) {
-        streamData.push({
-          name: `Other Data (${otherTables.length} tables)`,
-          icon: Database,
-          records: otherRecords,
-          status: 'active',
-          description: 'Additional data sources',
-          tables: otherTables.map((t: TableInfo) => t.tablename),
-        });
-      }
-
-      setStreams(streamData);
-      setTotalRecords(tables.reduce((sum: number, t: TableInfo) => sum + (t.row_count || 0), 0));
+      setStreams(results);
+      setTotalRecords(results.reduce((sum, s) => sum + s.records, 0));
     } catch (err) {
       console.error('Failed to fetch streams:', err);
     } finally {
@@ -113,6 +104,8 @@ export function DataStreams() {
 
   useEffect(() => {
     fetchStreams();
+    const interval = setInterval(fetchStreams, 5 * 60 * 1000);
+    return () => clearInterval(interval);
   }, []);
 
   return (
@@ -120,13 +113,7 @@ export function DataStreams() {
       title="Live Data Streams"
       icon={<Layers className="w-4 h-4" />}
       headerActions={
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6"
-          onClick={fetchStreams}
-          disabled={isLoading || loading}
-        >
+        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={fetchStreams} disabled={isLoading || loading}>
           <RefreshCw className={cn("w-3 h-3", (isLoading || loading) && "animate-spin")} />
         </Button>
       }
@@ -150,25 +137,17 @@ export function DataStreams() {
                   key={stream.name}
                   className={cn(
                     "flex items-center gap-3 p-3 rounded border transition-colors",
-                    stream.status === 'active' 
-                      ? "bg-muted/20 border-border hover:border-primary/50" 
+                    stream.status === 'active'
+                      ? "bg-muted/20 border-border hover:border-primary/50"
                       : "bg-muted/5 border-border/50 opacity-60"
                   )}
                 >
-                  <div className={cn(
-                    "p-2 rounded",
-                    stream.status === 'active' ? "bg-primary/10" : "bg-muted/20"
-                  )}>
-                    <Icon className={cn(
-                      "w-5 h-5",
-                      stream.status === 'active' ? "text-primary" : "text-muted-foreground"
-                    )} />
+                  <div className={cn("p-2 rounded", stream.status === 'active' ? "bg-primary/10" : "bg-muted/20")}>
+                    <Icon className={cn("w-5 h-5", stream.status === 'active' ? "text-primary" : "text-muted-foreground")} />
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="font-ui text-sm font-semibold truncate">
-                        {stream.name}
-                      </span>
+                      <span className="font-ui text-sm font-semibold truncate">{stream.name}</span>
                       {stream.status === 'active' ? (
                         <CheckCircle2 className="w-3 h-3 text-success shrink-0" />
                       ) : (
@@ -177,19 +156,14 @@ export function DataStreams() {
                     </div>
                     <p className="text-xs text-muted-foreground truncate">
                       {stream.description}
-                      {stream.tables.length > 0 && ` (${stream.tables.length} tables)`}
+                      {stream.lastUpdate && ` • Updated ${new Date(stream.lastUpdate).toLocaleDateString()}`}
                     </p>
                   </div>
                   <div className="text-right shrink-0">
-                    <p className={cn(
-                      "font-mono text-sm",
-                      stream.records > 0 ? "text-primary" : "text-muted-foreground"
-                    )}>
+                    <p className={cn("font-mono text-sm", stream.records > 0 ? "text-primary" : "text-muted-foreground")}>
                       {stream.records.toLocaleString()}
                     </p>
-                    <p className="text-xs text-muted-foreground">
-                      records
-                    </p>
+                    <p className="text-xs text-muted-foreground">records</p>
                   </div>
                 </div>
               );

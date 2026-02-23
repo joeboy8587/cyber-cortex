@@ -2,89 +2,81 @@ import { useEffect, useState } from "react";
 import { CyberPanel } from "@/components/ui/cyber-panel";
 import { Crosshair, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useNeonDatabase, ThreatData } from "@/hooks/useNeonDatabase";
+import { useNeonDatabase } from "@/hooks/useNeonDatabase";
 import { Button } from "@/components/ui/button";
+import { extractNeonData, safeNumber } from "@/lib/formatters";
+
+interface RealThreat {
+  registration: string;
+  threat_type: string;
+  total_violations: number;
+  avg_altitude: number | null;
+  escalation_level: number;
+  last_seen: string;
+}
 
 const levelStyles = {
-  critical: {
-    bg: "bg-destructive/10",
-    border: "border-destructive",
-    text: "text-destructive",
-    dot: "bg-destructive",
-  },
-  high: {
-    bg: "bg-warning/10",
-    border: "border-warning",
-    text: "text-warning",
-    dot: "bg-warning",
-  },
-  medium: {
-    bg: "bg-accent/10",
-    border: "border-accent",
-    text: "text-accent",
-    dot: "bg-accent",
-  },
-  low: {
-    bg: "bg-success/10",
-    border: "border-success",
-    text: "text-success",
-    dot: "bg-success",
-  },
+  critical: { bg: "bg-destructive/10", border: "border-destructive", text: "text-destructive", dot: "bg-destructive" },
+  high: { bg: "bg-warning/10", border: "border-warning", text: "text-warning", dot: "bg-warning" },
+  medium: { bg: "bg-accent/10", border: "border-accent", text: "text-accent", dot: "bg-accent" },
+  low: { bg: "bg-success/10", border: "border-success", text: "text-success", dot: "bg-success" },
 };
 
-export function ThreatMatrix() {
-  const { getThreatMatrix, customQuery, isLoading } = useNeonDatabase();
-  const [threatData, setThreatData] = useState<ThreatData[]>([]);
-  const [loadingData, setLoadingData] = useState(true);
+function getLevel(escalation: number): keyof typeof levelStyles {
+  if (escalation >= 4) return 'critical';
+  if (escalation >= 3) return 'high';
+  if (escalation >= 2) return 'medium';
+  return 'low';
+}
 
-  // Helper to extract array from nested response
-  const extractArray = (response: any): any[] => {
-    if (!response) return [];
-    if (Array.isArray(response)) return response;
-    if (response.data && Array.isArray(response.data)) return response.data;
-    if (typeof response === 'object') {
-      for (const key of Object.keys(response)) {
-        if (Array.isArray(response[key])) return response[key];
-      }
-    }
-    return [];
-  };
+export function ThreatMatrix() {
+  const { customQuery, isLoading } = useNeonDatabase();
+  const [threats, setThreats] = useState<RealThreat[]>([]);
+  const [loadingData, setLoadingData] = useState(true);
 
   const fetchThreatData = async () => {
     setLoadingData(true);
     try {
-      // Try custom threat matrix query first
-      const data = await getThreatMatrix();
-      const threatList = extractArray(data);
-      
-      if (threatList.length > 0) {
-        setThreatData(threatList);
-      } else {
-        // Fallback: Get top tables by row count as threat indicators
-        const tables = await customQuery(`
-          SELECT 
-            c.relname as name,
-            c.reltuples::bigint as row_count
-          FROM pg_class c
-          JOIN pg_namespace n ON n.oid = c.relnamespace
-          WHERE c.relkind = 'r' 
-            AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
-            AND c.reltuples > 0
-          ORDER BY c.reltuples DESC
-          LIMIT 8
-        `);
-        
-        const tableList = extractArray(tables);
-        setThreatData(tableList.map((t: { name: string; row_count: number }, i: number) => ({
-          id: t.name?.substring(0, 10).toUpperCase() || `TBL-${i}`,
-          name: t.name || 'Unknown Table',
-          level: (Number(t.row_count) > 100000 ? 'critical' : Number(t.row_count) > 10000 ? 'high' : Number(t.row_count) > 1000 ? 'medium' : 'low') as ThreatData['level'],
-          detections: Number(t.row_count) || 0,
-          avgAltitude: '-',
-          violations: 0,
-          enrichment: `${Math.floor((Number(t.row_count) || 0) / 1000)}×`,
-        })));
+      // Query real sentinel learned threats from Supabase + flagged aircraft from Neon
+      const [sentinelData, flaggedData] = await Promise.all([
+        customQuery(`
+          SELECT registration, threat_type, total_violations, avg_altitude, escalation_level, last_seen
+          FROM sentinel_learned_threats_rows
+          ORDER BY escalation_level DESC, total_violations DESC
+          LIMIT 10
+        `).catch(() => []),
+        customQuery(`
+          SELECT registration, flag_reason as threat_type, 
+                 detection_count as total_violations,
+                 avg_altitude, risk_score as escalation_level,
+                 last_detected as last_seen
+          FROM flagged_aircraft_rows_rows
+          ORDER BY risk_score DESC
+          LIMIT 10
+        `).catch(() => [])
+      ]);
+
+      const sentinel = extractNeonData<RealThreat>(sentinelData);
+      const flagged = extractNeonData(flaggedData).map((f: any) => ({
+        registration: f.registration || 'UNKNOWN',
+        threat_type: f.threat_type || 'Flagged',
+        total_violations: safeNumber(f.total_violations),
+        avg_altitude: f.avg_altitude ? safeNumber(f.avg_altitude) : null,
+        escalation_level: safeNumber(f.escalation_level, 1),
+        last_seen: f.last_seen || '',
+      }));
+
+      // Merge and deduplicate by registration
+      const seen = new Set<string>();
+      const merged: RealThreat[] = [];
+      for (const t of [...sentinel, ...flagged]) {
+        if (!seen.has(t.registration)) {
+          seen.add(t.registration);
+          merged.push(t);
+        }
       }
+
+      setThreats(merged.slice(0, 12));
     } catch (err) {
       console.error('Failed to fetch threat data:', err);
     } finally {
@@ -94,6 +86,8 @@ export function ThreatMatrix() {
 
   useEffect(() => {
     fetchThreatData();
+    const interval = setInterval(fetchThreatData, 5 * 60 * 1000);
+    return () => clearInterval(interval);
   }, []);
 
   return (
@@ -102,13 +96,7 @@ export function ThreatMatrix() {
       icon={<Crosshair className="w-4 h-4" />}
       variant="threat"
       headerActions={
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6"
-          onClick={fetchThreatData}
-          disabled={isLoading || loadingData}
-        >
+        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={fetchThreatData} disabled={isLoading || loadingData}>
           <RefreshCw className={cn("w-3 h-3", (isLoading || loadingData) && "animate-spin")} />
         </Button>
       }
@@ -119,64 +107,42 @@ export function ThreatMatrix() {
             <RefreshCw className="w-6 h-6 mx-auto animate-spin mb-2" />
             <p className="text-xs">Loading threat data...</p>
           </div>
-        ) : threatData.length === 0 ? (
+        ) : threats.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground">
-            <p className="text-xs">No threat data available</p>
+            <p className="text-xs">No active threats detected</p>
           </div>
         ) : (
-          threatData.map((threat) => {
-            const style = levelStyles[threat.level];
+          threats.map((threat, i) => {
+            const level = getLevel(safeNumber(threat.escalation_level));
+            const style = levelStyles[level];
             return (
-              <div
-                key={threat.id}
-                className={cn(
-                  "p-3 rounded border",
-                  style.bg,
-                  style.border,
-                  "transition-all hover:scale-[1.02]"
-                )}
-              >
+              <div key={`${threat.registration}-${i}`} className={cn("p-3 rounded border", style.bg, style.border, "transition-all hover:scale-[1.02]")}>
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
-                    <span
-                      className={cn(
-                        "status-dot animate-pulse",
-                        style.dot
-                      )}
-                    />
-                    <span className="font-display text-sm uppercase tracking-wide">
-                      {threat.id}
-                    </span>
+                    <span className={cn("status-dot animate-pulse", style.dot)} />
+                    <span className="font-display text-sm uppercase tracking-wide font-mono">{threat.registration}</span>
                   </div>
-                  <span
-                    className={cn(
-                      "text-xs font-bold uppercase px-2 py-0.5 rounded",
-                      style.bg,
-                      style.text
-                    )}
-                  >
-                    {threat.level}
-                  </span>
+                  <span className={cn("text-xs font-bold uppercase px-2 py-0.5 rounded", style.bg, style.text)}>{level}</span>
                 </div>
-                <p className="text-xs text-muted-foreground mb-2">
-                  {threat.name}
-                </p>
+                <p className="text-xs text-muted-foreground mb-2">{threat.threat_type}</p>
                 <div className="grid grid-cols-4 gap-2 text-xs">
                   <div>
-                    <span className="text-muted-foreground">Records</span>
-                    <p className="font-mono text-foreground">{threat.detections.toLocaleString()}</p>
+                    <span className="text-muted-foreground">Violations</span>
+                    <p className={cn("font-mono", style.text)}>{safeNumber(threat.total_violations).toLocaleString()}</p>
                   </div>
                   <div>
                     <span className="text-muted-foreground">Altitude</span>
-                    <p className="font-mono text-foreground">{threat.avgAltitude}</p>
+                    <p className="font-mono text-foreground">{threat.avg_altitude ? `${safeNumber(threat.avg_altitude).toFixed(0)}ft` : 'N/A'}</p>
                   </div>
                   <div>
-                    <span className="text-muted-foreground">Violations</span>
-                    <p className={cn("font-mono", style.text)}>{threat.violations.toLocaleString()}</p>
+                    <span className="text-muted-foreground">Escalation</span>
+                    <p className="font-mono text-foreground">Level {safeNumber(threat.escalation_level)}</p>
                   </div>
                   <div>
-                    <span className="text-muted-foreground">Scale</span>
-                    <p className="font-mono text-primary glow-cyan">{threat.enrichment}</p>
+                    <span className="text-muted-foreground">Last Seen</span>
+                    <p className="font-mono text-primary glow-cyan text-[10px]">
+                      {threat.last_seen ? new Date(threat.last_seen).toLocaleDateString() : 'N/A'}
+                    </p>
                   </div>
                 </div>
               </div>

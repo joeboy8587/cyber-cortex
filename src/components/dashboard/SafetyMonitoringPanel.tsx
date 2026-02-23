@@ -7,6 +7,7 @@ import {
   Shield, RefreshCw, AlertTriangle, Clock, CheckCircle, 
   XCircle, FileWarning, Heart, Radio, Activity
 } from 'lucide-react';
+import { extractNeonData } from '@/lib/formatters';
 
 interface DeadManStatus {
   last_checkin: string;
@@ -78,7 +79,9 @@ export const SafetyMonitoringPanel = () => {
       });
 
       // Process dead man status
-      const lastCheckin = checkinData?.data?.[0]?.check_in_timestamp || deadManData?.data?.[0]?.created_at;
+      const checkinRows = extractNeonData(checkinData);
+      const deadManRows = extractNeonData(deadManData);
+      const lastCheckin = checkinRows[0]?.check_in_timestamp || deadManRows[0]?.created_at;
       if (lastCheckin) {
         const hoursSince = (Date.now() - new Date(lastCheckin).getTime()) / (1000 * 60 * 60);
         let status: 'active' | 'warning' | 'critical' = 'active';
@@ -93,7 +96,7 @@ export const SafetyMonitoringPanel = () => {
       }
 
       // Process preservation orders
-      const orders = (preservationData?.data || []).map((row: Record<string, unknown>) => ({
+      const orders = extractNeonData(preservationData).map((row: Record<string, unknown>) => ({
         id: (row.id as string) || '',
         issued_date: (row.created_at as string) || '',
         target_entity: (row.target_entity as string) || (row.entity as string) || 'Unknown',
@@ -113,7 +116,7 @@ export const SafetyMonitoringPanel = () => {
     } finally {
       setLoading(false);
     }
-  }, [deadManStatus.hours_since_checkin]);
+  }, []);
 
   useEffect(() => {
     fetchSafetyData();

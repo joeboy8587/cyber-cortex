@@ -8,6 +8,7 @@ import {
   Radio, RefreshCw, AlertTriangle, Shield, ShieldAlert, 
   Eye, Clock, MapPin, Hash, Fingerprint
 } from 'lucide-react';
+import { extractNeonData, safeNumber } from '@/lib/formatters';
 
 interface SpoofedSignal {
   icao_hex: string;
@@ -100,7 +101,7 @@ export const ADSBSpoofingAudit = () => {
 
       if (error) throw error;
 
-      const rawData = data?.data || [];
+      const rawData = extractNeonData(data);
       
       // Process signals - filter for anomalous only
       const processed: SpoofedSignal[] = rawData
@@ -231,7 +232,7 @@ export const ADSBSpoofingAudit = () => {
         </div>
         <div className="bg-background/50 border border-green-500/30 rounded-lg p-3 text-center">
           <div className="text-2xl font-mono text-green-400">
-            {((1 - stats.spoofedCount / stats.totalSignals) * 100).toFixed(1)}%
+            {safeNumber((1 - stats.spoofedCount / Math.max(stats.totalSignals, 1)) * 100).toFixed(1)}%
           </div>
           <div className="text-xs text-muted-foreground">Integrity</div>
         </div>
@@ -285,7 +286,7 @@ export const ADSBSpoofingAudit = () => {
                         {signal.detection_count}
                       </Badge>
                       <span className="text-sm text-red-400 font-mono">
-                        {signal.confidence.toFixed(0)}% conf
+                        {safeNumber(signal.confidence).toFixed(0)}% conf
                       </span>
                     </div>
                   </div>
@@ -296,7 +297,7 @@ export const ADSBSpoofingAudit = () => {
                     </div>
                     <div className="flex items-center gap-1">
                       <MapPin className="h-3 w-3" />
-                      {signal.coordinates?.lat?.toFixed(3) ?? 'N/A'}°N, {Math.abs(signal.coordinates?.lon ?? 0).toFixed(3)}°W
+                      {safeNumber(signal.coordinates?.lat).toFixed(3)}°N, {Math.abs(safeNumber(signal.coordinates?.lon)).toFixed(3)}°W
                     </div>
                     <div className="flex items-center gap-1">
                       <Clock className="h-3 w-3" />

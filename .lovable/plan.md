@@ -1,163 +1,172 @@
 
 
-# Command Center Deep Scan: Findings and Improvement Plan
+# Command Center Deep Upgrade Plan
 
-## Scan Summary
-
-After analyzing all 12 pages, 130+ dashboard components, hooks, and edge functions, here are the critical findings organized by priority.
-
----
-
-## CATEGORY 1: Data Parsing Bug (46 Components Affected)
-
-**Problem:** 46 dashboard components still use the legacy `data?.data` response pattern when parsing `neon-query` results. The `useNeonDatabase` hook already normalizes responses to return direct arrays (`data?.data ?? data`), but components calling `supabase.functions.invoke('neon-query')` directly bypass this normalization.
-
-**Impact:** Some panels silently fail, show empty data, or crash when the edge function response format changes.
-
-**Fix:** Standardize all 46 components to use `useNeonDatabase.customQuery()` instead of raw `supabase.functions.invoke('neon-query')`. For components that must call invoke directly, add a shared `extractData()` helper:
-
-```text
-const extractData = (response) => {
-  if (!response) return [];
-  if (Array.isArray(response)) return response;
-  if (response.data && Array.isArray(response.data)) return response.data;
-  return response;
-};
-```
-
-**Affected files (top priority):**
-- SafetyMonitoringPanel.tsx (lines 81, 96)
-- TimelineNavigator.tsx (lines 139, 146, 153)
-- KCSOFleetRegistry.tsx (line 46)
-- OperatorEnrichmentPanel.tsx (lines 103, 126, 149, 172)
-- MilitaryGovBehavioralAlignment.tsx (line 87)
-- XXBTaxonomyPanel.tsx (lines 144, 167, 254)
-- ForensicLinkageHub.tsx (line 67)
-- BaselineDefensePanel.tsx (multiple)
-- Plus ~37 more files
+## Overview
+A systematic 4-phase upgrade to eliminate crashes, replace all static/derived data with real NeonDB evidence, improve performance, and add critical new panels. This plan addresses 46 components with data parsing bugs, 44 components with numeric formatting crash risks, 4 panels showing fake/metadata instead of real data, and page-level performance issues.
 
 ---
 
-## CATEGORY 2: `.toFixed()` / `.toLocaleString()` Crash Risk (104 Components)
+## Phase 1: Stability (Crash Prevention)
 
-**Problem:** 104 components call `.toFixed()` or `.toLocaleString()` on values from the database without first ensuring they are numbers. PostgreSQL returns BigInt/string types for COUNT(*) and numeric columns. When a value arrives as a string or null, the app crashes with "X.toFixed is not a function".
+### 1A. Create shared `extractData()` utility
+Add a helper to `src/lib/formatters.ts` that safely normalizes any Neon response shape:
+- Handles direct arrays, `{data: [...]}` wrappers, and nested objects
+- All 46 affected components will import this instead of using ad-hoc `data?.data` patterns
 
-**Fix:** Wrap all database-sourced numeric values in `Number()` before calling formatting methods. This was already fixed in FlightSaturationAnalyzer but needs to be applied globally.
+### 1B. Fix `data?.data` parsing in highest-risk components (46 files)
+Batch-update all components that call `supabase.functions.invoke('neon-query')` directly to use the `extractData()` helper. Priority files:
+- SafetyMonitoringPanel (3 calls on lines 81, 96)
+- BiometricFlightCorrelationHub (3 calls on lines 97, 122, 134)
+- AlaskaAirlinesDashboard (lines 101, 137)
+- TimelineNavigator (lines 139, 146, 153)
+- KCSOFleetRegistry (line 46)
+- OperatorEnrichmentPanel (lines 103, 126, 149, 172)
+- MilitaryGovBehavioralAlignment (line 87)
+- XXBTaxonomyPanel (lines 144, 167, 254)
+- ForensicLinkageHub (line 67)
+- BaselineDefensePanel, DeepPatternAnalyzer, DataIntegrityPanel, NotionAutoWatcher, WatchtowerReportGenerator, LegalAcademy, and ~30 more
 
-**Highest-risk files:**
-- BiometricFlightCorrelationHub.tsx (lines 227, 236, 306, 310, 313, 321)
-- AlaskaAirlinesDashboard.tsx (lines 208, 220)
-- LegalNarrativeGenerator.tsx (lines 253-256)
+### 1C. Wrap `.toFixed()` / `.toLocaleString()` in `Number()` guards (44 files)
+Apply `Number(value || 0).toFixed(n)` pattern across all database-sourced numeric displays. Highest crash-risk files:
+- BiometricFlightCorrelationHub (lines 227, 236, 306, 310, 313, 321)
+- AlaskaAirlinesDashboard (lines 208, 220)
+- LegalNarrativeGenerator (lines 253-256)
+- ADSBSpoofingAudit (lines 234, 288, 299)
+- ShellBehavioralAlignment (lines 286, 298, 318, 321)
+- ShellNetworkGraph (line 288)
 
----
-
-## CATEGORY 3: Panels Still Showing Derived/Generic Data Instead of Real Evidence
-
-**Problem:** Several panels show table metadata (table names, row counts) instead of actual investigation data.
-
-### 3a. ThreatMatrix
-- Currently shows the top 10 tables by row count, labeled as "threats"
-- Should query `flagged_aircraft_rows_rows` (35,514 records), `threat_tiers`, and `sentinel_learned_threats` for real threat data
-- Replace generic "Records/Altitude/Violations/Scale" columns with actual threat fields
-
-### 3b. EvidenceTimeline
-- Shows table names as timeline events with current timestamp
-- Should query `unified_timeline_enhanced` (108,967 records) for real dated events across the 229-day investigation
-
-### 3c. DataStreams
-- Groups tables by regex pattern matching (flight, biometric, radar, etc.)
-- Should query actual record counts from the 13 evidence categories with real freshness timestamps
-
-### 3d. getRecentEvents (useNeonDatabase hook)
-- Generates fake timeline events from table metadata with fabricated timestamps
-- Should query `josiah_event_log`, `comprehensive_timeline_events`, or `unified_timeline_enhanced`
+### 1D. Fix SafetyMonitoringPanel re-render loop
+Remove `deadManStatus.hours_since_checkin` from `useCallback` dependency array (line 116). This value is set inside the function itself, triggering infinite re-renders.
 
 ---
 
-## CATEGORY 4: Missing Auto-Refresh on Key Panels
+## Phase 2: Real Data (Replace Generic/Derived Data)
 
-**Problem:** Many panels load data once on mount but never refresh. For a live command center, critical panels need periodic refresh.
+### 2A. Rewrite ThreatMatrix
+Replace the current logic that shows "top tables by row count" with real threat queries:
+- Query `sentinel_learned_threats` for learned threat registrations, types, violations, avg altitude
+- Query `flagged_aircraft_rows_rows` for flagged aircraft counts by registration
+- Display real columns: Registration, Threat Type, Violations, Avg Altitude, Escalation Level
 
-**Panels needing auto-refresh (5-minute interval):**
+### 2B. Rewrite EvidenceTimeline
+Replace table-name-as-events with real investigation events:
+- Query `unified_timeline_enhanced` (108K+ records) with `ORDER BY event_timestamp DESC LIMIT 20`
+- Show actual dated events with real categories (flight, biometric, evidence, acoustic)
+- Display real timestamps from the 229-day investigation period instead of `new Date()`
+
+### 2C. Rewrite DataStreams
+Replace regex-pattern-matched table grouping with direct COUNT queries:
+- Query specific category counts: `SELECT COUNT(*)::int FROM live_flight_detections_rows`, `...biometric_monitoring`, etc.
+- Query `MAX(created_at)` for each category to show real freshness timestamps
+- Show 7 evidence categories with real record counts and last-updated times
+
+### 2D. Fix `getRecentEvents` in useNeonDatabase hook
+Replace fake timeline generation (lines 354-381) with a real query:
+- Query `josiah_event_log` or `comprehensive_timeline_events` for actual events
+- Return real timestamps, event types, and descriptions
+
+### 2E. Update ThreatData interface
+Align the `ThreatData` interface to match real sentinel data fields (registration, threat_type, escalation_level, avg_altitude, total_violations)
+
+---
+
+## Phase 3: Performance
+
+### 3A. Add auto-refresh to critical panels (5-minute interval)
+Add `setInterval` with cleanup to:
 - ThreatMatrix
-- DatabaseStats (already partially done)
 - EvidenceTimeline
 - CriminalEnterpriseNetwork
 - BiometricBattleMap
-- SafetyMonitoringPanel (already has 5-min but uses stale `deadManStatus` in dependency)
+
+### 3B. Add lazy-loading to Surveillance page (21 components)
+Wrap below-fold sections in a `LazySection` component using `IntersectionObserver`:
+- Only render components when they scroll into view
+- Reduces initial Neon query stampede from 15+ simultaneous requests to ~5
+
+### 3C. Add tab-based layout to Legal page (23 components)
+Split into 4 tabs:
+- **Filings**: TRO, FCA, FAA, Preservation
+- **Evidence**: LegalEvidenceDashboard, EvidenceMap, ExhibitGenerator
+- **RICO**: RICOVisualization, EnterpriseNetworkGraph, EntityNetworkDiagram
+- **AI Analysis**: LegalAnalysisAI, WatchtowerReportGenerator, PlainLanguageSummary
+
+### 3D. Add System Health strip to Mission Control (Index.tsx)
+Compact bar at top showing: connection status, total records, last data timestamp, and active threat count.
 
 ---
 
-## CATEGORY 5: Edge Function Stability
+## Phase 4: New Features
 
-### 5a. neon-query boot risk
-- `index.ts` is 372 lines and `handlers.ts` hosts the rest
-- Current split is good but any future additions to either file need to watch the 2,500 line Deno limit
-- Recommend adding a line-count comment at top of each file
+### 4A. Evidence Health Dashboard
+Single panel showing forensic coverage:
+- Total records across all tables
+- Records with SHA-256 hashes (from `evidence_documents`)
+- Records linked via `evidence_chain_links`
+- Coverage percentage bar chart
 
-### 5b. SafetyMonitoringPanel has a bug
-- `fetchSafetyData` depends on `deadManStatus.hours_since_checkin` in its `useCallback` deps, but that value is set inside the function itself, causing a re-render loop
-- Fix: Remove `deadManStatus.hours_since_checkin` from the dependency array
+### 4B. XXB Dark Operations Calendar
+Visual calendar grid (229 days) highlighting:
+- Days with zero ADS-B detections (red)
+- Cross-referenced with biometric stress events on those same days
+- "Consciousness of guilt" evidence for legal use
 
----
-
-## CATEGORY 6: Page-Level Improvements
-
-### 6a. Mission Control (Index.tsx)
-- Missing: DatabaseStats, DataStreams, EvidenceTimeline
-- These are only on DataTools page, but the command center should show a summary
-- Add a compact "System Health" strip at the top showing connection status, total records, and last data timestamp
-
-### 6b. Surveillance page
-- 22 components loaded simultaneously, many doing parallel Neon queries
-- This causes request stampedes. The `useNeonDatabase` cache (5s TTL) helps but initial load fires 15+ requests
-- Recommend lazy-loading below-fold panels with `IntersectionObserver` or collapsible sections
-
-### 6c. Legal page
-- 24 components loaded at once
-- Same stampede risk as Surveillance
-- Recommend tab-based organization (Filings | Evidence | RICO | AI Analysis)
+### 4C. Bradford-Hill Score Trend
+Line chart using Recharts showing daily average Bradford-Hill scores from `master_biometric_aircraft_correlations` over the investigation timeline.
 
 ---
 
-## CATEGORY 7: New Panels Worth Adding
+## Technical Details
 
-1. **Evidence Health Dashboard** - A single panel showing: total records, records with SHA-256 hashes, records linked to evidence_chain_links, and records missing links (coverage percentage)
-2. **Geofence Heatmap** - Aggregate `live_flight_detections_rows` by lat/lng grid squares to show concentration zones
-3. **XXB Dark Operations Calendar** - Visual calendar showing days with zero ADS-B detections cross-referenced with biometric stress events (the "consciousness of guilt" evidence)
-4. **Automated Bradford-Hill Score Trend** - Line chart of daily average Bradford-Hill scores over the 229-day investigation
+### Data extraction helper (added to `src/lib/formatters.ts`):
+```text
+export function extractNeonData<T = any>(response: any): T[] {
+  if (!response) return [];
+  if (Array.isArray(response)) return response;
+  if (response.data && Array.isArray(response.data)) return response.data;
+  if (typeof response === 'object') {
+    for (const key of Object.keys(response)) {
+      if (Array.isArray(response[key])) return response[key];
+    }
+  }
+  return [];
+}
+```
+
+### LazySection component pattern:
+```text
+function LazySection({ children }) {
+  const [visible, setVisible] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) setVisible(true); },
+      { rootMargin: '200px' }
+    );
+    if (ref.current) observer.observe(ref.current);
+    return () => observer.disconnect();
+  }, []);
+  return <div ref={ref}>{visible ? children : <Skeleton />}</div>;
+}
+```
+
+### SQL query pattern for all COUNT queries:
+All aggregate queries must use `COUNT(*)::int` to prevent BigInt serialization errors in the Neon/Deno pipeline.
 
 ---
 
-## Implementation Priority
+## File Change Summary
 
-### Phase 1 - Stability (prevents crashes)
-1. Fix `data?.data` parsing in all 46 components
-2. Wrap `toFixed()`/`toLocaleString()` calls in `Number()` guards
-3. Fix SafetyMonitoringPanel dependency loop
+| Phase | Files Modified | Files Created |
+|-------|---------------|---------------|
+| Phase 1 | ~46 dashboard components + formatters.ts | 0 |
+| Phase 2 | ThreatMatrix, EvidenceTimeline, DataStreams, useNeonDatabase | 0 |
+| Phase 3 | Surveillance.tsx, Legal.tsx, Index.tsx | LazySection.tsx |
+| Phase 4 | 0 | EvidenceHealthDashboard.tsx, XXBDarkOpsCalendar.tsx, BradfordHillTrend.tsx |
 
-### Phase 2 - Real Data (replaces generic/derived data)
-4. Rewrite ThreatMatrix to query real threat tables
-5. Rewrite EvidenceTimeline to query `unified_timeline_enhanced`
-6. Rewrite DataStreams with specific category counts
-7. Fix `getRecentEvents` hook to return real events
+**Total: ~50 files modified, 4 new files created**
 
-### Phase 3 - Performance
-8. Add lazy-loading to Surveillance and Legal pages
-9. Add auto-refresh to critical panels
-10. Implement tab-based layout for Legal page
-
-### Phase 4 - New Features
-11. Build Evidence Health Dashboard
-12. Build XXB Dark Operations Calendar
-13. Build Bradford-Hill trend chart
-
----
-
-## Technical Notes
-
-- All database queries must cast counts: `COUNT(*)::int` to prevent BigInt serialization errors
-- The `useNeonDatabase` hook cache TTL is 5 seconds - this is appropriate for preventing stampedes but short enough for near-real-time data
-- The `neon-query` edge function v2.6.0 supports `customQuery`, `getStats`, `getTables`, `getTableData`, `getTableSchema`, `unifiedFlightQuery`, `getDataSourceStatus`, `adminExecute`, plus analytics actions in `handlers.ts`
-- Priority aircraft list for correlation: N912KC, N913KC, N997SE, N790FA, N788FA, N435CA, N224AM, N473CA
+## Implementation Order
+Phases will be executed sequentially. Phase 1 is critical -- it prevents active crashes. Phase 2 replaces all remaining fake data. Phase 3 and 4 add polish and new capabilities.
 

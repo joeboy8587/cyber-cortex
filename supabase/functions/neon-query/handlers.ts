@@ -210,7 +210,7 @@ export async function handleAction(action: string, body: Record<string, any>, sq
                 WHEN callsign ~ '^(PHI|CAL|CARE|AIR1|LIFE)' THEN 'MEDEVAC Extension'
                 WHEN callsign ~ '^(N[0-9]+HP|CHP)' THEN 'CHP/State Agency'
                 WHEN registration ~ '^N[789][0-9]{2}(FA|KC)' THEN 'KCSO/Shell Network'
-                WHEN taxonomy_tag = 'xxb_military' THEN 'Military Contract'
+                WHEN taxonomy_tag IN ('military_asset','xxb_military') THEN 'Military Contract'
                 WHEN callsign ~ '^(CBP|ICE|DHS)' THEN 'Federal Agency'
                 ELSE 'Gov/Mil Pattern'
               END as entity_name,
@@ -470,16 +470,16 @@ export async function handleAction(action: string, body: Record<string, any>, sq
             'BIOMETRIC_VALIDATED' as validation_status
           FROM live_flight_detections_rows f
           INNER JOIN biometric_monitoring b ON ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - ${bioTimeCol}))) < 1800
-          WHERE f.taxonomy_tag LIKE 'xxb%' AND f.data_provenance IS DISTINCT FROM 'SYNTHETIC_DATA_GLITCH'
+          WHERE (f.taxonomy_tag IN ('tier0_kcso','tier1_priority','tier2_shell','low_alt_suspicious','military_asset','medical_air') OR f.taxonomy_tag LIKE 'xxb_%') AND f.taxonomy_tag != 'normal_traffic' AND f.data_provenance IS DISTINCT FROM 'SYNTHETIC_DATA_GLITCH'
             AND f.latitude IS NOT NULL AND f.longitude IS NOT NULL
           ORDER BY f.id, ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - ${bioTimeCol})))
           LIMIT ${limitCount}
         `);
-        const stats = await sql`SELECT COUNT(*) FILTER (WHERE taxonomy_tag LIKE 'xxb%') as total_xxb,
-          COUNT(*) FILTER (WHERE taxonomy_tag LIKE 'xxb%' AND data_provenance = 'SYNTHETIC_DATA_GLITCH') as synthetic_xxb,
-          COUNT(*) FILTER (WHERE taxonomy_tag LIKE 'xxb%' AND (data_provenance IS NULL OR data_provenance != 'SYNTHETIC_DATA_GLITCH')) as valid_xxb
+        const stats = await sql`SELECT COUNT(*) FILTER (WHERE taxonomy_tag LIKE 'xxb%' OR taxonomy_tag IN ('tier0_kcso','tier1_priority','tier2_shell','low_alt_suspicious','military_asset','medical_air')) as total_flagged,
+          COUNT(*) FILTER (WHERE taxonomy_tag IN ('normal_traffic','xxb_live')) as total_normal,
+          COUNT(*) FILTER (WHERE data_provenance = 'SYNTHETIC_DATA_GLITCH') as synthetic_count
           FROM live_flight_detections_rows`;
-        return { data: { records: validatedRecords || [], stats: { totalXXB: parseInt((stats[0] as any)?.total_xxb || '0'), syntheticXXB: parseInt((stats[0] as any)?.synthetic_xxb || '0'), validXXB: parseInt((stats[0] as any)?.valid_xxb || '0') } } };
+        return { data: { records: validatedRecords || [], stats: { totalFlagged: parseInt((stats[0] as any)?.total_flagged || '0'), totalNormal: parseInt((stats[0] as any)?.total_normal || '0'), syntheticCount: parseInt((stats[0] as any)?.synthetic_count || '0') } } };
       } catch (e) {
         return { data: { records: [], stats: { totalXXB: 0, syntheticXXB: 0, validXXB: 0 } } };
       }

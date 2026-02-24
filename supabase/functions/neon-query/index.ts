@@ -183,12 +183,12 @@ serve(async (req) => {
               COALESCE(heading,0) as heading, COALESCE(detection_timestamp,created_at) as event_time,
               taxonomy_tag, COALESCE(threat_score,0) as threat_score, COALESCE(flagged,false) as is_flagged,
               flagged_reasons, 'live_detection' as data_source,
-              CASE WHEN taxonomy_tag IN ('xxb_tier1_priority','xxb_kcso','xxb_kcso_shell') THEN 'critical'
-                WHEN taxonomy_tag IN ('xxb_tier2_shell','xxb_shell') THEN 'high'
-                WHEN taxonomy_tag = 'xxb_military' THEN 'high'
-                WHEN taxonomy_tag = 'xxb_medical_air' THEN 'medium'
+              CASE WHEN taxonomy_tag IN ('tier1_priority','xxb_tier1_priority','tier0_kcso','xxb_tier0_kcso','xxb_kcso','xxb_kcso_shell') THEN 'critical'
+                WHEN taxonomy_tag IN ('tier2_shell','xxb_tier2_shell','xxb_shell') THEN 'high'
+                WHEN taxonomy_tag IN ('military_asset','xxb_military') THEN 'high'
+                WHEN taxonomy_tag IN ('medical_air','xxb_medical_air') THEN 'medium'
                 WHEN altitude < 1500 AND altitude > 0 THEN 'medium' ELSE 'normal' END as threat_level,
-              CASE WHEN taxonomy_tag = 'xxb_military' OR registration ~ '^[0-9]{2}-[0-9]{5}$' THEN true ELSE false END as is_military
+              CASE WHEN taxonomy_tag IN ('military_asset','xxb_military') OR registration ~ '^[0-9]{2}-[0-9]{5}$' THEN true ELSE false END as is_military
             FROM live_flight_detections_rows
             WHERE latitude BETWEEN 35.20 AND 35.60 AND longitude BETWEEN -119.25 AND -118.75
               AND latitude IS NOT NULL AND longitude IS NOT NULL
@@ -209,11 +209,11 @@ serve(async (req) => {
               COALESCE(detection_timestamp,created_at,NOW()) as event_time, taxonomy_tag,
               COALESCE(threat_score,0) as threat_score, COALESCE(flagged,false) as is_flagged, flagged_reasons,
               'live_detection' as data_source,
-              CASE WHEN taxonomy_tag IN ('xxb_tier1_priority','xxb_kcso','xxb_kcso_shell') THEN 'critical'
-                WHEN taxonomy_tag IN ('xxb_tier2_shell','xxb_shell') THEN 'high'
-                WHEN taxonomy_tag = 'xxb_military' THEN 'high'
+              CASE WHEN taxonomy_tag IN ('tier1_priority','xxb_tier1_priority','tier0_kcso','xxb_tier0_kcso','xxb_kcso','xxb_kcso_shell') THEN 'critical'
+                WHEN taxonomy_tag IN ('tier2_shell','xxb_tier2_shell','xxb_shell') THEN 'high'
+                WHEN taxonomy_tag IN ('military_asset','xxb_military') THEN 'high'
                 WHEN altitude < 1500 AND altitude > 0 THEN 'medium' ELSE 'normal' END as threat_level,
-              CASE WHEN taxonomy_tag='xxb_military' OR registration ~ '^[0-9]{2}-[0-9]{5}$' THEN true ELSE false END as is_military
+              CASE WHEN taxonomy_tag IN ('military_asset','xxb_military') OR registration ~ '^[0-9]{2}-[0-9]{5}$' THEN true ELSE false END as is_military
             FROM live_flight_detections_rows
             WHERE detection_timestamp > NOW() - INTERVAL '${timeWindow}'
               AND latitude IS NOT NULL AND longitude IS NOT NULL AND latitude != 0 AND longitude != 0 ${geoFilter}
@@ -266,7 +266,7 @@ serve(async (req) => {
 
         case 'getLegalAnalysisStats': {
           const [flightStats, enterpriseStats, shellStats, watchtowerStats, biometricStats, josiahStats, ecgStats, chainStats] = await Promise.all([
-            sql`SELECT COUNT(*)::int as total_detections, COUNT(DISTINCT registration)::int as unique_aircraft, COUNT(CASE WHEN taxonomy_tag IN ('xxb_kcso','xxb_kcso_shell','xxb_tier2_shell','xxb_shell') THEN 1 END)::int as kcso_shell_count, COUNT(CASE WHEN taxonomy_tag='xxb_military' OR registration ~ '^[0-9]{2}-[0-9]{5}$' THEN 1 END)::int as military_count, COUNT(CASE WHEN taxonomy_tag='xxb_medical_air' OR callsign ~ '^(PHI|CAL|CARE|AIR1|LIFE|EVAC|N[0-9]+AM)' THEN 1 END)::int as medical_count, ROUND(AVG(NULLIF(altitude,0))::numeric,0)::int as avg_altitude, COUNT(CASE WHEN registration IN ('N912KC','N913KC') THEN 1 END)::int as kcso_primary_count, COUNT(CASE WHEN icao_address IS NULL OR icao_address='' THEN 1 END)::int as null_icao_count, COUNT(CASE WHEN taxonomy_tag LIKE 'xxb_%' THEN 1 END)::int as xxb_tagged_count, MAX(detection_timestamp) as last_detection FROM live_flight_detections_rows`.catch(() => [{ total_detections:0, unique_aircraft:0, kcso_shell_count:0, military_count:0, medical_count:0, avg_altitude:0, kcso_primary_count:0, null_icao_count:0, xxb_tagged_count:0, last_detection:null }]),
+            sql`SELECT COUNT(*)::int as total_detections, COUNT(DISTINCT registration)::int as unique_aircraft, COUNT(CASE WHEN taxonomy_tag IN ('tier0_kcso','xxb_kcso','xxb_kcso_shell','tier2_shell','xxb_tier2_shell','xxb_shell') THEN 1 END)::int as kcso_shell_count, COUNT(CASE WHEN taxonomy_tag IN ('military_asset','xxb_military') OR registration ~ '^[0-9]{2}-[0-9]{5}$' THEN 1 END)::int as military_count, COUNT(CASE WHEN taxonomy_tag IN ('medical_air','xxb_medical_air') OR callsign ~ '^(PHI|CAL|CARE|AIR1|LIFE|EVAC|N[0-9]+AM)' THEN 1 END)::int as medical_count, ROUND(AVG(NULLIF(altitude,0))::numeric,0)::int as avg_altitude, COUNT(CASE WHEN registration IN ('N912KC','N913KC') THEN 1 END)::int as kcso_primary_count, COUNT(CASE WHEN icao_address IS NULL OR icao_address='' THEN 1 END)::int as null_icao_count, COUNT(CASE WHEN taxonomy_tag LIKE 'xxb_%' AND taxonomy_tag != 'normal_traffic' THEN 1 END)::int as xxb_tagged_count, MAX(detection_timestamp) as last_detection FROM live_flight_detections_rows`.catch(() => [{ total_detections:0, unique_aircraft:0, kcso_shell_count:0, military_count:0, medical_count:0, avg_altitude:0, kcso_primary_count:0, null_icao_count:0, xxb_tagged_count:0, last_detection:null }]),
             sql`SELECT COUNT(DISTINCT entity_name)::int as enterprise_count FROM criminal_enterprise_command_structure`.catch(() => [{ enterprise_count:0 }]),
             sql`SELECT COUNT(*)::int as total FROM shell_companies`.catch(() => [{ total:0 }]),
             sql`SELECT COUNT(*)::int as total FROM watchtower_unified_master`.catch(() => [{ total:0 }]),

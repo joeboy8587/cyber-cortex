@@ -160,7 +160,7 @@ function classifyAircraft(registration: string, callsign: string, altitude: numb
     }
     
     return {
-      taxonomyTag: match.tier === 0 ? 'xxb_tier0_kcso' : match.tier === 1 ? 'xxb_tier1_priority' : 'xxb_tier2_shell',
+      taxonomyTag: match.tier === 0 ? 'tier0_kcso' : match.tier === 1 ? 'tier1_priority' : 'tier2_shell',
       threatScore: match.tier === 0 ? 100 : match.tier === 1 ? 95 : 75,
       tierLevel: match.tier,
       flagged: true,
@@ -189,7 +189,7 @@ function classifyAircraft(registration: string, callsign: string, altitude: numb
       }
       
       return {
-        taxonomyTag: sp.tier === 0 ? 'xxb_tier0_kcso' : sp.tier === 1 ? 'xxb_tier1_priority' : 'xxb_tier2_shell',
+        taxonomyTag: sp.tier === 0 ? 'tier0_kcso' : sp.tier === 1 ? 'tier1_priority' : 'tier2_shell',
         threatScore: sp.tier === 0 ? 100 : sp.tier === 1 ? 80 : 60,
         tierLevel: sp.tier,
         flagged: true,
@@ -205,7 +205,7 @@ function classifyAircraft(registration: string, callsign: string, altitude: numb
   // Military patterns
   if (/^\d{2}-\d{5}$/.test(reg)) {
     return {
-      taxonomyTag: 'xxb_military',
+      taxonomyTag: 'military_asset',
       threatScore: 50,
       tierLevel: 3,
       flagged: true,
@@ -221,7 +221,7 @@ function classifyAircraft(registration: string, callsign: string, altitude: numb
   if (/AM|RX|MERCY|LIFE|MED/i.test(reg) || /AM|RX|MERCY|LIFE|MED/i.test(call)) {
     const isSuspicious = altitude > 0 && altitude < 2000;
     return {
-      taxonomyTag: 'xxb_medical_air',
+      taxonomyTag: 'medical_air',
       threatScore: isSuspicious ? 45 : 40,
       tierLevel: 3,
       flagged: isSuspicious,
@@ -236,7 +236,7 @@ function classifyAircraft(registration: string, callsign: string, altitude: numb
   // Low altitude suspicious
   if (altitude > 0 && altitude < 1000) {
     return {
-      taxonomyTag: 'xxb_low_alt_suspicious',
+      taxonomyTag: 'low_alt_suspicious',
       threatScore: altitude < 500 ? 50 : 30,
       tierLevel: 4,
       flagged: altitude < 500,
@@ -250,7 +250,7 @@ function classifyAircraft(registration: string, callsign: string, altitude: numb
   
   // Default: live tracking
   return {
-    taxonomyTag: 'xxb_live',
+    taxonomyTag: 'normal_traffic',
     threatScore: 0,
     tierLevel: 5,
     flagged: false,
@@ -362,7 +362,7 @@ serve(async (req) => {
               airline: '',
               status: 'unknown',
               detected_at: f.detected_at,
-              taxonomyTag: f.taxonomy_tag || 'xxb_live',
+              taxonomyTag: f.taxonomy_tag || 'normal_traffic',
               threatScore: parseInt(f.threat_score) || 0,
               tierLevel: parseInt(f.tier_level) || 5,
               flagged: f.flagged || false,
@@ -379,8 +379,8 @@ serve(async (req) => {
                   flagged: transformedCached.filter((f: any) => f.flagged).length,
                   tier1: transformedCached.filter((f: any) => f.tierLevel === 1).length,
                   tier2: transformedCached.filter((f: any) => f.tierLevel === 2).length,
-                  military: transformedCached.filter((f: any) => f.taxonomyTag === 'xxb_military').length,
-                  medical: transformedCached.filter((f: any) => f.taxonomyTag === 'xxb_medical_air').length,
+                military: transformedCached.filter((f: any) => f.taxonomyTag === 'military_asset').length,
+                medical: transformedCached.filter((f: any) => f.taxonomyTag === 'medical_air').length,
                   lowAlt: transformedCached.filter((f: any) => f.altitude > 0 && f.altitude < 1500).length
                 },
                 source: 'cached',
@@ -432,8 +432,8 @@ serve(async (req) => {
         flagged: transformedFlights.filter(f => f.flagged).length,
         tier1: transformedFlights.filter(f => f.tierLevel === 1).length,
         tier2: transformedFlights.filter(f => f.tierLevel === 2).length,
-        military: transformedFlights.filter(f => f.taxonomyTag === 'xxb_military').length,
-        medical: transformedFlights.filter(f => f.taxonomyTag === 'xxb_medical_air').length,
+        military: transformedFlights.filter(f => f.taxonomyTag === 'military_asset').length,
+        medical: transformedFlights.filter(f => f.taxonomyTag === 'medical_air').length,
         lowAlt: transformedFlights.filter(f => f.altitude > 0 && f.altitude < 1500).length
       };
 

@@ -94,7 +94,7 @@ CRIMINAL ENTERPRISE STRUCTURE (36+ entities identified):
 PRIORITY AIRCRAFT DETECTIONS:
 - N912KC (KCSO): 260+ detections - PRIMARY ORCHESTRATOR
 - N229AM (Air Methods/Mercy Air): 200+ detections - "Anvil" Medical camouflage
-- N597E (County of Kern UH-1H Huey): CRITICAL - Government asset spoofing as "XXB"
+- N597E (County of Kern UH-1H Huey): CRITICAL - Government asset with masked ICAO
   * Serial: 70-16291, ICAO: Unknown/Masked
   * 1,225 ft "Hammer" position in coordinated ops
   * Acoustic signature verified: Huey "thump" rotor pattern
@@ -151,7 +151,7 @@ USER QUERY: ${query}
 - FAA registration fraud: False ADS-B identity transmissions
 - Medical billing fraud: "Medical" aircraft used for surveillance, not emergencies
 - Federal grant fraud: Helicopters purchased for civil rights violations
-- NEW: N597E government Huey masking as civilian callsign "XXB"
+- NEW: N597E government Huey with masked civilian ICAO identifier
 
 **TIER 3: FEDERAL AVIATION VIOLATIONS (14 CFR)**
 - 14 CFR § 91.215: Transponder/Mode-S violations

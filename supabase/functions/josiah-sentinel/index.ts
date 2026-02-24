@@ -19,7 +19,7 @@ const THREAT_SIGNATURES = {
   // Drone swarm detection parameters (from DRONE_SWARM_EVIDENCE_REPORT)
   droneSignatures: {
     knownDrones: ['N916GW', 'N5521S', 'N225CB', 'N916FT'],
-    ghostNetworkPrefixes: ['XXD', 'XXB'],
+    ghostNetworkPrefixes: ['XXD'],
     spoofedCommercialPrefixes: ['AAL', 'SWA', 'UAL', 'SKW', 'DAL'],
     swarmTimeWindowMinutes: 10,
     swarmMinAircraft: 3,
@@ -333,7 +333,7 @@ serve(async (req) => {
         proactiveAlerts.push(`🚁 DRONE SIGNATURES: ${droneRegs.length} aircraft matching drone flight profiles detected.`);
       }
 
-      // ========== STEP 7.2: XXD/XXB GHOST NETWORK DETECTION ==========
+      // ========== STEP 7.2: XXD GHOST NETWORK DETECTION ==========
       const ghostNetworkDetections = recentDetections.filter((d: any) => {
         const reg = (d.registration || d.callsign || '').toUpperCase();
         return THREAT_SIGNATURES.droneSignatures.ghostNetworkPrefixes.some(prefix => reg.startsWith(prefix));
@@ -346,11 +346,11 @@ serve(async (req) => {
           type: 'GHOST_NETWORK',
           severity: 'critical',
           registration: ghostRegs.join(', '),
-          details: `${ghostNetworkDetections.length} ghost network detections (XXD/XXB prefixes) - avg altitude ${Math.round(avgAlt)}ft. No valid registration/ICAO24. Indicates spoofed or synthetic aircraft.`,
+          details: `${ghostNetworkDetections.length} ghost network detections (XXD prefixes) - avg altitude ${Math.round(avgAlt)}ft. No valid registration/ICAO24. Indicates spoofed or synthetic aircraft.`,
           timestamp: new Date().toISOString(),
           relatedAircraft: ghostRegs as string[]
         });
-        proactiveAlerts.push(`👻 GHOST NETWORK: ${ghostNetworkDetections.length} XXD/XXB detections - synthetic aircraft or ADS-B spoofing confirmed.`);
+        proactiveAlerts.push(`👻 GHOST NETWORK: ${ghostNetworkDetections.length} XXD detections - synthetic aircraft or ADS-B spoofing confirmed.`);
       }
 
       // ========== STEP 7.3: ADS-B SPOOFING DETECTION ==========

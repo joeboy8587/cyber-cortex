@@ -71,7 +71,7 @@ export function FCACaseBuilder() {
           query: `
             SELECT 
               COUNT(*) as total,
-              COUNT(*) FILTER (WHERE taxonomy_tag LIKE '%xxb%' OR taxonomy_tag LIKE '%stalking%') as stalking,
+              COUNT(*) FILTER (WHERE taxonomy_tag LIKE '%stalking%' OR taxonomy_tag IN ('tier0_kcso','tier1_priority','tier2_shell')) as stalking,
               COUNT(*) FILTER (WHERE altitude < 1000) as low_altitude,
               COUNT(*) FILTER (WHERE registration IN ('N912KC','N913KC')) as kcso_direct
             FROM live_flight_detections_rows

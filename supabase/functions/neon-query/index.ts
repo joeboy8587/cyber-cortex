@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
 import { handleAction } from "./handlers.ts";
 
-const VERSION = "2.6.0";
+const VERSION = "2.7.0";
 console.log(`neon-query v${VERSION} booting...`);
 
 const corsHeaders = {
@@ -11,40 +11,56 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-async function createConnection(databaseUrl: string, attempt = 1): Promise<ReturnType<typeof postgres>> {
-  const maxAttempts = 3;
-  try {
+// ── Singleton connection pool ──────────────────────────────────────────
+// Reuse a single postgres.js instance across all requests within the same
+// isolate lifetime.  postgres.js already manages an internal pool; creating
+// a new instance per request was the root cause of "too many connection
+// attempts" errors under concurrent panel loads.
+let _sql: ReturnType<typeof postgres> | null = null;
+let _sqlReady: Promise<ReturnType<typeof postgres>> | null = null;
+
+function getConnection(): Promise<ReturnType<typeof postgres>> {
+  if (_sql) return Promise.resolve(_sql);
+  if (_sqlReady) return _sqlReady;
+
+  _sqlReady = (async () => {
+    const databaseUrl = Deno.env.get('NEON_DATABASE_URL');
+    if (!databaseUrl) throw new Error('Database connection not configured');
+
     const url = new URL(databaseUrl);
     url.searchParams.set('sslmode', 'require');
+
     const sql = postgres(url.toString(), {
       ssl: { rejectUnauthorized: false },
-      max: 1, idle_timeout: 5, connect_timeout: 15,
-      fetch_types: false, prepare: false,
+      max: 3,              // small pool shared across concurrent requests
+      idle_timeout: 20,     // keep alive between bursts
+      connect_timeout: 15,
+      fetch_types: false,
+      prepare: false,
       connection: { application_name: 'neon-query-edge-v' + VERSION },
-      onnotice: () => {}, debug: false,
-      transform: { undefined: null }
+      onnotice: () => {},
+      debug: false,
+      transform: { undefined: null },
     });
-    const testPromise = sql`SELECT 1 as connected`;
-    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Connection test timeout after 5s')), 5000));
-    await Promise.race([testPromise, timeoutPromise]);
-    console.log(`Database connected successfully on attempt ${attempt}`);
-    return sql;
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    console.error(`Connection attempt ${attempt}/${maxAttempts} failed: ${errorMsg}`);
-    if (attempt < maxAttempts) {
-      await new Promise(r => setTimeout(r, 300 * attempt));
-      return createConnection(databaseUrl, attempt + 1);
-    }
-    throw new Error(`Database unavailable after ${maxAttempts} attempts: ${errorMsg}`);
-  }
-}
 
-async function safeCloseConnection(sql: ReturnType<typeof postgres> | null): Promise<void> {
-  if (!sql) return;
-  try {
-    await Promise.race([sql.end({ timeout: 2 }), new Promise(resolve => setTimeout(resolve, 2000))]);
-  } catch (e) { console.warn('Connection cleanup warning:', e); }
+    // Quick connectivity check (with timeout)
+    const testPromise = sql`SELECT 1 as connected`;
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Connection test timeout after 8s')), 8000)
+    );
+    await Promise.race([testPromise, timeoutPromise]);
+    console.log('Database connected successfully on attempt 1');
+
+    _sql = sql;
+    return sql;
+  })().catch((err) => {
+    // Reset so the next request can retry
+    _sqlReady = null;
+    _sql = null;
+    throw err;
+  });
+
+  return _sqlReady;
 }
 
 serve(async (req) => {
@@ -52,12 +68,9 @@ serve(async (req) => {
     console.log(`neon-query v${VERSION} handling request: ${req.method}`);
     if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
-    const databaseUrl = Deno.env.get('NEON_DATABASE_URL');
-    if (!databaseUrl) {
+    if (!Deno.env.get('NEON_DATABASE_URL')) {
       return new Response(JSON.stringify({ error: 'Database connection not configured' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
-
-    let sql: ReturnType<typeof postgres> | null = null;
 
     try {
       let body: Record<string, any> = {};
@@ -82,7 +95,7 @@ serve(async (req) => {
         return new Response(JSON.stringify({ error: 'Missing required field: action' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
 
-      sql = await createConnection(databaseUrl);
+      const sql = await getConnection();
 
       let result: unknown;
 
@@ -357,12 +370,16 @@ serve(async (req) => {
         }
       }
 
-      await safeCloseConnection(sql);
+      // Singleton connection stays open — no close needed
       return new Response(JSON.stringify(result), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
     } catch (error) {
       console.error('Neon query error:', error);
-      await safeCloseConnection(sql);
+      // If the connection itself failed, reset singleton so next request retries
+      if (error instanceof Error && (error.message.includes('Connection') || error.message.includes('timeout') || error.message.includes('FATAL'))) {
+        _sql = null;
+        _sqlReady = null;
+      }
       return new Response(JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
   } catch (outerError) {

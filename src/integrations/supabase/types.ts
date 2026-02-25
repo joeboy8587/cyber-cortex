@@ -476,6 +476,57 @@ export type Database = {
         }
         Relationships: []
       }
+      watchtower_autonomous_flags: {
+        Row: {
+          auto_resolved: boolean | null
+          confidence_score: number | null
+          created_at: string
+          cross_references: Json | null
+          description: string
+          evidence_summary: Json | null
+          flag_type: string
+          id: string
+          learning_context: Json | null
+          registration: string | null
+          resolved_reason: string | null
+          severity: string
+          source_scan_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          auto_resolved?: boolean | null
+          confidence_score?: number | null
+          created_at?: string
+          cross_references?: Json | null
+          description: string
+          evidence_summary?: Json | null
+          flag_type: string
+          id?: string
+          learning_context?: Json | null
+          registration?: string | null
+          resolved_reason?: string | null
+          severity?: string
+          source_scan_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          auto_resolved?: boolean | null
+          confidence_score?: number | null
+          created_at?: string
+          cross_references?: Json | null
+          description?: string
+          evidence_summary?: Json | null
+          flag_type?: string
+          id?: string
+          learning_context?: Json | null
+          registration?: string | null
+          resolved_reason?: string | null
+          severity?: string
+          source_scan_id?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never

@@ -19,6 +19,7 @@ import { InfrastructureCorrelation } from "@/components/dashboard/Infrastructure
 import { PatternCoordinationAnalysis } from "@/components/dashboard/PatternCoordinationAnalysis";
 import DeepPatternAnalyzer from "@/components/dashboard/DeepPatternAnalyzer";
 import F24RadarUploader from "@/components/dashboard/F24RadarUploader";
+import { AutonomousWatchtower } from "@/components/dashboard/AutonomousWatchtower";
 
 export default function Surveillance() {
   return (
@@ -38,6 +39,11 @@ export default function Surveillance() {
             </p>
           </div>
         </div>
+
+        {/* 🧠 AUTONOMOUS WATCHTOWER - Bias-Free AI Detection */}
+        <section>
+          <AutonomousWatchtower />
+        </section>
 
         {/* 🔥 BIOMETRIC BATTLE MAP - Real-Time Overlay */}
         <section>

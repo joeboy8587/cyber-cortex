@@ -87,6 +87,9 @@ verify_jwt = false
 [functions.semantic-search]
 verify_jwt = false
 
+[functions.autonomous-watchtower]
+verify_jwt = false
+
 [api]
 enabled = true
 port = 54321

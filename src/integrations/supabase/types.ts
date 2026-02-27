@@ -452,6 +452,63 @@ export type Database = {
         }
         Relationships: []
       }
+      unmasked_hq_locations: {
+        Row: {
+          ai_assessment: string | null
+          aircraft_list: Json
+          cluster_center_lat: number
+          cluster_center_lng: number
+          created_at: string
+          cross_references: Json
+          first_visit: string | null
+          hq_confidence_score: number
+          id: string
+          last_visit: string | null
+          location_type: string
+          night_operations: number
+          scan_id: string | null
+          unique_aircraft: number
+          updated_at: string
+          visit_count: number
+        }
+        Insert: {
+          ai_assessment?: string | null
+          aircraft_list?: Json
+          cluster_center_lat: number
+          cluster_center_lng: number
+          created_at?: string
+          cross_references?: Json
+          first_visit?: string | null
+          hq_confidence_score?: number
+          id?: string
+          last_visit?: string | null
+          location_type?: string
+          night_operations?: number
+          scan_id?: string | null
+          unique_aircraft?: number
+          updated_at?: string
+          visit_count?: number
+        }
+        Update: {
+          ai_assessment?: string | null
+          aircraft_list?: Json
+          cluster_center_lat?: number
+          cluster_center_lng?: number
+          created_at?: string
+          cross_references?: Json
+          first_visit?: string | null
+          hq_confidence_score?: number
+          id?: string
+          last_visit?: string | null
+          location_type?: string
+          night_operations?: number
+          scan_id?: string | null
+          unique_aircraft?: number
+          updated_at?: string
+          visit_count?: number
+        }
+        Relationships: []
+      }
       user_roles: {
         Row: {
           granted_at: string | null

@@ -20,6 +20,7 @@ import { PatternCoordinationAnalysis } from "@/components/dashboard/PatternCoord
 import DeepPatternAnalyzer from "@/components/dashboard/DeepPatternAnalyzer";
 import F24RadarUploader from "@/components/dashboard/F24RadarUploader";
 import { AutonomousWatchtower } from "@/components/dashboard/AutonomousWatchtower";
+import UnmaskHQSystem from "@/components/dashboard/UnmaskHQSystem";
 
 export default function Surveillance() {
   return (
@@ -43,6 +44,11 @@ export default function Surveillance() {
         {/* 🧠 AUTONOMOUS WATCHTOWER - Bias-Free AI Detection */}
         <section>
           <AutonomousWatchtower />
+        </section>
+
+        {/* 🎯 UNMASK HQ - Landing Cluster & Base Detection */}
+        <section>
+          <UnmaskHQSystem />
         </section>
 
         {/* 🔥 BIOMETRIC BATTLE MAP - Real-Time Overlay */}

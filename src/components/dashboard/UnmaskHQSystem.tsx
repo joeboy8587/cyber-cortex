@@ -43,18 +43,27 @@ export default function UnmaskHQSystem() {
   const loadData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const { data: result, error } = await supabase.functions.invoke("neon-query", {
-        body: { action: "getUnmaskHQData" },
-      });
-      if (error) throw error;
-      const payload = result?.data || result;
-      const locs = (payload?.locations || []).map((l: any) => ({
+      // Query locations directly from Supabase (table lives here, not Neon)
+      const { data: locs, error: locErr } = await supabase
+        .from("unmasked_hq_locations")
+        .select("*")
+        .order("hq_confidence_score", { ascending: false })
+        .limit(100);
+      if (locErr) throw locErr;
+
+      const parsed = (locs || []).map((l: any) => ({
         ...l,
         aircraft_list: typeof l.aircraft_list === "string" ? JSON.parse(l.aircraft_list) : l.aircraft_list || [],
         cross_references: typeof l.cross_references === "string" ? JSON.parse(l.cross_references) : l.cross_references || [],
       }));
-      setLocations(locs);
-      setSummary(payload?.summary || null);
+      setLocations(parsed);
+
+      // Build summary from fetched data
+      const total = parsed.length;
+      const maxConf = total ? Math.max(...parsed.map((l: any) => l.hq_confidence_score)) : 0;
+      const totalVisits = parsed.reduce((s: number, l: any) => s + (l.visit_count || 0), 0);
+      const totalScans = new Set(parsed.map((l: any) => l.scan_id).filter(Boolean)).size;
+      setSummary({ total_locations: total, max_confidence: maxConf, total_visits: totalVisits, total_scans: totalScans });
     } catch (e) {
       console.error("Failed to load HQ data:", e);
     } finally {

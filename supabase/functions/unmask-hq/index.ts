@@ -6,7 +6,6 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// Haversine distance in meters
 function haversineDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6371000;
   const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -35,7 +34,6 @@ interface Cluster {
 
 function clusterLandingPoints(points: LandingPoint[], radiusM = 500): Cluster[] {
   const clusters: Cluster[] = [];
-
   for (const pt of points) {
     let merged = false;
     for (const cluster of clusters) {
@@ -43,7 +41,6 @@ function clusterLandingPoints(points: LandingPoint[], radiusM = 500): Cluster[] 
         cluster.points.push(pt);
         cluster.registrations.add(pt.registration);
         cluster.timestamps.push(new Date(pt.detection_timestamp));
-        // Recalculate center as average
         const n = cluster.points.length;
         cluster.center_lat = cluster.points.reduce((s, p) => s + p.latitude, 0) / n;
         cluster.center_lng = cluster.points.reduce((s, p) => s + p.longitude, 0) / n;
@@ -61,55 +58,52 @@ function clusterLandingPoints(points: LandingPoint[], radiusM = 500): Cluster[] 
       });
     }
   }
-
   return clusters;
 }
 
 function scoreCluster(cluster: Cluster): number {
   let score = 0;
-
-  // Visit frequency: 20 pts per unique visit, capped at 60
   score += Math.min(60, cluster.points.length * 20);
-
-  // Multi-aircraft convergence
   if (cluster.registrations.size > 1) score += 15;
-
-  // Time span > 30 days
   const sorted = cluster.timestamps.sort((a, b) => a.getTime() - b.getTime());
   if (sorted.length >= 2) {
     const spanDays = (sorted[sorted.length - 1].getTime() - sorted[0].getTime()) / (1000 * 60 * 60 * 24);
     if (spanDays >= 30) score += 10;
   }
-
-  // Night operations (22:00-05:00)
   const nightOps = cluster.timestamps.filter(t => {
     const h = t.getUTCHours();
     return h >= 22 || h < 5;
   }).length;
   if (nightOps > 0) score += 10;
-
-  // Normalize to 0-100
   return Math.min(100, score);
+}
+
+function connectDb(url: string) {
+  const u = new URL(url);
+  u.searchParams.set('sslmode', 'require');
+  return postgres(u.toString(), { ssl: { rejectUnauthorized: false }, max: 2, idle_timeout: 10, connect_timeout: 15, fetch_types: false, prepare: false });
 }
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
-  const dbUrl = Deno.env.get('NEON_DATABASE_URL');
-  if (!dbUrl) return new Response(JSON.stringify({ error: 'DB not configured' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  const neonUrl = Deno.env.get('NEON_DATABASE_URL');
+  const supaUrl = Deno.env.get('SUPABASE_DB_URL');
+  if (!neonUrl || !supaUrl) {
+    return new Response(JSON.stringify({ error: 'DB not configured' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  }
 
-  const url = new URL(dbUrl);
-  url.searchParams.set('sslmode', 'require');
-  const sql = postgres(url.toString(), { ssl: { rejectUnauthorized: false }, max: 2, idle_timeout: 10, connect_timeout: 15, fetch_types: false, prepare: false });
+  const neonSql = connectDb(neonUrl);
+  const supaSql = connectDb(supaUrl);
 
   try {
     const scanId = `unmask-${Date.now()}`;
     console.log(`[unmask-hq] Starting scan ${scanId}`);
 
-    // 1. Get target aircraft from watchtower flags + sentinel threats
+    // 1. Get target aircraft from Supabase tables
     const [flaggedAircraft, sentinelThreats] = await Promise.all([
-      sql`SELECT DISTINCT registration FROM watchtower_autonomous_flags WHERE registration IS NOT NULL AND registration != '' AND (auto_resolved = false OR auto_resolved IS NULL)`,
-      sql`SELECT DISTINCT registration FROM sentinel_learned_threats_rows WHERE registration IS NOT NULL AND registration != ''`.catch(() => []),
+      supaSql`SELECT DISTINCT registration FROM watchtower_autonomous_flags WHERE registration IS NOT NULL AND registration != '' AND (auto_resolved = false OR auto_resolved IS NULL)`,
+      neonSql`SELECT DISTINCT registration FROM sentinel_learned_threats_rows WHERE registration IS NOT NULL AND registration != ''`.catch(() => []),
     ]);
 
     const targetRegs = new Set<string>();
@@ -118,15 +112,15 @@ serve(async (req) => {
 
     if (targetRegs.size === 0) {
       console.log('[unmask-hq] No target aircraft found');
-      await sql.end();
+      await Promise.all([neonSql.end(), supaSql.end()]);
       return new Response(JSON.stringify({ success: true, message: 'No target aircraft found', clusters: 0 }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     console.log(`[unmask-hq] ${targetRegs.size} target aircraft: ${[...targetRegs].slice(0, 10).join(', ')}`);
 
-    // 2. Query landing signatures for target aircraft
+    // 2. Query landing signatures from Neon
     const regList = [...targetRegs].map(r => `'${r.replace(/'/g, '')}'`).join(',');
-    const landingPoints: LandingPoint[] = await sql.unsafe(`
+    const landingPoints: LandingPoint[] = await neonSql.unsafe(`
       SELECT registration, latitude, longitude, altitude, speed, detection_timestamp
       FROM live_flight_detections_rows
       WHERE registration IN (${regList})
@@ -140,40 +134,34 @@ serve(async (req) => {
     console.log(`[unmask-hq] Found ${landingPoints.length} landing signature points`);
 
     if (landingPoints.length === 0) {
-      await sql.end();
+      await Promise.all([neonSql.end(), supaSql.end()]);
       return new Response(JSON.stringify({ success: true, message: 'No landing signatures detected', clusters: 0, targets: targetRegs.size }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     // 3. Cluster landing points
     const clusters = clusterLandingPoints(landingPoints);
-    console.log(`[unmask-hq] Formed ${clusters.length} clusters`);
-
-    // Filter to clusters with 2+ visits
     const significantClusters = clusters.filter(c => c.points.length >= 2);
 
-    // 4. Cross-reference with shell companies
+    // 4. Cross-reference with shell companies (Neon)
     let shellAddresses: any[] = [];
     try {
-      shellAddresses = await sql`SELECT company_name, registered_address FROM shell_companies WHERE registered_address IS NOT NULL LIMIT 100`;
+      shellAddresses = await neonSql`SELECT company_name, registered_address FROM shell_companies WHERE registered_address IS NOT NULL LIMIT 100`;
     } catch { /* table may not exist */ }
 
-    // 5. Score and persist each cluster
+    // 5. Score and persist each cluster to Supabase
     const results = [];
     for (const cluster of significantClusters) {
       const confidence = scoreCluster(cluster);
       const nightOps = cluster.timestamps.filter(t => { const h = t.getUTCHours(); return h >= 22 || h < 5; }).length;
       const sortedTs = cluster.timestamps.sort((a, b) => a.getTime() - b.getTime());
 
-      // Simple location type classification
       let locationType = 'unknown_facility';
       if (cluster.points.length >= 10) locationType = 'probable_base';
       else if (cluster.registrations.size > 2) locationType = 'convergence_point';
       else if (nightOps > cluster.points.length * 0.5) locationType = 'covert_facility';
 
-      // Check shell company proximity (very basic text-match for now)
       const crossRefs: any[] = [];
       for (const sc of shellAddresses) {
-        // Could do geocoding; for now just tag
         crossRefs.push({ type: 'shell_company', name: sc.company_name });
         if (crossRefs.length >= 3) break;
       }
@@ -194,7 +182,7 @@ serve(async (req) => {
       };
 
       try {
-        await sql`INSERT INTO unmasked_hq_locations ${sql(record as any)}`;
+        await supaSql`INSERT INTO unmasked_hq_locations ${supaSql(record as any)}`;
         results.push(record);
       } catch (e) {
         console.error('[unmask-hq] Insert error:', e);
@@ -202,7 +190,7 @@ serve(async (req) => {
     }
 
     console.log(`[unmask-hq] Persisted ${results.length} HQ locations`);
-    await sql.end();
+    await Promise.all([neonSql.end(), supaSql.end()]);
 
     return new Response(JSON.stringify({
       success: true,
@@ -217,7 +205,7 @@ serve(async (req) => {
 
   } catch (error) {
     console.error('[unmask-hq] Error:', error);
-    try { await sql.end(); } catch {}
+    try { await Promise.all([neonSql.end(), supaSql.end()]); } catch {}
     return new Response(JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
 });

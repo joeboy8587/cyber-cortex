@@ -689,6 +689,53 @@ export async function handleAction(action: string, body: Record<string, any>, sq
       return { success: true, inserted: insertedCount, total: body.data.length };
     }
 
+    // ============== UNMASK HQ DATA ==============
+    case 'getUnmaskHQData': {
+      try {
+        const locations = await sql.unsafe(`
+          SELECT id, cluster_center_lat, cluster_center_lng, visit_count, unique_aircraft,
+            aircraft_list, first_visit, last_visit, hq_confidence_score, location_type,
+            cross_references, night_operations, ai_assessment, scan_id, created_at
+          FROM unmasked_hq_locations
+          ORDER BY hq_confidence_score DESC
+          LIMIT 100
+        `);
+        const summary = await sql.unsafe(`
+          SELECT COUNT(*)::int as total_locations,
+            MAX(hq_confidence_score) as max_confidence,
+            SUM(visit_count)::int as total_visits,
+            COUNT(DISTINCT scan_id) as total_scans
+          FROM unmasked_hq_locations
+        `);
+        return { data: { locations: locations || [], summary: summary[0] || {} } };
+      } catch (e) {
+        console.error('getUnmaskHQData error:', e);
+        return { data: { locations: [], summary: {} } };
+      }
+    }
+
+    case 'getUnmaskHQLandingTrails': {
+      try {
+        const lat = Number(body.lat);
+        const lng = Number(body.lng);
+        const radius = Number(body.radius) || 0.005; // ~500m in degrees
+        const trails = await sql.unsafe(`
+          SELECT registration, latitude, longitude, altitude, speed, detection_timestamp
+          FROM live_flight_detections_rows
+          WHERE latitude BETWEEN ${lat - radius} AND ${lat + radius}
+            AND longitude BETWEEN ${lng - radius} AND ${lng + radius}
+            AND altitude < 500 AND altitude > 0
+            AND speed < 60
+          ORDER BY registration, detection_timestamp
+          LIMIT 500
+        `);
+        return { data: trails || [] };
+      } catch (e) {
+        console.error('getUnmaskHQLandingTrails error:', e);
+        return { data: [] };
+      }
+    }
+
     default:
       return null; // Signal "not handled" back to main router
   }

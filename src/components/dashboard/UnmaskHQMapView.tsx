@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { MapContainer, TileLayer, CircleMarker, Popup, useMap } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 
@@ -23,41 +23,36 @@ interface Props {
 
 function MapCenterUpdater({ lat, lng }: { lat: number; lng: number }) {
   const map = useMap();
-  useEffect(() => { map.setView([lat, lng], 10); }, [lat, lng, map]);
+  const prev = useRef({ lat: 0, lng: 0 });
+  useEffect(() => {
+    if (prev.current.lat !== lat || prev.current.lng !== lng) {
+      prev.current = { lat, lng };
+      map.setView([lat, lng], 10);
+    }
+  }, [lat, lng, map]);
   return null;
 }
 
-function UnmaskHQMapView({ locations, onSelectLocation, selectedId }: Props) {
-  const [ready, setReady] = useState(false);
+const getColor = (score: number) => {
+  if (score >= 80) return "#ef4444";
+  if (score >= 60) return "#f97316";
+  if (score >= 40) return "#eab308";
+  return "#6b7280";
+};
 
-  useEffect(() => {
-    const t = setTimeout(() => setReady(true), 150);
-    return () => clearTimeout(t);
-  }, []);
+const getRadius = (visits: number) => Math.min(30, 8 + visits * 2);
 
-  if (!ready) return <div className="h-full flex items-center justify-center bg-muted text-muted-foreground">Loading map...</div>;
-
-  const center: [number, number] = locations.length > 0
-    ? [locations[0].cluster_center_lat, locations[0].cluster_center_lng]
-    : [35.4, -119.0];
-
-  const getColor = (score: number) => {
-    if (score >= 80) return "#ef4444";
-    if (score >= 60) return "#f97316";
-    if (score >= 40) return "#eab308";
-    return "#6b7280";
-  };
-
-  const getRadius = (visits: number) => Math.min(30, 8 + visits * 2);
+function MapContent({ locations, onSelectLocation, selectedId }: Props) {
+  const selected = selectedId ? locations.find(l => l.id === selectedId) : null;
 
   return (
-    <MapContainer center={center} zoom={9} style={{ height: "100%", width: "100%" }} className="z-0">
+    <>
       <TileLayer
         attribution='&copy; <a href="https://carto.com">CARTO</a>'
         url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
       />
-      {selectedId && locations.find(l => l.id === selectedId) && (
-        <MapCenterUpdater lat={locations.find(l => l.id === selectedId)!.cluster_center_lat} lng={locations.find(l => l.id === selectedId)!.cluster_center_lng} />
+      {selected && (
+        <MapCenterUpdater lat={selected.cluster_center_lat} lng={selected.cluster_center_lng} />
       )}
       {locations.map((loc) => (
         <CircleMarker
@@ -83,6 +78,29 @@ function UnmaskHQMapView({ locations, onSelectLocation, selectedId }: Props) {
           </Popup>
         </CircleMarker>
       ))}
+    </>
+  );
+}
+
+function UnmaskHQMapView({ locations, onSelectLocation, selectedId }: Props) {
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    const t = setTimeout(() => setReady(true), 200);
+    return () => clearTimeout(t);
+  }, []);
+
+  if (!ready) {
+    return <div className="h-full flex items-center justify-center bg-muted text-muted-foreground">Loading map...</div>;
+  }
+
+  const center: [number, number] = locations.length > 0
+    ? [locations[0].cluster_center_lat, locations[0].cluster_center_lng]
+    : [35.4, -119.0];
+
+  return (
+    <MapContainer center={center} zoom={9} style={{ height: "100%", width: "100%" }} className="z-0">
+      <MapContent locations={locations} onSelectLocation={onSelectLocation} selectedId={selectedId} />
     </MapContainer>
   );
 }

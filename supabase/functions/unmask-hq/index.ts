@@ -102,8 +102,8 @@ serve(async (req) => {
 
     // 1. Get target aircraft from Supabase tables
     const [flaggedAircraft, sentinelThreats] = await Promise.all([
-      supaSql`SELECT DISTINCT registration FROM watchtower_autonomous_flags WHERE registration IS NOT NULL AND registration != '' AND (auto_resolved = false OR auto_resolved IS NULL)`,
-      neonSql`SELECT DISTINCT registration FROM sentinel_learned_threats_rows WHERE registration IS NOT NULL AND registration != ''`.catch(() => []),
+      supaSql`SELECT DISTINCT registration FROM public.watchtower_autonomous_flags WHERE registration IS NOT NULL AND registration != '' AND (auto_resolved = false OR auto_resolved IS NULL)`,
+      supaSql`SELECT DISTINCT registration FROM public.sentinel_learned_threats WHERE registration IS NOT NULL AND registration != ''`.catch(() => []),
     ]);
 
     const targetRegs = new Set<string>();

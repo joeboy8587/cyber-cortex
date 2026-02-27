@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { MapContainer, TileLayer, CircleMarker, Popup, useMap } from "react-leaflet";
+import { MapContainer, TileLayer, CircleMarker, Tooltip, useMap } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 
 interface HQLocation {
@@ -42,11 +42,26 @@ const getColor = (score: number) => {
 
 const getRadius = (visits: number) => Math.min(30, 8 + visits * 2);
 
-function MapContent({ locations, onSelectLocation, selectedId }: Props) {
+function UnmaskHQMapView({ locations, onSelectLocation, selectedId }: Props) {
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    const t = setTimeout(() => setReady(true), 250);
+    return () => clearTimeout(t);
+  }, []);
+
+  if (!ready) {
+    return <div className="h-full flex items-center justify-center bg-muted text-muted-foreground">Loading map...</div>;
+  }
+
+  const center: [number, number] = locations.length > 0
+    ? [locations[0].cluster_center_lat, locations[0].cluster_center_lng]
+    : [35.4, -119.0];
+
   const selected = selectedId ? locations.find(l => l.id === selectedId) : null;
 
   return (
-    <>
+    <MapContainer center={center} zoom={9} style={{ height: "100%", width: "100%" }} className="z-0">
       <TileLayer
         attribution='&copy; <a href="https://carto.com">CARTO</a>'
         url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
@@ -67,40 +82,13 @@ function MapContent({ locations, onSelectLocation, selectedId }: Props) {
           }}
           eventHandlers={{ click: () => onSelectLocation(loc) }}
         >
-          <Popup>
-            <div className="text-xs space-y-1">
-              <div className="font-bold">Confidence: {loc.hq_confidence_score}%</div>
-              <div>Visits: {loc.visit_count} | Aircraft: {loc.unique_aircraft}</div>
-              <div>Type: {loc.location_type}</div>
-              <div>Night Ops: {loc.night_operations}</div>
-              <div className="font-mono text-[10px]">{loc.aircraft_list.join(", ")}</div>
-            </div>
-          </Popup>
+          <Tooltip>
+            <span className="text-xs font-mono">
+              {loc.hq_confidence_score}% — {loc.visit_count} visits — {loc.unique_aircraft} aircraft
+            </span>
+          </Tooltip>
         </CircleMarker>
       ))}
-    </>
-  );
-}
-
-function UnmaskHQMapView({ locations, onSelectLocation, selectedId }: Props) {
-  const [ready, setReady] = useState(false);
-
-  useEffect(() => {
-    const t = setTimeout(() => setReady(true), 200);
-    return () => clearTimeout(t);
-  }, []);
-
-  if (!ready) {
-    return <div className="h-full flex items-center justify-center bg-muted text-muted-foreground">Loading map...</div>;
-  }
-
-  const center: [number, number] = locations.length > 0
-    ? [locations[0].cluster_center_lat, locations[0].cluster_center_lng]
-    : [35.4, -119.0];
-
-  return (
-    <MapContainer center={center} zoom={9} style={{ height: "100%", width: "100%" }} className="z-0">
-      <MapContent locations={locations} onSelectLocation={onSelectLocation} selectedId={selectedId} />
     </MapContainer>
   );
 }

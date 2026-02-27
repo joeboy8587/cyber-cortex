@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, lazy, Suspense } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -6,8 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Crosshair, MapPin, Plane, Shield, Moon, RefreshCw, Loader2, AlertTriangle } from "lucide-react";
-
-const UnmaskHQMap = lazy(() => import("@/components/dashboard/UnmaskHQMapView"));
+import UnmaskHQMap from "@/components/dashboard/UnmaskHQMapView";
 
 interface HQLocation {
   id: string;
@@ -149,9 +148,7 @@ export default function UnmaskHQSystem() {
 
           <TabsContent value="map">
             <div className="h-[500px] rounded-lg overflow-hidden border border-border">
-              <Suspense fallback={<div className="h-full flex items-center justify-center bg-muted"><Loader2 className="w-6 h-6 animate-spin" /></div>}>
-                <UnmaskHQMap locations={locations} onSelectLocation={(loc: any) => setSelectedLocation(loc as HQLocation)} selectedId={selectedLocation?.id} />
-              </Suspense>
+              <UnmaskHQMap locations={locations} onSelectLocation={(loc: any) => setSelectedLocation(loc as HQLocation)} selectedId={selectedLocation?.id} />
             </div>
             {summary && (
               <div className="grid grid-cols-4 gap-3 mt-4">

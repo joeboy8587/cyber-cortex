@@ -12,6 +12,7 @@ import { ChronoBiometricDigest } from "@/components/dashboard/ChronoBiometricDig
 import { MedicalBehavioralAlignment } from "@/components/dashboard/MedicalBehavioralAlignment";
 import { SafetyMonitoringPanel } from "@/components/dashboard/SafetyMonitoringPanel";
 import { NullHypothesisPanel } from "@/components/dashboard/NullHypothesisPanel";
+import { BiometricArchivePanel } from "@/components/dashboard/BiometricArchivePanel";
 
 export default function Biometrics() {
   return (
@@ -31,6 +32,11 @@ export default function Biometrics() {
             </p>
           </div>
         </div>
+
+        {/* 🔥 Full Biometric Archive - 305K+ Records */}
+        <section>
+          <BiometricArchivePanel />
+        </section>
 
         {/* Early Warning System */}
         <section>

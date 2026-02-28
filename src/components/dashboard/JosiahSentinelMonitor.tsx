@@ -100,6 +100,11 @@ export function JosiahSentinelMonitor() {
     }
   }, [windowMinutes]);
 
+  // Auto-scan on mount
+  useEffect(() => {
+    runScan();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     let interval: NodeJS.Timeout;
     if (isAutoMonitor) {

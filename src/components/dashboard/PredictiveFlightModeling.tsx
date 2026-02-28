@@ -232,13 +232,21 @@ export function PredictiveFlightModeling() {
       setProgress(70);
 
       // FLEET ROTATION PREDICTIONS (lowered threshold from 10 to 3)
+      const parseDow = (dow: any): number[] => {
+        if (Array.isArray(dow)) return dow;
+        if (typeof dow === 'string') {
+          try { return JSON.parse(dow.replace(/^\{/, '[').replace(/\}$/, ']')); } catch { return []; }
+        }
+        return [];
+      };
       const predictableFleet = rotations.filter((r: any) => 
-        r.active_days >= 3 && (r.active_dow?.length || 0) >= 2
+        r.active_days >= 3 && (parseDow(r.active_dow)?.length || 0) >= 2
       );
 
       if (predictableFleet.length > 0) {
         const topAsset = predictableFleet[0];
-        const dowNames = (topAsset.active_dow || []).map((d: number) => 
+        const dowArr = parseDow(topAsset.active_dow);
+        const dowNames = dowArr.map((d: number) => 
           ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d]
         ).join(", ");
         

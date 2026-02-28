@@ -97,10 +97,20 @@ export default function DataQualityAudit() {
       ]);
 
       if (summaryRes.data?.data) setSummary(summaryRes.data.data);
-      if (ocrRes.data?.data) setOcrAudit(ocrRes.data.data);
+      if (ocrRes.data?.data) setOcrAudit(Array.isArray(ocrRes.data.data) ? ocrRes.data.data : []);
       if (domainsRes.data?.data) setDomains(domainsRes.data.data);
-      if (timelineRes.data?.data) setTimeline(timelineRes.data.data);
-      if (ingestionRes.data) setIngestionStats(ingestionRes.data);
+      if (timelineRes.data?.data) setTimeline(Array.isArray(timelineRes.data.data) ? timelineRes.data.data : []);
+      if (ingestionRes.data) {
+        const raw = ingestionRes.data?.data || ingestionRes.data;
+        setIngestionStats({
+          coordinateStats: raw.coordinateStats || { totalRecords: 0, validCoordinates: 0, nullCoordinates: 0, zeroCoordinates: 0, kernCountyFlights: 0, validationRate: 0 },
+          taxonomyDistribution: Array.isArray(raw.taxonomyDistribution) ? raw.taxonomyDistribution : [],
+          recentActivity: Array.isArray(raw.recentActivity) ? raw.recentActivity : [],
+          flagStats: raw.flagStats || { flagged: 0, unflagged: 0, tier1: 0, tier2: 0, tier3: 0, tier4plus: 0 },
+          uniqueIdentifiers: raw.uniqueIdentifiers || { registrations: 0, icaoCodes: 0, callsigns: 0 },
+          timestamp: raw.timestamp || new Date().toISOString(),
+        });
+      }
 
       toast.success('Audit complete');
     } catch (err) {

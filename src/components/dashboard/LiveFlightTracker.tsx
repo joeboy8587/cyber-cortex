@@ -125,7 +125,12 @@ export function LiveFlightTracker() {
           flagged_reasons: f.flaggedReasons?.join('; ') || null,
           data_source: 'live_detection' as const,
           threat_level: (f.tierLevel === 1 ? 'critical' : f.tierLevel === 2 ? 'high' : f.tierLevel === 3 ? 'medium' : 'normal') as 'critical' | 'high' | 'medium' | 'normal',
-          is_military: f.taxonomyTag === 'xxb_military'
+          is_military: f.isMilitary || f.taxonomyTag === 'xxb_military',
+          owner_operator: f.ownerOperator || '',
+          aircraft_type: f.aircraftType || '',
+          aircraft_type_desc: f.aircraftTypeDesc || '',
+          shell_auto_detected: f.shellAutoDetected || false,
+          shell_detection_reason: f.shellDetectionReason || '',
         }));
       
       // Combine: API flights first (fresher), then DB flights not already in API set
@@ -395,6 +400,26 @@ export function LiveFlightTracker() {
                     {new Date(flight.event_time).toLocaleTimeString()}
                   </div>
                 </div>
+                {/* Rich ADS-B data row */}
+                {((flight as any).owner_operator || (flight as any).aircraft_type || (flight as any).shell_auto_detected) && (
+                  <div className="mt-1.5 flex flex-wrap gap-1.5 text-xs">
+                    {(flight as any).owner_operator && (
+                      <span className={`px-1.5 py-0.5 rounded font-mono ${(flight as any).shell_auto_detected ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30' : 'bg-muted text-muted-foreground'}`}>
+                        👤 {(flight as any).owner_operator}
+                      </span>
+                    )}
+                    {(flight as any).aircraft_type && (
+                      <span className="px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-mono">
+                        ✈ {(flight as any).aircraft_type}{(flight as any).aircraft_type_desc ? ` (${(flight as any).aircraft_type_desc})` : ''}
+                      </span>
+                    )}
+                    {(flight as any).shell_auto_detected && (
+                      <Badge variant="outline" className="text-purple-400 border-purple-500/50 text-[10px] h-5">
+                        🕵 SHELL DETECTED
+                      </Badge>
+                    )}
+                  </div>
+                )}
               </div>
             ))
           )}

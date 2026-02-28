@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
 import { handleAction } from "./handlers.ts";
+import { handleAction2 } from "./handlers2.ts";
 
 const VERSION = "2.7.0";
 console.log(`neon-query v${VERSION} booting...`);
@@ -363,9 +364,12 @@ serve(async (req) => {
         }
 
         default: {
-          // Delegate to handlers module for remaining analytics actions
+          // Delegate to handler modules for remaining analytics actions
           const handlerResult = await handleAction(action, body, sql);
-          if (handlerResult === null) throw new Error(`Unknown action: ${action}`);
+          if (handlerResult !== null) { result = handlerResult; break; }
+          const handlerResult2 = await handleAction2(action, body, sql);
+          if (handlerResult2 !== null) { result = handlerResult2; break; }
+          throw new Error(`Unknown action: ${action}`);
           result = handlerResult;
         }
       }

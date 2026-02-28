@@ -573,60 +573,84 @@ serve(async (req) => {
 
       // Store in database (fire and forget, don't fail if DB is unavailable)
       let inserted = 0;
+      let updated = 0;
       if (neonUrl && transformedFlights.length > 0) {
         const insertResult = await safeDbQuery(neonUrl, async (sql) => {
-          let count = 0;
+          let newCount = 0;
+          let upCount = 0;
           for (const flight of transformedFlights) {
             try {
+              // Check for existing record (handle NULL timestamps too)
               const existing = await sql`
                 SELECT id FROM live_flight_detections_rows 
                 WHERE (icao_code = ${flight.hex} OR registration = ${flight.registration})
-                  AND detection_timestamp > NOW() - INTERVAL '5 minutes'
+                  AND (detection_timestamp > NOW() - INTERVAL '30 minutes' OR detection_timestamp IS NULL)
+                ORDER BY detection_timestamp DESC NULLS LAST
                 LIMIT 1
               `;
               
-              if (existing.length > 0) continue;
-              
-              await sql`
-                INSERT INTO live_flight_detections_rows (
-                  id, icao_code, registration, callsign, altitude, speed,
-                  latitude, longitude, heading, vertical_rate,
-                  detection_timestamp, created_at, taxonomy_tag,
-                  threat_score, tier_level, flagged, flagged_reasons
-                ) VALUES (
-                  ${crypto.randomUUID()},
-                  ${flight.hex},
-                  ${flight.registration},
-                  ${flight.callsign},
-                  ${flight.altitude},
-                  ${flight.speed},
-                  ${flight.latitude},
-                  ${flight.longitude},
-                  ${flight.heading},
-                  ${flight.vertical_rate},
-                  NOW(),
-                  NOW(),
-                  ${flight.taxonomyTag},
-                  ${flight.threatScore},
-                  ${flight.tierLevel},
-                  ${flight.flagged},
-                  ${flight.flaggedReasons.join('; ')}
-                )
-              `;
-              
-              count++;
+              if (existing.length > 0) {
+                // UPDATE existing record with fresh position/timestamp
+                await sql`
+                  UPDATE live_flight_detections_rows
+                  SET altitude = ${flight.altitude},
+                      speed = ${flight.speed},
+                      latitude = ${flight.latitude},
+                      longitude = ${flight.longitude},
+                      heading = ${flight.heading},
+                      vertical_rate = ${flight.vertical_rate},
+                      detection_timestamp = NOW(),
+                      taxonomy_tag = ${flight.taxonomyTag},
+                      threat_score = ${flight.threatScore},
+                      flagged = ${flight.flagged},
+                      flagged_reasons = ${flight.flaggedReasons.join('; ')}
+                  WHERE id = ${existing[0].id}
+                `;
+                upCount++;
+              } else {
+                // INSERT new record
+                await sql`
+                  INSERT INTO live_flight_detections_rows (
+                    id, icao_code, registration, callsign, altitude, speed,
+                    latitude, longitude, heading, vertical_rate,
+                    detection_timestamp, created_at, taxonomy_tag,
+                    threat_score, tier_level, flagged, flagged_reasons
+                  ) VALUES (
+                    ${crypto.randomUUID()},
+                    ${flight.hex},
+                    ${flight.registration},
+                    ${flight.callsign},
+                    ${flight.altitude},
+                    ${flight.speed},
+                    ${flight.latitude},
+                    ${flight.longitude},
+                    ${flight.heading},
+                    ${flight.vertical_rate},
+                    NOW(),
+                    NOW(),
+                    ${flight.taxonomyTag},
+                    ${flight.threatScore},
+                    ${flight.tierLevel},
+                    ${flight.flagged},
+                    ${flight.flaggedReasons.join('; ')}
+                  )
+                `;
+                newCount++;
+              }
+
               if (flight.flagged) {
                 console.log(`🚨 FLAGGED: ${flight.registration} - ${flight.flaggedReasons.join(', ')}`);
               }
-            } catch {
-              // Skip individual insert errors
+            } catch (insertErr) {
+              console.error(`DB error for ${flight.registration}:`, insertErr instanceof Error ? insertErr.message : insertErr);
             }
           }
-          return count;
+          return { newCount, upCount };
         });
         
-        inserted = insertResult || 0;
-        console.log(`Inserted ${inserted} new flights into database`);
+        inserted = insertResult?.newCount || 0;
+        updated = insertResult?.upCount || 0;
+        console.log(`Inserted ${inserted} new, updated ${updated} existing flights`);
       }
 
       const stats = {
@@ -648,6 +672,7 @@ serve(async (req) => {
           flights: transformedFlights,
           count: transformedFlights.length,
           inserted,
+          updated,
           stats,
           source: dataSource,
           apiError,
@@ -670,6 +695,36 @@ serve(async (req) => {
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
+    }
+
+    if (action === 'fixTriggers') {
+      if (!neonUrl) {
+        return new Response(JSON.stringify({ error: 'No database URL' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      const result = await safeDbQuery(neonUrl, async (sql) => {
+        await sql`DROP TRIGGER IF EXISTS trg_auto_hash_flight ON live_flight_detections_rows`;
+        return { droppedTrigger: 'trg_auto_hash_flight' };
+      });
+      return new Response(JSON.stringify({ success: true, result }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    if (action === 'fixNullTimestamps') {
+      if (!neonUrl) {
+        return new Response(JSON.stringify({ error: 'No database URL' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      const result = await safeDbQuery(neonUrl, async (sql) => {
+        // Fix in batches of 5000 to avoid timeout
+        const updated = await sql`
+          WITH batch AS (
+            SELECT id FROM live_flight_detections_rows WHERE detection_timestamp IS NULL LIMIT 5000
+          )
+          UPDATE live_flight_detections_rows SET detection_timestamp = COALESCE(created_at, NOW())
+          WHERE id IN (SELECT id FROM batch)
+        `;
+        const remaining = await sql`SELECT COUNT(*)::int as cnt FROM live_flight_detections_rows WHERE detection_timestamp IS NULL`;
+        return { updated: updated.count, remaining: remaining[0]?.cnt || 0 };
+      });
+      return new Response(JSON.stringify({ success: true, result }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     return new Response(

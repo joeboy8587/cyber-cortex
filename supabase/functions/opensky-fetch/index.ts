@@ -399,7 +399,70 @@ serve(async (req) => {
         apiError = 'OpenSky API unreachable after retries';
       }
       
-      // Fallback to cached data if API failed
+      // ============ FALLBACK 1: RapidAPI ADS-B Exchange ============
+      if (!apiSuccess) {
+        const rapidApiKey = Deno.env.get('RAPIDAPI_KEY');
+        if (rapidApiKey) {
+          console.log('OpenSky failed, trying RapidAPI ADS-B Exchange...');
+          try {
+            // ADS-B Exchange v2 - search by geographic bounds
+            const lat = (KERN_BOUNDS.lamin + KERN_BOUNDS.lamax) / 2;
+            const lon = (KERN_BOUNDS.lomin + KERN_BOUNDS.lomax) / 2;
+            const dist = 50; // ~50 nautical miles radius covers the bounding box
+            
+            const rapidResp = await fetchWithRetry(
+              `https://adsbexchange-com1.p.rapidapi.com/v2/lat/${lat}/lon/${lon}/dist/${dist}/`,
+              {
+                headers: {
+                  'X-RapidAPI-Key': rapidApiKey,
+                  'X-RapidAPI-Host': 'adsbexchange-com1.p.rapidapi.com',
+                  'Accept': 'application/json'
+                }
+              },
+              2
+            );
+
+            if (rapidResp && rapidResp.ok) {
+              const rapidData = await rapidResp.json();
+              const ac = rapidData.ac || rapidData.aircraft || [];
+              console.log(`RapidAPI returned ${ac.length} aircraft`);
+              
+              if (ac.length > 0) {
+                flights = ac
+                  .filter((a: any) => a.lat && a.lon && !a.gnd)
+                  .map((a: any) => ({
+                    icao24: (a.hex || a.icao || '').toLowerCase(),
+                    callsign: (a.flight || a.call || '').trim(),
+                    origin_country: 'United States',
+                    longitude: a.lon,
+                    latitude: a.lat,
+                    altitude: a.alt_baro !== 'ground' ? (a.alt_baro || a.alt_geom || 0) : 0,
+                    geo_altitude: a.alt_geom || 0,
+                    on_ground: a.gnd || false,
+                    velocity: (a.gs || 0) * 0.514444, // knots to m/s for consistent processing
+                    heading: a.track || a.true_heading || 0,
+                    vertical_rate: (a.baro_rate || a.geom_rate || 0) * 0.00508, // fpm to m/s
+                    squawk: a.squawk || '',
+                    time_position: null,
+                    last_contact: null,
+                    // ADS-B Exchange provides registration directly
+                    _registration: a.r || a.reg || ''
+                  }));
+                apiSuccess = true;
+                apiError = null;
+                console.log(`✅ RapidAPI ADS-B Exchange: ${flights.length} valid aircraft`);
+              }
+            } else {
+              const status = rapidResp?.status || 'no response';
+              console.warn(`RapidAPI returned ${status}`);
+            }
+          } catch (rapidErr) {
+            console.error('RapidAPI fallback error:', rapidErr instanceof Error ? rapidErr.message : rapidErr);
+          }
+        }
+      }
+
+      // ============ FALLBACK 2: Cached DB data ============
       if (!apiSuccess && neonUrl) {
         console.log('API unavailable, fetching cached flights from database...');
         
@@ -476,12 +539,13 @@ serve(async (req) => {
           const altitudeFeet = metersToFeet(f.altitude || f.geo_altitude);
           const speedKnots = msToKnots(f.velocity);
           
-          let registration = '';
-          if (callsign.startsWith('N') && /^N\d/.test(callsign)) {
+          // Use direct registration from ADS-B Exchange if available
+          let registration = f._registration || '';
+          if (!registration && callsign.startsWith('N') && /^N\d/.test(callsign)) {
             registration = callsign.replace(/\s+/g, '');
           }
           
-          const classification = classifyAircraft(registration, callsign, altitudeFeet);
+          const classification = classifyAircraft(registration, callsign, altitudeFeet, speedKnots);
           
           const openskyTimestamp = f.time_position || f.last_contact;
           const detectedAt = openskyTimestamp 
@@ -575,6 +639,9 @@ serve(async (req) => {
         lowAlt: transformedFlights.filter(f => f.altitude > 0 && f.altitude < 1500).length
       };
 
+      // Determine which source provided the data
+      const dataSource = flights.length > 0 && flights[0]._registration !== undefined ? 'rapidapi_adsb' : 'opensky';
+
       return new Response(
         JSON.stringify({
           success: apiSuccess,
@@ -582,7 +649,7 @@ serve(async (req) => {
           count: transformedFlights.length,
           inserted,
           stats,
-          source: 'opensky',
+          source: dataSource,
           apiError,
           timestamp: new Date().toISOString()
         }),

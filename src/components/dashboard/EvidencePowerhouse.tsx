@@ -117,66 +117,113 @@ export function EvidencePowerhouse() {
             </div>
           )}
 
-          {/* Data table - same structure for all tabs */}
-          {['forensic', 'evidence', 'threats'].map(tab => (
-            <TabsContent key={tab} value={tab}>
-              <div className="rounded border overflow-auto max-h-[400px]">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      {tab === 'forensic' && <><TableHead className="text-xs">Timestamp</TableHead><TableHead className="text-xs">Type</TableHead><TableHead className="text-xs">Source</TableHead><TableHead className="text-xs">Confidence</TableHead><TableHead className="text-xs">Summary</TableHead></>}
-                      {tab === 'evidence' && <><TableHead className="text-xs">Timestamp</TableHead><TableHead className="text-xs">Type</TableHead><TableHead className="text-xs">Source</TableHead><TableHead className="text-xs">Confidence</TableHead><TableHead className="text-xs">Summary</TableHead></>}
-                      {tab === 'threats' && <><TableHead className="text-xs">Registration</TableHead><TableHead className="text-xs">Tier</TableHead><TableHead className="text-xs">Score</TableHead><TableHead className="text-xs">Type</TableHead><TableHead className="text-xs">Source</TableHead></>}
+          {/* Forensic Events tab */}
+          <TabsContent value="forensic">
+            <div className="rounded border overflow-auto max-h-[400px]">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-xs">Timestamp</TableHead>
+                    <TableHead className="text-xs">Registration</TableHead>
+                    <TableHead className="text-xs">Tag</TableHead>
+                    <TableHead className="text-xs">Score</TableHead>
+                    <TableHead className="text-xs">Source</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {rows.length === 0 && (
+                    <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground text-xs py-8">{isLoading ? 'Loading...' : 'No records found'}</TableCell></TableRow>
+                  )}
+                  {rows.map((row, i) => (
+                    <TableRow key={i}>
+                      <TableCell className="text-xs font-mono">{row.event_timestamp?.slice(0, 19) || '—'}</TableCell>
+                      <TableCell className="text-xs font-bold">{row.registration || '—'}</TableCell>
+                      <TableCell><Badge variant="outline" className="text-[10px]">{row.taxonomy_tag || '—'}</Badge></TableCell>
+                      <TableCell className="text-xs">{safeNumber(row.threat_score)}</TableCell>
+                      <TableCell className="text-xs">{row.source_table || '—'}</TableCell>
                     </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {rows.length === 0 && (
-                      <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground text-xs py-8">{isLoading ? 'Loading...' : 'No records found'}</TableCell></TableRow>
-                    )}
-                    {rows.map((row, i) => (
-                      <TableRow key={i}>
-                        {tab === 'forensic' && <>
-                          <TableCell className="text-xs font-mono">{row.event_timestamp?.slice(0, 19) || '—'}</TableCell>
-                          <TableCell><Badge variant="outline" className="text-[10px]">{row.event_type || '—'}</Badge></TableCell>
-                          <TableCell className="text-xs">{row.source_table || '—'}</TableCell>
-                          <TableCell className="text-xs">{safeNumber(row.confidence_score)}</TableCell>
-                          <TableCell className="text-xs max-w-[200px] truncate">{row.summary || '—'}</TableCell>
-                        </>}
-                        {tab === 'evidence' && <>
-                          <TableCell className="text-xs font-mono">{row.event_timestamp?.slice(0, 19) || '—'}</TableCell>
-                          <TableCell><Badge variant="outline" className="text-[10px]">{row.evidence_type || '—'}</Badge></TableCell>
-                          <TableCell className="text-xs">{row.source_table || '—'}</TableCell>
-                          <TableCell className="text-xs">{safeNumber(row.confidence_score)}</TableCell>
-                          <TableCell className="text-xs max-w-[200px] truncate">{row.summary || '—'}</TableCell>
-                        </>}
-                        {tab === 'threats' && <>
-                          <TableCell className="text-xs font-mono font-bold">{row.registration || '—'}</TableCell>
-                          <TableCell><Badge variant="destructive" className="text-[10px]">{row.tier || '—'}</Badge></TableCell>
-                          <TableCell className="text-xs">{safeNumber(row.threat_score)}</TableCell>
-                          <TableCell className="text-xs">{row.event_type || '—'}</TableCell>
-                          <TableCell className="text-xs">{row.source_table || '—'}</TableCell>
-                        </>}
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-              <div className="flex items-center justify-between mt-2">
-                <span className="text-xs text-muted-foreground font-mono">
-                  Page {page + 1} • Showing {rows.length} records
-                </span>
-                <div className="flex gap-1">
-                  <Button variant="outline" size="sm" onClick={() => handlePage(-1)} disabled={page === 0}>
-                    <ChevronLeft className="h-3 w-3" />
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={() => handlePage(1)} disabled={rows.length < PAGE_SIZE}>
-                    <ChevronRight className="h-3 w-3" />
-                  </Button>
-                </div>
-              </div>
-            </TabsContent>
-          ))}
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </TabsContent>
+
+          {/* Unified Evidence tab */}
+          <TabsContent value="evidence">
+            <div className="rounded border overflow-auto max-h-[400px]">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-xs">Timestamp</TableHead>
+                    <TableHead className="text-xs">Type</TableHead>
+                    <TableHead className="text-xs">Source</TableHead>
+                    <TableHead className="text-xs">Confidence</TableHead>
+                    <TableHead className="text-xs">Summary</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {rows.length === 0 && (
+                    <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground text-xs py-8">{isLoading ? 'Loading...' : 'No records found'}</TableCell></TableRow>
+                  )}
+                  {rows.map((row, i) => (
+                    <TableRow key={i}>
+                      <TableCell className="text-xs font-mono">{row.event_timestamp?.slice(0, 19) || '—'}</TableCell>
+                      <TableCell><Badge variant="outline" className="text-[10px]">{row.evidence_type || '—'}</Badge></TableCell>
+                      <TableCell className="text-xs">{row.source_table || '—'}</TableCell>
+                      <TableCell className="text-xs">{safeNumber(row.confidence_score)}</TableCell>
+                      <TableCell className="text-xs max-w-[200px] truncate">{row.summary || '—'}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </TabsContent>
+
+          {/* Threat Tiers tab */}
+          <TabsContent value="threats">
+            <div className="rounded border overflow-auto max-h-[400px]">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-xs">Detection ID</TableHead>
+                    <TableHead className="text-xs">Tier</TableHead>
+                    <TableHead className="text-xs">WTI Score</TableHead>
+                    <TableHead className="text-xs">Threat Level</TableHead>
+                    <TableHead className="text-xs">Computed</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {rows.length === 0 && (
+                    <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground text-xs py-8">{isLoading ? 'Loading...' : 'No records found'}</TableCell></TableRow>
+                  )}
+                  {rows.map((row, i) => (
+                    <TableRow key={i}>
+                      <TableCell className="text-xs font-mono truncate max-w-[120px]">{row.detection_id || '—'}</TableCell>
+                      <TableCell><Badge variant="destructive" className="text-[10px]">{row.tier_level || '—'}</Badge></TableCell>
+                      <TableCell className="text-xs font-bold">{safeNumber(row.wti_score)}</TableCell>
+                      <TableCell className="text-xs">{row.threat_level || '—'}</TableCell>
+                      <TableCell className="text-xs font-mono">{row.computed_at?.slice(0, 19) || '—'}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </TabsContent>
         </Tabs>
+
+        <div className="flex items-center justify-between mt-2">
+          <span className="text-xs text-muted-foreground font-mono">
+            Page {page + 1} • Showing {rows.length} records
+          </span>
+          <div className="flex gap-1">
+            <Button variant="outline" size="sm" onClick={() => handlePage(-1)} disabled={page === 0}>
+              <ChevronLeft className="h-3 w-3" />
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => handlePage(1)} disabled={rows.length < PAGE_SIZE}>
+              <ChevronRight className="h-3 w-3" />
+            </Button>
+          </div>
+        </div>
       </CardContent>
     </Card>
   );

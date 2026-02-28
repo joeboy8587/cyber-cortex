@@ -48,8 +48,7 @@ export function SentinelViolationsBoard() {
 
   const severityColor = (s: string) => {
     const sv = (s || '').toLowerCase();
-    if (sv === 'critical') return 'destructive';
-    if (sv === 'high') return 'destructive';
+    if (sv === 'critical' || sv === 'high') return 'destructive';
     return 'outline';
   };
 
@@ -70,7 +69,6 @@ export function SentinelViolationsBoard() {
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* Category breakdown */}
         {summary && Object.keys(summary.categories).length > 0 && (
           <div className="flex flex-wrap gap-1">
             {Object.entries(summary.categories).slice(0, 10).map(([cat, cnt]) => (
@@ -97,10 +95,10 @@ export function SentinelViolationsBoard() {
                 <TableHeader>
                   <TableRow>
                     <TableHead className="text-xs">Detected</TableHead>
-                    <TableHead className="text-xs">Registration</TableHead>
+                    <TableHead className="text-xs">Aircraft</TableHead>
                     <TableHead className="text-xs">Type</TableHead>
                     <TableHead className="text-xs">Severity</TableHead>
-                    <TableHead className="text-xs">Details</TableHead>
+                    <TableHead className="text-xs">Description</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -109,11 +107,11 @@ export function SentinelViolationsBoard() {
                   )}
                   {rows.map((row, i) => (
                     <TableRow key={i}>
-                      <TableCell className="text-xs font-mono">{row.detected_at?.slice(0, 19) || '—'}</TableCell>
-                      <TableCell className="text-xs font-bold">{row.registration || '—'}</TableCell>
+                      <TableCell className="text-xs font-mono">{row.detection_timestamp?.slice(0, 19) || '—'}</TableCell>
+                      <TableCell className="text-xs font-bold">{row.aircraft_registration || '—'}</TableCell>
                       <TableCell><Badge variant="outline" className="text-[10px]">{row.violation_type || '—'}</Badge></TableCell>
                       <TableCell><Badge variant={severityColor(row.severity)} className="text-[10px]">{row.severity || '—'}</Badge></TableCell>
-                      <TableCell className="text-xs max-w-[200px] truncate">{row.details || '—'}</TableCell>
+                      <TableCell className="text-xs max-w-[200px] truncate">{row.description || '—'}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -126,11 +124,11 @@ export function SentinelViolationsBoard() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="text-xs">Detected</TableHead>
+                    <TableHead className="text-xs">Timestamp</TableHead>
                     <TableHead className="text-xs">Registration</TableHead>
                     <TableHead className="text-xs">Event Type</TableHead>
-                    <TableHead className="text-xs">Severity</TableHead>
                     <TableHead className="text-xs">Source</TableHead>
+                    <TableHead className="text-xs">HR / Stress</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -139,11 +137,11 @@ export function SentinelViolationsBoard() {
                   )}
                   {rows.map((row, i) => (
                     <TableRow key={i}>
-                      <TableCell className="text-xs font-mono">{row.detected_at?.slice(0, 19) || '—'}</TableCell>
+                      <TableCell className="text-xs font-mono">{row.event_timestamp?.slice(0, 19) || '—'}</TableCell>
                       <TableCell className="text-xs font-bold">{row.registration || '—'}</TableCell>
                       <TableCell><Badge variant="outline" className="text-[10px]">{row.event_type || '—'}</Badge></TableCell>
-                      <TableCell><Badge variant={severityColor(row.severity)} className="text-[10px]">{row.severity || '—'}</Badge></TableCell>
-                      <TableCell className="text-xs">{row.source || '—'}</TableCell>
+                      <TableCell className="text-xs">{row.source_table || '—'}</TableCell>
+                      <TableCell className="text-xs">{row.heart_rate ? `${row.heart_rate} bpm` : '—'}{row.stress_level ? ` / ${row.stress_level}` : ''}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

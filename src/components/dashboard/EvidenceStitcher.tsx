@@ -88,11 +88,11 @@ export function EvidenceStitcher() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="text-xs">Source Table</TableHead>
-                    <TableHead className="text-xs">Source ID</TableHead>
-                    <TableHead className="text-xs">→ Linked Table</TableHead>
-                    <TableHead className="text-xs">Link Type</TableHead>
+                    <TableHead className="text-xs">Evidence Table</TableHead>
+                    <TableHead className="text-xs">Evidence ID</TableHead>
+                    <TableHead className="text-xs">Type</TableHead>
                     <TableHead className="text-xs">Confidence</TableHead>
+                    <TableHead className="text-xs">Description</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -101,11 +101,11 @@ export function EvidenceStitcher() {
                   )}
                   {rows.map((row, i) => (
                     <TableRow key={i}>
-                      <TableCell><Badge variant="outline" className="text-[10px]">{row.source_table || '—'}</Badge></TableCell>
-                      <TableCell className="text-xs font-mono truncate max-w-[100px]">{row.source_id || '—'}</TableCell>
-                      <TableCell><Badge variant="secondary" className="text-[10px]">{row.linked_table || '—'}</Badge></TableCell>
-                      <TableCell className="text-xs">{row.link_type || '—'}</TableCell>
-                      <TableCell className="text-xs">{safeNumber(row.confidence)}%</TableCell>
+                      <TableCell><Badge variant="outline" className="text-[10px]">{row.evidence_table || '—'}</Badge></TableCell>
+                      <TableCell className="text-xs font-mono truncate max-w-[100px]">{row.evidence_id || '—'}</TableCell>
+                      <TableCell><Badge variant="secondary" className="text-[10px]">{row.evidence_type || '—'}</Badge></TableCell>
+                      <TableCell className="text-xs">{safeNumber(row.confidence_score)}%</TableCell>
+                      <TableCell className="text-xs max-w-[200px] truncate">{row.link_description || '—'}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -120,9 +120,9 @@ export function EvidenceStitcher() {
                   <TableRow>
                     <TableHead className="text-xs">Timestamp</TableHead>
                     <TableHead className="text-xs">Type</TableHead>
-                    <TableHead className="text-xs">Registration</TableHead>
-                    <TableHead className="text-xs">Sources</TableHead>
-                    <TableHead className="text-xs">Summary</TableHead>
+                    <TableHead className="text-xs">Aircraft</TableHead>
+                    <TableHead className="text-xs">Threat</TableHead>
+                    <TableHead className="text-xs">Description</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -133,9 +133,9 @@ export function EvidenceStitcher() {
                     <TableRow key={i}>
                       <TableCell className="text-xs font-mono">{row.event_timestamp?.slice(0, 19) || '—'}</TableCell>
                       <TableCell><Badge variant="outline" className="text-[10px]">{row.event_type || '—'}</Badge></TableCell>
-                      <TableCell className="text-xs font-bold">{row.registration || '—'}</TableCell>
-                      <TableCell className="text-xs truncate max-w-[120px]">{row.source_tables || '—'}</TableCell>
-                      <TableCell className="text-xs max-w-[200px] truncate">{row.summary || '—'}</TableCell>
+                      <TableCell className="text-xs font-bold">{row.aircraft_id || '—'}</TableCell>
+                      <TableCell className="text-xs">{row.threat_level || '—'}</TableCell>
+                      <TableCell className="text-xs max-w-[200px] truncate">{row.event_description || '—'}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

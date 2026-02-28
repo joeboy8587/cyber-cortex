@@ -20,14 +20,16 @@ export interface ArchiveSummary {
 export function useArchiveDatabase() {
   const { customQuery, isLoading, error, connectionStatus } = useNeonDatabase();
 
+  // ===== canonical_forensic_events =====
+  // Columns: canonical_id, source_table, source_id, event_timestamp, registration, callsign, icao_code, icao24, altitude, speed, latitude, longitude, heading, threat_score, flagged, taxonomy_tag, anomaly_flags, network_classification, drone_likelihood, row_payload
   const getForensicEvents = useCallback(async (params: ArchiveQueryParams = {}) => {
     const { startDate, endDate, category, limit = 50, offset = 0 } = params;
     let where = 'WHERE 1=1';
     if (startDate) where += ` AND event_timestamp >= '${startDate}'`;
     if (endDate) where += ` AND event_timestamp <= '${endDate}'`;
-    if (category) where += ` AND event_type = '${category}'`;
+    if (category) where += ` AND taxonomy_tag = '${category}'`;
     const data = await customQuery(
-      `SELECT id, event_timestamp, event_type, source_table, confidence_score, summary, entity_id
+      `SELECT canonical_id, event_timestamp, registration, callsign, taxonomy_tag, threat_score, altitude, source_table, flagged, network_classification
        FROM canonical_forensic_events ${where}
        ORDER BY event_timestamp DESC LIMIT ${limit} OFFSET ${offset}`
     );
@@ -45,13 +47,14 @@ export function useArchiveDatabase() {
     const row = rows[0] || {};
 
     const catData = await customQuery(`
-      SELECT event_type, COUNT(*)::int as cnt
+      SELECT taxonomy_tag, COUNT(*)::int as cnt
       FROM canonical_forensic_events
-      GROUP BY event_type ORDER BY cnt DESC LIMIT 20
+      WHERE taxonomy_tag IS NOT NULL
+      GROUP BY taxonomy_tag ORDER BY cnt DESC LIMIT 20
     `);
     const catRows = extractNeonData(catData);
     const categories: Record<string, number> = {};
-    catRows.forEach((r: any) => { categories[r.event_type || 'unknown'] = safeNumber(r.cnt); });
+    catRows.forEach((r: any) => { categories[r.taxonomy_tag || 'unknown'] = safeNumber(r.cnt); });
 
     return {
       totalRecords: safeNumber(row.total),
@@ -60,6 +63,8 @@ export function useArchiveDatabase() {
     };
   }, [customQuery]);
 
+  // ===== master_unified_evidence =====
+  // Keeping original query — this table returned 2.8M records so columns likely match
   const getUnifiedEvidence = useCallback(async (params: ArchiveQueryParams = {}) => {
     const { startDate, endDate, category, limit = 50, offset = 0 } = params;
     let where = 'WHERE 1=1';
@@ -67,9 +72,8 @@ export function useArchiveDatabase() {
     if (endDate) where += ` AND event_timestamp <= '${endDate}'`;
     if (category) where += ` AND evidence_type = '${category}'`;
     const data = await customQuery(
-      `SELECT id, event_timestamp, evidence_type, source_table, summary, confidence_score
-       FROM master_unified_evidence ${where}
-       ORDER BY event_timestamp DESC LIMIT ${limit} OFFSET ${offset}`
+      `SELECT * FROM master_unified_evidence ${where}
+       ORDER BY event_timestamp DESC NULLS LAST LIMIT ${limit} OFFSET ${offset}`
     );
     return extractNeonData(data);
   }, [customQuery]);
@@ -87,6 +91,7 @@ export function useArchiveDatabase() {
     const catData = await customQuery(`
       SELECT evidence_type, COUNT(*)::int as cnt
       FROM master_unified_evidence
+      WHERE evidence_type IS NOT NULL
       GROUP BY evidence_type ORDER BY cnt DESC LIMIT 20
     `);
     const catRows = extractNeonData(catData);
@@ -100,14 +105,16 @@ export function useArchiveDatabase() {
     };
   }, [customQuery]);
 
+  // ===== threat_tiers =====
+  // Columns: detection_id, wti_score, tier_level, threat_level, components, computed_at, method_version, as_of_timestamp
   const getThreatTiers = useCallback(async (params: ArchiveQueryParams = {}) => {
     const { limit = 50, offset = 0, category } = params;
     let where = 'WHERE 1=1';
-    if (category) where += ` AND tier = '${category}'`;
+    if (category) where += ` AND tier_level = '${category}'`;
     const data = await customQuery(
-      `SELECT id, registration, tier, threat_score, event_type, source_table, created_at
+      `SELECT detection_id, tier_level, wti_score, threat_level, components, computed_at
        FROM threat_tiers ${where}
-       ORDER BY threat_score DESC NULLS LAST LIMIT ${limit} OFFSET ${offset}`
+       ORDER BY wti_score DESC NULLS LAST LIMIT ${limit} OFFSET ${offset}`
     );
     return extractNeonData(data);
   }, [customQuery]);
@@ -115,21 +122,22 @@ export function useArchiveDatabase() {
   const getThreatTiersSummary = useCallback(async (): Promise<ArchiveSummary> => {
     const data = await customQuery(`
       SELECT COUNT(*)::int as total,
-             MIN(created_at) as earliest,
-             MAX(created_at) as latest
+             MIN(computed_at) as earliest,
+             MAX(computed_at) as latest
       FROM threat_tiers
     `);
     const rows = extractNeonData(data);
     const row = rows[0] || {};
 
     const catData = await customQuery(`
-      SELECT tier, COUNT(*)::int as cnt
+      SELECT tier_level, COUNT(*)::int as cnt
       FROM threat_tiers
-      GROUP BY tier ORDER BY cnt DESC LIMIT 20
+      WHERE tier_level IS NOT NULL
+      GROUP BY tier_level ORDER BY cnt DESC LIMIT 20
     `);
     const catRows = extractNeonData(catData);
     const categories: Record<string, number> = {};
-    catRows.forEach((r: any) => { categories[r.tier || 'unknown'] = safeNumber(r.cnt); });
+    catRows.forEach((r: any) => { categories[r.tier_level || 'unknown'] = safeNumber(r.cnt); });
 
     return {
       totalRecords: safeNumber(row.total),
@@ -138,15 +146,17 @@ export function useArchiveDatabase() {
     };
   }, [customQuery]);
 
+  // ===== sentinel_violations =====
+  // Columns: id, detection_timestamp, aircraft_registration, aircraft_type, altitude, latitude, longitude, violation_type, severity, description, correlated_biometric, evidence_hash, created_at, alert_sent, sha256_hash
   const getSentinelViolations = useCallback(async (params: ArchiveQueryParams = {}) => {
     const { startDate, endDate, limit = 50, offset = 0 } = params;
     let where = 'WHERE 1=1';
-    if (startDate) where += ` AND detected_at >= '${startDate}'`;
-    if (endDate) where += ` AND detected_at <= '${endDate}'`;
+    if (startDate) where += ` AND detection_timestamp >= '${startDate}'`;
+    if (endDate) where += ` AND detection_timestamp <= '${endDate}'`;
     const data = await customQuery(
-      `SELECT id, registration, violation_type, severity, detected_at, details
+      `SELECT id, detection_timestamp, aircraft_registration, aircraft_type, violation_type, severity, description, altitude
        FROM sentinel_violations ${where}
-       ORDER BY detected_at DESC LIMIT ${limit} OFFSET ${offset}`
+       ORDER BY detection_timestamp DESC LIMIT ${limit} OFFSET ${offset}`
     );
     return extractNeonData(data);
   }, [customQuery]);
@@ -154,8 +164,8 @@ export function useArchiveDatabase() {
   const getSentinelViolationsSummary = useCallback(async (): Promise<ArchiveSummary> => {
     const data = await customQuery(`
       SELECT COUNT(*)::int as total,
-             MIN(detected_at) as earliest,
-             MAX(detected_at) as latest
+             MIN(detection_timestamp) as earliest,
+             MAX(detection_timestamp) as latest
       FROM sentinel_violations
     `);
     const rows = extractNeonData(data);
@@ -164,6 +174,7 @@ export function useArchiveDatabase() {
     const catData = await customQuery(`
       SELECT violation_type, COUNT(*)::int as cnt
       FROM sentinel_violations
+      WHERE violation_type IS NOT NULL
       GROUP BY violation_type ORDER BY cnt DESC LIMIT 20
     `);
     const catRows = extractNeonData(catData);
@@ -177,25 +188,27 @@ export function useArchiveDatabase() {
     };
   }, [customQuery]);
 
+  // ===== watchtower_unified_master =====
+  // Columns: event_id, event_type, source_table, source_id, event_timestamp, registration, icao_code, callsign, altitude_ft, ground_speed, heading, heart_rate, hrv, stress_level, ...
   const getWatchtowerMaster = useCallback(async (params: ArchiveQueryParams = {}) => {
     const { limit = 50, offset = 0 } = params;
     const data = await customQuery(
-      `SELECT id, registration, event_type, severity, detected_at, source, details
+      `SELECT event_id, event_type, source_table, event_timestamp, registration, callsign, altitude_ft, heart_rate, stress_level
        FROM watchtower_unified_master
-       ORDER BY detected_at DESC NULLS LAST LIMIT ${limit} OFFSET ${offset}`
+       ORDER BY event_timestamp DESC NULLS LAST LIMIT ${limit} OFFSET ${offset}`
     );
     return extractNeonData(data);
   }, [customQuery]);
 
+  // ===== biometric tables =====
   const getBiometricCollapses = useCallback(async (params: ArchiveQueryParams = {}) => {
     const { startDate, endDate, limit = 50, offset = 0 } = params;
     let where = 'WHERE 1=1';
     if (startDate) where += ` AND collapse_timestamp >= '${startDate}'`;
     if (endDate) where += ` AND collapse_timestamp <= '${endDate}'`;
     const data = await customQuery(
-      `SELECT id, collapse_timestamp, hrv_value, heart_rate, severity, correlated_aircraft, collapse_type
-       FROM biometric_threshold_collapses ${where}
-       ORDER BY collapse_timestamp DESC LIMIT ${limit} OFFSET ${offset}`
+      `SELECT * FROM biometric_threshold_collapses ${where}
+       ORDER BY collapse_timestamp DESC NULLS LAST LIMIT ${limit} OFFSET ${offset}`
     );
     return extractNeonData(data);
   }, [customQuery]);
@@ -203,8 +216,7 @@ export function useArchiveDatabase() {
   const getBiometricBatchEvents = useCallback(async (params: ArchiveQueryParams = {}) => {
     const { limit = 50, offset = 0 } = params;
     const data = await customQuery(
-      `SELECT id, event_timestamp, event_type, hrv, heart_rate, severity, source
-       FROM unified_biometric_batch_events
+      `SELECT * FROM unified_biometric_batch_events
        ORDER BY event_timestamp DESC NULLS LAST LIMIT ${limit} OFFSET ${offset}`
     );
     return extractNeonData(data);
@@ -213,8 +225,7 @@ export function useArchiveDatabase() {
   const getBiometricEvidence = useCallback(async (params: ArchiveQueryParams = {}) => {
     const { limit = 50, offset = 0 } = params;
     const data = await customQuery(
-      `SELECT id, measurement_timestamp, hrv, heart_rate, source, severity
-       FROM biometric_evidence
+      `SELECT * FROM biometric_evidence
        ORDER BY measurement_timestamp DESC NULLS LAST LIMIT ${limit} OFFSET ${offset}`
     );
     return extractNeonData(data);
@@ -223,19 +234,20 @@ export function useArchiveDatabase() {
   const getBiometricAircraftCorrelations = useCallback(async (params: ArchiveQueryParams = {}) => {
     const { limit = 50, offset = 0 } = params;
     const data = await customQuery(
-      `SELECT id, biometric_timestamp, registration, hrv_delta, correlation_strength, altitude
-       FROM master_biometric_aircraft_correlations
+      `SELECT * FROM master_biometric_aircraft_correlations
        ORDER BY biometric_timestamp DESC NULLS LAST LIMIT ${limit} OFFSET ${offset}`
     );
     return extractNeonData(data);
   }, [customQuery]);
 
+  // ===== case_evidence_links =====
+  // Columns: id, case_id, evidence_table, evidence_id, evidence_type, relevance_score, confidence_score, link_description, added_by_josiah, created_at, sha256_hash, evidence_hash
   const getCaseEvidenceLinks = useCallback(async (params: ArchiveQueryParams = {}) => {
     const { limit = 50, offset = 0, category } = params;
     let where = 'WHERE 1=1';
-    if (category) where += ` AND source_table = '${category}'`;
+    if (category) where += ` AND evidence_table = '${category}'`;
     const data = await customQuery(
-      `SELECT id, source_table, source_id, linked_table, linked_id, link_type, confidence, created_at
+      `SELECT id, case_id, evidence_table, evidence_id, evidence_type, relevance_score, confidence_score, link_description, created_at
        FROM case_evidence_links ${where}
        ORDER BY created_at DESC NULLS LAST LIMIT ${limit} OFFSET ${offset}`
     );
@@ -253,13 +265,14 @@ export function useArchiveDatabase() {
     const row = rows[0] || {};
 
     const catData = await customQuery(`
-      SELECT source_table, COUNT(*)::int as cnt
+      SELECT evidence_table, COUNT(*)::int as cnt
       FROM case_evidence_links
-      GROUP BY source_table ORDER BY cnt DESC LIMIT 20
+      WHERE evidence_table IS NOT NULL
+      GROUP BY evidence_table ORDER BY cnt DESC LIMIT 20
     `);
     const catRows = extractNeonData(catData);
     const categories: Record<string, number> = {};
-    catRows.forEach((r: any) => { categories[r.source_table || 'unknown'] = safeNumber(r.cnt); });
+    catRows.forEach((r: any) => { categories[r.evidence_table || 'unknown'] = safeNumber(r.cnt); });
 
     return {
       totalRecords: safeNumber(row.total),
@@ -268,10 +281,12 @@ export function useArchiveDatabase() {
     };
   }, [customQuery]);
 
+  // ===== investigator_master_view_rows =====
+  // Columns: serial_id, event_id, source_table, event_type, event_description, aircraft_id, event_timestamp, threat_level, altitude, speed, latitude, longitude, heart_rate, stress_score, correlation_strength, low_altitude_flag, high_stress_flag, sha256_hash
   const getInvestigatorMasterView = useCallback(async (params: ArchiveQueryParams = {}) => {
     const { limit = 50, offset = 0 } = params;
     const data = await customQuery(
-      `SELECT id, event_timestamp, event_type, registration, summary, source_tables, confidence
+      `SELECT serial_id, event_id, source_table, event_type, event_description, aircraft_id, event_timestamp, threat_level, altitude, heart_rate, stress_score
        FROM investigator_master_view_rows
        ORDER BY event_timestamp DESC NULLS LAST LIMIT ${limit} OFFSET ${offset}`
     );
@@ -296,27 +311,20 @@ export function useArchiveDatabase() {
     isLoading,
     error,
     connectionStatus,
-    // Forensic Events (3.97M)
     getForensicEvents,
     getForensicEventsSummary,
-    // Unified Evidence (2.84M)
     getUnifiedEvidence,
     getUnifiedEvidenceSummary,
-    // Threat Tiers (2.85M)
     getThreatTiers,
     getThreatTiersSummary,
-    // Sentinel Violations (88K)
     getSentinelViolations,
     getSentinelViolationsSummary,
-    // Watchtower Master (582K)
     getWatchtowerMaster,
-    // Biometrics (305K+)
     getBiometricCollapses,
     getBiometricBatchEvents,
     getBiometricEvidence,
     getBiometricAircraftCorrelations,
     getFullBiometricSummary,
-    // Evidence Stitcher (487K)
     getCaseEvidenceLinks,
     getCaseEvidenceLinksSummary,
     getInvestigatorMasterView,

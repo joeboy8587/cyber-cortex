@@ -14,6 +14,9 @@ import { JosiahAutonomousHypothesis } from "@/components/dashboard/JosiahAutonom
 import { EntityRelationshipMap } from "@/components/dashboard/EntityRelationshipMap";
 import { PredictiveFlightModeling } from "@/components/dashboard/PredictiveFlightModeling";
 import { ShellNetworkGraph } from "@/components/dashboard/ShellNetworkGraph";
+import { EvidencePowerhouse } from "@/components/dashboard/EvidencePowerhouse";
+import { SentinelViolationsBoard } from "@/components/dashboard/SentinelViolationsBoard";
+import { EvidenceStitcher } from "@/components/dashboard/EvidenceStitcher";
 
 const Index = () => {
   return (
@@ -90,6 +93,21 @@ const Index = () => {
         {/* MASTER EVIDENCE HUB */}
         <section>
           <MasterEvidenceHub />
+        </section>
+
+        {/* 🔥 EVIDENCE POWERHOUSE - 9.6M Records Unlocked */}
+        <section>
+          <EvidencePowerhouse />
+        </section>
+
+        {/* SENTINEL VIOLATIONS BOARD - 670K Records */}
+        <section>
+          <SentinelViolationsBoard />
+        </section>
+
+        {/* CROSS-MODAL EVIDENCE STITCHER - 487K Records */}
+        <section>
+          <EvidenceStitcher />
         </section>
 
         {/* ENTITY RELATIONSHIP MAP */}

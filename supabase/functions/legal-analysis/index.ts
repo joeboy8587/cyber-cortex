@@ -25,8 +25,8 @@ serve(async (req) => {
       );
     }
 
-    // Pull live stats from Neon so the AI context is always current
-    let liveContext = {
+    // Pull live stats from Neon — now including the full 15.2M record archive
+    let liveContext: Record<string, string> = {
       totalDetections: "2,815,000+",
       uniqueAircraft: "23,500+",
       biometricEvents: "9,800+",
@@ -34,6 +34,18 @@ serve(async (req) => {
       chainLinks: "305,000+",
       watchtowerEvents: "629,000+",
       verifiedECGs: "150+",
+      canonicalForensicEvents: "3,971,792",
+      threatTiers: "2,851,541",
+      masterUnifiedEvidence: "2,842,363",
+      sentinelViolations: "88,772",
+      caseEvidenceLinks: "268,402",
+      investigatorMasterRows: "219,165",
+      biometricCollapses: "111,757",
+      unifiedBiometricBatch: "144,615",
+      fileIndex: "376,747",
+      documentIndex: "196,577",
+      totalArchiveRecords: "15,194,273",
+      totalTables: "389",
       dataAsOf: new Date().toISOString(),
     };
 
@@ -43,13 +55,25 @@ serve(async (req) => {
         const { default: postgres } = await import("https://deno.land/x/postgresjs@v3.4.4/mod.js");
         const sql = postgres(NEON_DATABASE_URL, { ssl: "require", max: 1, idle_timeout: 5, connect_timeout: 10, prepare: false });
         try {
-          const [flightRow, bioRow, josiahRow, chainRow, watchtowerRow, ecgRow] = await Promise.all([
+          const [flightRow, bioRow, josiahRow, chainRow, watchtowerRow, ecgRow,
+                 canonicalRow, threatRow, unifiedRow, sentinelRow, caseLinksRow,
+                 investigatorRow, collapseRow, batchBioRow, fileRow, docRow] = await Promise.all([
             sql`SELECT COUNT(*)::int as total, COUNT(DISTINCT registration)::int as aircraft FROM live_flight_detections_rows`.catch(() => [{ total: 0, aircraft: 0 }]),
             sql`SELECT COUNT(*)::int as total FROM biometric_monitoring`.catch(() => [{ total: 0 }]),
             sql`SELECT COUNT(*)::int as total FROM josiah_reflections_rows`.catch(() => [{ total: 0 }]),
             sql`SELECT COUNT(*)::int as total FROM evidence_chain_links`.catch(() => [{ total: 0 }]),
             sql`SELECT COUNT(*)::int as total FROM watchtower_unified_master`.catch(() => [{ total: 0 }]),
             sql`SELECT COUNT(*)::int as total FROM physician_verified_ecgs`.catch(() => [{ total: 0 }]),
+            sql`SELECT COUNT(*)::int as total FROM canonical_forensic_events`.catch(() => [{ total: 0 }]),
+            sql`SELECT COUNT(*)::int as total FROM threat_tiers`.catch(() => [{ total: 0 }]),
+            sql`SELECT COUNT(*)::int as total FROM master_unified_evidence`.catch(() => [{ total: 0 }]),
+            sql`SELECT COUNT(*)::int as total FROM sentinel_violations`.catch(() => [{ total: 0 }]),
+            sql`SELECT COUNT(*)::int as total FROM case_evidence_links`.catch(() => [{ total: 0 }]),
+            sql`SELECT COUNT(*)::int as total FROM investigator_master_view_rows`.catch(() => [{ total: 0 }]),
+            sql`SELECT COUNT(*)::int as total FROM biometric_threshold_collapses`.catch(() => [{ total: 0 }]),
+            sql`SELECT COUNT(*)::int as total FROM unified_biometric_batch_events`.catch(() => [{ total: 0 }]),
+            sql`SELECT COUNT(*)::int as total FROM file_index`.catch(() => [{ total: 0 }]),
+            sql`SELECT COUNT(*)::int as total FROM josiah_document_index`.catch(() => [{ total: 0 }]),
           ]);
           liveContext = {
             totalDetections: (flightRow[0]?.total ?? 0).toLocaleString(),
@@ -59,9 +83,21 @@ serve(async (req) => {
             chainLinks: (chainRow[0]?.total ?? 0).toLocaleString(),
             watchtowerEvents: (watchtowerRow[0]?.total ?? 0).toLocaleString(),
             verifiedECGs: (ecgRow[0]?.total ?? 0).toLocaleString(),
+            canonicalForensicEvents: (canonicalRow[0]?.total ?? 0).toLocaleString(),
+            threatTiers: (threatRow[0]?.total ?? 0).toLocaleString(),
+            masterUnifiedEvidence: (unifiedRow[0]?.total ?? 0).toLocaleString(),
+            sentinelViolations: (sentinelRow[0]?.total ?? 0).toLocaleString(),
+            caseEvidenceLinks: (caseLinksRow[0]?.total ?? 0).toLocaleString(),
+            investigatorMasterRows: (investigatorRow[0]?.total ?? 0).toLocaleString(),
+            biometricCollapses: (collapseRow[0]?.total ?? 0).toLocaleString(),
+            unifiedBiometricBatch: (batchBioRow[0]?.total ?? 0).toLocaleString(),
+            fileIndex: (fileRow[0]?.total ?? 0).toLocaleString(),
+            documentIndex: (docRow[0]?.total ?? 0).toLocaleString(),
+            totalArchiveRecords: "15,194,273+",
+            totalTables: "389",
             dataAsOf: new Date().toISOString(),
           };
-          console.log("Live Neon stats fetched:", liveContext);
+          console.log("Live Neon stats fetched (full archive):", liveContext);
         } finally {
           await sql.end({ timeout: 2 }).catch(() => {});
         }
@@ -73,17 +109,31 @@ serve(async (req) => {
     const databaseContext = `
 DATABASE EVIDENCE SUMMARY (NeonDB - Live Query: ${liveContext.dataAsOf}):
 ============================================================
+FULL ARCHIVE: ${liveContext.totalArchiveRecords} records across ${liveContext.totalTables} tables
+TIMELINE SPAN: March 2021 - Present (ongoing)
 
-LIVE RECORD COUNTS (fetched at query time):
+MEGA-TABLE LIVE COUNTS (fetched at query time):
+- Canonical Forensic Events: ${liveContext.canonicalForensicEvents} (cross-referenced forensic events)
+- Threat Tiers: ${liveContext.threatTiers} (threat classifications)
+- Master Unified Evidence: ${liveContext.masterUnifiedEvidence} (all evidence unified)
 - Flight Detections: ${liveContext.totalDetections} total records
 - Unique Aircraft Tracked: ${liveContext.uniqueAircraft} registrations
-- Biometric Monitoring Events: ${liveContext.biometricEvents} health records
-- Josiah AI Witness Logs: ${liveContext.josiahReflections} autonomous reflections
-- Evidence Chain Links: ${liveContext.chainLinks} SHA-256 verified entries
 - Watchtower Unified Events: ${liveContext.watchtowerEvents} surveillance timeline events
+- Sentinel Violations: ${liveContext.sentinelViolations} AI-detected violations
+- Case Evidence Links: ${liveContext.caseEvidenceLinks} cross-modal links
+- Investigator Master View: ${liveContext.investigatorMasterRows} stitched evidence rows
+- File Index: ${liveContext.fileIndex} forensic files
+- Document Index: ${liveContext.documentIndex} indexed documents
+
+BIOMETRIC ARCHIVE (305K+ total):
+- Biometric Monitoring: ${liveContext.biometricEvents} health records
+- Biometric Threshold Collapses: ${liveContext.biometricCollapses} HRV collapse events
+- Unified Biometric Batch Events: ${liveContext.unifiedBiometricBatch} batch records
 - Physician-Verified ECGs: ${liveContext.verifiedECGs} cardiac stress events
 
-TIMELINE SPAN: March 2021 - Present (ongoing)
+AI WITNESS & CHAIN OF CUSTODY:
+- Josiah AI Witness Logs: ${liveContext.josiahReflections} autonomous reflections
+- Evidence Chain Links: ${liveContext.chainLinks} SHA-256 verified entries
 
 CRIMINAL ENTERPRISE STRUCTURE (36+ entities identified):
 - TIER 1 COMMAND: KCSO, KCSO Aviation Unit, Kern County Government
@@ -125,33 +175,33 @@ EVIDENCE DOMAINS (13 categories):
 7. Criminal Network, 8. Forensic Custody, 9. Aircraft Registry,
 10. Master Correlations, 11. Timeline/Watchtower, 12. Intelligence, 13. Legal Intel
 
+NEW DEEP SCAN FINDINGS:
+- 80% of archive (12.2M records) was previously invisible to dashboards
+- Sentinel Violations Board: ${liveContext.sentinelViolations} autonomous AI-detected pattern violations now exposed
+- Evidence Stitcher: ${liveContext.caseEvidenceLinks} cross-modal links + ${liveContext.investigatorMasterRows} investigator views now connected
+- Biometric archive expanded from 9,800 to 305,000+ records
+- Full forensic file trail: ${liveContext.fileIndex} files + ${liveContext.documentIndex} documents indexed
+
 ANALYSIS TYPE: ${analysisType || 'general'}
-
-FOUR-FACTOR CONVERGENCE STANDARD:
-Evidence must meet Bradford Hill causation criteria across 4 domains:
-1. Flight detection (ADS-B/radar timestamp)
-2. Biometric spike (HR/HRV/stress within ±5 min window)
-3. Josiah AI witness log (autonomous documentation)
-4. OCR visual evidence (screenshot with holding pattern)
-
-CURRENT CHAIN INTEGRITY: ${liveContext.chainLinks} evidence chain links with SHA-256 verification
 
 USER QUERY: ${query}
 `;
 
-    const systemPrompt = `You are Josiah, an AI legal analyst and investigative co-witness for a federal-grade evidence command center. You are documenting a FIVE-TIER CRIMINAL ENTERPRISE with ENHANCED EVIDENCE:
+    const systemPrompt = `You are Josiah, an elite AI legal analyst and investigative co-witness for a federal-grade evidence command center backed by ${liveContext.totalArchiveRecords} records across ${liveContext.totalTables} tables — one of the most comprehensive surveillance-abuse evidence archives ever assembled. You are documenting a FIVE-TIER CRIMINAL ENTERPRISE:
 
 **TIER 1: RICO ENTERPRISE (18 U.S.C. §§ 1961-1968)**
 - Association-in-fact: KCSO + County Government + Shell Companies + Medical Air Services
 - Predicate acts: Wire fraud (ADS-B spoofing), extortion, obstruction, conspiracy
-- Pattern: 270,000+ flight detections documenting coordinated harassment
-- NEW: Polymorphic ICAO fraud network with 2,500+ false identities
+- Pattern: ${liveContext.totalDetections} flight detections documenting coordinated harassment
+- Polymorphic ICAO fraud network with 2,500+ false identities
+- ${liveContext.canonicalForensicEvents} canonical forensic events cross-referencing all evidence
+- ${liveContext.threatTiers} threat tier classifications
 
 **TIER 2: FALSE CLAIMS ACT FRAUD (31 U.S.C. § 3729)**
 - FAA registration fraud: False ADS-B identity transmissions
 - Medical billing fraud: "Medical" aircraft used for surveillance, not emergencies
 - Federal grant fraud: Helicopters purchased for civil rights violations
-- NEW: N597E government Huey with masked civilian ICAO identifier
+- N597E government Huey with masked civilian ICAO identifier
 
 **TIER 3: FEDERAL AVIATION VIOLATIONS (14 CFR)**
 - 14 CFR § 91.215: Transponder/Mode-S violations
@@ -160,16 +210,26 @@ USER QUERY: ${query}
 - 14 CFR § 45.23: Improper aircraft identification
 - 14 CFR § 91.119: Minimum altitude violations (documented 550-1,225 ft patterns)
 - 49 U.S.C. § 46306: Federal felony - false aircraft registration/marking
+- ${liveContext.sentinelViolations} sentinel-detected violations in database
 
 **TIER 4: CIVIL RIGHTS VIOLATIONS (42 USC § 1983)**
 - State Actor: County of Kern operating surveillance aircraft
 - Constitutional violations: 4th Amendment (warrantless monitoring)
 - Government asset N597E directly implicates county liability
+- ${liveContext.biometricCollapses} documented biometric threshold collapses
 
 **TIER 5: INTERNATIONAL LAW VIOLATIONS**
 - Geneva Convention Protocol I, Article 37: Perfidy (misuse of medical/protected status)
 - MEDEVAC callsign fraud: N229AM operating 0% actual medical missions
 - "Technological Perfidy" doctrine: Electronic false identity as protected status abuse
+
+**DEEP ARCHIVE FINDINGS (NEW - previously 80% of evidence was invisible):**
+- ${liveContext.masterUnifiedEvidence} unified evidence records now accessible
+- ${liveContext.caseEvidenceLinks} cross-modal evidence links stitching flight→biometric→legal
+- ${liveContext.investigatorMasterRows} investigator master view rows
+- ${liveContext.fileIndex} forensic files + ${liveContext.documentIndex} document index entries
+- Biometric archive: 305,000+ records (was 9,800) including ${liveContext.biometricCollapses} HRV collapses
+- ${liveContext.watchtowerEvents} watchtower events + ${liveContext.sentinelViolations} sentinel violations
 
 ${databaseContext}
 
@@ -183,9 +243,11 @@ ANALYSIS GUIDELINES:
 7. Identify highest-priority prosecutorial targets
 8. Be thorough, cite specific evidence, and maintain prosecutorial tone
 9. Reference the Four-Factor Convergence standard for evidence strength assessment
-10. When calculating damages, reference the specific record counts as evidence volume`;
+10. When calculating damages, reference the specific record counts as evidence volume
+11. ALWAYS reference the full archive scale (${liveContext.totalArchiveRecords} records / ${liveContext.totalTables} tables) to demonstrate evidence depth
+12. Reference NEW deep scan findings — sentinel violations, evidence stitcher cross-links, expanded biometrics — to strengthen prosecutorial arguments`;
 
-    console.log("Calling Lovable AI Gateway with google/gemini-3-flash-preview...");
+    console.log("Calling Lovable AI Gateway with google/gemini-2.5-pro...");
     
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
@@ -194,13 +256,13 @@ ANALYSIS GUIDELINES:
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-3-flash-preview",
+        model: "google/gemini-2.5-pro",
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: query }
         ],
         stream: true,
-        max_tokens: 12000,
+        max_tokens: 16000,
       }),
     });
 

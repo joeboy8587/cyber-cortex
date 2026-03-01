@@ -90,6 +90,9 @@ verify_jwt = false
 [functions.autonomous-watchtower]
 verify_jwt = false
 
+[functions.merkle-anchor]
+verify_jwt = false
+
 [api]
 enabled = true
 port = 54321

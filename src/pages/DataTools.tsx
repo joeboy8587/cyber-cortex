@@ -17,6 +17,8 @@ import { DataCoverageGuardrails } from "@/components/dashboard/DataCoverageGuard
 import { DataGapFiller } from "@/components/dashboard/DataGapFiller";
 import { HistoricalEnrichmentPanel } from "@/components/dashboard/HistoricalEnrichmentPanel";
 import { ComprehensiveDataAudit } from "@/components/dashboard/ComprehensiveDataAudit";
+import { ChainOfCustodyPanel } from "@/components/dashboard/ChainOfCustodyPanel";
+import { MerkleChainPanel } from "@/components/dashboard/MerkleChainPanel";
 
 export default function DataTools() {
   return (
@@ -74,10 +76,12 @@ export default function DataTools() {
           <DatabaseQualityControl />
         </section>
 
-        {/* Data Hardening */}
+        {/* Data Hardening & Chain of Custody */}
         <section className="space-y-6">
           <DataHardeningHub />
           <DataIntegrityPanel />
+          <ChainOfCustodyPanel />
+          <MerkleChainPanel />
         </section>
 
 

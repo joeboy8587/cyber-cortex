@@ -158,23 +158,66 @@ export function LiveAlertBanner({
   const fetchAlerts = useCallback(async () => {
     setLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke("opensky-fetch", {
-        body: { action: "fetchKernCounty" }
-      });
+      // Fetch from live API AND recent database rows in parallel
+      const [liveResult, dbResult] = await Promise.allSettled([
+        supabase.functions.invoke("opensky-fetch", {
+          body: { action: "fetchKernCounty" }
+        }),
+        supabase.functions.invoke("neon-query", {
+          body: {
+            action: "customQuery",
+            query: `SELECT id, registration, callsign, altitude, latitude, longitude,
+                     speed, detection_timestamp
+              FROM live_flight_detections
+              WHERE detection_timestamp > NOW() - INTERVAL '15 minutes'
+                AND registration IS NOT NULL AND registration != ''
+              ORDER BY detection_timestamp DESC
+              LIMIT 200`
+          }
+        })
+      ]);
 
-      if (error || !data?.flights) {
-        console.error('Alert fetch error:', error);
+      const allFlights: any[] = [];
+      const seenRegs = new Set<string>();
+
+      // Process live API flights first (highest priority)
+      if (liveResult.status === 'fulfilled' && liveResult.value.data?.flights) {
+        for (const f of liveResult.value.data.flights) {
+          allFlights.push(f);
+          if (f.registration) seenRegs.add(f.registration);
+        }
+      }
+
+      // Supplement with recent database rows (catches anything the live API missed)
+      if (dbResult.status === 'fulfilled' && dbResult.value.data) {
+        const dbRows = Array.isArray(dbResult.value.data) ? dbResult.value.data 
+          : dbResult.value.data?.data || [];
+        for (const row of dbRows) {
+          if (row.registration && !seenRegs.has(row.registration)) {
+            seenRegs.add(row.registration);
+            allFlights.push({
+              ...row,
+              detected_at: row.detection_timestamp,
+              flagged: row.flagged,
+              flaggedReasons: row.flagged_reasons,
+              taxonomyTag: row.taxonomy_tag
+            });
+          }
+        }
+      }
+
+      if (allFlights.length === 0) {
+        setAlerts([]);
+        setLastCheck(new Date());
         return;
       }
 
       const newAlerts: FlightAlert[] = [];
-      const currentIds = new Set<string>();
 
-      for (const flight of data.flights) {
+      for (const flight of allFlights) {
         const alert = classifyFlight(flight);
         if (alert && !alert.dismissed) {
           newAlerts.push(alert);
-          currentIds.add(alert.id);
         }
       }
 

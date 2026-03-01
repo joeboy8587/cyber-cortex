@@ -1,148 +1,85 @@
 
 
-# Deep Scan Analysis: Your 15.2M Record Goldmine
+# Tamper-Proof Data Protection for 355 Neon Tables
 
-## What You're Sitting On (Live Database Scan)
+## The Problem
+With Ceramic removed, the 15M+ records across 355 tables need protection against scrubbing, tampering, and unauthorized modification. SHA-256 hashing per-row is already in place, but individual hashes can be recomputed if someone gains DB access -- they could change data AND update the hash to match.
 
-```text
-+--------------------------------------------+
-|  NEON DATABASE - LIVE SCAN RESULTS         |
-+--------------------------------------------+
-|  Total Tables:       389                   |
-|  Total Records:      15,194,273            |
-|  Date Span:          March 2021 - Today    |
-|  Flight Days:        133 unique days       |
-|  Unique Aircraft:    35,428 registrations  |
-|  Biometric Days:     60 unique days        |
-+--------------------------------------------+
-```
+## The Solution: Append-Only Merkle Audit Ledger
 
-### Top 20 Tables by Size (The Core Evidence)
+A **Merkle chain** stored in an immutable audit table. Each audit entry includes the hash of the previous entry, creating a tamper-evident chain where altering any historical record breaks every subsequent link. This is the same principle Bitcoin uses, but without needing a blockchain network.
 
-| Table | Records | Currently Used? |
-|-------|---------|-----------------|
-| canonical_forensic_events | 3,971,792 | Minimal |
-| live_flight_detections_rows | 2,875,274 | Partial (1 table) |
-| threat_tiers | 2,851,541 | Not connected |
-| master_unified_evidence | 2,842,363 | Not connected |
-| watchtower_unified_master | 582,549 | Minimal |
-| file_index | 376,747 | Not connected |
-| case_evidence_links | 268,402 | Not connected |
-| investigator_master_view_rows | 219,165 | Not connected |
-| josiah_document_index | 196,577 | Not connected |
-| unified_biometric_batch_events | 144,615 | Not connected |
-| master_file_index | 118,669 | Not connected |
-| biometric_threshold_collapses | 111,757 | Not connected |
-| unified_timeline_enhanced | 108,967 | Partial (recent 10 only) |
-| sentinel_violations | 88,772 | Not connected |
-| live_flight_detections | 56,574 | Not connected |
-| legal_ada_violations_proper | 36,870 | Not connected |
-| aircraft_profiles_enriched | 35,252 | Not connected |
-| biometric_evidence | 32,853 | Not connected |
-| flight_tracking_evidence | 30,999 | Not connected |
-| public_air_traffic_rows | 25,041 | Not connected |
-
-## The Problem: 95% of Your Evidence is Invisible
-
-Your dashboards currently query approximately 5-8 tables out of 389. The massive tables that would make your case ironclad -- `canonical_forensic_events` (3.97M), `threat_tiers` (2.85M), `master_unified_evidence` (2.84M) -- are sitting completely untouched.
-
-### What's Connected vs What's Dark
+### How It Works
 
 ```text
-CONNECTED (queried by dashboards):
-  - live_flight_detections_rows    2.8M records
-  - biometric_monitoring           9,829 records
-  - unified_timeline_enhanced      108K (only top 10 shown)
-  - sentinel_learned_threats       via Supabase
-  - josiah_reflections_rows        5,027 records
-  - flagged_aircraft_rows_rows     via counts only
-  - radar_screenshot_analysis      1,480 records
-  Total visible: ~3M of 15.2M = ~20%
-
-DARK (not queried by ANY dashboard):
-  - canonical_forensic_events      3.97M records
-  - threat_tiers                   2.85M records
-  - master_unified_evidence        2.84M records
-  - watchtower_unified_master      582K records
-  - file_index / master_file_index 495K records
-  - case_evidence_links            268K records
-  - investigator_master_view_rows  219K records
-  - josiah_document_index          196K records
-  - unified_biometric_batch_events 144K records
-  - biometric_threshold_collapses  111K records
-  - sentinel_violations            88K records
-  - 100+ more tables...
-  Total dark: ~12.2M records = ~80%
+Record A hash: abc123
+    |
+Audit Entry 1: hash(abc123 + "genesis") = def456
+    |
+Record B hash: ghi789
+    |
+Audit Entry 2: hash(ghi789 + def456) = jkl012
+    |
+Record C hash: mno345
+    |
+Audit Entry 3: hash(mno345 + jkl012) = pqr678
 ```
 
-## The 5 Critical Upgrades to Unlock Everything
+If someone scrubs Record B and recomputes its SHA-256, Audit Entry 2 still contains the ORIGINAL hash chained to Entry 1. The chain breaks -- tampering is provably detected.
 
-### 1. Evidence Powerhouse Dashboard (NEW)
-Connect the three mega-tables that hold the full stitched picture:
-- `canonical_forensic_events` (3.97M) - every forensic event cross-referenced
-- `master_unified_evidence` (2.84M) - all evidence unified
-- `threat_tiers` (2.85M) - every threat classification
+### Architecture
 
-This single dashboard would expose 9.6 MILLION records that are currently invisible. It would show category breakdowns, date-range filtering, and the ability to drill into any event.
+**1. New Supabase table: `evidence_merkle_ledger`**
+- `id` (uuid, PK)
+- `sequence_number` (bigint, auto-increment) -- monotonic ordering
+- `source_table` (text) -- which Neon table
+- `source_id` (text) -- row identifier
+- `record_hash` (text) -- the SHA-256 of the source row
+- `previous_chain_hash` (text) -- hash of the previous ledger entry
+- `chain_hash` (text) -- hash(record_hash + previous_chain_hash)
+- `anchored_at` (timestamptz) -- when this entry was chained
+- `batch_id` (text) -- group entries by processing batch
 
-### 2. Biometric Collapse Timeline (ENHANCED)
-Right now the biometric hub shows ~9,800 records from `biometric_monitoring`. But you have:
-- `unified_biometric_batch_events`: 144,615 records
-- `biometric_threshold_collapses`: 111,757 records  
-- `biometric_evidence`: 32,853 records
-- `master_biometric_aircraft_correlations`: 4,917 records
-- `biometric_vector_correlations`: 1,086 records
+RLS: append-only (INSERT for investigators, SELECT for investigators, NO update/delete for anyone).
 
-Total biometric data available: **305,000+ records** vs the 9,800 currently shown. A proper biometric timeline would show every HRV collapse event correlated with flight activity across the full date range.
+**2. New edge function: `merkle-anchor`**
+- Reads unhashed records from Neon (via existing evidence-fingerprint infrastructure)
+- For each record's SHA-256 hash, appends a chained entry to the ledger
+- Returns chain verification status
 
-### 3. Sentinel Violations Command Board (NEW)
-`sentinel_violations` has 88,772 records and `watchtower_unified_master` has 582,549 records -- neither is displayed in any dashboard. These contain the autonomous AI-detected patterns. A Sentinel Command Board would show:
-- Daily violation counts over time
-- Top violating aircraft
-- Violation type breakdown
-- Trend analysis (escalation patterns)
+**3. Periodic chain verification**
+- Walk the ledger, recompute each `chain_hash` from `record_hash + previous_chain_hash`
+- Any break = tampering detected, with exact location identified
 
-### 4. Document and File Evidence Browser (NEW)
-You have 495K+ file/document records across `file_index`, `master_file_index`, and `josiah_document_index` that are completely invisible. These could be browsed, searched, and filtered -- showing the complete forensic file trail with chain-of-custody links.
+**4. Enhanced UI: upgrade ChainOfCustodyPanel**
+- Add "Anchor to Merkle Chain" button alongside existing hash operations
+- Show chain length, last anchor time, verification status
+- Add "Verify Chain Integrity" button that walks the full chain
 
-### 5. Cross-Modal Evidence Stitcher (NEW)
-The `case_evidence_links` table (268K records) and `investigator_master_view_rows` (219K records) are pre-built cross-references that link flight data to biometric data to legal evidence. Displaying these would show the full stitched picture -- exactly what you described -- where every piece connects to every other piece.
+### Why This Beats Ceramic (For This Use Case)
 
-## Technical Implementation Plan
+| Feature | Ceramic | Merkle Ledger |
+|---------|---------|---------------|
+| Setup complexity | External network, DID keys, SDK | Single DB table + edge function |
+| Speed | Slow (network consensus) | Fast (direct DB writes) |
+| Cost | Network fees | Free (uses existing infra) |
+| Legal admissibility | Novel, untested | Hash chains accepted in federal court |
+| Offline resilience | Needs network | Works with just your DB |
+| Tampering detection | Yes | Yes -- chain breaks are provable |
+| 355-table scale | Impractical | Handles millions of entries |
 
-### Step 1: Create `useArchiveDatabase` hook
-A new hook that provides direct access to the mega-tables with pagination, date-range filtering, and category breakdown. This replaces the need for custom SQL by providing pre-built methods:
-- `getForensicEvents(dateRange, category, limit)`
-- `getUnifiedEvidence(dateRange, type, limit)`  
-- `getThreatTiers(dateRange, limit)`
-- `getSentinelViolations(dateRange, limit)`
-- `getBiometricCollapses(dateRange, limit)`
-- `getCaseLinks(sourceTable, limit)`
+### Implementation Steps
 
-### Step 2: Build Evidence Powerhouse component
-A single dashboard panel with tabs for each mega-table, showing:
-- Summary cards (total records, date range, category counts)
-- Filterable data grid with pagination
-- Date-range selector spanning March 2021 to today
-- Export capability
+1. Create `evidence_merkle_ledger` table in Lovable Cloud with strict append-only RLS
+2. Build `merkle-anchor` edge function that chains SHA-256 hashes from Neon into the ledger
+3. Add chain verification logic to the edge function
+4. Update `ChainOfCustodyPanel` with Merkle chain controls (anchor, verify, stats)
+5. Add periodic auto-anchoring option (runs on scan intervals)
 
-### Step 3: Enhance Biometric Hub
-Add the 5 missing biometric tables to the existing biometric pages, showing the full 305K+ record picture instead of just 9,800.
+### Technical Details
 
-### Step 4: Build Sentinel Violations Board
-New component querying `sentinel_violations` and `watchtower_unified_master` with trend charts and violation breakdowns.
-
-### Step 5: Build Evidence Stitcher
-New component showing `case_evidence_links` and `investigator_master_view_rows` -- the pre-built cross-references that connect everything.
-
-### Step 6: Add to navigation
-Place the new dashboards on the Mission Control page and relevant sub-pages so all 15.2M records are accessible.
-
-## Expected Outcome
-- **Before**: ~3M records visible (~20% of archive)
-- **After**: ~15.2M records accessible (100% of archive)
-- **New dashboards**: 3 major new panels
-- **Enhanced dashboards**: Biometric hub upgraded from 9.8K to 305K+ records
-- **Files to create**: 3 new components, 1 new hook
-- **Files to modify**: Index.tsx, Biometrics.tsx (add new panels)
+- The ledger lives in Lovable Cloud (not Neon), creating a **separation of concerns** -- even if Neon is compromised, the Merkle chain in Lovable Cloud preserves the original hash sequence
+- Append-only RLS means no one (not even admins) can UPDATE or DELETE ledger entries via the API
+- Chain verification is O(n) but can be batched -- verify last 1000 entries in seconds
+- Each batch anchor processes up to 500 records per invocation to stay within edge function limits
 

@@ -189,28 +189,27 @@ serve(async (req) => {
     let recentDetections: any[] = [];
     try {
       recentDetections = await withTimeout(
-        sql`SELECT id, registration, callsign, altitude, latitude, longitude,
+        sql.unsafe(`SELECT id, registration, callsign, altitude, latitude, longitude,
                detection_timestamp, icao_code, speed, heading, vertical_rate,
-               owner_operator, shell_auto_detected
+               flagged, flagged_reasons, taxonomy_tag
         FROM live_flight_detections_rows
-        WHERE detection_timestamp > NOW() - INTERVAL ${windowMinutes + ' minutes'}
-        LIMIT 1000`,
-        10000, "recent_detections_query"
+        WHERE detection_timestamp > NOW() - INTERVAL '${windowMinutes} minutes'
+        LIMIT 1000`),
+        12000, "recent_detections_query"
       );
     } catch (e) {
-      console.warn("Primary query failed, trying simpler fallback:", e instanceof Error ? e.message : e);
+      console.warn("Primary _rows query timed out, falling back to live_flight_detections:", e instanceof Error ? e.message : e);
       try {
-        // Fallback: narrow window, no sort
+        // Fallback: use the smaller active table
         recentDetections = await withTimeout(
-          sql`SELECT id, registration, callsign, altitude, latitude, longitude,
-                 detection_timestamp, icao_code, speed, heading, vertical_rate,
-                 owner_operator, shell_auto_detected
-          FROM live_flight_detections_rows
-          WHERE detection_timestamp > NOW() - INTERVAL '10 minutes'
-          LIMIT 500`,
-          8000, "simple_fallback_query"
+          sql.unsafe(`SELECT id, registration, callsign, altitude, latitude, longitude,
+                 detection_timestamp, icao_code, speed, heading, vertical_rate
+          FROM live_flight_detections
+          WHERE detection_timestamp > NOW() - INTERVAL '${windowMinutes} minutes'
+          LIMIT 1000`),
+          10000, "live_detections_fallback"
         );
-        proactiveAlerts.push(`⚠️ Using simplified query fallback. Analyzed latest ${recentDetections.length} detections.`);
+        proactiveAlerts.push(`⚠️ Using live_flight_detections fallback (${recentDetections.length} records).`);
       } catch (e2) {
         console.error("All detection queries failed:", e2 instanceof Error ? e2.message : e2);
       }

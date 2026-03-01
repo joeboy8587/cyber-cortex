@@ -147,6 +147,16 @@ serve(async (req) => {
           break;
         }
 
+        case 'createIndex': {
+          if (!query) throw new Error('Index DDL is required');
+          const normalizedDDL = query.trim().toUpperCase();
+          if (!normalizedDDL.startsWith('CREATE INDEX') && !normalizedDDL.startsWith('CREATE UNIQUE INDEX')) {
+            throw new Error('Only CREATE INDEX statements are allowed');
+          }
+          result = await sql.unsafe(query);
+          break;
+        }
+
         case 'insertRecord': {
           const allowedTables = ['aircraft_registry_enriched','operator_profiles_enriched','flagged_aircraft_rows_rows','criminal_enterprise_command_structure','live_flight_detections_rows','biometric_monitoring','ocr_aircraft_holding_patterns','daily_event_imports','josiah_reflections_rows','pattern_recognition_enriched','legal_findings','forensic_violation_citations','legal_intel_extractions','aircraft_violations'];
           if (!table || !allowedTables.includes(table)) throw new Error(`Insert not allowed for table: ${table}`);

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -66,19 +66,23 @@ export function JosiahSentinelMonitor() {
   const [isAutoMonitor, setIsAutoMonitor] = useState(false);
   const [windowMinutes, setWindowMinutes] = useState(30);
   const [scanHistory, setScanHistory] = useState<SentinelReport[]>([]);
+  const scanInFlightRef = useRef(false);
 
   const runScan = useCallback(async () => {
+    if (scanInFlightRef.current) return;
+
+    scanInFlightRef.current = true;
     setIsScanning(true);
-    const timeout = setTimeout(() => {
-      setIsScanning(false);
-      toast.error('Sentinel scan timed out - try again');
+
+    const slowScanTimer = setTimeout(() => {
+      toast.info('Sentinel scan is still running… analyzing full telemetry window');
     }, 25000);
+
     try {
       const { data, error } = await supabase.functions.invoke('josiah-sentinel', {
         body: { windowMinutes, mode: 'monitor' }
       });
 
-      clearTimeout(timeout);
       if (error) throw error;
 
       if (data?.report) {
@@ -98,10 +102,13 @@ export function JosiahSentinelMonitor() {
         }
       }
     } catch (err) {
-      clearTimeout(timeout);
       console.error('Sentinel scan error:', err);
-      toast.error('Sentinel scan failed');
+      toast.error('Sentinel scan failed', {
+        description: err instanceof Error ? err.message : 'Unexpected runtime error'
+      });
     } finally {
+      clearTimeout(slowScanTimer);
+      scanInFlightRef.current = false;
       setIsScanning(false);
     }
   }, [windowMinutes]);

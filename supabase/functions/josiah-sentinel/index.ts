@@ -111,7 +111,10 @@ serve(async (req) => {
   }
 
   try {
-    const { windowMinutes = 30, mode = "monitor" } = await req.json();
+    const payload = await req.json().catch(() => ({}));
+    const mode = payload?.mode === "deep" ? "deep" : "monitor";
+    const windowMinutes = Math.min(180, Math.max(5, Number(payload?.windowMinutes) || 30));
+    const isMonitorMode = mode === "monitor";
     
     const NEON_DATABASE_URL = Deno.env.get("NEON_DATABASE_URL");
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
@@ -306,8 +309,10 @@ serve(async (req) => {
       const hourlyGroups = new Map<string, Set<string>>();
       for (const detection of recentDetections) {
         const ts = (detection as any).detection_timestamp;
-        const iso = ts instanceof Date ? ts.toISOString() : new Date(ts).toISOString();
-        const hour = iso.slice(0, 13);
+        const parsedTs = ts ? new Date(ts) : null;
+        if (!parsedTs || Number.isNaN(parsedTs.getTime())) continue;
+
+        const hour = parsedTs.toISOString().slice(0, 13);
         if (!hourlyGroups.has(hour)) hourlyGroups.set(hour, new Set());
         if (detection.registration) hourlyGroups.get(hour)!.add(detection.registration);
       }
@@ -441,6 +446,8 @@ serve(async (req) => {
       const swarmBuckets = new Map<string, any[]>();
       for (const d of lowAltDetections) {
         const ts = new Date(d.detection_timestamp).getTime();
+        if (!Number.isFinite(ts)) continue;
+
         const bucket = Math.floor(ts / swarmWindowMs).toString();
         if (!swarmBuckets.has(bucket)) swarmBuckets.set(bucket, []);
         swarmBuckets.get(bucket)!.push(d);
@@ -475,38 +482,93 @@ serve(async (req) => {
       }
 
 
-      const historicalPatterns = await sql`
-        WITH repeat_offenders AS (
-          SELECT registration, COUNT(*)::int as detection_count, 
-                 AVG(altitude::numeric) as avg_altitude,
-                 MAX(detection_timestamp) as last_seen
-          FROM live_flight_detections_rows
-          WHERE detection_timestamp > NOW() - INTERVAL '90 days'
-            AND registration IS NOT NULL
-          GROUP BY registration
-          HAVING COUNT(*) > 50
-          ORDER BY COUNT(*) DESC
-          LIMIT 20
-        ),
-        low_altitude_patterns AS (
-          SELECT registration, COUNT(*)::int as low_alt_count,
-                 AVG(altitude::numeric) as avg_low_altitude
-          FROM live_flight_detections_rows
-          WHERE altitude::numeric < 2000 AND altitude::numeric > 0
-            AND detection_timestamp > NOW() - INTERVAL '90 days'
-          GROUP BY registration
-          HAVING COUNT(*) > 10
-          ORDER BY COUNT(*) DESC
-          LIMIT 10
-        )
-        SELECT 'repeat_offender' as pattern_type, registration, detection_count as count,
-               avg_altitude, last_seen
-        FROM repeat_offenders
-        UNION ALL
-        SELECT 'low_altitude_pattern' as pattern_type, registration, low_alt_count as count,
-               avg_low_altitude as avg_altitude, NULL as last_seen
-        FROM low_altitude_patterns
-      `;
+      let historicalPatterns: any[] = [];
+
+      if (isMonitorMode) {
+        const profileMap = new Map<string, { count: number; lowAlt: number; totalAlt: number; lastSeen: string }>();
+
+        for (const d of recentDetections) {
+          const reg = d.registration || d.callsign;
+          if (!reg) continue;
+
+          const altitude = Number(d.altitude || 0);
+          const existing = profileMap.get(reg) || {
+            count: 0,
+            lowAlt: 0,
+            totalAlt: 0,
+            lastSeen: d.detection_timestamp || new Date().toISOString(),
+          };
+
+          existing.count += 1;
+          existing.totalAlt += altitude;
+          if (altitude > 0 && altitude < 2000) existing.lowAlt += 1;
+          existing.lastSeen = d.detection_timestamp || existing.lastSeen;
+
+          profileMap.set(reg, existing);
+        }
+
+        historicalPatterns = Array.from(profileMap.entries())
+          .flatMap(([registration, profile]) => {
+            const rows: any[] = [];
+
+            if (profile.count >= 3) {
+              rows.push({
+                pattern_type: 'repeat_offender',
+                registration,
+                count: profile.count,
+                avg_altitude: profile.count > 0 ? profile.totalAlt / profile.count : 0,
+                last_seen: profile.lastSeen,
+              });
+            }
+
+            if (profile.lowAlt >= 2) {
+              rows.push({
+                pattern_type: 'low_altitude_pattern',
+                registration,
+                count: profile.lowAlt,
+                avg_altitude: profile.lowAlt > 0 ? profile.totalAlt / profile.count : 0,
+                last_seen: profile.lastSeen,
+              });
+            }
+
+            return rows;
+          })
+          .sort((a, b) => Number(b.count) - Number(a.count))
+          .slice(0, 20);
+      } else {
+        historicalPatterns = await sql`
+          WITH repeat_offenders AS (
+            SELECT registration, COUNT(*)::int as detection_count, 
+                   AVG(altitude::numeric) as avg_altitude,
+                   MAX(detection_timestamp) as last_seen
+            FROM live_flight_detections_rows
+            WHERE detection_timestamp > NOW() - INTERVAL '90 days'
+              AND registration IS NOT NULL
+            GROUP BY registration
+            HAVING COUNT(*) > 50
+            ORDER BY COUNT(*) DESC
+            LIMIT 20
+          ),
+          low_altitude_patterns AS (
+            SELECT registration, COUNT(*)::int as low_alt_count,
+                   AVG(altitude::numeric) as avg_low_altitude
+            FROM live_flight_detections_rows
+            WHERE altitude::numeric < 2000 AND altitude::numeric > 0
+              AND detection_timestamp > NOW() - INTERVAL '90 days'
+            GROUP BY registration
+            HAVING COUNT(*) > 10
+            ORDER BY COUNT(*) DESC
+            LIMIT 10
+          )
+          SELECT 'repeat_offender' as pattern_type, registration, detection_count as count,
+                 avg_altitude, last_seen
+          FROM repeat_offenders
+          UNION ALL
+          SELECT 'low_altitude_pattern' as pattern_type, registration, low_alt_count as count,
+                 avg_low_altitude as avg_altitude, NULL as last_seen
+          FROM low_altitude_patterns
+        `;
+      }
 
       for (const pattern of historicalPatterns) {
         learnedPatterns.push({
@@ -533,7 +595,7 @@ serve(async (req) => {
 
       // ========== STEP 9: AI SYNTHESIS ==========
       let aiSynthesis: string | null = null;
-      if (LOVABLE_API_KEY && violations.length > 0) {
+      if (!isMonitorMode && LOVABLE_API_KEY && violations.length > 0) {
         try {
           const synthesisPrompt = `You are JOSIAH SENTINEL, a proactive surveillance detection AI. Analyze these LIVE violations detected in the last ${windowMinutes} minutes and provide actionable intelligence:
 
@@ -653,7 +715,7 @@ Be direct, analytical, and cite specific aircraft when relevant.`;
           `;
         } catch (e) { console.warn("Load escalated threats error:", e); }
       }
-      if (LOVABLE_API_KEY && highEscalationThreats.length > 0) {
+      if (!isMonitorMode && LOVABLE_API_KEY && highEscalationThreats.length > 0) {
         try {
           const cmPrompt = `You are JOSIAH SENTINEL's countermeasure engine. Based on the following escalated threats, generate specific, actionable countermeasure recommendations.
 

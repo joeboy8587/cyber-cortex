@@ -363,12 +363,12 @@ serve(async (req) => {
           const adminQuery = body.query;
           if (!adminQuery || typeof adminQuery !== 'string') throw new Error('Query is required for adminExecute');
           const normalizedAdmin = adminQuery.trim().toUpperCase();
-          const allowedPrefixes = ['DROP TABLE','DROP VIEW','DROP MATERIALIZED','CREATE TABLE','CREATE INDEX','ALTER TABLE','ANALYZE','INSERT INTO','CREATE OR REPLACE','SELECT INDEXNAME','SELECT PG_SIZE'];
-          if (!allowedPrefixes.some(prefix => normalizedAdmin.startsWith(prefix))) throw new Error('adminExecute only allows: DROP TABLE, CREATE TABLE, CREATE INDEX, ALTER TABLE, ANALYZE, INSERT INTO, CREATE OR REPLACE, SELECT indexname');
+          const allowedPrefixes = ['DROP TABLE','DROP VIEW','DROP MATERIALIZED','DROP INDEX','CREATE TABLE','CREATE INDEX','ALTER TABLE','ANALYZE','VACUUM','REINDEX','CLUSTER','INSERT INTO','CREATE OR REPLACE','SELECT INDEXNAME','SELECT PG_SIZE','SELECT PG_STAT'];
+          if (!allowedPrefixes.some(prefix => normalizedAdmin.startsWith(prefix))) throw new Error('adminExecute only allows: DROP TABLE/INDEX, CREATE TABLE/INDEX, ALTER TABLE, ANALYZE, VACUUM, REINDEX, CLUSTER, INSERT INTO, CREATE OR REPLACE');
           console.log(`adminExecute: ${adminQuery.substring(0, 100)}...`);
           try {
             // Set a generous statement timeout for DDL on large tables
-            await sql.unsafe(`SET statement_timeout = '120s'`);
+            await sql.unsafe(`SET statement_timeout = '300s'`);
             const adminResult = await sql.unsafe(adminQuery);
             await sql.unsafe(`SET statement_timeout = '30s'`);
             result = { success: true, affected: Array.isArray(adminResult) ? adminResult.length : 0, message: `Executed: ${adminQuery.substring(0, 80)}...` };

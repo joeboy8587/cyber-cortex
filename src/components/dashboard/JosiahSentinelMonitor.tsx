@@ -69,11 +69,16 @@ export function JosiahSentinelMonitor() {
 
   const runScan = useCallback(async () => {
     setIsScanning(true);
+    const timeout = setTimeout(() => {
+      setIsScanning(false);
+      toast.error('Sentinel scan timed out - try again');
+    }, 25000);
     try {
       const { data, error } = await supabase.functions.invoke('josiah-sentinel', {
         body: { windowMinutes, mode: 'monitor' }
       });
 
+      clearTimeout(timeout);
       if (error) throw error;
 
       if (data?.report) {
@@ -93,6 +98,7 @@ export function JosiahSentinelMonitor() {
         }
       }
     } catch (err) {
+      clearTimeout(timeout);
       console.error('Sentinel scan error:', err);
       toast.error('Sentinel scan failed');
     } finally {

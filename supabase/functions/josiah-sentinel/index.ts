@@ -30,6 +30,16 @@ const THREAT_SIGNATURES = {
   },
 };
 
+const KNOWN_SHELL_OPERATORS = [
+  '9K AIR', 'FLYEXCLUSIVE', 'FLY EXCLUSIVE', 'NETJETS', 'FLEXJET',
+  'XOJET', 'WHEELS UP', 'VISTA', 'JET LINX', 'SOLAIRUS',
+];
+
+const SHELL_OWNOP_KEYWORDS = [
+  'LLC', 'TRUST', 'HOLDINGS', 'CAPITAL', 'PARTNERS', 'AVIATION',
+  'LEASING', 'CHARTER', 'MANAGEMENT', 'SERVICES',
+];
+
 // Escalation thresholds
 const ESCALATION_THRESHOLDS = [
   { level: 2, minViolations: 10 },

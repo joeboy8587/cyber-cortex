@@ -138,7 +138,7 @@ serve(async (req) => {
 
     console.log(`Sentinel scan starting: mode=${mode}, window=${windowMinutes}min`);
 
-    sql = postgres(NEON_DATABASE_URL, { ssl: "require", max: 1, idle_timeout: 20, connect_timeout: 30 });
+    sql = postgres(NEON_DATABASE_URL, { ssl: "require", max: 1, idle_timeout: 20, connect_timeout: 30, connection: { statement_timeout: '12000' } });
     
     const SUPABASE_DB_URL = Deno.env.get("SUPABASE_DB_URL");
     sbSql = SUPABASE_DB_URL ? postgres(SUPABASE_DB_URL, { ssl: "require", max: 1, idle_timeout: 10, connect_timeout: 10 }) : null;
@@ -185,32 +185,28 @@ serve(async (req) => {
     }
 
     // ========== STEP 1: ANALYZE RECENT DETECTIONS ==========
-    // Use a subquery with LIMIT to avoid full table scans on the 2.8M+ row table
+    // Use WHERE on timestamp directly (avoids full-table ORDER BY sort on 2.8M rows)
     let recentDetections: any[] = [];
     try {
       recentDetections = await withTimeout(
-        sql.unsafe(`
-          SELECT id, registration, callsign, altitude, latitude, longitude,
-                 detection_timestamp, icao_code, speed, heading, vertical_rate,
-                 owner_operator, shell_auto_detected
-          FROM (
-            SELECT * FROM live_flight_detections_rows
-            ORDER BY detection_timestamp DESC NULLS LAST
-            LIMIT 2000
-          ) recent
-          WHERE detection_timestamp > NOW() - INTERVAL '${windowMinutes} minutes'
-          ORDER BY detection_timestamp DESC
-          LIMIT 1000
-        `),
-        15000, "recent_detections_query"
+        sql`SELECT id, registration, callsign, altitude, latitude, longitude,
+               detection_timestamp, icao_code, speed, heading, vertical_rate
+        FROM live_flight_detections
+        WHERE detection_timestamp > NOW() - INTERVAL ${windowMinutes + ' minutes'}
+        LIMIT 1000`,
+        10000, "recent_detections_query"
       );
     } catch (e) {
       console.warn("Primary query failed, trying simpler fallback:", e instanceof Error ? e.message : e);
-      // Ultra-simple fallback: just grab the latest 500 rows
       try {
+        // Fallback: narrow window, no sort
         recentDetections = await withTimeout(
-          sql.unsafe(`SELECT id, registration, callsign, altitude, latitude, longitude, detection_timestamp, icao_code, speed, heading, vertical_rate, owner_operator, shell_auto_detected FROM live_flight_detections_rows ORDER BY detection_timestamp DESC NULLS LAST LIMIT 500`),
-          15000, "simple_fallback_query"
+          sql`SELECT id, registration, callsign, altitude, latitude, longitude,
+                 detection_timestamp, icao_code, speed, heading, vertical_rate
+          FROM live_flight_detections
+          WHERE detection_timestamp > NOW() - INTERVAL '10 minutes'
+          LIMIT 500`,
+          8000, "simple_fallback_query"
         );
         proactiveAlerts.push(`⚠️ Using simplified query fallback. Analyzed latest ${recentDetections.length} detections.`);
       } catch (e2) {

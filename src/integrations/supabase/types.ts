@@ -277,6 +277,42 @@ export type Database = {
         }
         Relationships: []
       }
+      evidence_merkle_ledger: {
+        Row: {
+          anchored_at: string
+          batch_id: string | null
+          chain_hash: string
+          id: string
+          previous_chain_hash: string
+          record_hash: string
+          sequence_number: number
+          source_id: string
+          source_table: string
+        }
+        Insert: {
+          anchored_at?: string
+          batch_id?: string | null
+          chain_hash: string
+          id?: string
+          previous_chain_hash: string
+          record_hash: string
+          sequence_number?: number
+          source_id: string
+          source_table: string
+        }
+        Update: {
+          anchored_at?: string
+          batch_id?: string | null
+          chain_hash?: string
+          id?: string
+          previous_chain_hash?: string
+          record_hash?: string
+          sequence_number?: number
+          source_id?: string
+          source_table?: string
+        }
+        Relationships: []
+      }
       kcso_fleet: {
         Row: {
           created_at: string

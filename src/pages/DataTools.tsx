@@ -5,7 +5,7 @@ import { DatabaseStats } from "@/components/dashboard/DatabaseStats";
 import { NeonTableCensus } from "@/components/dashboard/NeonTableCensus";
 import DataQualityAudit from "@/components/dashboard/DataQualityAudit";
 import { DatabaseQualityControl } from "@/components/dashboard/DatabaseQualityControl";
-import { CeramicAnchorPanel } from "@/components/dashboard/CeramicAnchorPanel";
+
 import { DataEnrichmentDashboard } from "@/components/dashboard/DataEnrichmentDashboard";
 import { DataIntegrityPanel } from "@/components/dashboard/DataIntegrityPanel";
 import { DataHardeningHub } from "@/components/dashboard/DataHardeningHub";
@@ -80,10 +80,6 @@ export default function DataTools() {
           <DataIntegrityPanel />
         </section>
 
-        {/* Ceramic Anchor */}
-        <section>
-          <CeramicAnchorPanel />
-        </section>
 
         {/* Enrichment */}
         <section className="space-y-6">

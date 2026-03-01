@@ -462,6 +462,7 @@ export async function handleAction(action: string, body: Record<string, any>, sq
         const hrCol = bioColNames.has('heart_rate') ? 'b.heart_rate' : bioColNames.has('hr_avg') ? 'b.hr_avg as heart_rate' : 'NULL as heart_rate';
         const stressCol = bioColNames.has('stress_level') ? 'b.stress_level' : 'NULL as stress_level';
         const bioTimeCol = bioColNames.has('measurement_timestamp') ? 'b.measurement_timestamp' : bioColNames.has('event_timestamp') ? 'b.event_timestamp' : 'b.created_at';
+        const daysBack = body.daysBack || 30;
         const validatedRecords = await sql.unsafe(`
           SELECT DISTINCT ON (f.id) f.id, f.registration, f.callsign, f.altitude, f.speed,
             f.latitude, f.longitude, f.detection_timestamp, f.taxonomy_tag, f.threat_score,
@@ -470,7 +471,8 @@ export async function handleAction(action: string, body: Record<string, any>, sq
             'BIOMETRIC_VALIDATED' as validation_status
           FROM live_flight_detections_rows f
           INNER JOIN biometric_monitoring b ON ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - ${bioTimeCol}))) < 1800
-          WHERE (f.taxonomy_tag IN ('tier0_kcso','tier1_priority','tier2_shell','low_alt_suspicious','military_asset','medical_air') OR f.taxonomy_tag LIKE 'xxb_%') AND f.taxonomy_tag != 'normal_traffic' AND f.data_provenance IS DISTINCT FROM 'SYNTHETIC_DATA_GLITCH'
+          WHERE f.detection_timestamp >= NOW() - INTERVAL '${daysBack} days'
+            AND (f.taxonomy_tag IN ('tier0_kcso','tier1_priority','tier2_shell','low_alt_suspicious','military_asset','medical_air') OR f.taxonomy_tag LIKE 'xxb_%') AND f.taxonomy_tag != 'normal_traffic' AND f.data_provenance IS DISTINCT FROM 'SYNTHETIC_DATA_GLITCH'
             AND f.latitude IS NOT NULL AND f.longitude IS NOT NULL
           ORDER BY f.id, ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - ${bioTimeCol})))
           LIMIT ${limitCount}
@@ -478,7 +480,7 @@ export async function handleAction(action: string, body: Record<string, any>, sq
         const stats = await sql`SELECT COUNT(*) FILTER (WHERE taxonomy_tag LIKE 'xxb%' OR taxonomy_tag IN ('tier0_kcso','tier1_priority','tier2_shell','low_alt_suspicious','military_asset','medical_air')) as total_flagged,
           COUNT(*) FILTER (WHERE taxonomy_tag IN ('normal_traffic','xxb_live')) as total_normal,
           COUNT(*) FILTER (WHERE data_provenance = 'SYNTHETIC_DATA_GLITCH') as synthetic_count
-          FROM live_flight_detections_rows`;
+          FROM live_flight_detections_rows WHERE detection_timestamp >= NOW() - INTERVAL '90 days'`;
         return { data: { records: validatedRecords || [], stats: { totalFlagged: parseInt((stats[0] as any)?.total_flagged || '0'), totalNormal: parseInt((stats[0] as any)?.total_normal || '0'), syntheticCount: parseInt((stats[0] as any)?.synthetic_count || '0') } } };
       } catch (e) {
         return { data: { records: [], stats: { totalXXB: 0, syntheticXXB: 0, validXXB: 0 } } };

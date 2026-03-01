@@ -293,31 +293,53 @@ async function safeDbQuery<T>(neonUrl: string, queryFn: (sql: any) => Promise<T>
   }
 }
 
-// Ensure rich columns exist (idempotent)
-async function ensureRichColumns(neonUrl: string): Promise<void> {
-  await safeDbQuery(neonUrl, async (sql) => {
-    // Add new columns if they don't exist
-    const cols = [
-      { name: 'owner_operator', type: 'TEXT' },
-      { name: 'aircraft_type', type: 'TEXT' },
-      { name: 'aircraft_type_desc', type: 'TEXT' },
-      { name: 'is_military', type: 'BOOLEAN DEFAULT FALSE' },
-      { name: 'adsb_category', type: 'TEXT' },
-      { name: 'emergency_status', type: 'TEXT' },
-      { name: 'signal_rssi', type: 'NUMERIC' },
-      { name: 'nav_altitude', type: 'INTEGER' },
-      { name: 'data_source', type: 'TEXT DEFAULT \'opensky\'' },
-      { name: 'year_manufactured', type: 'INTEGER' },
-      { name: 'shell_auto_detected', type: 'BOOLEAN DEFAULT FALSE' },
-      { name: 'shell_detection_reason', type: 'TEXT' },
-    ];
-    for (const col of cols) {
-      try {
-        await sql.unsafe(`ALTER TABLE live_flight_detections_rows ADD COLUMN IF NOT EXISTS ${col.name} ${col.type}`);
-      } catch { /* column may already exist */ }
+// Ensure rich columns exist (idempotent) - with explicit error logging
+let richColumnsVerified = false;
+async function ensureRichColumns(neonUrl: string): Promise<boolean> {
+  if (richColumnsVerified) return true;
+  
+  let sql = null;
+  try {
+    sql = postgres(neonUrl, { ssl: 'require', max: 1, idle_timeout: 5, connect_timeout: 15 });
+    
+    // Check if columns already exist first
+    const existing = await sql`
+      SELECT column_name FROM information_schema.columns 
+      WHERE table_name = 'live_flight_detections_rows' AND column_name = 'owner_operator'
+    `;
+    
+    if (existing.length > 0) {
+      richColumnsVerified = true;
+      console.log('Rich columns already exist');
+      return true;
     }
-    console.log('Rich columns ensured');
-  });
+    
+    // Add all columns in a single transaction
+    await sql`
+      ALTER TABLE live_flight_detections_rows 
+        ADD COLUMN IF NOT EXISTS owner_operator TEXT,
+        ADD COLUMN IF NOT EXISTS aircraft_type TEXT,
+        ADD COLUMN IF NOT EXISTS aircraft_type_desc TEXT,
+        ADD COLUMN IF NOT EXISTS is_military BOOLEAN DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS adsb_category TEXT,
+        ADD COLUMN IF NOT EXISTS emergency_status TEXT,
+        ADD COLUMN IF NOT EXISTS signal_rssi NUMERIC,
+        ADD COLUMN IF NOT EXISTS nav_altitude INTEGER,
+        ADD COLUMN IF NOT EXISTS data_source TEXT DEFAULT 'opensky',
+        ADD COLUMN IF NOT EXISTS year_manufactured INTEGER,
+        ADD COLUMN IF NOT EXISTS shell_auto_detected BOOLEAN DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS shell_detection_reason TEXT
+    `;
+    
+    richColumnsVerified = true;
+    console.log('✅ Rich columns created successfully');
+    return true;
+  } catch (err) {
+    console.error('❌ Failed to create rich columns:', err instanceof Error ? err.message : err);
+    return false;
+  } finally {
+    if (sql) { try { await sql.end(); } catch { /* ignore */ } }
+  }
 }
 
 serve(async (req) => {
@@ -476,8 +498,7 @@ serve(async (req) => {
               icao_code as hex, registration, callsign, altitude, speed,
               latitude, longitude, heading, vertical_rate,
               detection_timestamp as detected_at, taxonomy_tag,
-              threat_score, tier_level, flagged, flagged_reasons,
-              owner_operator, aircraft_type, is_military, data_source
+              threat_score, tier_level, flagged, flagged_reasons
             FROM live_flight_detections_rows
             WHERE latitude IS NOT NULL AND longitude IS NOT NULL
               AND detection_timestamp > NOW() - INTERVAL '2 hours'
@@ -595,89 +616,6 @@ serve(async (req) => {
         shellDetections.forEach(s => console.log(`  → ${s.registration} | ownOp="${s.ownerOperator}" | ${s.shellDetectionReason}`));
       }
 
-      // ============ STORE IN DATABASE WITH RICH FIELDS ============
-      let inserted = 0, updated = 0;
-      if (neonUrl && transformedFlights.length > 0) {
-        // Ensure rich columns exist (first time only, idempotent)
-        await ensureRichColumns(neonUrl);
-        
-        const insertResult = await safeDbQuery(neonUrl, async (sql) => {
-          let newCount = 0, upCount = 0;
-          for (const flight of transformedFlights) {
-            try {
-              const existing = await sql`
-                SELECT id FROM live_flight_detections_rows 
-                WHERE (icao_code = ${flight.hex} OR registration = ${flight.registration})
-                  AND (detection_timestamp > NOW() - INTERVAL '30 minutes' OR detection_timestamp IS NULL)
-                ORDER BY detection_timestamp DESC NULLS LAST LIMIT 1
-              `;
-              
-              if (existing.length > 0) {
-                await sql`
-                  UPDATE live_flight_detections_rows SET
-                    altitude = ${flight.altitude}, speed = ${flight.speed},
-                    latitude = ${flight.latitude}, longitude = ${flight.longitude},
-                    heading = ${flight.heading}, vertical_rate = ${flight.vertical_rate},
-                    detection_timestamp = NOW(),
-                    taxonomy_tag = ${flight.taxonomyTag}, threat_score = ${flight.threatScore},
-                    flagged = ${flight.flagged}, flagged_reasons = ${flight.flaggedReasons.join('; ')},
-                    owner_operator = ${flight.ownerOperator || null},
-                    aircraft_type = ${flight.aircraftType || null},
-                    aircraft_type_desc = ${flight.aircraftTypeDesc || null},
-                    is_military = ${flight.isMilitary},
-                    adsb_category = ${flight.adsbCategory || null},
-                    emergency_status = ${flight.emergencyStatus || null},
-                    signal_rssi = ${flight.signalRssi || null},
-                    nav_altitude = ${flight.navAltitude || null},
-                    data_source = ${flight.source},
-                    year_manufactured = ${flight.yearManufactured || null},
-                    shell_auto_detected = ${flight.shellAutoDetected},
-                    shell_detection_reason = ${flight.shellDetectionReason || null}
-                  WHERE id = ${existing[0].id}
-                `;
-                upCount++;
-              } else {
-                await sql`
-                  INSERT INTO live_flight_detections_rows (
-                    id, icao_code, registration, callsign, altitude, speed,
-                    latitude, longitude, heading, vertical_rate,
-                    detection_timestamp, created_at, taxonomy_tag,
-                    threat_score, tier_level, flagged, flagged_reasons,
-                    owner_operator, aircraft_type, aircraft_type_desc,
-                    is_military, adsb_category, emergency_status,
-                    signal_rssi, nav_altitude, data_source,
-                    year_manufactured, shell_auto_detected, shell_detection_reason
-                  ) VALUES (
-                    ${crypto.randomUUID()}, ${flight.hex}, ${flight.registration},
-                    ${flight.callsign}, ${flight.altitude}, ${flight.speed},
-                    ${flight.latitude}, ${flight.longitude}, ${flight.heading},
-                    ${flight.vertical_rate}, NOW(), NOW(),
-                    ${flight.taxonomyTag}, ${flight.threatScore}, ${flight.tierLevel},
-                    ${flight.flagged}, ${flight.flaggedReasons.join('; ')},
-                    ${flight.ownerOperator || null}, ${flight.aircraftType || null},
-                    ${flight.aircraftTypeDesc || null}, ${flight.isMilitary},
-                    ${flight.adsbCategory || null}, ${flight.emergencyStatus || null},
-                    ${flight.signalRssi || null}, ${flight.navAltitude || null},
-                    ${flight.source}, ${flight.yearManufactured || null},
-                    ${flight.shellAutoDetected}, ${flight.shellDetectionReason || null}
-                  )
-                `;
-                newCount++;
-              }
-              if (flight.flagged) {
-                console.log(`🚨 FLAGGED: ${flight.registration} [${flight.ownerOperator || 'no ownOp'}] - ${flight.flaggedReasons.join(', ')}`);
-              }
-            } catch (insertErr) {
-              console.error(`DB error for ${flight.registration}:`, insertErr instanceof Error ? insertErr.message : insertErr);
-            }
-          }
-          return { newCount, upCount };
-        });
-        inserted = insertResult?.newCount || 0;
-        updated = insertResult?.upCount || 0;
-        console.log(`DB: ${inserted} new, ${updated} updated`);
-      }
-
       const stats = {
         total: transformedFlights.length,
         flagged: transformedFlights.filter(f => f.flagged).length,
@@ -691,9 +629,144 @@ serve(async (req) => {
         withAircraftType: transformedFlights.filter(f => f.aircraftType).length,
       };
 
+      // ============ FIRE-AND-FORGET DB WRITE ============
+      // Don't await — return response immediately, write in background
+      if (neonUrl && transformedFlights.length > 0) {
+        const dbWrite = (async () => {
+          let sql = null;
+          try {
+            sql = postgres(neonUrl, { ssl: 'require', max: 1, idle_timeout: 5, connect_timeout: 10 });
+            
+            // Check/create rich columns
+            let hasRichCols = richColumnsVerified;
+            if (!hasRichCols) {
+              try {
+                const cols = await sql`
+                  SELECT column_name FROM information_schema.columns 
+                  WHERE table_name = 'live_flight_detections_rows' AND column_name = 'owner_operator'
+                `;
+                if (cols.length > 0) {
+                  hasRichCols = true;
+                  richColumnsVerified = true;
+                } else {
+                  try {
+                    await sql.unsafe(`
+                      ALTER TABLE live_flight_detections_rows 
+                        ADD COLUMN IF NOT EXISTS owner_operator TEXT,
+                        ADD COLUMN IF NOT EXISTS aircraft_type TEXT,
+                        ADD COLUMN IF NOT EXISTS aircraft_type_desc TEXT,
+                        ADD COLUMN IF NOT EXISTS is_military BOOLEAN DEFAULT FALSE,
+                        ADD COLUMN IF NOT EXISTS adsb_category TEXT,
+                        ADD COLUMN IF NOT EXISTS emergency_status TEXT,
+                        ADD COLUMN IF NOT EXISTS signal_rssi NUMERIC,
+                        ADD COLUMN IF NOT EXISTS nav_altitude INTEGER,
+                        ADD COLUMN IF NOT EXISTS data_source TEXT DEFAULT 'opensky',
+                        ADD COLUMN IF NOT EXISTS year_manufactured INTEGER,
+                        ADD COLUMN IF NOT EXISTS shell_auto_detected BOOLEAN DEFAULT FALSE,
+                        ADD COLUMN IF NOT EXISTS shell_detection_reason TEXT
+                    `);
+                    hasRichCols = true;
+                    richColumnsVerified = true;
+                    console.log('✅ Rich columns created');
+                  } catch (e) { console.warn('Column creation skipped:', e instanceof Error ? e.message : e); }
+                }
+              } catch { /* ignore */ }
+            }
+
+            let newCount = 0, upCount = 0;
+            for (const flight of transformedFlights) {
+              try {
+                const existing = await sql`
+                  SELECT id FROM live_flight_detections_rows 
+                  WHERE (icao_code = ${flight.hex} OR registration = ${flight.registration})
+                    AND (detection_timestamp > NOW() - INTERVAL '30 minutes' OR detection_timestamp IS NULL)
+                  ORDER BY detection_timestamp DESC NULLS LAST LIMIT 1
+                `;
+                
+                if (existing.length > 0) {
+                  if (hasRichCols) {
+                    await sql`UPDATE live_flight_detections_rows SET
+                      altitude=${flight.altitude}, speed=${flight.speed},
+                      latitude=${flight.latitude}, longitude=${flight.longitude},
+                      heading=${flight.heading}, vertical_rate=${flight.vertical_rate},
+                      detection_timestamp=NOW(), taxonomy_tag=${flight.taxonomyTag},
+                      threat_score=${flight.threatScore}, flagged=${flight.flagged},
+                      flagged_reasons=${flight.flaggedReasons.join('; ')},
+                      owner_operator=${flight.ownerOperator||null},
+                      aircraft_type=${flight.aircraftType||null},
+                      aircraft_type_desc=${flight.aircraftTypeDesc||null},
+                      is_military=${flight.isMilitary},
+                      shell_auto_detected=${flight.shellAutoDetected},
+                      shell_detection_reason=${flight.shellDetectionReason||null},
+                      data_source=${flight.source}
+                    WHERE id=${existing[0].id}`;
+                  } else {
+                    await sql`UPDATE live_flight_detections_rows SET
+                      altitude=${flight.altitude}, speed=${flight.speed},
+                      latitude=${flight.latitude}, longitude=${flight.longitude},
+                      heading=${flight.heading}, vertical_rate=${flight.vertical_rate},
+                      detection_timestamp=NOW(), taxonomy_tag=${flight.taxonomyTag},
+                      threat_score=${flight.threatScore}, flagged=${flight.flagged},
+                      flagged_reasons=${flight.flaggedReasons.join('; ')}
+                    WHERE id=${existing[0].id}`;
+                  }
+                  upCount++;
+                } else {
+                  if (hasRichCols) {
+                    await sql`INSERT INTO live_flight_detections_rows (
+                      id, icao_code, registration, callsign, altitude, speed,
+                      latitude, longitude, heading, vertical_rate,
+                      detection_timestamp, created_at, taxonomy_tag,
+                      threat_score, tier_level, flagged, flagged_reasons,
+                      owner_operator, aircraft_type, aircraft_type_desc,
+                      is_military, data_source, shell_auto_detected, shell_detection_reason
+                    ) VALUES (
+                      ${crypto.randomUUID()}, ${flight.hex}, ${flight.registration},
+                      ${flight.callsign}, ${flight.altitude}, ${flight.speed},
+                      ${flight.latitude}, ${flight.longitude}, ${flight.heading},
+                      ${flight.vertical_rate}, NOW(), NOW(),
+                      ${flight.taxonomyTag}, ${flight.threatScore}, ${flight.tierLevel},
+                      ${flight.flagged}, ${flight.flaggedReasons.join('; ')},
+                      ${flight.ownerOperator||null}, ${flight.aircraftType||null},
+                      ${flight.aircraftTypeDesc||null}, ${flight.isMilitary},
+                      ${flight.source}, ${flight.shellAutoDetected},
+                      ${flight.shellDetectionReason||null}
+                    )`;
+                  } else {
+                    await sql`INSERT INTO live_flight_detections_rows (
+                      id, icao_code, registration, callsign, altitude, speed,
+                      latitude, longitude, heading, vertical_rate,
+                      detection_timestamp, created_at, taxonomy_tag,
+                      threat_score, tier_level, flagged, flagged_reasons
+                    ) VALUES (
+                      ${crypto.randomUUID()}, ${flight.hex}, ${flight.registration},
+                      ${flight.callsign}, ${flight.altitude}, ${flight.speed},
+                      ${flight.latitude}, ${flight.longitude}, ${flight.heading},
+                      ${flight.vertical_rate}, NOW(), NOW(),
+                      ${flight.taxonomyTag}, ${flight.threatScore}, ${flight.tierLevel},
+                      ${flight.flagged}, ${flight.flaggedReasons.join('; ')}
+                    )`;
+                  }
+                  newCount++;
+                }
+              } catch (e) {
+                console.error(`DB err ${flight.registration}:`, e instanceof Error ? e.message : e);
+              }
+            }
+            console.log(`DB: ${newCount} new, ${upCount} updated`);
+          } catch (e) {
+            console.error('DB connection error:', e instanceof Error ? e.message : e);
+          } finally {
+            if (sql) { try { await sql.end(); } catch { /* ignore */ } }
+          }
+        })();
+        // Don't await — let it run in background
+        dbWrite.catch(e => console.error('BG DB write failed:', e));
+      }
+
       return new Response(JSON.stringify({
         success: apiSuccess, flights: transformedFlights, count: transformedFlights.length,
-        inserted, updated, stats, source: dataSource, apiError,
+        stats, source: dataSource, apiError,
         richDataAvailable: dataSource === 'rapidapi_adsb',
         timestamp: new Date().toISOString()
       }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });

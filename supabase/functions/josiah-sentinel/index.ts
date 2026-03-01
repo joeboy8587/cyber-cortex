@@ -190,8 +190,9 @@ serve(async (req) => {
     try {
       recentDetections = await withTimeout(
         sql`SELECT id, registration, callsign, altitude, latitude, longitude,
-               detection_timestamp, icao_code, speed, heading, vertical_rate
-        FROM live_flight_detections
+               detection_timestamp, icao_code, speed, heading, vertical_rate,
+               owner_operator, shell_auto_detected
+        FROM live_flight_detections_rows
         WHERE detection_timestamp > NOW() - INTERVAL ${windowMinutes + ' minutes'}
         LIMIT 1000`,
         10000, "recent_detections_query"
@@ -202,8 +203,9 @@ serve(async (req) => {
         // Fallback: narrow window, no sort
         recentDetections = await withTimeout(
           sql`SELECT id, registration, callsign, altitude, latitude, longitude,
-                 detection_timestamp, icao_code, speed, heading, vertical_rate
-          FROM live_flight_detections
+                 detection_timestamp, icao_code, speed, heading, vertical_rate,
+                 owner_operator, shell_auto_detected
+          FROM live_flight_detections_rows
           WHERE detection_timestamp > NOW() - INTERVAL '10 minutes'
           LIMIT 500`,
           8000, "simple_fallback_query"

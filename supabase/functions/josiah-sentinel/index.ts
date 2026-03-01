@@ -167,15 +167,32 @@ serve(async (req) => {
       }
 
       // ========== STEP 1: ANALYZE RECENT DETECTIONS ==========
-      const recentDetections = await sql`
+      let recentDetections = await sql`
         SELECT 
           id, registration, callsign, altitude, latitude, longitude,
-          detection_timestamp, icao24, icao_code, speed, heading, vertical_rate
+          detection_timestamp, icao_code, speed, heading, vertical_rate
         FROM live_flight_detections_rows
         WHERE detection_timestamp > NOW() - INTERVAL '${sql.unsafe(String(windowMinutes))} minutes'
         ORDER BY detection_timestamp DESC
         LIMIT 1000
       `;
+
+      // Fallback for upstream/API gaps: use latest cached detections so Sentinel still evaluates risk
+      if (recentDetections.length === 0) {
+        recentDetections = await sql`
+          SELECT 
+            id, registration, callsign, altitude, latitude, longitude,
+            detection_timestamp, icao_code, speed, heading, vertical_rate
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() - INTERVAL '2 hours'
+          ORDER BY detection_timestamp DESC
+          LIMIT 1000
+        `;
+
+        if (recentDetections.length > 0) {
+          proactiveAlerts.push(`⚠️ Live feed gap detected. Sentinel analyzed ${recentDetections.length} cached detections from the last 2 hours.`);
+        }
+      }
 
       // ========== STEP 2: LOW ALTITUDE VIOLATIONS (with adaptive thresholds) ==========
       const lowAltitudeViolations = recentDetections.filter((d: any) => {
@@ -225,22 +242,32 @@ serve(async (req) => {
       }
 
       // ========== STEP 4: SHELL COMPANY ACTIVITY ==========
-      const shellActivity = recentDetections.filter((d: any) =>
-        THREAT_SIGNATURES.shellCompany.some(reg =>
+      const shellActivity = recentDetections.filter((d: any) => {
+        const regMatch = THREAT_SIGNATURES.shellCompany.some(reg =>
           d.registration?.includes(reg) || d.callsign?.includes(reg)
-        )
-      );
+        );
+
+        const ownOp = String(d.owner_operator || '').toUpperCase();
+        const ownOpKeywordHits = SHELL_OWNOP_KEYWORDS.filter(kw => ownOp.includes(kw)).length;
+        const ownOpMatch = Boolean(d.shell_auto_detected) ||
+          KNOWN_SHELL_OPERATORS.some(op => ownOp.includes(op)) ||
+          ownOpKeywordHits >= 2;
+
+        return regMatch || ownOpMatch;
+      });
 
       if (shellActivity.length > 0) {
-        const uniqueShell = [...new Set(shellActivity.map((d: any) => d.registration || d.callsign))];
+        const uniqueShell = [...new Set(shellActivity.map((d: any) => d.registration || d.callsign).filter(Boolean))];
+        const shellOperators = [...new Set(shellActivity.map((d: any) => d.owner_operator).filter(Boolean))];
         violations.push({
           type: 'SHELL_COMPANY',
-          severity: 'high',
+          severity: uniqueShell.length >= 2 ? 'critical' : 'high',
           registration: uniqueShell.join(', '),
-          details: `${uniqueShell.length} shell company aircraft (ALF IX LLC network) detected`,
+          details: `${uniqueShell.length} shell-linked aircraft detected${shellOperators.length ? ` • operators: ${shellOperators.slice(0, 3).join(', ')}` : ''}`,
           timestamp: new Date().toISOString(),
           relatedAircraft: uniqueShell as string[]
         });
+        proactiveAlerts.push(`🕵️ SHELL NETWORK ACTIVE: ${uniqueShell.length} aircraft${shellOperators.length ? ` (${shellOperators.slice(0, 2).join(', ')})` : ''}.`);
       }
 
       // ========== STEP 5: MEDICAL COVER (Hammer-Anvil) ==========

@@ -84,12 +84,24 @@ export function LiveAlertBanner({
     let threat_level: 'critical' | 'high' | 'medium' = 'medium';
     let entity = 'Unknown';
 
+    const ownerOperator = flight.ownerOperator || flight.owner_operator || '';
+    const shellAutoDetected = Boolean(flight.shellAutoDetected ?? flight.shell_auto_detected);
+    const shellDetectionReason = flight.shellDetectionReason || flight.shell_detection_reason || '';
+
+    // Shell company auto-detection takes precedence as high-risk signal
+    if (shellAutoDetected) {
+      threat_level = 'high';
+      reasons.push('SHELL_COMPANY_AUTO_DETECTED');
+      if (shellDetectionReason) reasons.push(`SHELL_REASON:${shellDetectionReason}`);
+      entity = ownerOperator || 'Shell Company Network';
+    }
+
     // Check critical registrations
     if (CRITICAL_REGISTRATIONS.includes(reg.toUpperCase())) {
       threat_level = 'critical';
       reasons.push('WATCHLIST_CRITICAL');
       const match = MONITORED_PATTERNS.find(p => p.pattern.test(reg));
-      entity = match?.entity || 'Known Threat';
+      entity = ownerOperator || match?.entity || 'Known Threat';
     }
 
     // Check patterns
@@ -98,7 +110,7 @@ export function LiveAlertBanner({
         if (pattern.priority === 'critical') threat_level = 'critical';
         else if (pattern.priority === 'high' && threat_level !== 'critical') threat_level = 'high';
         reasons.push(`PATTERN_MATCH:${pattern.entity}`);
-        entity = pattern.entity;
+        entity = ownerOperator || pattern.entity;
         break;
       }
     }
@@ -211,6 +223,7 @@ export function LiveAlertBanner({
 
   const criticalCount = alerts.filter(a => a.threat_level === 'critical').length;
   const highCount = alerts.filter(a => a.threat_level === 'high').length;
+  const shellCount = alerts.filter(a => a.flagged_reasons.some(r => r.includes('SHELL'))).length;
 
   if (alerts.length === 0) {
     return (
@@ -241,6 +254,17 @@ export function LiveAlertBanner({
         )}
       >
         {/* Header */}
+        {shellCount > 0 && (
+          <div className="px-3 py-2 border-b border-primary/30 bg-primary/10">
+            <div className="flex items-center gap-2 text-xs">
+              <Badge variant="outline" className="border-primary/40 text-primary">SHELL COMPANY ALERTS</Badge>
+              <span className="text-muted-foreground">
+                {shellCount} shell-linked aircraft detected in current scan
+              </span>
+            </div>
+          </div>
+        )}
+
         <div 
           className={cn(
             "p-3 flex items-center justify-between cursor-pointer",
@@ -266,6 +290,9 @@ export function LiveAlertBanner({
                 )}
                 {highCount > 0 && (
                   <Badge className="bg-orange-500 text-white text-xs">{highCount} High</Badge>
+                )}
+                {shellCount > 0 && (
+                  <Badge variant="outline" className="text-xs border-primary/40 text-primary">{shellCount} Shell</Badge>
                 )}
                 <span>• Low altitude threshold: {lowAltitudeThreshold}ft</span>
               </div>

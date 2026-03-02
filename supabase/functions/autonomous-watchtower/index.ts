@@ -256,9 +256,9 @@ serve(async (req) => {
             FROM biometric_monitoring
             WHERE measurement_timestamp > NOW() - INTERVAL '24 hours'
               AND (
-                heart_rate > ${Number(bioBase.mean_hr) + 2 * Number(bioBase.stddev_hr || 12)}
-                OR hrv < ${Number(bioBase.mean_hrv) - 2 * Number(bioBase.stddev_hrv || 15)}
-                OR stress_level > ${Number(bioBase.mean_stress) + 2 * Number(bioBase.stddev_stress || 15)}
+                heart_rate > ${Math.round(Number(bioBase.mean_hr) + 2 * Number(bioBase.stddev_hr || 12))}
+                OR hrv < ${Math.round(Number(bioBase.mean_hrv) - 2 * Number(bioBase.stddev_hrv || 15))}
+                OR stress_level > ${Math.round(Number(bioBase.mean_stress) + 2 * Number(bioBase.stddev_stress || 15))}
               )
           ),
           correlated AS (
@@ -333,11 +333,11 @@ serve(async (req) => {
             )}]) as registration) t
           ),
           witness_matches AS (
-            SELECT 'witness_log' as source, registration, COUNT(*)::int as match_count
+            SELECT 'witness_log' as source, subject as registration, COUNT(*)::int as match_count
             FROM josiah_reflections_rows
-            WHERE registration IN (SELECT registration FROM recent_flags)
+            WHERE subject IN (SELECT registration FROM recent_flags)
               AND created_at > NOW() - INTERVAL '30 days'
-            GROUP BY registration
+            GROUP BY subject
           ),
           forensic_matches AS (
             SELECT 'forensic_event' as source, primary_entity_id as registration, COUNT(*)::int as match_count

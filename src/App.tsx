@@ -18,7 +18,9 @@ import DataTools from "./pages/DataTools";
 import Simulation from "./pages/Simulation";
 import Academy from "./pages/Academy";
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: { queries: { retry: 2, staleTime: 5000 } },
+});
 
 function ErrorFallback({ error }: { error: Error }) {
   return (

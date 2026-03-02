@@ -363,7 +363,7 @@ serve(async (req) => {
           const adminQuery = body.query;
           if (!adminQuery || typeof adminQuery !== 'string') throw new Error('Query is required for adminExecute');
           const normalizedAdmin = adminQuery.trim().toUpperCase();
-          const allowedPrefixes = ['DROP TABLE','DROP VIEW','DROP MATERIALIZED','DROP INDEX','CREATE TABLE','CREATE INDEX','ALTER TABLE','ANALYZE','VACUUM','REINDEX','CLUSTER','INSERT INTO','CREATE OR REPLACE','SELECT INDEXNAME','SELECT PG_SIZE','SELECT PG_STAT'];
+          const allowedPrefixes = ['DROP TABLE','DROP VIEW','DROP MATERIALIZED','DROP INDEX','DROP TRIGGER','CREATE TABLE','CREATE INDEX','CREATE TRIGGER','ALTER TABLE','ANALYZE','VACUUM','REINDEX','CLUSTER','INSERT INTO','CREATE OR REPLACE','SELECT INDEXNAME','SELECT PG_SIZE','SELECT PG_STAT'];
           if (!allowedPrefixes.some(prefix => normalizedAdmin.startsWith(prefix))) throw new Error('adminExecute only allows: DROP TABLE/INDEX, CREATE TABLE/INDEX, ALTER TABLE, ANALYZE, VACUUM, REINDEX, CLUSTER, INSERT INTO, CREATE OR REPLACE');
           console.log(`adminExecute: ${adminQuery.substring(0, 100)}...`);
           try {

@@ -100,15 +100,26 @@ serve(async (req) => {
     const scanId = `unmask-${Date.now()}`;
     console.log(`[unmask-hq] Starting scan ${scanId}`);
 
-    // 1. Get target aircraft from Supabase tables
-    const [flaggedAircraft, sentinelThreats] = await Promise.all([
+    // 1. Get target aircraft — pull from BOTH Supabase flags AND Neon tagged records
+    const [flaggedAircraft, sentinelThreats, neonFlagged] = await Promise.all([
       supaSql`SELECT DISTINCT registration FROM public.watchtower_autonomous_flags WHERE registration IS NOT NULL AND registration != '' AND (auto_resolved = false OR auto_resolved IS NULL)`,
       supaSql`SELECT DISTINCT registration FROM public.sentinel_learned_threats WHERE registration IS NOT NULL AND registration != ''`.catch(() => []),
+      // Pull N-number registrations directly from Neon's tagged/flagged records
+      neonSql.unsafe(`
+        SELECT DISTINCT registration FROM live_flight_detections_rows
+        WHERE registration IS NOT NULL AND registration != ''
+          AND registration LIKE 'N%'
+          AND (taxonomy_tag IN ('tier0_kcso','tier1_priority','tier2_shell','low_alt_suspicious','military_asset')
+               OR taxonomy_tag LIKE 'xxb_%'
+               OR flagged = true)
+        LIMIT 500
+      `).catch(() => []),
     ]);
 
     const targetRegs = new Set<string>();
     for (const r of flaggedAircraft) if (r.registration) targetRegs.add(r.registration);
     for (const r of sentinelThreats) if (r.registration) targetRegs.add(r.registration);
+    for (const r of neonFlagged as any[]) if (r.registration) targetRegs.add(r.registration);
 
     if (targetRegs.size === 0) {
       console.log('[unmask-hq] No target aircraft found');
@@ -116,10 +127,17 @@ serve(async (req) => {
       return new Response(JSON.stringify({ success: true, message: 'No target aircraft found', clusters: 0 }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
-    console.log(`[unmask-hq] ${targetRegs.size} target aircraft: ${[...targetRegs].slice(0, 10).join(', ')}`);
+    // Filter to only N-number registrations (actual aircraft, not callsigns)
+    const nNumberRegs = [...targetRegs].filter(r => /^N\d/.test(r));
+    console.log(`[unmask-hq] ${targetRegs.size} total targets, ${nNumberRegs.length} N-number registrations`);
 
-    // 2. Query landing signatures from Neon
-    const regList = [...targetRegs].map(r => `'${r.replace(/'/g, '')}'`).join(',');
+    if (nNumberRegs.length === 0) {
+      await Promise.all([neonSql.end(), supaSql.end()]);
+      return new Response(JSON.stringify({ success: true, message: 'No N-number registrations to scan', clusters: 0, targets: targetRegs.size }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    // 2. Query landing signatures from Neon using N-numbers only
+    const regList = nNumberRegs.map(r => `'${r.replace(/'/g, '')}'`).join(',');
     const landingPoints: LandingPoint[] = await neonSql.unsafe(`
       SELECT registration, latitude, longitude, altitude, speed, detection_timestamp
       FROM live_flight_detections_rows
@@ -131,11 +149,11 @@ serve(async (req) => {
       ORDER BY registration, detection_timestamp
     `);
 
-    console.log(`[unmask-hq] Found ${landingPoints.length} landing signature points`);
+    console.log(`[unmask-hq] Found ${landingPoints.length} landing signature points from ${nNumberRegs.length} aircraft`);
 
     if (landingPoints.length === 0) {
       await Promise.all([neonSql.end(), supaSql.end()]);
-      return new Response(JSON.stringify({ success: true, message: 'No landing signatures detected', clusters: 0, targets: targetRegs.size }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      return new Response(JSON.stringify({ success: true, message: 'No landing signatures detected', clusters: 0, targets: nNumberRegs.length }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     // 3. Cluster landing points

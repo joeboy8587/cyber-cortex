@@ -185,38 +185,56 @@ serve(async (req) => {
     }
 
     // ========== STEP 1: ANALYZE RECENT DETECTIONS ==========
-    // Use WHERE on timestamp directly (avoids full-table ORDER BY sort on 2.8M rows)
-    let recentDetections: any[] = [];
-    try {
-      recentDetections = await withTimeout(
-        sql.unsafe(`SELECT id, registration, callsign, altitude, latitude, longitude,
+    // Cascading time windows: try requested window, then expand if empty
+    const DETECTION_COLUMNS = `id, registration, callsign, altitude, latitude, longitude,
                detection_timestamp, icao_code, speed, heading, vertical_rate,
-               flagged, flagged_reasons, taxonomy_tag
-        FROM live_flight_detections_rows
-        WHERE detection_timestamp > NOW() - INTERVAL '${windowMinutes} minutes'
-        LIMIT 1000`),
-        12000, "recent_detections_query"
-      );
-    } catch (e) {
-      console.warn("Primary _rows query timed out, falling back to live_flight_detections:", e instanceof Error ? e.message : e);
+               flagged, flagged_reasons, taxonomy_tag, owner_operator, shell_auto_detected`;
+    let recentDetections: any[] = [];
+    let effectiveWindowMinutes = windowMinutes;
+    const fallbackWindows = [windowMinutes, 120, 360, 1440]; // requested → 2h → 6h → 24h
+
+    for (const fw of fallbackWindows) {
       try {
-        // Fallback: use the smaller active table
+        recentDetections = await withTimeout(
+          sql.unsafe(`SELECT ${DETECTION_COLUMNS}
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() - INTERVAL '${fw} minutes'
+          LIMIT 1000`),
+          12000, `detections_${fw}min`
+        );
+        if (recentDetections.length > 0) {
+          effectiveWindowMinutes = fw;
+          if (fw > windowMinutes) {
+            proactiveAlerts.push(`⚠️ No data in last ${windowMinutes}min — expanded to ${fw}min window (${recentDetections.length} detections).`);
+          }
+          break;
+        }
+      } catch (e) {
+        console.warn(`Window ${fw}min query failed:`, e instanceof Error ? e.message : e);
+      }
+    }
+
+    // Last resort: try live_flight_detections table
+    if (recentDetections.length === 0) {
+      try {
         recentDetections = await withTimeout(
           sql.unsafe(`SELECT id, registration, callsign, altitude, latitude, longitude,
                  detection_timestamp, icao_code, speed, heading, vertical_rate
           FROM live_flight_detections
-          WHERE detection_timestamp > NOW() - INTERVAL '${windowMinutes} minutes'
-          LIMIT 1000`),
+          ORDER BY detection_timestamp DESC
+          LIMIT 500`),
           10000, "live_detections_fallback"
         );
-        proactiveAlerts.push(`⚠️ Using live_flight_detections fallback (${recentDetections.length} records).`);
+        if (recentDetections.length > 0) {
+          proactiveAlerts.push(`⚠️ Using live_flight_detections fallback (${recentDetections.length} records).`);
+        }
       } catch (e2) {
         console.error("All detection queries failed:", e2 instanceof Error ? e2.message : e2);
       }
     }
 
     if (recentDetections.length === 0) {
-      proactiveAlerts.push(`⚠️ No detections found. Live feed may be offline.`);
+      proactiveAlerts.push(`⚠️ No detections found in any time window. Live feed may be offline.`);
     }
 
     console.log(`Detections loaded: ${recentDetections.length} in ${Date.now() - startTime}ms`);

@@ -191,14 +191,14 @@ serve(async (req) => {
                flagged, flagged_reasons, taxonomy_tag, owner_operator, shell_auto_detected`;
     let recentDetections: any[] = [];
     let effectiveWindowMinutes = windowMinutes;
-    const fallbackWindows = [windowMinutes, 120, 360, 1440]; // requested → 2h → 6h → 24h
+    const fallbackWindows = [windowMinutes, 120, 360, 1440, 4320]; // requested → 2h → 6h → 24h → 72h
 
     for (const fw of fallbackWindows) {
       try {
         recentDetections = await withTimeout(
           sql.unsafe(`SELECT ${DETECTION_COLUMNS}
           FROM live_flight_detections_rows
-          WHERE detection_timestamp > NOW() - INTERVAL '${fw} minutes'
+          WHERE detection_timestamp > NOW() AT TIME ZONE 'UTC' - INTERVAL '${fw} minutes'
           LIMIT 1000`),
           12000, `detections_${fw}min`
         );
@@ -214,19 +214,18 @@ serve(async (req) => {
       }
     }
 
-    // Last resort: try live_flight_detections table
+    // Last resort: most recent records from live_flight_detections_rows (no time filter)
     if (recentDetections.length === 0) {
       try {
         recentDetections = await withTimeout(
-          sql.unsafe(`SELECT id, registration, callsign, altitude, latitude, longitude,
-                 detection_timestamp, icao_code, speed, heading, vertical_rate
-          FROM live_flight_detections
+          sql.unsafe(`SELECT ${DETECTION_COLUMNS}
+          FROM live_flight_detections_rows
           ORDER BY detection_timestamp DESC
-          LIMIT 500`),
-          10000, "live_detections_fallback"
+          LIMIT 1000`),
+          12000, "rows_latest_fallback"
         );
         if (recentDetections.length > 0) {
-          proactiveAlerts.push(`⚠️ Using live_flight_detections fallback (${recentDetections.length} records).`);
+          proactiveAlerts.push(`⚠️ Using latest archived records (${recentDetections.length}) — live feed may be stale.`);
         }
       } catch (e2) {
         console.error("All detection queries failed:", e2 instanceof Error ? e2.message : e2);

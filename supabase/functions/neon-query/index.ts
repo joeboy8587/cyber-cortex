@@ -44,13 +44,22 @@ function getConnection(): Promise<ReturnType<typeof postgres>> {
       transform: { undefined: null },
     });
 
-    // Quick connectivity check (with timeout)
-    const testPromise = sql`SELECT 1 as connected`;
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Connection test timeout after 8s')), 8000)
-    );
-    await Promise.race([testPromise, timeoutPromise]);
-    console.log('Database connected successfully on attempt 1');
+    // Quick connectivity check with retry
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const testPromise = sql`SELECT 1 as connected`;
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Connection test timeout after 15s')), 15000)
+        );
+        await Promise.race([testPromise, timeoutPromise]);
+        console.log(`Database connected successfully on attempt ${attempt}`);
+        break;
+      } catch (e) {
+        if (attempt === 2) throw e;
+        console.log(`Connection attempt ${attempt} failed, retrying...`);
+        await new Promise(r => setTimeout(r, 1000));
+      }
+    }
 
     _sql = sql;
     return sql;

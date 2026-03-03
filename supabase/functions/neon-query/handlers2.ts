@@ -255,6 +255,156 @@ export async function handleAction2(action: string, body: Record<string, any>, s
       }
     }
 
+    // ============== C2014 COHORT SCAN ==============
+    case 'c2014CohortScan': {
+      try {
+        const targetRegs = body.registrations || ['N528AM','N786FA','N6196P','N256AA','N789FA','N912KC','N913KC','N597E','N789FA','N791FA','N790FA'];
+        const targetHexCodes = body.hexCodes || [];
+
+        // 1. Procurement Cohort: Aircraft with 2014-era registration/first-seen dates
+        const procurementCohort = await sql`
+          SELECT registration, hex, owner_operator, aircraft_type, aircraft_type_desc,
+            MIN(detection_timestamp) as first_seen,
+            MAX(detection_timestamp) as last_seen,
+            COUNT(*)::int as total_detections,
+            ROUND(AVG(altitude::numeric),0) as avg_altitude,
+            ROUND(AVG(speed::numeric),1) as avg_speed,
+            shell_auto_detected,
+            is_military,
+            taxonomy_tag
+          FROM live_flight_detections_rows
+          WHERE registration = ANY(${targetRegs})
+          GROUP BY registration, hex, owner_operator, aircraft_type, aircraft_type_desc,
+            shell_auto_detected, is_military, taxonomy_tag
+          ORDER BY total_detections DESC
+        `;
+
+        // 2. Behavioral Signatures: "Sensor Loitering" (speed <5kts, alt 0-400ft, extended dwell)
+        const sensorLoitering = await sql`
+          SELECT registration, hex, owner_operator,
+            COUNT(*)::int as loiter_detections,
+            ROUND(AVG(altitude::numeric),0) as avg_alt,
+            ROUND(AVG(speed::numeric),1) as avg_speed,
+            MIN(detection_timestamp) as first_loiter,
+            MAX(detection_timestamp) as last_loiter,
+            COUNT(DISTINCT DATE(detection_timestamp))::int as loiter_days
+          FROM live_flight_detections_rows
+          WHERE speed::numeric < 5 AND altitude::numeric BETWEEN 0 AND 400
+            AND altitude::numeric > 0
+          GROUP BY registration, hex, owner_operator
+          HAVING COUNT(*) > 2
+          ORDER BY loiter_detections DESC
+          LIMIT 25
+        `;
+
+        // 3. High-Altitude Signatures (>60000ft - U-2/ER-2 class)
+        const highAltitude = await sql`
+          SELECT registration, hex, owner_operator, aircraft_type,
+            MAX(altitude::numeric) as max_altitude,
+            COUNT(*)::int as high_alt_detections,
+            MIN(detection_timestamp) as first_seen,
+            MAX(detection_timestamp) as last_seen
+          FROM live_flight_detections_rows
+          WHERE altitude::numeric > 60000
+          GROUP BY registration, hex, owner_operator, aircraft_type
+          ORDER BY max_altitude DESC
+          LIMIT 20
+        `;
+
+        // 4. Hammer-Anvil Coordination: Same 1nm grid, same minute, different aircraft
+        const hammerAnvil = await sql`
+          WITH gridded AS (
+            SELECT registration, hex, owner_operator, altitude::numeric as alt, speed::numeric as spd,
+              ROUND(latitude::numeric, 2) as grid_lat, ROUND(longitude::numeric, 2) as grid_lng,
+              DATE_TRUNC('minute', detection_timestamp) as time_slot,
+              detection_timestamp
+            FROM live_flight_detections_rows
+            WHERE registration = ANY(${targetRegs})
+              AND detection_timestamp > NOW() - INTERVAL '30 days'
+          )
+          SELECT a.time_slot, a.grid_lat, a.grid_lng,
+            a.registration as aircraft_a, a.alt as alt_a, a.spd as speed_a,
+            b.registration as aircraft_b, b.alt as alt_b, b.spd as speed_b,
+            ABS(a.alt - b.alt) as altitude_diff,
+            CASE
+              WHEN a.alt < 1000 AND b.alt > 2000 THEN 'HAMMER-ANVIL'
+              WHEN a.alt > 2000 AND b.alt < 1000 THEN 'ANVIL-HAMMER'
+              WHEN ABS(a.alt - b.alt) < 500 THEN 'FORMATION'
+              ELSE 'COORDINATION'
+            END as pattern_type
+          FROM gridded a
+          JOIN gridded b ON a.time_slot = b.time_slot
+            AND a.grid_lat = b.grid_lat AND a.grid_lng = b.grid_lng
+            AND a.registration < b.registration
+          ORDER BY a.time_slot DESC
+          LIMIT 50
+        `;
+
+        // 5. Shell Company Node Analysis: Delaware mail-drop addresses
+        const shellNodes = await sql`
+          SELECT registration, hex, owner_operator,
+            COUNT(*)::int as total_detections,
+            shell_auto_detected,
+            taxonomy_tag,
+            MIN(detection_timestamp) as first_seen,
+            MAX(detection_timestamp) as last_seen,
+            COUNT(DISTINCT DATE(detection_timestamp))::int as active_days
+          FROM live_flight_detections_rows
+          WHERE (owner_operator ILIKE '%LLC%' OR owner_operator ILIKE '%Holdings%'
+            OR owner_operator ILIKE '%Trust%' OR owner_operator ILIKE '%Equities%'
+            OR shell_auto_detected = true)
+          GROUP BY registration, hex, owner_operator, shell_auto_detected, taxonomy_tag
+          ORDER BY total_detections DESC
+          LIMIT 30
+        `;
+
+        // 6. Biometric Correlation for target fleet
+        const biometricCorrelation = await sql`
+          SELECT b.registration as aircraft_registration,
+            COUNT(*)::int as correlation_count,
+            ROUND(AVG(b.correlation_score::numeric),2) as avg_score,
+            MAX(b.biometric_timestamp) as latest_correlation
+          FROM master_biometric_aircraft_correlations b
+          WHERE b.registration = ANY(${targetRegs})
+          GROUP BY b.registration
+          ORDER BY correlation_count DESC
+        `.catch(() => []);
+
+        // 7. FAA Registry cross-ref for 2014 procurement dates
+        const faaRegistry = await sql`
+          SELECT n_number, registrant_name, aircraft_manufacturer, aircraft_model,
+            certificate_issue_date, airworthiness_date, mode_s_hex,
+            registrant_street, registrant_city, registrant_state,
+            year_manufactured, status
+          FROM aircraft_registry
+          WHERE n_number = ANY(${targetRegs.map((r: string) => r.replace('N',''))})
+            OR ('N' || n_number) = ANY(${targetRegs})
+          ORDER BY certificate_issue_date
+        `.catch(() => []);
+
+        return {
+          cohort: procurementCohort,
+          sensorLoitering,
+          highAltitude,
+          hammerAnvil,
+          shellNodes,
+          biometricCorrelation,
+          faaRegistry,
+          meta: {
+            scanTimestamp: new Date().toISOString(),
+            targetRegistrations: targetRegs,
+            cohortSize: procurementCohort.length,
+            hammerAnvilEvents: hammerAnvil.length,
+            shellEntities: shellNodes.length,
+            loiterSignatures: sensorLoitering.length
+          }
+        };
+      } catch (e) {
+        console.error('c2014CohortScan error:', e);
+        return { error: (e as Error).message };
+      }
+    }
+
     default:
       return null; // Signal "not handled" back to main router
   }

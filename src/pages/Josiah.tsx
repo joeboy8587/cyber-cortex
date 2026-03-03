@@ -11,6 +11,7 @@ import { LegalAnalystAgent } from "@/components/dashboard/LegalAnalystAgent";
 import { LegalDraftingAgent } from "@/components/dashboard/LegalDraftingAgent";
 import { GlobalAISearch } from "@/components/dashboard/GlobalAISearch";
 import { TruthScannerDashboard } from "@/components/dashboard/TruthScannerDashboard";
+import { C2014CohortScanner } from "@/components/dashboard/C2014CohortScanner";
 
 export default function Josiah() {
   return (
@@ -49,6 +50,11 @@ export default function Josiah() {
         {/* Global AI Search */}
         <section>
           <GlobalAISearch />
+        </section>
+
+        {/* C2014 Procurement Cohort Scanner */}
+        <section>
+          <C2014CohortScanner />
         </section>
 
         {/* Biometric Query */}

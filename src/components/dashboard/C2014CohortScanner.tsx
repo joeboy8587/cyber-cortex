@@ -39,8 +39,11 @@ export function C2014CohortScanner() {
         }
       });
       if (error) throw error;
-      setResults(data as CohortResult);
-      toast({ title: "C2014 Cohort Scan Complete", description: `${(data as CohortResult)?.meta?.cohortSize || 0} aircraft profiled, ${(data as CohortResult)?.meta?.hammerAnvilEvents || 0} coordination events detected` });
+      const result = data as CohortResult;
+      if ((result as any)?.error) throw new Error((result as any).error);
+      if (!result?.meta) throw new Error('No data returned from scan');
+      setResults(result);
+      toast({ title: "C2014 Cohort Scan Complete", description: `${result.meta.cohortSize || 0} aircraft profiled, ${result.meta.hammerAnvilEvents || 0} coordination events detected` });
     } catch (err) {
       toast({ title: "Scan failed", description: (err as Error).message, variant: "destructive" });
     } finally {

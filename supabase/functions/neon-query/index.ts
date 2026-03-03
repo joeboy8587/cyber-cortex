@@ -166,6 +166,16 @@ serve(async (req) => {
           break;
         }
 
+        case 'dropTrigger': {
+          const triggerName = body.triggerName;
+          const triggerTable = body.triggerTable;
+          if (!triggerName || !triggerTable) throw new Error('triggerName and triggerTable are required');
+          const safeTrigger = triggerName.replace(/[^a-zA-Z0-9_]/g, '');
+          const safeTable = triggerTable.replace(/[^a-zA-Z0-9_]/g, '');
+          result = await sql.unsafe(`DROP TRIGGER IF EXISTS ${safeTrigger} ON ${safeTable}`);
+          break;
+        }
+
         case 'insertRecord': {
           const allowedTables = ['aircraft_registry_enriched','operator_profiles_enriched','flagged_aircraft_rows_rows','criminal_enterprise_command_structure','live_flight_detections_rows','biometric_monitoring','ocr_aircraft_holding_patterns','daily_event_imports','josiah_reflections_rows','pattern_recognition_enriched','legal_findings','forensic_violation_citations','legal_intel_extractions','aircraft_violations'];
           if (!table || !allowedTables.includes(table)) throw new Error(`Insert not allowed for table: ${table}`);

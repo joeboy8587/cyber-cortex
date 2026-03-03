@@ -313,7 +313,7 @@ serve(async (req) => {
             sql`SELECT COUNT(DISTINCT entity_name)::int as enterprise_count FROM criminal_enterprise_command_structure`.catch(() => [{ enterprise_count:0 }]),
             sql`SELECT COUNT(*)::int as total FROM shell_companies`.catch(() => [{ total:0 }]),
             sql`SELECT COUNT(*)::int as total FROM watchtower_unified_master`.catch(() => [{ total:0 }]),
-            sql`SELECT COUNT(*)::int as total, ROUND(AVG(NULLIF(hr_avg,0))::numeric,0)::int as avg_hr FROM biometric_monitoring`.catch(() => [{ total:0, avg_hr:0 }]),
+            sql`SELECT COUNT(*)::int as total, ROUND(AVG(NULLIF(heart_rate,0))::numeric,0)::int as avg_hr FROM biometric_monitoring`.catch(() => [{ total:0, avg_hr:0 }]),
             sql`SELECT COUNT(*)::int as total FROM josiah_reflections_rows`.catch(() => [{ total:0 }]),
             sql`SELECT COUNT(*)::int as total FROM physician_verified_ecgs`.catch(() => [{ total:0 }]),
             sql`SELECT COUNT(*)::int as total FROM evidence_chain_links`.catch(() => [{ total:0 }]),
@@ -326,11 +326,11 @@ serve(async (req) => {
           try {
             const [flightSt, biometricSt, ecgSt, josiahSt, ocrSt, convergenceCalc] = await Promise.all([
               sql`SELECT COUNT(*) as total_flights, COUNT(DISTINCT registration) as unique_aircraft, COUNT(CASE WHEN taxonomy_tag IN ('xxb_kcso','xxb_tier1_priority','xxb_kcso_shell') THEN 1 END) as priority_hits FROM live_flight_detections_rows`,
-              sql`SELECT COUNT(*) as total, ROUND(COALESCE(AVG(NULLIF(COALESCE(hr_avg,0),0)),0)::numeric,0) as avg_hr FROM biometric_monitoring`,
+              sql`SELECT COUNT(*) as total, ROUND(COALESCE(AVG(NULLIF(heart_rate,0)),0)::numeric,0) as avg_hr FROM biometric_monitoring`,
               sql`SELECT COUNT(*) as total FROM physician_verified_ecgs`,
               sql`SELECT COUNT(*) as total FROM josiah_reflections_rows`,
               sql`SELECT COUNT(*) as total FROM ocr_aircraft_holding_patterns`,
-              sql`WITH daily_factors AS (SELECT DATE(detection_timestamp) as event_date, COUNT(*) as flight_count FROM live_flight_detections_rows WHERE taxonomy_tag IN ('xxb_kcso','xxb_tier1_priority','xxb_kcso_shell','xxb_tier2_shell') GROUP BY DATE(detection_timestamp)), biometric_days AS (SELECT DATE(COALESCE(event_timestamp,measurement_timestamp,created_at)) as event_date, COUNT(*) as bio_count, COALESCE(AVG(NULLIF(hr_avg,0)),0) as avg_hr FROM biometric_monitoring WHERE COALESCE(hr_avg,0)>90 GROUP BY 1), convergence AS (SELECT f.event_date, f.flight_count, COALESCE(b.bio_count,0) as bio_count, COALESCE(b.avg_hr,0) as avg_hr FROM daily_factors f LEFT JOIN biometric_days b ON f.event_date=b.event_date) SELECT COUNT(*) as total_convergence_days, COUNT(CASE WHEN flight_count>0 AND bio_count>0 THEN 1 END) as two_factor_events, SUM(flight_count) as total_flights_in_convergence, ROUND(AVG(avg_hr)::numeric,0) as avg_hr_in_events FROM convergence`,
+              sql`WITH daily_factors AS (SELECT DATE(detection_timestamp) as event_date, COUNT(*) as flight_count FROM live_flight_detections_rows WHERE taxonomy_tag IN ('xxb_kcso','xxb_tier1_priority','xxb_kcso_shell','xxb_tier2_shell') GROUP BY DATE(detection_timestamp)), biometric_days AS (SELECT DATE(COALESCE(event_timestamp,measurement_timestamp,created_at)) as event_date, COUNT(*) as bio_count, COALESCE(AVG(NULLIF(heart_rate,0)),0) as avg_hr FROM biometric_monitoring WHERE COALESCE(heart_rate,0)>90 GROUP BY 1), convergence AS (SELECT f.event_date, f.flight_count, COALESCE(b.bio_count,0) as bio_count, COALESCE(b.avg_hr,0) as avg_hr FROM daily_factors f LEFT JOIN biometric_days b ON f.event_date=b.event_date) SELECT COUNT(*) as total_convergence_days, COUNT(CASE WHEN flight_count>0 AND bio_count>0 THEN 1 END) as two_factor_events, SUM(flight_count) as total_flights_in_convergence, ROUND(AVG(avg_hr)::numeric,0) as avg_hr_in_events FROM convergence`,
             ]);
             const totalECGs = parseInt((ecgSt[0] as any)?.total||'0');
             const totalJosiah = parseInt((josiahSt[0] as any)?.total||'0');

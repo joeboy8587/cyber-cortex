@@ -263,7 +263,7 @@ export async function handleAction2(action: string, body: Record<string, any>, s
 
         // 1. Procurement Cohort: Aircraft with 2014-era registration/first-seen dates
         const procurementCohort = await sql`
-          SELECT registration, hex, owner_operator, aircraft_type, aircraft_type_desc,
+          SELECT registration, icao_code as hex, owner_operator, aircraft_type, aircraft_type_desc,
             MIN(detection_timestamp) as first_seen,
             MAX(detection_timestamp) as last_seen,
             COUNT(*)::int as total_detections,
@@ -274,14 +274,14 @@ export async function handleAction2(action: string, body: Record<string, any>, s
             taxonomy_tag
           FROM live_flight_detections_rows
           WHERE registration = ANY(${targetRegs})
-          GROUP BY registration, hex, owner_operator, aircraft_type, aircraft_type_desc,
+          GROUP BY registration, icao_code, owner_operator, aircraft_type, aircraft_type_desc,
             shell_auto_detected, is_military, taxonomy_tag
           ORDER BY total_detections DESC
         `;
 
         // 2. Behavioral Signatures: "Sensor Loitering" (speed <5kts, alt 0-400ft, extended dwell)
         const sensorLoitering = await sql`
-          SELECT registration, hex, owner_operator,
+          SELECT registration, icao_code as hex, owner_operator,
             COUNT(*)::int as loiter_detections,
             ROUND(AVG(altitude::numeric),0) as avg_alt,
             ROUND(AVG(speed::numeric),1) as avg_speed,
@@ -291,7 +291,7 @@ export async function handleAction2(action: string, body: Record<string, any>, s
           FROM live_flight_detections_rows
           WHERE speed::numeric < 5 AND altitude::numeric BETWEEN 0 AND 400
             AND altitude::numeric > 0
-          GROUP BY registration, hex, owner_operator
+          GROUP BY registration, icao_code, owner_operator
           HAVING COUNT(*) > 2
           ORDER BY loiter_detections DESC
           LIMIT 25
@@ -299,14 +299,14 @@ export async function handleAction2(action: string, body: Record<string, any>, s
 
         // 3. High-Altitude Signatures (>60000ft - U-2/ER-2 class)
         const highAltitude = await sql`
-          SELECT registration, hex, owner_operator, aircraft_type,
+          SELECT registration, icao_code as hex, owner_operator, aircraft_type,
             MAX(altitude::numeric) as max_altitude,
             COUNT(*)::int as high_alt_detections,
             MIN(detection_timestamp) as first_seen,
             MAX(detection_timestamp) as last_seen
           FROM live_flight_detections_rows
           WHERE altitude::numeric > 60000
-          GROUP BY registration, hex, owner_operator, aircraft_type
+          GROUP BY registration, icao_code, owner_operator, aircraft_type
           ORDER BY max_altitude DESC
           LIMIT 20
         `;
@@ -314,7 +314,7 @@ export async function handleAction2(action: string, body: Record<string, any>, s
         // 4. Hammer-Anvil Coordination: Same 1nm grid, same minute, different aircraft
         const hammerAnvil = await sql`
           WITH gridded AS (
-            SELECT registration, hex, owner_operator, altitude::numeric as alt, speed::numeric as spd,
+            SELECT registration, icao_code as hex, owner_operator, altitude::numeric as alt, speed::numeric as spd,
               ROUND(latitude::numeric, 2) as grid_lat, ROUND(longitude::numeric, 2) as grid_lng,
               DATE_TRUNC('minute', detection_timestamp) as time_slot,
               detection_timestamp
@@ -342,7 +342,7 @@ export async function handleAction2(action: string, body: Record<string, any>, s
 
         // 5. Shell Company Node Analysis: Delaware mail-drop addresses
         const shellNodes = await sql`
-          SELECT registration, hex, owner_operator,
+          SELECT registration, icao_code as hex, owner_operator,
             COUNT(*)::int as total_detections,
             shell_auto_detected,
             taxonomy_tag,
@@ -353,7 +353,7 @@ export async function handleAction2(action: string, body: Record<string, any>, s
           WHERE (owner_operator ILIKE '%LLC%' OR owner_operator ILIKE '%Holdings%'
             OR owner_operator ILIKE '%Trust%' OR owner_operator ILIKE '%Equities%'
             OR shell_auto_detected = true)
-          GROUP BY registration, hex, owner_operator, shell_auto_detected, taxonomy_tag
+          GROUP BY registration, icao_code, owner_operator, shell_auto_detected, taxonomy_tag
           ORDER BY total_detections DESC
           LIMIT 30
         `;

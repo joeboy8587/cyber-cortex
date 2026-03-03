@@ -251,6 +251,39 @@ function classifyAircraft(registration: string, callsign: string, altitude: numb
   };
 }
 
+// ============ SHA-256 EVIDENCE HASHING ============
+async function computeSHA256(data: Record<string, unknown>): Promise<string> {
+  const canonical = JSON.stringify(data, Object.keys(data).sort());
+  const encoded = new TextEncoder().encode(canonical);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', encoded);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function buildHashPayload(flight: any): Record<string, unknown> {
+  return {
+    icao: flight.hex,
+    reg: flight.registration,
+    callsign: flight.callsign,
+    alt: flight.altitude,
+    spd: flight.speed,
+    lat: flight.latitude,
+    lon: flight.longitude,
+    hdg: flight.heading,
+    vr: flight.vertical_rate,
+    tag: flight.taxonomyTag,
+    ts: flight.threatScore,
+    tier: flight.tierLevel,
+    flagged: flight.flagged,
+    reasons: flight.flaggedReasons?.join('; ') || '',
+    ownOp: flight.ownerOperator || '',
+    type: flight.aircraftType || '',
+    mil: flight.isMilitary || false,
+    shell: flight.shellAutoDetected || false,
+    src: flight.source || '',
+  };
+}
+
 function metersToFeet(meters: number | null): number {
   if (meters === null || meters === undefined) return 0;
   return Math.round(meters * 3.28084);
@@ -665,7 +698,8 @@ serve(async (req) => {
                       ADD COLUMN IF NOT EXISTS data_source TEXT DEFAULT 'opensky',
                       ADD COLUMN IF NOT EXISTS year_manufactured INTEGER,
                       ADD COLUMN IF NOT EXISTS shell_auto_detected BOOLEAN DEFAULT FALSE,
-                      ADD COLUMN IF NOT EXISTS shell_detection_reason TEXT
+                      ADD COLUMN IF NOT EXISTS shell_detection_reason TEXT,
+                      ADD COLUMN IF NOT EXISTS sha256_hash TEXT
                   `);
                   hasRichCols = true;
                   richColumnsVerified = true;
@@ -681,6 +715,10 @@ serve(async (req) => {
 
           for (const flight of transformedFlights) {
             try {
+              // ============ SHA-256 HASH EVERY DETECTION ============
+              const hashPayload = buildHashPayload(flight);
+              const sha256Hash = await computeSHA256(hashPayload);
+
               const existing = await sql`
                 SELECT id FROM live_flight_detections_rows 
                 WHERE (icao_code = ${flight.hex} OR registration = ${flight.registration})
@@ -703,7 +741,8 @@ serve(async (req) => {
                     is_military=${flight.isMilitary},
                     shell_auto_detected=${flight.shellAutoDetected},
                     shell_detection_reason=${flight.shellDetectionReason||null},
-                    data_source=${flight.source}
+                    data_source=${flight.source},
+                    sha256_hash=${sha256Hash}
                   WHERE id=${existing[0].id}`;
                 } else {
                   await sql`UPDATE live_flight_detections_rows SET
@@ -712,7 +751,8 @@ serve(async (req) => {
                     heading=${flight.heading}, vertical_rate=${flight.vertical_rate},
                     detection_timestamp=NOW(), taxonomy_tag=${flight.taxonomyTag},
                     threat_score=${flight.threatScore}, flagged=${flight.flagged},
-                    flagged_reasons=${flight.flaggedReasons.join('; ')}
+                    flagged_reasons=${flight.flaggedReasons.join('; ')},
+                    sha256_hash=${sha256Hash}
                   WHERE id=${existing[0].id}`;
                 }
                 updated++;
@@ -724,7 +764,8 @@ serve(async (req) => {
                     detection_timestamp, created_at, taxonomy_tag,
                     threat_score, tier_level, flagged, flagged_reasons,
                     owner_operator, aircraft_type, aircraft_type_desc,
-                    is_military, data_source, shell_auto_detected, shell_detection_reason
+                    is_military, data_source, shell_auto_detected, shell_detection_reason,
+                    sha256_hash
                   ) VALUES (
                     ${crypto.randomUUID()}, ${flight.hex}, ${flight.registration},
                     ${flight.callsign}, ${flight.altitude}, ${flight.speed},
@@ -735,21 +776,24 @@ serve(async (req) => {
                     ${flight.ownerOperator||null}, ${flight.aircraftType||null},
                     ${flight.aircraftTypeDesc||null}, ${flight.isMilitary},
                     ${flight.source}, ${flight.shellAutoDetected},
-                    ${flight.shellDetectionReason||null}
+                    ${flight.shellDetectionReason||null},
+                    ${sha256Hash}
                   )`;
                 } else {
                   await sql`INSERT INTO live_flight_detections_rows (
                     id, icao_code, registration, callsign, altitude, speed,
                     latitude, longitude, heading, vertical_rate,
                     detection_timestamp, created_at, taxonomy_tag,
-                    threat_score, tier_level, flagged, flagged_reasons
+                    threat_score, tier_level, flagged, flagged_reasons,
+                    sha256_hash
                   ) VALUES (
                     ${crypto.randomUUID()}, ${flight.hex}, ${flight.registration},
                     ${flight.callsign}, ${flight.altitude}, ${flight.speed},
                     ${flight.latitude}, ${flight.longitude}, ${flight.heading},
                     ${flight.vertical_rate}, NOW(), NOW(),
                     ${flight.taxonomyTag}, ${flight.threatScore}, ${flight.tierLevel},
-                    ${flight.flagged}, ${flight.flaggedReasons.join('; ')}
+                    ${flight.flagged}, ${flight.flaggedReasons.join('; ')},
+                    ${sha256Hash}
                   )`;
                 }
                 inserted++;

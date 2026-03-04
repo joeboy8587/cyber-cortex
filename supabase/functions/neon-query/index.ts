@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { handleAction } from "./handlers.ts";
 import { handleAction2 } from "./handlers2.ts";
 
@@ -382,8 +383,8 @@ serve(async (req) => {
           const adminQuery = body.query;
           if (!adminQuery || typeof adminQuery !== 'string') throw new Error('Query is required for adminExecute');
           const normalizedAdmin = adminQuery.trim().toUpperCase();
-          const allowedPrefixes = ['DROP TABLE','DROP VIEW','DROP MATERIALIZED','DROP INDEX','DROP TRIGGER','CREATE TABLE','CREATE INDEX','CREATE TRIGGER','ALTER TABLE','ANALYZE','VACUUM','REINDEX','CLUSTER','INSERT INTO','CREATE OR REPLACE','SELECT INDEXNAME','SELECT PG_SIZE','SELECT PG_STAT'];
-          if (!allowedPrefixes.some(prefix => normalizedAdmin.startsWith(prefix))) throw new Error('adminExecute only allows: DROP TABLE/INDEX, CREATE TABLE/INDEX, ALTER TABLE, ANALYZE, VACUUM, REINDEX, CLUSTER, INSERT INTO, CREATE OR REPLACE');
+          const allowedPrefixes = ['DROP TABLE','DROP VIEW','DROP MATERIALIZED','DROP INDEX','DROP TRIGGER','CREATE TABLE','CREATE INDEX','CREATE TRIGGER','ALTER TABLE','ANALYZE','VACUUM','REINDEX','CLUSTER','INSERT INTO','UPDATE ','CREATE OR REPLACE','SELECT INDEXNAME','SELECT PG_SIZE','SELECT PG_STAT'];
+          if (!allowedPrefixes.some(prefix => normalizedAdmin.startsWith(prefix))) throw new Error('adminExecute only allows: DROP TABLE/INDEX, CREATE TABLE/INDEX, ALTER TABLE, UPDATE, ANALYZE, VACUUM, REINDEX, CLUSTER, INSERT INTO, CREATE OR REPLACE');
           console.log(`adminExecute: ${adminQuery.substring(0, 100)}...`);
           try {
             // Set a generous statement timeout for DDL on large tables
@@ -394,6 +395,94 @@ serve(async (req) => {
           } catch (e) {
             try { await sql.unsafe(`SET statement_timeout = '30s'`); } catch (_) {}
             result = { success: false, error: (e as any)?.message || 'DDL execution failed' };
+          }
+          break;
+        }
+
+        case 'backfillIcaoCodes': {
+          // Cross-database backfill: read aircraft_registry from Supabase, update Neon
+          try {
+            const supabaseUrl = Deno.env.get('SUPABASE_URL');
+            const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+            if (!supabaseUrl || !supabaseKey) throw new Error('Supabase credentials not configured');
+            
+            const supabase = createClient(supabaseUrl, supabaseKey);
+            
+            // 1. Get all registrations with null icao_code from Neon
+            const nullIcaoRegs = await sql`
+              SELECT DISTINCT registration 
+              FROM live_flight_detections_rows 
+              WHERE (icao_code IS NULL OR icao_code = '') 
+                AND registration IS NOT NULL 
+                AND registration != ''
+            `;
+            console.log(`Found ${nullIcaoRegs.length} unique registrations with null ICAO codes`);
+            
+            if (nullIcaoRegs.length === 0) {
+              result = { success: true, message: 'No null ICAO codes to backfill', updated: 0 };
+              break;
+            }
+
+            // 2. Fetch mode_s_hex mappings from Supabase aircraft_registry
+            // N-numbers in registry don't have N prefix in n_number field sometimes
+            const regList = nullIcaoRegs.map((r: any) => r.registration);
+            const nNumbers = regList.map((r: string) => r.startsWith('N') ? r.substring(1) : r);
+            
+            // Batch fetch from Supabase (1000 at a time)
+            const mappings: Record<string, string> = {};
+            for (let i = 0; i < nNumbers.length; i += 500) {
+              const batch = nNumbers.slice(i, i + 500);
+              const batchFull = regList.slice(i, i + 500);
+              
+              // Try both with and without N prefix
+              const { data: registryData } = await supabase
+                .from('aircraft_registry')
+                .select('n_number, mode_s_hex')
+                .or(`n_number.in.(${batch.join(',')}),n_number.in.(${batchFull.join(',')})`)
+                .not('mode_s_hex', 'is', null);
+              
+              if (registryData) {
+                for (const entry of registryData) {
+                  if (entry.mode_s_hex) {
+                    const fullReg = entry.n_number.startsWith('N') ? entry.n_number : `N${entry.n_number}`;
+                    mappings[fullReg] = entry.mode_s_hex.toUpperCase();
+                  }
+                }
+              }
+            }
+            
+            console.log(`Found ${Object.keys(mappings).length} ICAO mappings from aircraft registry`);
+            
+            // 3. Batch update Neon records
+            let totalUpdated = 0;
+            await sql.unsafe(`SET statement_timeout = '300s'`);
+            
+            for (const [reg, icao] of Object.entries(mappings)) {
+              try {
+                const updateResult = await sql`
+                  UPDATE live_flight_detections_rows 
+                  SET icao_code = ${icao}
+                  WHERE registration = ${reg} 
+                    AND (icao_code IS NULL OR icao_code = '')
+                `;
+                totalUpdated += updateResult.count || 0;
+              } catch (e) {
+                console.error(`Failed to update ${reg}: ${(e as Error).message}`);
+              }
+            }
+            
+            await sql.unsafe(`SET statement_timeout = '30s'`);
+            
+            result = { 
+              success: true, 
+              nullIcaoRegistrations: nullIcaoRegs.length,
+              registryMatches: Object.keys(mappings).length,
+              recordsUpdated: totalUpdated,
+              mappingSample: Object.entries(mappings).slice(0, 10).map(([reg, icao]) => ({ registration: reg, icao_code: icao }))
+            };
+          } catch (e) {
+            try { await sql.unsafe(`SET statement_timeout = '30s'`); } catch (_) {}
+            result = { success: false, error: (e as Error).message };
           }
           break;
         }

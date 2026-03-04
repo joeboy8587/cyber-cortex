@@ -6,7 +6,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Ghost, Loader2, AlertTriangle, Radio, Plane,
-  BarChart3, Clock, Crosshair, Search
+  BarChart3, Clock, Crosshair, Search, Database
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import {
@@ -44,8 +44,27 @@ const PIE_COLORS = ['hsl(var(--destructive))', 'hsl(var(--primary))', 'hsl(var(-
 
 export function NullIcaoForensicPanel() {
   const [loading, setLoading] = useState(false);
+  const [backfilling, setBackfilling] = useState(false);
+  const [backfillResult, setBackfillResult] = useState<any>(null);
   const [results, setResults] = useState<ScanResults | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const runBackfill = async () => {
+    setBackfilling(true);
+    setBackfillResult(null);
+    try {
+      const { data, error: err } = await supabase.functions.invoke('neon-query', {
+        body: { action: 'backfillIcaoCodes' }
+      });
+      if (err) throw new Error(err.message);
+      if (data?.error) throw new Error(data.error);
+      setBackfillResult(data);
+    } catch (err) {
+      setBackfillResult({ success: false, error: err instanceof Error ? err.message : 'Backfill failed' });
+    } finally {
+      setBackfilling(false);
+    }
+  };
 
   const runScan = async () => {
     setLoading(true);
@@ -138,16 +157,45 @@ export function NullIcaoForensicPanel() {
       icon={<Ghost className="w-4 h-4" />}
       variant="threat"
       headerActions={
-        <Button onClick={runScan} disabled={loading} size="sm" className="gap-2">
-          {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Search className="w-3 h-3" />}
-          {loading ? 'Scanning...' : 'Run Deep Scan'}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button onClick={runBackfill} disabled={backfilling || loading} size="sm" variant="outline" className="gap-2">
+            {backfilling ? <Loader2 className="w-3 h-3 animate-spin" /> : <Database className="w-3 h-3" />}
+            {backfilling ? 'Backfilling...' : 'Backfill ICAOs'}
+          </Button>
+          <Button onClick={runScan} disabled={loading} size="sm" className="gap-2">
+            {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Search className="w-3 h-3" />}
+            {loading ? 'Scanning...' : 'Run Deep Scan'}
+          </Button>
+        </div>
       }
     >
       <div className="p-4 space-y-4">
         {error && (
           <div className="p-3 rounded bg-destructive/10 border border-destructive/30 text-destructive text-xs flex items-center gap-2">
             <AlertTriangle className="w-4 h-4" /> {error}
+          </div>
+        )}
+
+        {backfillResult && (
+          <div className={`p-3 rounded text-xs border ${backfillResult.success ? 'bg-primary/10 border-primary/30 text-primary' : 'bg-destructive/10 border-destructive/30 text-destructive'}`}>
+            {backfillResult.success ? (
+              <div className="space-y-1">
+                <p className="font-bold">✅ ICAO Backfill Complete</p>
+                <p>Null-ICAO registrations found: {Number(backfillResult.nullIcaoRegistrations).toLocaleString()}</p>
+                <p>Registry matches: {Number(backfillResult.registryMatches).toLocaleString()}</p>
+                <p className="font-bold">Records updated: {Number(backfillResult.recordsUpdated).toLocaleString()}</p>
+                {backfillResult.mappingSample?.length > 0 && (
+                  <div className="mt-2">
+                    <p className="text-muted-foreground">Sample mappings:</p>
+                    {backfillResult.mappingSample.map((m: any, i: number) => (
+                      <span key={i} className="inline-block mr-2">{m.registration}→{m.icao_code}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p><AlertTriangle className="w-3 h-3 inline mr-1" />{backfillResult.error}</p>
+            )}
           </div>
         )}
 

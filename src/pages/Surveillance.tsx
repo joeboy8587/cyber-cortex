@@ -18,6 +18,7 @@ import { OperatorEnrichmentPanel } from "@/components/dashboard/OperatorEnrichme
 import { InfrastructureCorrelation } from "@/components/dashboard/InfrastructureCorrelation";
 import { PatternCoordinationAnalysis } from "@/components/dashboard/PatternCoordinationAnalysis";
 import DeepPatternAnalyzer from "@/components/dashboard/DeepPatternAnalyzer";
+import { NullIcaoForensicPanel } from "@/components/dashboard/NullIcaoForensicPanel";
 import F24RadarUploader from "@/components/dashboard/F24RadarUploader";
 import { AutonomousWatchtower } from "@/components/dashboard/AutonomousWatchtower";
 import UnmaskHQSystem from "@/components/dashboard/UnmaskHQSystem";
@@ -60,6 +61,11 @@ export default function Surveillance() {
         <section className="space-y-6">
           <AircraftMapVisualization />
           <LiveFlightTracker />
+        </section>
+
+        {/* 👻 NULL ICAO FORENSIC INVESTIGATOR */}
+        <section>
+          <NullIcaoForensicPanel />
         </section>
 
         {/* 🔥 ADS-B SPOOFING DETECTOR - Real-Time Masking Detection */}

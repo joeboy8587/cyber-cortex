@@ -186,24 +186,26 @@ const AircraftMapVisualization: React.FC = () => {
               {filteredFlights.length} visible
             </Badge>
             <Button
-              variant="ghost"
+              variant="outline"
               size="sm"
               onClick={exportAsImage}
               disabled={exporting}
-              className="h-8 w-8 p-0"
+              className="h-8 gap-1 text-xs"
               title="Export as PNG"
             >
-              <Camera className="h-4 w-4" />
+              <Camera className="h-3.5 w-3.5" />
+              PNG
             </Button>
             <Button
-              variant="ghost"
+              variant="outline"
               size="sm"
               onClick={exportAsPDF}
               disabled={exporting}
-              className="h-8 w-8 p-0"
+              className="h-8 gap-1 text-xs"
               title="Export as PDF"
             >
-              <FileText className="h-4 w-4" />
+              <FileText className="h-3.5 w-3.5" />
+              PDF
             </Button>
             <Button
               variant="ghost"

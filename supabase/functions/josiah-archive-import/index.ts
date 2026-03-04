@@ -88,7 +88,7 @@ serve(async (req) => {
             await sql`
               INSERT INTO live_flight_detections_rows (
                 registration,
-                icao24,
+                icao_code,
                 altitude,
                 latitude,
                 longitude,

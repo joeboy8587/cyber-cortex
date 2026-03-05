@@ -423,29 +423,49 @@ serve(async (req) => {
               break;
             }
 
-            // 2. Fetch mode_s_hex mappings from Supabase aircraft_registry
-            // N-numbers in registry don't have N prefix in n_number field sometimes
+            // 2. Fetch mode_s_hex AND mode_s_code mappings from Supabase aircraft_registry
+            // mode_s_hex is rarely populated; mode_s_code contains hex in format "(Base 16 / Hex) | A04DEE |"
             const regList = nullIcaoRegs.map((r: any) => r.registration);
-            const nNumbers = regList.map((r: string) => r.startsWith('N') ? r.substring(1) : r);
             
-            // Batch fetch from Supabase (1000 at a time)
+            // Build lookup sets: try both with and without N prefix
+            const allLookups = new Set<string>();
+            for (const r of regList) {
+              allLookups.add(r);
+              if (r.startsWith('N')) allLookups.add(r.substring(1));
+              else allLookups.add(`N${r}`);
+            }
+            const lookupArray = Array.from(allLookups);
+            
             const mappings: Record<string, string> = {};
-            for (let i = 0; i < nNumbers.length; i += 500) {
-              const batch = nNumbers.slice(i, i + 500);
-              const batchFull = regList.slice(i, i + 500);
+            for (let i = 0; i < lookupArray.length; i += 500) {
+              const batch = lookupArray.slice(i, i + 500);
               
-              // Try both with and without N prefix
               const { data: registryData } = await supabase
                 .from('aircraft_registry')
-                .select('n_number, mode_s_hex')
-                .or(`n_number.in.(${batch.join(',')}),n_number.in.(${batchFull.join(',')})`)
-                .not('mode_s_hex', 'is', null);
+                .select('n_number, mode_s_hex, mode_s_code')
+                .in('n_number', batch);
               
               if (registryData) {
                 for (const entry of registryData) {
+                  // Extract hex ICAO from mode_s_hex or parse from mode_s_code
+                  let icaoHex: string | null = null;
+                  
                   if (entry.mode_s_hex) {
+                    icaoHex = entry.mode_s_hex.trim().toUpperCase();
+                  } else if (entry.mode_s_code) {
+                    // Parse format like "(Base 16 / Hex) | A04DEE |"
+                    const hexMatch = entry.mode_s_code.match(/\|\s*([A-Fa-f0-9]{4,6})\s*\|/);
+                    if (hexMatch) {
+                      icaoHex = hexMatch[1].toUpperCase();
+                    }
+                  }
+                  
+                  if (icaoHex) {
                     const fullReg = entry.n_number.startsWith('N') ? entry.n_number : `N${entry.n_number}`;
-                    mappings[fullReg] = entry.mode_s_hex.toUpperCase();
+                    // Only map if this registration is in our null-ICAO list
+                    if (regList.includes(fullReg) || regList.includes(entry.n_number)) {
+                      mappings[regList.includes(fullReg) ? fullReg : entry.n_number] = icaoHex;
+                    }
                   }
                 }
               }

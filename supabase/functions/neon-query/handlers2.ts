@@ -405,6 +405,108 @@ export async function handleAction2(action: string, body: Record<string, any>, s
       }
     }
 
+    // ============== OPERATOR ENRICHMENT ==============
+    case 'operatorEnrichment': {
+      try {
+        const operators = await sql.unsafe(`
+          SELECT registration, 
+            COUNT(*) as detection_count,
+            MIN(COALESCE(detection_timestamp, created_at)) as first_seen,
+            MAX(COALESCE(detection_timestamp, created_at)) as last_seen,
+            ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as avg_altitude,
+            COUNT(DISTINCT DATE(COALESCE(detection_timestamp, created_at))) as active_days,
+            COALESCE(operator, 'Unknown') as operator_name,
+            COALESCE(taxonomy_tag, 'unclassified') as taxonomy
+          FROM live_flight_detections_rows
+          WHERE registration IS NOT NULL AND registration != ''
+          GROUP BY registration, operator, taxonomy_tag
+          ORDER BY detection_count DESC
+          LIMIT 100
+        `);
+        return { operators };
+      } catch (e) {
+        console.error('operatorEnrichment error:', e);
+        return { error: (e as Error).message };
+      }
+    }
+
+    // ============== XXB FLIGHT ANALYSIS ==============
+    case 'xxbFlightAnalysis': {
+      try {
+        const analysis = await sql.unsafe(`
+          SELECT registration,
+            taxonomy_tag,
+            COUNT(*) as total_flights,
+            COUNT(*) FILTER (WHERE altitude < 1500 AND altitude > 0) as low_altitude_flights,
+            ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as avg_altitude,
+            COUNT(DISTINCT DATE(COALESCE(detection_timestamp, created_at))) as active_days,
+            MIN(COALESCE(detection_timestamp, created_at)) as first_seen,
+            MAX(COALESCE(detection_timestamp, created_at)) as last_seen
+          FROM live_flight_detections_rows
+          WHERE taxonomy_tag LIKE 'xxb%'
+            AND registration IS NOT NULL AND registration != ''
+          GROUP BY registration, taxonomy_tag
+          ORDER BY total_flights DESC
+          LIMIT 50
+        `);
+        return { analysis };
+      } catch (e) {
+        console.error('xxbFlightAnalysis error:', e);
+        return { error: (e as Error).message };
+      }
+    }
+
+    // ============== TOP FLAGGED AIRCRAFT ==============
+    case 'getTopFlaggedAircraft': {
+      try {
+        const flagged = await sql.unsafe(`
+          SELECT registration,
+            COUNT(*) as detection_count,
+            ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as avg_altitude,
+            COUNT(*) FILTER (WHERE altitude < 1000 AND altitude > 0) as sub1000_count,
+            COUNT(DISTINCT DATE(COALESCE(detection_timestamp, created_at))) as active_days,
+            MAX(COALESCE(detection_timestamp, created_at)) as last_seen,
+            COALESCE(taxonomy_tag, 'unclassified') as taxonomy
+          FROM live_flight_detections_rows
+          WHERE flagged = true
+            AND registration IS NOT NULL AND registration != ''
+          GROUP BY registration, taxonomy_tag
+          ORDER BY detection_count DESC
+          LIMIT 25
+        `);
+        return { flagged };
+      } catch (e) {
+        console.error('getTopFlaggedAircraft error:', e);
+        return { error: (e as Error).message };
+      }
+    }
+
+    // ============== ANOMALOUS HEX CODES ==============
+    case 'getAnomalousHexCodes': {
+      try {
+        const anomalous = await sql.unsafe(`
+          SELECT hex,
+            COUNT(*) as detection_count,
+            COUNT(DISTINCT registration) as registration_variants,
+            ARRAY_AGG(DISTINCT registration) FILTER (WHERE registration IS NOT NULL AND registration != '') as registrations,
+            ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as avg_altitude,
+            MIN(COALESCE(detection_timestamp, created_at)) as first_seen,
+            MAX(COALESCE(detection_timestamp, created_at)) as last_seen
+          FROM live_flight_detections_rows
+          WHERE hex IS NOT NULL AND hex != ''
+          GROUP BY hex
+          HAVING COUNT(DISTINCT registration) > 1
+             OR (hex !~ '^[A-Fa-f0-9]{6}$' AND LENGTH(hex) > 0)
+          ORDER BY detection_count DESC
+          LIMIT 30
+        `);
+        return { anomalous };
+      } catch (e) {
+        console.error('getAnomalousHexCodes error:', e);
+        return { error: (e as Error).message };
+      }
+    }
+
     default:
       return null; // Signal "not handled" back to main router
   }

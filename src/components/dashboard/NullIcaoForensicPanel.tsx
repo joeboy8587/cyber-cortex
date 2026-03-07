@@ -51,6 +51,23 @@ export function NullIcaoForensicPanel() {
   const [results, setResults] = useState<ScanResults | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const runColumnFix = async () => {
+    setFixing(true);
+    setFixResult(null);
+    try {
+      const { data, error: err } = await supabase.functions.invoke('neon-query', {
+        body: { action: 'fixIcaoColumnMapping' }
+      });
+      if (err) throw new Error(err.message);
+      if (data?.error) throw new Error(data.error);
+      setFixResult(data);
+    } catch (err) {
+      setFixResult({ success: false, error: err instanceof Error ? err.message : 'Fix failed' });
+    } finally {
+      setFixing(false);
+    }
+  };
+
   const runBackfill = async () => {
     setBackfilling(true);
     setBackfillResult(null);

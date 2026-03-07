@@ -177,6 +177,10 @@ export function NullIcaoForensicPanel() {
       variant="threat"
       headerActions={
         <div className="flex items-center gap-2">
+          <Button onClick={runColumnFix} disabled={fixing || loading} size="sm" variant="outline" className="gap-2">
+            {fixing ? <Loader2 className="w-3 h-3 animate-spin" /> : <AlertTriangle className="w-3 h-3" />}
+            {fixing ? 'Fixing...' : 'Fix Column Mapping'}
+          </Button>
           <Button onClick={runBackfill} disabled={backfilling || loading} size="sm" variant="outline" className="gap-2">
             {backfilling ? <Loader2 className="w-3 h-3 animate-spin" /> : <Database className="w-3 h-3" />}
             {backfilling ? 'Backfilling...' : 'Backfill ICAOs'}
@@ -189,9 +193,26 @@ export function NullIcaoForensicPanel() {
       }
     >
       <div className="p-4 space-y-4">
-        {error && (
+         {error && (
           <div className="p-3 rounded bg-destructive/10 border border-destructive/30 text-destructive text-xs flex items-center gap-2">
             <AlertTriangle className="w-4 h-4" /> {error}
+          </div>
+        )}
+
+        {fixResult && (
+          <div className={`p-3 rounded text-xs border ${fixResult.success ? 'bg-primary/10 border-primary/30 text-primary' : 'bg-destructive/10 border-destructive/30 text-destructive'}`}>
+            {fixResult.success ? (
+              <div className="space-y-1">
+                <p className="font-bold">✅ Column Mapping Fixed</p>
+                <p className="text-muted-foreground font-mono text-[10px]">Before: {Number(fixResult.before?.type_codes_in_icao).toLocaleString()} type codes in icao_code, {Number(fixResult.before?.valid_hex_in_icao24).toLocaleString()} valid hex in icao24</p>
+                <p>Type codes → aircraft_type_desc: {Number(fixResult.operations?.type_codes_saved_to_aircraft_type_desc).toLocaleString()}</p>
+                <p>Hex codes icao24 → icao_code: {Number(fixResult.operations?.hex_codes_copied_from_icao24).toLocaleString()}</p>
+                <p>Invalid icao_code cleared: {Number(fixResult.operations?.invalid_icao_codes_cleared).toLocaleString()}</p>
+                <p className="font-bold mt-1">After: {Number(fixResult.after?.valid_icao_codes).toLocaleString()} valid ICAO hex codes, {Number(fixResult.after?.null_icao_codes).toLocaleString()} still null</p>
+              </div>
+            ) : (
+              <p><AlertTriangle className="w-3 h-3 inline mr-1" />{fixResult.error}</p>
+            )}
           </div>
         )}
 

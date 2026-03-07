@@ -271,13 +271,31 @@ export function JosiahAutonomousHypothesis() {
 
       const template = hypothesisTemplates[templateKey];
       
-       const { data, error } = await supabase.functions.invoke('neon-query', {
-        body: { action: 'customQuery', query: template.query }
-      });
+       let data: any = null;
+       let queryError: any = null;
+       
+       // Retry with timeout to handle transient network failures
+       for (let attempt = 0; attempt < 2; attempt++) {
+         try {
+           const controller = new AbortController();
+           const timeout = setTimeout(() => controller.abort(), 30000);
+           const result = await supabase.functions.invoke('neon-query', {
+             body: { action: 'customQuery', query: template.query }
+           });
+           clearTimeout(timeout);
+           data = result.data;
+           queryError = result.error;
+           if (!queryError) break;
+         } catch (fetchErr) {
+           console.warn(`Lead validation attempt ${attempt + 1} failed:`, fetchErr);
+           if (attempt === 1) throw fetchErr;
+           await new Promise(r => setTimeout(r, 2000));
+         }
+       }
 
-      if (error) {
-        console.error('Query error:', error);
-        throw error;
+      if (queryError) {
+        console.error('Query error:', queryError);
+        throw queryError;
       }
 
        // neon-query returns either:

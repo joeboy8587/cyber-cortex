@@ -45,6 +45,8 @@ const PIE_COLORS = ['hsl(var(--destructive))', 'hsl(var(--primary))', 'hsl(var(-
 export function NullIcaoForensicPanel() {
   const [loading, setLoading] = useState(false);
   const [backfilling, setBackfilling] = useState(false);
+  const [fixing, setFixing] = useState(false);
+  const [fixResult, setFixResult] = useState<any>(null);
   const [backfillResult, setBackfillResult] = useState<any>(null);
   const [results, setResults] = useState<ScanResults | null>(null);
   const [error, setError] = useState<string | null>(null);

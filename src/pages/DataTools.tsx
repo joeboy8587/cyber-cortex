@@ -27,11 +27,11 @@ export default function DataTools() {
       <div className="container py-6 space-y-6">
         {/* Page Header */}
         <div className="flex items-center gap-4">
-          <div className="w-10 h-10 rounded bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center">
-            <span className="text-cyan-500 text-lg">🗄️</span>
+          <div className="w-10 h-10 rounded bg-primary/10 border border-primary/30 flex items-center justify-center">
+            <span className="text-primary text-lg">🗄️</span>
           </div>
           <div>
-            <h1 className="font-display text-2xl uppercase tracking-wider text-cyan-500">
+            <h1 className="font-display text-2xl uppercase tracking-wider text-primary">
               Data Tools Hub
             </h1>
             <p className="font-mono text-xs text-muted-foreground">

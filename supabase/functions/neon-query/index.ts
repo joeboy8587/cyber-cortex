@@ -1,8 +1,25 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
-import { handleAction } from "./handlers.ts";
-import { handleAction2 } from "./handlers2.ts";
+// Lazy-loaded to avoid BOOT_ERROR from combined file size exceeding Deno parse limits
+let _handleAction: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
+let _handleAction2: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
+
+async function getHandler1() {
+  if (!_handleAction) {
+    const mod = await import("./handlers.ts");
+    _handleAction = mod.handleAction;
+  }
+  return _handleAction;
+}
+
+async function getHandler2() {
+  if (!_handleAction2) {
+    const mod = await import("./handlers2.ts");
+    _handleAction2 = mod.handleAction2;
+  }
+  return _handleAction2;
+}
 
 const VERSION = "2.7.0";
 console.log(`neon-query v${VERSION} booting...`);

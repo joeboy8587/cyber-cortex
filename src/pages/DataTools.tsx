@@ -19,6 +19,7 @@ import { HistoricalEnrichmentPanel } from "@/components/dashboard/HistoricalEnri
 import { ComprehensiveDataAudit } from "@/components/dashboard/ComprehensiveDataAudit";
 import { ChainOfCustodyPanel } from "@/components/dashboard/ChainOfCustodyPanel";
 import { MerkleChainPanel } from "@/components/dashboard/MerkleChainPanel";
+import { DBHealthMonitor } from "@/components/dashboard/DBHealthMonitor";
 
 export default function DataTools() {
   return (

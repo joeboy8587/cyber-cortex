@@ -40,7 +40,12 @@ export default function DataTools() {
           </div>
         </div>
 
-        {/* Comprehensive Data Audit - Primary */}
+        {/* Live DB Health Monitor - top priority */}
+        <section>
+          <DBHealthMonitor />
+        </section>
+
+        {/* Comprehensive Data Audit */}
         <section>
           <ComprehensiveDataAudit />
         </section>

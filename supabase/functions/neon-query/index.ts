@@ -525,13 +525,14 @@ serve(async (req) => {
         }
 
         default: {
-          // Delegate to handler modules for remaining analytics actions
-          const handlerResult = await handleAction(action, body, sql);
+          // Lazy-load handler modules only when needed
+          const h1 = await getHandler1();
+          const handlerResult = await h1(action, body, sql);
           if (handlerResult !== null) { result = handlerResult; break; }
-          const handlerResult2 = await handleAction2(action, body, sql);
+          const h2 = await getHandler2();
+          const handlerResult2 = await h2(action, body, sql);
           if (handlerResult2 !== null) { result = handlerResult2; break; }
           throw new Error(`Unknown action: ${action}`);
-          result = handlerResult;
         }
       }
 

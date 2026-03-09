@@ -1,5 +1,8 @@
 project_id = "pdmgglyqweveqplbgxiu"
 
+[functions.db-health-monitor]
+verify_jwt = false
+
 [functions.populate-correlations]
 verify_jwt = false
 

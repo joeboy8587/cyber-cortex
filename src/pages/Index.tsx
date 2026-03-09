@@ -21,17 +21,17 @@ import { EvidenceStitcher } from "@/components/dashboard/EvidenceStitcher";
 const Index = () => {
   return (
     <DashboardLayout>
-      <div className="container py-6 space-y-6">
+      <div className="px-3 sm:px-4 lg:px-6 py-4 sm:py-6 space-y-4 sm:space-y-6 max-w-full overflow-x-hidden">
         {/* Page Header */}
-        <div className="flex items-center gap-4">
-          <div className="w-10 h-10 rounded bg-primary/10 border border-primary/30 flex items-center justify-center">
-            <span className="text-primary text-lg">🎯</span>
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 sm:w-10 sm:h-10 rounded bg-primary/10 border border-primary/30 flex items-center justify-center shrink-0">
+            <span className="text-primary text-base sm:text-lg">🎯</span>
           </div>
-          <div>
-            <h1 className="font-display text-2xl uppercase tracking-wider text-primary">
+          <div className="min-w-0">
+            <h1 className="font-display text-lg sm:text-2xl uppercase tracking-wider text-primary truncate">
               Mission Control
             </h1>
-            <p className="font-mono text-xs text-muted-foreground">
+            <p className="font-mono text-[10px] sm:text-xs text-muted-foreground truncate">
               PRIORITY ALERTS // EVIDENCE HUB // REAL-TIME MONITORING
             </p>
           </div>
@@ -47,13 +47,13 @@ const Index = () => {
         </section>
         
         {/* DATABASE INTELLIGENCE - Multi-Modal Scanner */}
-        <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <section className="grid grid-cols-1 xl:grid-cols-2 gap-4 sm:gap-6">
           <DatabaseIntelligenceScanner />
           <MasterEvidenceSearch />
         </section>
 
         {/* KCSO & BIOMETRIC EVIDENCE HUB */}
-        <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <section className="grid grid-cols-1 xl:grid-cols-2 gap-4 sm:gap-6">
           <KCSOEvidenceMatrix />
           <BiometricFlightCorrelationHub />
         </section>
@@ -64,13 +64,13 @@ const Index = () => {
         </section>
 
         {/* 🔥 PREDICTIVE HUNTING MACHINE - AI-Powered Threat Prediction */}
-        <section className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        <section className="grid grid-cols-1 xl:grid-cols-2 gap-4 sm:gap-6">
           <PredictiveFlightModeling />
           <ShellNetworkGraph />
         </section>
 
         {/* BIOMETRIC EARLY WARNING & AUTONOMOUS HYPOTHESIS */}
-        <section className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        <section className="grid grid-cols-1 xl:grid-cols-2 gap-4 sm:gap-6">
           <BiometricEarlyWarningSystem />
           <JosiahAutonomousHypothesis />
         </section>

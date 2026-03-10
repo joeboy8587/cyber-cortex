@@ -227,30 +227,90 @@ serve(async (req) => {
         }
       }
 
-      // ===== PHASE 3: TEMPORAL CONVERGENCE (data-driven, not list-driven) =====
+      // ===== PHASE 3: TEMPORAL CONVERGENCE (percentage-based, with recurrence decay) =====
+      // AI RECOMMENDATION #1: Use percentage of sector volume, not fixed count
+      // AI RECOMMENDATION #2: Recurrence decay — persistent aircraft → "Baseline Infrastructure"
+      
       const hourBuckets = new Map<string, Set<string>>();
+      const allUniqueAircraft24h = new Set<string>();
       for (const d of recentDetections) {
         if (!d.registration) continue;
+        allUniqueAircraft24h.add(d.registration);
         const hour = new Date(d.detection_timestamp).toISOString().slice(0, 13);
         if (!hourBuckets.has(hour)) hourBuckets.set(hour, new Set());
         hourBuckets.get(hour)!.add(d.registration);
       }
 
+      const totalSectorVolume = allUniqueAircraft24h.size || 1;
+
+      // Track recurrence: count how many hour-windows each aircraft appears in
+      const recurrenceCount = new Map<string, number>();
+      for (const [, aircraft] of hourBuckets) {
+        for (const reg of aircraft) {
+          recurrenceCount.set(reg, (recurrenceCount.get(reg) || 0) + 1);
+        }
+      }
+
+      // Identify "Baseline Infrastructure" aircraft (appear in 10+ windows)
+      const baselineInfrastructure = new Set<string>();
+      for (const [reg, count] of recurrenceCount) {
+        if (count >= BASE_RULES.recurrenceDecayThreshold) {
+          baselineInfrastructure.add(reg);
+        }
+      }
+
+      if (baselineInfrastructure.size > 0) {
+        learningInsights.push(`RECURRENCE DECAY: ${baselineInfrastructure.size} aircraft classified as "Baseline Infrastructure" (present in ${BASE_RULES.recurrenceDecayThreshold}+ hourly windows): ${Array.from(baselineInfrastructure).slice(0, 8).join(', ')}`);
+      }
+
       for (const [hour, aircraft] of hourBuckets) {
-        if (aircraft.size >= 4) {
-          // Check if this convergence is unusual by comparing to baseline
-          const regs = Array.from(aircraft);
+        // Filter out baseline infrastructure from convergence detection
+        const nonBaselineAircraft = Array.from(aircraft).filter(r => !baselineInfrastructure.has(r));
+        const clusterPercent = (nonBaselineAircraft.length / totalSectorVolume) * 100;
+
+        // Only flag if BOTH percentage threshold AND minimum absolute count are met
+        if (nonBaselineAircraft.length >= BASE_RULES.convergenceMinAbsolute && 
+            clusterPercent >= BASE_RULES.convergencePercentThreshold) {
+          const severity = clusterPercent >= 60 ? 'critical' : clusterPercent >= 45 ? 'high' : 'medium';
           flags.push({
             flag_type: 'TEMPORAL_CONVERGENCE',
-            severity: aircraft.size >= 6 ? 'critical' : 'high',
-            registration: regs.join(', '),
-            description: `${aircraft.size} unique aircraft converged during ${hour}:00 UTC — statistically unusual clustering`,
-            evidence_summary: { aircraft_count: aircraft.size, aircraft_list: regs, hour },
+            severity,
+            registration: nonBaselineAircraft.slice(0, 10).join(', '),
+            description: `${nonBaselineAircraft.length} non-baseline aircraft converged during ${hour}:00 UTC — ${clusterPercent.toFixed(1)}% of sector volume (${baselineInfrastructure.size} baseline aircraft excluded)`,
+            evidence_summary: { 
+              aircraft_count: nonBaselineAircraft.length,
+              aircraft_list: nonBaselineAircraft,
+              baseline_excluded: Array.from(baselineInfrastructure),
+              sector_volume: totalSectorVolume,
+              cluster_percent: clusterPercent.toFixed(1),
+              hour 
+            },
             cross_references: [],
-            confidence_score: Math.min(90, 50 + aircraft.size * 8),
-            learning_context: { method: 'temporal_clustering', window: '1_hour' }
+            confidence_score: Math.min(90, 50 + Math.round(clusterPercent)),
+            learning_context: { 
+              method: 'percentage_sector_analysis', 
+              window: '1_hour',
+              recurrence_decay_applied: true,
+              baseline_aircraft_excluded: baselineInfrastructure.size
+            }
           });
         }
+      }
+
+      // AI RECOMMENDATION #3: Registration homogeneity warning
+      const nPrefixCount = Array.from(allUniqueAircraft24h).filter(r => r.startsWith('N')).length;
+      const nPrefixPercent = (nPrefixCount / totalSectorVolume) * 100;
+      if (nPrefixPercent >= BASE_RULES.domesticBiasWarningThreshold && totalSectorVolume > 20) {
+        learningInsights.push(`GEOGRAPHIC BIAS WARNING: ${nPrefixPercent.toFixed(1)}% of flagged entities carry N (USA) prefix — data source may have domestic bias. Consider cross-referencing international ADS-B feeds.`);
+      }
+
+      // Log the "Temporal Core" persistent cluster for tracking (Finding #1)
+      const persistentCore = Array.from(recurrenceCount.entries())
+        .filter(([, count]) => count >= Math.floor(hourBuckets.size * 0.7))
+        .map(([reg]) => reg);
+      
+      if (persistentCore.length >= 5) {
+        learningInsights.push(`TEMPORAL CORE CLUSTER: ${persistentCore.length} aircraft present in >70% of all hourly windows: ${persistentCore.slice(0, 8).join(', ')} — tracked as persistent but moved to baseline infrastructure to reduce alert noise`);
       }
 
       // ===== PHASE 4: BIOMETRIC CROSS-REFERENCE (±5 min correlation) =====

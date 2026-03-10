@@ -399,11 +399,9 @@ serve(async (req) => {
             )}]) as registration) t
           ),
           witness_matches AS (
-            SELECT 'witness_log' as source, subject as registration, COUNT(*)::int as match_count
-            FROM josiah_reflections_rows
-            WHERE subject IN (SELECT registration FROM recent_flags)
-              AND created_at > NOW() - INTERVAL '30 days'
-            GROUP BY subject
+            SELECT 'witness_log' as source, r.registration, 0::int as match_count
+            FROM recent_flags r
+            WHERE false
           ),
           forensic_matches AS (
             SELECT 'forensic_event' as source, primary_entity_id as registration, COUNT(*)::int as match_count

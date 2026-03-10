@@ -19,6 +19,12 @@ const BASE_RULES = {
   minConfidenceToFlag: 60,         // Don't flag below 60% confidence
   biometricCorrelationWindowMin: 5, // ±5 min for bio-flight cross-ref
   learningDecayDays: 90,           // Patterns older than 90 days decay in weight
+  // AI-RECOMMENDED ADJUSTMENTS (Finding #1, #2, #3)
+  recurrenceDecayThreshold: 10,    // If aircraft appears in 10+ consecutive windows → "Baseline Infrastructure"
+  convergencePercentThreshold: 30, // Flag convergence when cluster is >30% of total sector volume (not fixed count)
+  convergenceMinAbsolute: 8,       // Minimum absolute count before even checking percentage
+  baselineInfraMaxWindows: 20,     // Track last N windows for recurrence
+  domesticBiasWarningThreshold: 90, // Warn if >90% registrations are same prefix
 };
 
 interface AutonomousFlag {

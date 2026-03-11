@@ -552,17 +552,31 @@ export async function handleAction2(action: string, body: Record<string, any>, s
             AND (icao_code IS NULL OR icao_code = '')
         `;
 
-        // Step 5: Self-backfill — build a mapping table first, then update in batches
-        // First get the mapping (fast — small result set)
-        const knownMappings = await sql`
-          SELECT registration, MAX(icao_code) as known_icao
-          FROM live_flight_detections_rows
-          WHERE icao_code IS NOT NULL AND icao_code != ''
-            AND icao_code SIMILAR TO '[0-9a-fA-F]{4,6}'
+        // Step 5: Self-backfill — find registrations that have icao_code in some rows but not others
+        // First get registrations needing backfill (use index on icao_code)
+        const regsNeedingBackfill = await sql`
+          SELECT DISTINCT registration 
+          FROM live_flight_detections_rows 
+          WHERE (icao_code IS NULL OR icao_code = '') 
             AND registration IS NOT NULL AND registration != ''
-          GROUP BY registration
-          LIMIT 5000
+          LIMIT 2000
         `;
+        
+        // For each, check if we have a known icao_code from another row
+        const knownMappings: Array<{registration: string, known_icao: string}> = [];
+        for (const r of regsNeedingBackfill) {
+          const reg = (r as any).registration;
+          const known = await sql`
+            SELECT icao_code FROM live_flight_detections_rows
+            WHERE registration = ${reg}
+              AND icao_code IS NOT NULL AND icao_code != ''
+              AND icao_code SIMILAR TO '[0-9a-fA-F]{4,6}'
+            LIMIT 1
+          `;
+          if (known.length > 0) {
+            knownMappings.push({ registration: reg, known_icao: (known[0] as any).icao_code });
+          }
+        }
         
         let selfBackfillCount = 0;
         const sbStart = Date.now();

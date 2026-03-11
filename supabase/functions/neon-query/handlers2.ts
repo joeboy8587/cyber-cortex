@@ -510,6 +510,9 @@ export async function handleAction2(action: string, body: Record<string, any>, s
     // ============== FIX ICAO COLUMN MAPPING ==============
     case 'fixIcaoColumnMapping': {
       try {
+        await sql.unsafe(`SET statement_timeout = '55s'`);
+        const BATCH = 50000;
+
         // Step 1: Count the problem
         const [before] = await sql`
           SELECT
@@ -520,33 +523,57 @@ export async function handleAction2(action: string, body: Record<string, any>, s
           FROM live_flight_detections_rows
         `;
 
-        // Step 2: Save type codes from icao_code → aircraft_type_desc (where aircraft_type_desc is null/empty)
-        const savedTypes = await sql`
-          UPDATE live_flight_detections_rows
-          SET aircraft_type_desc = icao_code
-          WHERE icao_code IS NOT NULL
-            AND icao_code != ''
-            AND icao_code !~ '^[A-Fa-f0-9]{4,6}$'
-            AND (aircraft_type_desc IS NULL OR aircraft_type_desc = '')
-        `;
+        // Step 2: Save type codes from icao_code → aircraft_type_desc (batched)
+        let typesSaved = 0;
+        for (let i = 0; i < 20; i++) {
+          const r = await sql`
+            UPDATE live_flight_detections_rows
+            SET aircraft_type_desc = icao_code
+            WHERE id IN (
+              SELECT id FROM live_flight_detections_rows
+              WHERE icao_code IS NOT NULL AND icao_code != ''
+                AND icao_code !~ '^[A-Fa-f0-9]{4,6}$'
+                AND (aircraft_type_desc IS NULL OR aircraft_type_desc = '')
+              LIMIT ${BATCH}
+            )
+          `;
+          typesSaved += r.count || 0;
+          if ((r.count || 0) < BATCH) break;
+        }
 
-        // Step 3: Copy valid hex from icao24 → icao_code (where icao_code is wrong or null)
-        const copiedHex = await sql`
-          UPDATE live_flight_detections_rows
-          SET icao_code = UPPER(icao24)
-          WHERE icao24 IS NOT NULL
-            AND icao24 ~ '^[A-Fa-f0-9]{4,6}$'
-            AND (icao_code IS NULL OR icao_code = '' OR icao_code !~ '^[A-Fa-f0-9]{4,6}$')
-        `;
+        // Step 3: Copy valid hex from icao24 → icao_code (batched)
+        let hexCopied = 0;
+        for (let i = 0; i < 20; i++) {
+          const r = await sql`
+            UPDATE live_flight_detections_rows
+            SET icao_code = UPPER(icao24)
+            WHERE id IN (
+              SELECT id FROM live_flight_detections_rows
+              WHERE icao24 IS NOT NULL AND icao24 ~ '^[A-Fa-f0-9]{4,6}$'
+                AND (icao_code IS NULL OR icao_code = '' OR icao_code !~ '^[A-Fa-f0-9]{4,6}$')
+              LIMIT ${BATCH}
+            )
+          `;
+          hexCopied += r.count || 0;
+          if ((r.count || 0) < BATCH) break;
+        }
 
-        // Step 4: Clear non-hex values from icao_code
-        const cleared = await sql`
-          UPDATE live_flight_detections_rows
-          SET icao_code = NULL
-          WHERE icao_code IS NOT NULL
-            AND icao_code != ''
-            AND icao_code !~ '^[A-Fa-f0-9]{4,6}$'
-        `;
+        // Step 4: Clear non-hex values from icao_code (batched)
+        let cleared = 0;
+        for (let i = 0; i < 20; i++) {
+          const r = await sql`
+            UPDATE live_flight_detections_rows
+            SET icao_code = NULL
+            WHERE id IN (
+              SELECT id FROM live_flight_detections_rows
+              WHERE icao_code IS NOT NULL AND icao_code != ''
+                AND icao_code !~ '^[A-Fa-f0-9]{4,6}$'
+              LIMIT ${BATCH}
+            )
+          `;
+          cleared += r.count || 0;
+          if ((r.count || 0) < BATCH) break;
+        }
 
         // Step 5: Count after
         const [after] = await sql`
@@ -558,6 +585,8 @@ export async function handleAction2(action: string, body: Record<string, any>, s
           FROM live_flight_detections_rows
         `;
 
+        await sql.unsafe(`SET statement_timeout = '30s'`);
+
         return {
           success: true,
           before: {
@@ -567,9 +596,9 @@ export async function handleAction2(action: string, body: Record<string, any>, s
             total: before.total,
           },
           operations: {
-            type_codes_saved_to_aircraft_type_desc: savedTypes.count,
-            hex_codes_copied_from_icao24: copiedHex.count,
-            invalid_icao_codes_cleared: cleared.count,
+            type_codes_saved_to_aircraft_type_desc: typesSaved,
+            hex_codes_copied_from_icao24: hexCopied,
+            invalid_icao_codes_cleared: cleared,
           },
           after: {
             valid_icao_codes: after.valid_icao_codes,
@@ -579,6 +608,7 @@ export async function handleAction2(action: string, body: Record<string, any>, s
           },
         };
       } catch (e) {
+        try { await sql.unsafe(`SET statement_timeout = '30s'`); } catch (_) {}
         console.error('fixIcaoColumnMapping error:', e);
         return { success: false, error: (e as Error).message };
       }

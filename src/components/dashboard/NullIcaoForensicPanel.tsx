@@ -203,12 +203,11 @@ export function NullIcaoForensicPanel() {
           <div className={`p-3 rounded text-xs border ${fixResult.success ? 'bg-primary/10 border-primary/30 text-primary' : 'bg-destructive/10 border-destructive/30 text-destructive'}`}>
             {fixResult.success ? (
               <div className="space-y-1">
-                <p className="font-bold">✅ Column Mapping Fixed</p>
-                <p className="text-muted-foreground font-mono text-[10px]">Before: {Number(fixResult.before?.type_codes_in_icao).toLocaleString()} type codes in icao_code, {Number(fixResult.before?.valid_hex_in_icao24).toLocaleString()} valid hex in icao24</p>
-                <p>Type codes → aircraft_type_desc: {Number(fixResult.operations?.type_codes_saved_to_aircraft_type_desc).toLocaleString()}</p>
-                <p>Hex codes icao24 → icao_code: {Number(fixResult.operations?.hex_codes_copied_from_icao24).toLocaleString()}</p>
-                <p>Invalid icao_code cleared: {Number(fixResult.operations?.invalid_icao_codes_cleared).toLocaleString()}</p>
-                <p className="font-bold mt-1">After: {Number(fixResult.after?.valid_icao_codes).toLocaleString()} valid ICAO hex codes, {Number(fixResult.after?.null_icao_codes).toLocaleString()} still null</p>
+                <p className="font-bold">✅ Column Mapping Fixed — {Number(fixResult.totalFixed).toLocaleString()} records corrected</p>
+                <p>Type codes (icao_code→desc): {Number(fixResult.operations?.type_codes_from_icao_to_desc).toLocaleString()}</p>
+                <p>Type codes (icao24→desc): {Number(fixResult.operations?.type_codes_from_icao24_to_desc).toLocaleString()}</p>
+                <p>Hex copied from icao24: {Number(fixResult.operations?.hex_copied_from_icao24).toLocaleString()}</p>
+                <p>Tilde hex copied (~hex→hex): {Number(fixResult.operations?.tilde_hex_copied).toLocaleString()}</p>
               </div>
             ) : (
               <p><AlertTriangle className="w-3 h-3 inline mr-1" />{fixResult.error}</p>
@@ -221,9 +220,11 @@ export function NullIcaoForensicPanel() {
             {backfillResult.success ? (
               <div className="space-y-1">
                 <p className="font-bold">✅ ICAO Backfill Complete</p>
-                <p>Null-ICAO registrations found: {Number(backfillResult.nullIcaoRegistrations).toLocaleString()}</p>
-                <p>Registry matches: {Number(backfillResult.registryMatches).toLocaleString()}</p>
-                <p className="font-bold">Records updated: {Number(backfillResult.recordsUpdated).toLocaleString()}</p>
+                <p>Self-backfilled (from same registration): {Number(backfillResult.selfBackfilled).toLocaleString()}</p>
+                <p>Remaining null N-prefix registrations: {Number(backfillResult.nullIcaoRegistrations).toLocaleString()}</p>
+                <p>FAA registry matches: {Number(backfillResult.registryMatches).toLocaleString()}</p>
+                <p>Registry records updated: {Number(backfillResult.registryRecordsUpdated).toLocaleString()}</p>
+                <p className="font-bold">Total updated: {Number(backfillResult.totalUpdated).toLocaleString()}</p>
                 {backfillResult.mappingSample?.length > 0 && (
                   <div className="mt-2">
                     <p className="text-muted-foreground">Sample mappings:</p>

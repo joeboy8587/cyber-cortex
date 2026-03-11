@@ -510,11 +510,10 @@ export async function handleAction2(action: string, body: Record<string, any>, s
     // ============== FIX ICAO COLUMN MAPPING ==============
     case 'fixIcaoColumnMapping': {
       try {
-        await sql.unsafe(`SET statement_timeout = '45s'`);
+        await sql.unsafe(`SET statement_timeout = '50s'`);
 
-        // Step 1: Save aircraft type codes (3-4 char like B738, A320, C172) to aircraft_type_desc
-        // Use simple LENGTH check - no regex needed
-        const savedTypes = await sql`
+        // Step 1: Save aircraft type codes from icao_code → aircraft_type_desc
+        const savedTypesFromIcao = await sql`
           UPDATE live_flight_detections_rows
           SET aircraft_type_desc = icao_code, icao_code = NULL
           WHERE icao_code IS NOT NULL
@@ -523,7 +522,18 @@ export async function handleAction2(action: string, body: Record<string, any>, s
             AND (aircraft_type_desc IS NULL OR aircraft_type_desc = '')
         `;
 
-        // Step 2: Copy valid hex from icao24 → icao_code (only where icao_code is null)
+        // Step 2: Save aircraft type codes from icao24 → aircraft_type_desc
+        const savedTypesFromIcao24 = await sql`
+          UPDATE live_flight_detections_rows
+          SET aircraft_type_desc = icao24
+          WHERE icao24 IS NOT NULL AND icao24 != ''
+            AND LENGTH(icao24) BETWEEN 2 AND 5
+            AND icao24 NOT SIMILAR TO '[0-9a-fA-F]+'
+            AND icao24 NOT LIKE '~%'
+            AND (aircraft_type_desc IS NULL OR aircraft_type_desc = '')
+        `;
+
+        // Step 3: Copy valid hex from icao24 → icao_code (exact hex match)
         const copiedHex = await sql`
           UPDATE live_flight_detections_rows
           SET icao_code = UPPER(icao24)
@@ -532,18 +542,29 @@ export async function handleAction2(action: string, body: Record<string, any>, s
             AND icao24 SIMILAR TO '[0-9a-fA-F]{4,6}'
         `;
 
+        // Step 4: Handle tilde-prefixed hex in icao24 (e.g. ~298B0E → 298B0E)
+        const copiedTildeHex = await sql`
+          UPDATE live_flight_detections_rows
+          SET icao_code = UPPER(SUBSTRING(icao24 FROM 2))
+          WHERE icao24 LIKE '~%'
+            AND LENGTH(icao24) = 7
+            AND SUBSTRING(icao24 FROM 2) SIMILAR TO '[0-9a-fA-F]{6}'
+            AND (icao_code IS NULL OR icao_code = '')
+        `;
+
         await sql.unsafe(`SET statement_timeout = '30s'`);
 
+        const totalOps = (savedTypesFromIcao.count || 0) + (savedTypesFromIcao24.count || 0) + (copiedHex.count || 0) + (copiedTildeHex.count || 0);
         return {
           success: true,
-          before: { type_codes_in_icao: savedTypes.count || 0, valid_hex_in_icao24: copiedHex.count || 0, valid_hex_already_correct: 0, total: 0 },
           operations: {
-            type_codes_saved_to_aircraft_type_desc: savedTypes.count || 0,
-            hex_codes_copied_from_icao24: copiedHex.count || 0,
-            invalid_icao_codes_cleared: savedTypes.count || 0,
+            type_codes_from_icao_to_desc: savedTypesFromIcao.count || 0,
+            type_codes_from_icao24_to_desc: savedTypesFromIcao24.count || 0,
+            hex_copied_from_icao24: copiedHex.count || 0,
+            tilde_hex_copied: copiedTildeHex.count || 0,
           },
-          after: { valid_icao_codes: copiedHex.count || 0, null_icao_codes: 0, has_type_desc: savedTypes.count || 0, total: 0 },
-          message: `Type codes moved: ${savedTypes.count || 0}, Hex codes copied: ${copiedHex.count || 0}`,
+          totalFixed: totalOps,
+          message: `Type codes moved: ${(savedTypesFromIcao.count || 0) + (savedTypesFromIcao24.count || 0)}, Hex copied: ${(copiedHex.count || 0) + (copiedTildeHex.count || 0)}`,
         };
       } catch (e) {
         try { await sql.unsafe(`SET statement_timeout = '30s'`); } catch (_) {}

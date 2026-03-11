@@ -552,21 +552,29 @@ export async function handleAction2(action: string, body: Record<string, any>, s
             AND (icao_code IS NULL OR icao_code = '')
         `;
 
-        // Step 5: Self-backfill — copy icao_code from other rows with the same registration
-        const selfBackfill = await sql`
-          UPDATE live_flight_detections_rows t
-          SET icao_code = s.known_icao
-          FROM (
-            SELECT registration, MAX(icao_code) as known_icao
-            FROM live_flight_detections_rows
-            WHERE icao_code IS NOT NULL AND icao_code != ''
-              AND icao_code SIMILAR TO '[0-9a-fA-F]{4,6}'
-              AND registration IS NOT NULL AND registration != ''
-            GROUP BY registration
-          ) s
-          WHERE t.registration = s.registration
-            AND (t.icao_code IS NULL OR t.icao_code = '')
+        // Step 5: Self-backfill — build a mapping table first, then update in batches
+        // First get the mapping (fast — small result set)
+        const knownMappings = await sql`
+          SELECT registration, MAX(icao_code) as known_icao
+          FROM live_flight_detections_rows
+          WHERE icao_code IS NOT NULL AND icao_code != ''
+            AND icao_code SIMILAR TO '[0-9a-fA-F]{4,6}'
+            AND registration IS NOT NULL AND registration != ''
+          GROUP BY registration
+          LIMIT 5000
         `;
+        
+        let selfBackfillCount = 0;
+        for (const mapping of knownMappings) {
+          const m = mapping as any;
+          const res = await sql`
+            UPDATE live_flight_detections_rows
+            SET icao_code = ${m.known_icao}
+            WHERE registration = ${m.registration}
+              AND (icao_code IS NULL OR icao_code = '')
+          `;
+          selfBackfillCount += res.count || 0;
+        }
 
         // Get final counts
         const afterCounts = await sql`

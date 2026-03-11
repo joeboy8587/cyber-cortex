@@ -594,10 +594,10 @@ export async function handleAction2(action: string, body: Record<string, any>, s
             type_codes_from_icao24_to_desc: savedTypesFromIcao24.count || 0,
             hex_copied_from_icao24: copiedHex.count || 0,
             tilde_hex_copied: copiedTildeHex.count || 0,
-            self_backfill_from_same_reg: selfBackfill.count || 0,
+            self_backfill_from_same_reg: selfBackfillCount,
           },
           after: { valid_icao_codes: after.valid_icao, null_icao_codes: after.null_icao },
-          message: `Type codes moved: ${(savedTypesFromIcao.count || 0) + (savedTypesFromIcao24.count || 0)}, Hex copied: ${(copiedHex.count || 0) + (copiedTildeHex.count || 0)}, Self-backfilled: ${selfBackfill.count || 0}`,
+          message: `Type codes moved: ${(savedTypesFromIcao.count || 0) + (savedTypesFromIcao24.count || 0)}, Hex copied: ${(copiedHex.count || 0) + (copiedTildeHex.count || 0)}, Self-backfilled: ${selfBackfillCount}`,
         };
       } catch (e) {
         try { await sql.unsafe(`SET statement_timeout = '30s'`); } catch (_) {}

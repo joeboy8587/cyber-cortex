@@ -552,15 +552,7 @@ export async function handleAction2(action: string, body: Record<string, any>, s
             AND (icao_code IS NULL OR icao_code = '')
         `;
 
-        // Get final counts using reltuples estimate for speed
-        const afterCounts = await sql`
-          SELECT 
-            (SELECT reltuples::bigint FROM pg_class WHERE relname = 'live_flight_detections_rows') as total_est,
-            (SELECT COUNT(*)::int FROM live_flight_detections_rows WHERE icao_code IS NULL OR icao_code = '' LIMIT 1) as null_icao
-        `;
-
         await sql.unsafe(`SET statement_timeout = '30s'`);
-        const after = afterCounts[0] || { valid_icao: 0, null_icao: 0 };
 
         return {
           success: true,

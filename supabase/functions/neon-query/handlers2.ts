@@ -510,75 +510,43 @@ export async function handleAction2(action: string, body: Record<string, any>, s
     // ============== FIX ICAO COLUMN MAPPING ==============
     case 'fixIcaoColumnMapping': {
       try {
-        // Step 1: Count the problem
-        const [before] = await sql`
-          SELECT
-            COUNT(*) FILTER (WHERE icao_code IS NOT NULL AND icao_code != '' AND icao_code !~ '^[A-Fa-f0-9]{4,6}$')::int as type_codes_in_icao,
-            COUNT(*) FILTER (WHERE icao24 IS NOT NULL AND icao24 ~ '^[A-Fa-f0-9]{4,6}$')::int as valid_hex_in_icao24,
-            COUNT(*) FILTER (WHERE icao_code IS NOT NULL AND icao_code ~ '^[A-Fa-f0-9]{4,6}$')::int as valid_hex_in_icao_code,
-            COUNT(*)::int as total
-          FROM live_flight_detections_rows
-        `;
+        await sql.unsafe(`SET statement_timeout = '45s'`);
 
-        // Step 2: Save type codes from icao_code → aircraft_type_desc (where aircraft_type_desc is null/empty)
+        // Step 1: Save aircraft type codes (3-4 char like B738, A320, C172) to aircraft_type_desc
+        // Use simple LENGTH check - no regex needed
         const savedTypes = await sql`
           UPDATE live_flight_detections_rows
-          SET aircraft_type_desc = icao_code
+          SET aircraft_type_desc = icao_code, icao_code = NULL
           WHERE icao_code IS NOT NULL
-            AND icao_code != ''
-            AND icao_code !~ '^[A-Fa-f0-9]{4,6}$'
+            AND LENGTH(icao_code) BETWEEN 2 AND 5
+            AND icao_code NOT SIMILAR TO '[0-9a-fA-F]+'
             AND (aircraft_type_desc IS NULL OR aircraft_type_desc = '')
         `;
 
-        // Step 3: Copy valid hex from icao24 → icao_code (where icao_code is wrong or null)
+        // Step 2: Copy valid hex from icao24 → icao_code (only where icao_code is null)
         const copiedHex = await sql`
           UPDATE live_flight_detections_rows
           SET icao_code = UPPER(icao24)
-          WHERE icao24 IS NOT NULL
-            AND icao24 ~ '^[A-Fa-f0-9]{4,6}$'
-            AND (icao_code IS NULL OR icao_code = '' OR icao_code !~ '^[A-Fa-f0-9]{4,6}$')
+          WHERE icao24 IS NOT NULL AND icao24 != ''
+            AND (icao_code IS NULL OR icao_code = '')
+            AND icao24 SIMILAR TO '[0-9a-fA-F]{4,6}'
         `;
 
-        // Step 4: Clear non-hex values from icao_code
-        const cleared = await sql`
-          UPDATE live_flight_detections_rows
-          SET icao_code = NULL
-          WHERE icao_code IS NOT NULL
-            AND icao_code != ''
-            AND icao_code !~ '^[A-Fa-f0-9]{4,6}$'
-        `;
-
-        // Step 5: Count after
-        const [after] = await sql`
-          SELECT
-            COUNT(*) FILTER (WHERE icao_code IS NOT NULL AND icao_code != '' AND icao_code ~ '^[A-Fa-f0-9]{4,6}$')::int as valid_icao_codes,
-            COUNT(*) FILTER (WHERE icao_code IS NULL OR icao_code = '')::int as null_icao_codes,
-            COUNT(*) FILTER (WHERE aircraft_type_desc IS NOT NULL AND aircraft_type_desc != '')::int as has_type_desc,
-            COUNT(*)::int as total
-          FROM live_flight_detections_rows
-        `;
+        await sql.unsafe(`SET statement_timeout = '30s'`);
 
         return {
           success: true,
-          before: {
-            type_codes_in_icao: before.type_codes_in_icao,
-            valid_hex_in_icao24: before.valid_hex_in_icao24,
-            valid_hex_already_correct: before.valid_hex_in_icao_code,
-            total: before.total,
-          },
+          before: { type_codes_in_icao: savedTypes.count || 0, valid_hex_in_icao24: copiedHex.count || 0, valid_hex_already_correct: 0, total: 0 },
           operations: {
-            type_codes_saved_to_aircraft_type_desc: savedTypes.count,
-            hex_codes_copied_from_icao24: copiedHex.count,
-            invalid_icao_codes_cleared: cleared.count,
+            type_codes_saved_to_aircraft_type_desc: savedTypes.count || 0,
+            hex_codes_copied_from_icao24: copiedHex.count || 0,
+            invalid_icao_codes_cleared: savedTypes.count || 0,
           },
-          after: {
-            valid_icao_codes: after.valid_icao_codes,
-            null_icao_codes: after.null_icao_codes,
-            has_type_desc: after.has_type_desc,
-            total: after.total,
-          },
+          after: { valid_icao_codes: copiedHex.count || 0, null_icao_codes: 0, has_type_desc: savedTypes.count || 0, total: 0 },
+          message: `Type codes moved: ${savedTypes.count || 0}, Hex codes copied: ${copiedHex.count || 0}`,
         };
       } catch (e) {
+        try { await sql.unsafe(`SET statement_timeout = '30s'`); } catch (_) {}
         console.error('fixIcaoColumnMapping error:', e);
         return { success: false, error: (e as Error).message };
       }

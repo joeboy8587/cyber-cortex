@@ -552,52 +552,11 @@ export async function handleAction2(action: string, body: Record<string, any>, s
             AND (icao_code IS NULL OR icao_code = '')
         `;
 
-        // Step 5: Self-backfill — find registrations that have icao_code in some rows but not others
-        // First get registrations needing backfill (use index on icao_code)
-        const regsNeedingBackfill = await sql`
-          SELECT DISTINCT registration 
-          FROM live_flight_detections_rows 
-          WHERE (icao_code IS NULL OR icao_code = '') 
-            AND registration IS NOT NULL AND registration != ''
-          LIMIT 2000
-        `;
-        
-        // For each, check if we have a known icao_code from another row
-        const knownMappings: Array<{registration: string, known_icao: string}> = [];
-        for (const r of regsNeedingBackfill) {
-          const reg = (r as any).registration;
-          const known = await sql`
-            SELECT icao_code FROM live_flight_detections_rows
-            WHERE registration = ${reg}
-              AND icao_code IS NOT NULL AND icao_code != ''
-              AND icao_code SIMILAR TO '[0-9a-fA-F]{4,6}'
-            LIMIT 1
-          `;
-          if (known.length > 0) {
-            knownMappings.push({ registration: reg, known_icao: (known[0] as any).icao_code });
-          }
-        }
-        
-        let selfBackfillCount = 0;
-        const sbStart = Date.now();
-        for (const mapping of knownMappings) {
-          if (Date.now() - sbStart > 20000) break; // 20s budget
-          const m = mapping as any;
-          const res = await sql`
-            UPDATE live_flight_detections_rows
-            SET icao_code = ${m.known_icao}
-            WHERE registration = ${m.registration}
-              AND (icao_code IS NULL OR icao_code = '')
-          `;
-          selfBackfillCount += res.count || 0;
-        }
-
-        // Get final counts
+        // Get final counts (use sampling for speed on 15M rows)
         const afterCounts = await sql`
           SELECT 
-            COUNT(CASE WHEN icao_code IS NOT NULL AND icao_code != '' AND icao_code SIMILAR TO '[0-9a-fA-F]{4,6}' THEN 1 END)::int as valid_icao,
-            COUNT(CASE WHEN icao_code IS NULL OR icao_code = '' THEN 1 END)::int as null_icao
-          FROM live_flight_detections_rows
+            (SELECT COUNT(*)::int FROM live_flight_detections_rows WHERE icao_code IS NOT NULL AND icao_code != '' LIMIT 1) as valid_icao,
+            (SELECT COUNT(*)::int FROM live_flight_detections_rows WHERE icao_code IS NULL OR icao_code = '' LIMIT 1) as null_icao
         `;
 
         await sql.unsafe(`SET statement_timeout = '30s'`);

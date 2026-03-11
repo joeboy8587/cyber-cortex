@@ -510,79 +510,69 @@ export async function handleAction2(action: string, body: Record<string, any>, s
     // ============== FIX ICAO COLUMN MAPPING ==============
     case 'fixIcaoColumnMapping': {
       try {
-        await sql.unsafe(`SET statement_timeout = '50s'`);
-        const BATCH = 5000;
-        const startTime = Date.now();
-        const MAX_MS = 40000;
+        await sql.unsafe(`SET statement_timeout = '45s'`);
 
-        // Step 1: Save type codes (length 3-4 all caps like B738, A320) to aircraft_type_desc
-        let typesSaved = 0;
-        for (let i = 0; i < 10 && (Date.now() - startTime) < MAX_MS; i++) {
-          const r = await sql`
-            UPDATE live_flight_detections_rows t
-            SET aircraft_type_desc = t.icao_code
-            FROM (
-              SELECT id FROM live_flight_detections_rows
-              WHERE icao_code IS NOT NULL AND LENGTH(icao_code) BETWEEN 3 AND 4
-                AND icao_code ~ '^[A-Z][A-Z0-9]{2,3}$'
-                AND icao_code !~ '^[A-Fa-f0-9]{4}$'
-                AND (aircraft_type_desc IS NULL OR aircraft_type_desc = '')
-              LIMIT ${BATCH}
-            ) sub WHERE t.id = sub.id
-          `;
-          typesSaved += r.count || 0;
-          if ((r.count || 0) < BATCH) break;
-        }
+        // Step 1: Save type codes to aircraft_type_desc (single batch, no subquery)
+        const savedTypes = await sql`
+          WITH batch AS (
+            SELECT ctid FROM live_flight_detections_rows
+            WHERE icao_code IS NOT NULL AND icao_code != ''
+              AND LENGTH(icao_code) <= 4
+              AND icao_code ~ '[G-Zg-z]'
+              AND (aircraft_type_desc IS NULL OR aircraft_type_desc = '')
+            LIMIT 2000
+          )
+          UPDATE live_flight_detections_rows t
+          SET aircraft_type_desc = t.icao_code
+          FROM batch WHERE t.ctid = batch.ctid
+        `;
 
         // Step 2: Copy valid hex from icao24 → icao_code
-        let hexCopied = 0;
-        for (let i = 0; i < 10 && (Date.now() - startTime) < MAX_MS; i++) {
-          const r = await sql`
-            UPDATE live_flight_detections_rows t
-            SET icao_code = UPPER(t2.icao24)
-            FROM (
-              SELECT id, icao24 FROM live_flight_detections_rows
-              WHERE icao24 IS NOT NULL AND LENGTH(icao24) BETWEEN 4 AND 6
-                AND icao24 ~ '^[0-9a-fA-F]+$'
-                AND (icao_code IS NULL OR icao_code = '')
-              LIMIT ${BATCH}
-            ) t2 WHERE t.id = t2.id
-          `;
-          hexCopied += r.count || 0;
-          if ((r.count || 0) < BATCH) break;
-        }
+        const copiedHex = await sql`
+          WITH batch AS (
+            SELECT ctid, icao24 FROM live_flight_detections_rows
+            WHERE icao24 IS NOT NULL AND LENGTH(icao24) BETWEEN 4 AND 6
+              AND icao24 ~ '^[0-9a-fA-F]+$'
+              AND (icao_code IS NULL OR icao_code = '')
+            LIMIT 2000
+          )
+          UPDATE live_flight_detections_rows t
+          SET icao_code = UPPER(batch.icao24)
+          FROM batch WHERE t.ctid = batch.ctid
+        `;
 
-        // Step 3: Clear type codes still left in icao_code (non-hex values)
-        let cleared = 0;
-        for (let i = 0; i < 10 && (Date.now() - startTime) < MAX_MS; i++) {
-          const r = await sql`
-            UPDATE live_flight_detections_rows t
-            SET icao_code = NULL
-            FROM (
-              SELECT id FROM live_flight_detections_rows
-              WHERE icao_code IS NOT NULL AND icao_code != ''
-                AND icao_code !~ '^[0-9a-fA-F]{4,6}$'
-              LIMIT ${BATCH}
-            ) sub WHERE t.id = sub.id
-          `;
-          cleared += r.count || 0;
-          if ((r.count || 0) < BATCH) break;
-        }
+        // Step 3: Clear non-hex values from icao_code
+        const cleared = await sql`
+          WITH batch AS (
+            SELECT ctid FROM live_flight_detections_rows
+            WHERE icao_code IS NOT NULL AND icao_code != ''
+              AND LENGTH(icao_code) <= 4
+              AND icao_code ~ '[G-Zg-z]'
+            LIMIT 2000
+          )
+          UPDATE live_flight_detections_rows t
+          SET icao_code = NULL
+          FROM batch WHERE t.ctid = batch.ctid
+        `;
 
-        const elapsed = Date.now() - startTime;
         await sql.unsafe(`SET statement_timeout = '30s'`);
+
+        const typesSaved = savedTypes.count || 0;
+        const hexCopied = copiedHex.count || 0;
+        const numCleared = cleared.count || 0;
 
         return {
           success: true,
-          before: { type_codes_in_icao: 0, valid_hex_in_icao24: 0, valid_hex_already_correct: 0, total: 0 },
+          before: { type_codes_in_icao: typesSaved + numCleared, valid_hex_in_icao24: hexCopied, valid_hex_already_correct: 0, total: 0 },
           operations: {
             type_codes_saved_to_aircraft_type_desc: typesSaved,
             hex_codes_copied_from_icao24: hexCopied,
-            invalid_icao_codes_cleared: cleared,
+            invalid_icao_codes_cleared: numCleared,
           },
           after: { valid_icao_codes: hexCopied, null_icao_codes: 0, has_type_desc: typesSaved, total: 0 },
-          elapsed_ms: elapsed,
-          needs_more_passes: elapsed >= MAX_MS,
+          message: typesSaved + hexCopied + numCleared > 0
+            ? `Processed batch. Click again to continue (${typesSaved} types saved, ${hexCopied} hex copied, ${numCleared} cleared).`
+            : 'No more records to fix — all done!',
         };
       } catch (e) {
         try { await sql.unsafe(`SET statement_timeout = '30s'`); } catch (_) {}

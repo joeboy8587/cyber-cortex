@@ -222,9 +222,11 @@ export function NullIcaoForensicPanel() {
             {backfillResult.success ? (
               <div className="space-y-1">
                 <p className="font-bold">✅ ICAO Backfill Complete</p>
-                <p>Null-ICAO registrations found: {Number(backfillResult.nullIcaoRegistrations).toLocaleString()}</p>
-                <p>Registry matches: {Number(backfillResult.registryMatches).toLocaleString()}</p>
-                <p className="font-bold">Records updated: {Number(backfillResult.recordsUpdated).toLocaleString()}</p>
+                <p>Self-backfilled (from same registration): {Number(backfillResult.selfBackfilled).toLocaleString()}</p>
+                <p>Remaining null N-prefix registrations: {Number(backfillResult.nullIcaoRegistrations).toLocaleString()}</p>
+                <p>FAA registry matches: {Number(backfillResult.registryMatches).toLocaleString()}</p>
+                <p>Registry records updated: {Number(backfillResult.registryRecordsUpdated).toLocaleString()}</p>
+                <p className="font-bold">Total updated: {Number(backfillResult.totalUpdated).toLocaleString()}</p>
                 {backfillResult.mappingSample?.length > 0 && (
                   <div className="mt-2">
                     <p className="text-muted-foreground">Sample mappings:</p>

@@ -514,11 +514,11 @@ serve(async (req) => {
             
             result = { 
               success: true, 
-              selfBackfilled: selfBackfill.count || 0,
+              selfBackfilled: selfBackfillCount,
               nullIcaoRegistrations: nullIcaoRegs.length,
               registryMatches: Object.keys(mappings).length,
               registryRecordsUpdated: registryUpdated,
-              totalUpdated: (selfBackfill.count || 0) + registryUpdated,
+              totalUpdated: selfBackfillCount + registryUpdated,
               mappingSample: Object.entries(mappings).slice(0, 10).map(([reg, icao]) => ({ registration: reg, icao_code: icao }))
             };
           } catch (e) {

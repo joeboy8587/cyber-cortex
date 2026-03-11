@@ -417,72 +417,67 @@ serve(async (req) => {
         }
 
         case 'backfillIcaoCodes': {
-          // Cross-database backfill: read aircraft_registry from Supabase, update Neon
           try {
             const supabaseUrl = Deno.env.get('SUPABASE_URL');
             const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
             if (!supabaseUrl || !supabaseKey) throw new Error('Supabase credentials not configured');
             
             const supabase = createClient(supabaseUrl, supabaseKey);
+            await sql.unsafe(`SET statement_timeout = '50s'`);
             
-            // 1. Get all registrations with null icao_code from Neon
+            // Step 1: Self-backfill from Neon's own data first
+            const selfBackfill = await sql`
+              UPDATE live_flight_detections_rows t
+              SET icao_code = s.known_icao
+              FROM (
+                SELECT registration, MAX(icao_code) as known_icao
+                FROM live_flight_detections_rows
+                WHERE icao_code IS NOT NULL AND icao_code != ''
+                  AND icao_code SIMILAR TO '[0-9a-fA-F]{4,6}'
+                  AND registration IS NOT NULL AND registration != ''
+                GROUP BY registration
+              ) s
+              WHERE t.registration = s.registration
+                AND (t.icao_code IS NULL OR t.icao_code = '')
+            `;
+            console.log(`Self-backfilled ${selfBackfill.count || 0} records from Neon's own data`);
+            
+            // Step 2: Get remaining registrations with null icao_code
             const nullIcaoRegs = await sql`
               SELECT DISTINCT registration 
               FROM live_flight_detections_rows 
               WHERE (icao_code IS NULL OR icao_code = '') 
                 AND registration IS NOT NULL 
                 AND registration != ''
+                AND registration LIKE 'N%'
             `;
-            console.log(`Found ${nullIcaoRegs.length} unique registrations with null ICAO codes`);
+            console.log(`Found ${nullIcaoRegs.length} remaining N-prefix registrations with null ICAO codes`);
             
-            if (nullIcaoRegs.length === 0) {
-              result = { success: true, message: 'No null ICAO codes to backfill', updated: 0 };
-              break;
-            }
-
-            // 2. Fetch mode_s_hex AND mode_s_code mappings from Supabase aircraft_registry
-            // mode_s_hex is rarely populated; mode_s_code contains hex in format "(Base 16 / Hex) | A04DEE |"
+            // Step 3: Fetch from Supabase aircraft_registry
             const regList = nullIcaoRegs.map((r: any) => r.registration);
-            
-            // Build lookup sets: try both with and without N prefix
-            const allLookups = new Set<string>();
-            for (const r of regList) {
-              allLookups.add(r);
-              if (r.startsWith('N')) allLookups.add(r.substring(1));
-              else allLookups.add(`N${r}`);
-            }
-            const lookupArray = Array.from(allLookups);
-            
             const mappings: Record<string, string> = {};
-            for (let i = 0; i < lookupArray.length; i += 500) {
-              const batch = lookupArray.slice(i, i + 500);
+            
+            // Batch lookup in Supabase registry
+            for (let i = 0; i < regList.length; i += 500) {
+              const batch = regList.slice(i, i + 500);
               
               const { data: registryData } = await supabase
                 .from('aircraft_registry')
                 .select('n_number, mode_s_hex, mode_s_code')
-                .in('n_number', batch);
+                .in('n_number', batch)
+                .not('mode_s_code', 'is', null);
               
               if (registryData) {
                 for (const entry of registryData) {
-                  // Extract hex ICAO from mode_s_hex or parse from mode_s_code
                   let icaoHex: string | null = null;
-                  
                   if (entry.mode_s_hex) {
                     icaoHex = entry.mode_s_hex.trim().toUpperCase();
                   } else if (entry.mode_s_code) {
-                    // Parse format like "(Base 16 / Hex) | A04DEE |"
                     const hexMatch = entry.mode_s_code.match(/\|\s*([A-Fa-f0-9]{4,6})\s*\|/);
-                    if (hexMatch) {
-                      icaoHex = hexMatch[1].toUpperCase();
-                    }
+                    if (hexMatch) icaoHex = hexMatch[1].toUpperCase();
                   }
-                  
-                  if (icaoHex) {
-                    const fullReg = entry.n_number.startsWith('N') ? entry.n_number : `N${entry.n_number}`;
-                    // Only map if this registration is in our null-ICAO list
-                    if (regList.includes(fullReg) || regList.includes(entry.n_number)) {
-                      mappings[regList.includes(fullReg) ? fullReg : entry.n_number] = icaoHex;
-                    }
+                  if (icaoHex && regList.includes(entry.n_number)) {
+                    mappings[entry.n_number] = icaoHex;
                   }
                 }
               }
@@ -490,10 +485,8 @@ serve(async (req) => {
             
             console.log(`Found ${Object.keys(mappings).length} ICAO mappings from aircraft registry`);
             
-            // 3. Batch update Neon records
-            let totalUpdated = 0;
-            await sql.unsafe(`SET statement_timeout = '300s'`);
-            
+            // Step 4: Apply Supabase registry matches
+            let registryUpdated = 0;
             for (const [reg, icao] of Object.entries(mappings)) {
               try {
                 const updateResult = await sql`
@@ -502,7 +495,7 @@ serve(async (req) => {
                   WHERE registration = ${reg} 
                     AND (icao_code IS NULL OR icao_code = '')
                 `;
-                totalUpdated += updateResult.count || 0;
+                registryUpdated += updateResult.count || 0;
               } catch (e) {
                 console.error(`Failed to update ${reg}: ${(e as Error).message}`);
               }
@@ -512,9 +505,11 @@ serve(async (req) => {
             
             result = { 
               success: true, 
+              selfBackfilled: selfBackfill.count || 0,
               nullIcaoRegistrations: nullIcaoRegs.length,
               registryMatches: Object.keys(mappings).length,
-              recordsUpdated: totalUpdated,
+              registryRecordsUpdated: registryUpdated,
+              totalUpdated: (selfBackfill.count || 0) + registryUpdated,
               mappingSample: Object.entries(mappings).slice(0, 10).map(([reg, icao]) => ({ registration: reg, icao_code: icao }))
             };
           } catch (e) {

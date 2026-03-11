@@ -203,13 +203,11 @@ export function NullIcaoForensicPanel() {
           <div className={`p-3 rounded text-xs border ${fixResult.success ? 'bg-primary/10 border-primary/30 text-primary' : 'bg-destructive/10 border-destructive/30 text-destructive'}`}>
             {fixResult.success ? (
               <div className="space-y-1">
-                <p className="font-bold">✅ Column Mapping Fixed</p>
+                <p className="font-bold">✅ Column Mapping Fixed — {Number(fixResult.totalFixed).toLocaleString()} records corrected</p>
                 <p>Type codes (icao_code→desc): {Number(fixResult.operations?.type_codes_from_icao_to_desc).toLocaleString()}</p>
                 <p>Type codes (icao24→desc): {Number(fixResult.operations?.type_codes_from_icao24_to_desc).toLocaleString()}</p>
                 <p>Hex copied from icao24: {Number(fixResult.operations?.hex_copied_from_icao24).toLocaleString()}</p>
-                <p>Tilde hex copied: {Number(fixResult.operations?.tilde_hex_copied).toLocaleString()}</p>
-                <p>Self-backfilled (same reg): {Number(fixResult.operations?.self_backfill_from_same_reg).toLocaleString()}</p>
-                <p className="font-bold mt-1">After: {Number(fixResult.after?.valid_icao_codes).toLocaleString()} valid ICAO hex, {Number(fixResult.after?.null_icao_codes).toLocaleString()} still null</p>
+                <p>Tilde hex copied (~hex→hex): {Number(fixResult.operations?.tilde_hex_copied).toLocaleString()}</p>
               </div>
             ) : (
               <p><AlertTriangle className="w-3 h-3 inline mr-1" />{fixResult.error}</p>

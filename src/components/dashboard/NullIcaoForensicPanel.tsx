@@ -204,11 +204,12 @@ export function NullIcaoForensicPanel() {
             {fixResult.success ? (
               <div className="space-y-1">
                 <p className="font-bold">✅ Column Mapping Fixed</p>
-                <p className="text-muted-foreground font-mono text-[10px]">Before: {Number(fixResult.before?.type_codes_in_icao).toLocaleString()} type codes in icao_code, {Number(fixResult.before?.valid_hex_in_icao24).toLocaleString()} valid hex in icao24</p>
-                <p>Type codes → aircraft_type_desc: {Number(fixResult.operations?.type_codes_saved_to_aircraft_type_desc).toLocaleString()}</p>
-                <p>Hex codes icao24 → icao_code: {Number(fixResult.operations?.hex_codes_copied_from_icao24).toLocaleString()}</p>
-                <p>Invalid icao_code cleared: {Number(fixResult.operations?.invalid_icao_codes_cleared).toLocaleString()}</p>
-                <p className="font-bold mt-1">After: {Number(fixResult.after?.valid_icao_codes).toLocaleString()} valid ICAO hex codes, {Number(fixResult.after?.null_icao_codes).toLocaleString()} still null</p>
+                <p>Type codes (icao_code→desc): {Number(fixResult.operations?.type_codes_from_icao_to_desc).toLocaleString()}</p>
+                <p>Type codes (icao24→desc): {Number(fixResult.operations?.type_codes_from_icao24_to_desc).toLocaleString()}</p>
+                <p>Hex copied from icao24: {Number(fixResult.operations?.hex_copied_from_icao24).toLocaleString()}</p>
+                <p>Tilde hex copied: {Number(fixResult.operations?.tilde_hex_copied).toLocaleString()}</p>
+                <p>Self-backfilled (same reg): {Number(fixResult.operations?.self_backfill_from_same_reg).toLocaleString()}</p>
+                <p className="font-bold mt-1">After: {Number(fixResult.after?.valid_icao_codes).toLocaleString()} valid ICAO hex, {Number(fixResult.after?.null_icao_codes).toLocaleString()} still null</p>
               </div>
             ) : (
               <p><AlertTriangle className="w-3 h-3 inline mr-1" />{fixResult.error}</p>

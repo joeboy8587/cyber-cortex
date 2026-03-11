@@ -565,7 +565,9 @@ export async function handleAction2(action: string, body: Record<string, any>, s
         `;
         
         let selfBackfillCount = 0;
+        const sbStart = Date.now();
         for (const mapping of knownMappings) {
+          if (Date.now() - sbStart > 20000) break; // 20s budget
           const m = mapping as any;
           const res = await sql`
             UPDATE live_flight_detections_rows

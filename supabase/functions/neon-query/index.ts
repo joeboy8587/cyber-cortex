@@ -425,29 +425,36 @@ serve(async (req) => {
             const supabase = createClient(supabaseUrl, supabaseKey);
             await sql.unsafe(`SET statement_timeout = '50s'`);
             
-            // Step 1: Self-backfill from Neon's own data first (batched)
-            const knownMappings = await sql`
-              SELECT registration, MAX(icao_code) as known_icao
-              FROM live_flight_detections_rows
-              WHERE icao_code IS NOT NULL AND icao_code != ''
-                AND icao_code SIMILAR TO '[0-9a-fA-F]{4,6}'
+            // Step 1: Self-backfill — get null-icao registrations, then check if they have icao elsewhere
+            const nullRegs = await sql`
+              SELECT DISTINCT registration 
+              FROM live_flight_detections_rows 
+              WHERE (icao_code IS NULL OR icao_code = '') 
                 AND registration IS NOT NULL AND registration != ''
-              GROUP BY registration
-              LIMIT 5000
+              LIMIT 500
             `;
             
             let selfBackfillCount = 0;
             const startTime = Date.now();
-            for (const mapping of knownMappings) {
-              if (Date.now() - startTime > 25000) break; // 25s budget
-              const m = mapping as any;
-              const res = await sql`
-                UPDATE live_flight_detections_rows
-                SET icao_code = ${m.known_icao}
-                WHERE registration = ${m.registration}
-                  AND (icao_code IS NULL OR icao_code = '')
+            for (const r of nullRegs) {
+              if (Date.now() - startTime > 20000) break;
+              const reg = (r as any).registration;
+              const known = await sql`
+                SELECT icao_code FROM live_flight_detections_rows
+                WHERE registration = ${reg}
+                  AND icao_code IS NOT NULL AND icao_code != ''
+                  AND LENGTH(icao_code) = 6
+                LIMIT 1
               `;
-              selfBackfillCount += res.count || 0;
+              if (known.length > 0) {
+                const icao = (known[0] as any).icao_code;
+                const res = await sql`
+                  UPDATE live_flight_detections_rows
+                  SET icao_code = ${icao}
+                  WHERE registration = ${reg} AND (icao_code IS NULL OR icao_code = '')
+                `;
+                selfBackfillCount += res.count || 0;
+              }
             }
             console.log(`Self-backfilled ${selfBackfillCount} records from Neon's own data`);
             

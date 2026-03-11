@@ -512,67 +512,38 @@ export async function handleAction2(action: string, body: Record<string, any>, s
       try {
         await sql.unsafe(`SET statement_timeout = '45s'`);
 
-        // Step 1: Save type codes to aircraft_type_desc (single batch, no subquery)
+        // Step 1: Save aircraft type codes (3-4 char like B738, A320, C172) to aircraft_type_desc
+        // Use simple LENGTH check - no regex needed
         const savedTypes = await sql`
-          WITH batch AS (
-            SELECT ctid FROM live_flight_detections_rows
-            WHERE icao_code IS NOT NULL AND icao_code != ''
-              AND LENGTH(icao_code) <= 4
-              AND icao_code ~ '[G-Zg-z]'
-              AND (aircraft_type_desc IS NULL OR aircraft_type_desc = '')
-            LIMIT 2000
-          )
-          UPDATE live_flight_detections_rows t
-          SET aircraft_type_desc = t.icao_code
-          FROM batch WHERE t.ctid = batch.ctid
+          UPDATE live_flight_detections_rows
+          SET aircraft_type_desc = icao_code, icao_code = NULL
+          WHERE icao_code IS NOT NULL
+            AND LENGTH(icao_code) BETWEEN 2 AND 5
+            AND icao_code NOT SIMILAR TO '[0-9a-fA-F]+'
+            AND (aircraft_type_desc IS NULL OR aircraft_type_desc = '')
         `;
 
-        // Step 2: Copy valid hex from icao24 → icao_code
+        // Step 2: Copy valid hex from icao24 → icao_code (only where icao_code is null)
         const copiedHex = await sql`
-          WITH batch AS (
-            SELECT ctid, icao24 FROM live_flight_detections_rows
-            WHERE icao24 IS NOT NULL AND LENGTH(icao24) BETWEEN 4 AND 6
-              AND icao24 ~ '^[0-9a-fA-F]+$'
-              AND (icao_code IS NULL OR icao_code = '')
-            LIMIT 2000
-          )
-          UPDATE live_flight_detections_rows t
-          SET icao_code = UPPER(batch.icao24)
-          FROM batch WHERE t.ctid = batch.ctid
-        `;
-
-        // Step 3: Clear non-hex values from icao_code
-        const cleared = await sql`
-          WITH batch AS (
-            SELECT ctid FROM live_flight_detections_rows
-            WHERE icao_code IS NOT NULL AND icao_code != ''
-              AND LENGTH(icao_code) <= 4
-              AND icao_code ~ '[G-Zg-z]'
-            LIMIT 2000
-          )
-          UPDATE live_flight_detections_rows t
-          SET icao_code = NULL
-          FROM batch WHERE t.ctid = batch.ctid
+          UPDATE live_flight_detections_rows
+          SET icao_code = UPPER(icao24)
+          WHERE icao24 IS NOT NULL AND icao24 != ''
+            AND (icao_code IS NULL OR icao_code = '')
+            AND icao24 SIMILAR TO '[0-9a-fA-F]{4,6}'
         `;
 
         await sql.unsafe(`SET statement_timeout = '30s'`);
 
-        const typesSaved = savedTypes.count || 0;
-        const hexCopied = copiedHex.count || 0;
-        const numCleared = cleared.count || 0;
-
         return {
           success: true,
-          before: { type_codes_in_icao: typesSaved + numCleared, valid_hex_in_icao24: hexCopied, valid_hex_already_correct: 0, total: 0 },
+          before: { type_codes_in_icao: savedTypes.count || 0, valid_hex_in_icao24: copiedHex.count || 0, valid_hex_already_correct: 0, total: 0 },
           operations: {
-            type_codes_saved_to_aircraft_type_desc: typesSaved,
-            hex_codes_copied_from_icao24: hexCopied,
-            invalid_icao_codes_cleared: numCleared,
+            type_codes_saved_to_aircraft_type_desc: savedTypes.count || 0,
+            hex_codes_copied_from_icao24: copiedHex.count || 0,
+            invalid_icao_codes_cleared: savedTypes.count || 0,
           },
-          after: { valid_icao_codes: hexCopied, null_icao_codes: 0, has_type_desc: typesSaved, total: 0 },
-          message: typesSaved + hexCopied + numCleared > 0
-            ? `Processed batch. Click again to continue (${typesSaved} types saved, ${hexCopied} hex copied, ${numCleared} cleared).`
-            : 'No more records to fix — all done!',
+          after: { valid_icao_codes: copiedHex.count || 0, null_icao_codes: 0, has_type_desc: savedTypes.count || 0, total: 0 },
+          message: `Type codes moved: ${savedTypes.count || 0}, Hex codes copied: ${copiedHex.count || 0}`,
         };
       } catch (e) {
         try { await sql.unsafe(`SET statement_timeout = '30s'`); } catch (_) {}

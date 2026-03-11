@@ -554,6 +554,7 @@ export async function handleAction2(action: string, body: Record<string, any>, s
 
         await sql.unsafe(`SET statement_timeout = '30s'`);
 
+        const totalOps = (savedTypesFromIcao.count || 0) + (savedTypesFromIcao24.count || 0) + (copiedHex.count || 0) + (copiedTildeHex.count || 0);
         return {
           success: true,
           operations: {
@@ -562,7 +563,7 @@ export async function handleAction2(action: string, body: Record<string, any>, s
             hex_copied_from_icao24: copiedHex.count || 0,
             tilde_hex_copied: copiedTildeHex.count || 0,
           },
-          after: { valid_icao_codes: after.valid_icao, null_icao_codes: after.null_icao },
+          totalFixed: totalOps,
           message: `Type codes moved: ${(savedTypesFromIcao.count || 0) + (savedTypesFromIcao24.count || 0)}, Hex copied: ${(copiedHex.count || 0) + (copiedTildeHex.count || 0)}`,
         };
       } catch (e) {

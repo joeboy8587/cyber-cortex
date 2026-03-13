@@ -104,6 +104,7 @@ export default function ForensicTrajectoryPanel() {
   }, [registration, timeWindow, queryDatabase]);
 
   const loadViolations = useCallback(async () => {
+    setIsLoading(true);
     try {
       const [vioResult, aircraftResult] = await Promise.all([
         queryDatabase('getAltitudeViolations', { timeWindow }),
@@ -115,6 +116,8 @@ export default function ForensicTrajectoryPanel() {
       toast.success('Violation evidence log loaded');
     } catch (e) {
       toast.error('Failed to load violations');
+    } finally {
+      setIsLoading(false);
     }
   }, [timeWindow, queryDatabase]);
 

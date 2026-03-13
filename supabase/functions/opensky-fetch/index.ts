@@ -720,84 +720,102 @@ serve(async (req) => {
               const sha256Hash = await computeSHA256(hashPayload);
 
               const existing = await sql`
-                SELECT id FROM live_flight_detections_rows 
+                SELECT id, altitude FROM live_flight_detections_rows 
                 WHERE (icao_code = ${flight.hex} OR registration = ${flight.registration})
                   AND (detection_timestamp > NOW() - INTERVAL '30 minutes' OR detection_timestamp IS NULL)
                 ORDER BY detection_timestamp DESC NULLS LAST LIMIT 1
               `;
 
               if (existing.length > 0) {
-                if (hasRichCols) {
-                  await sql`UPDATE live_flight_detections_rows SET
-                    altitude=${flight.altitude}, speed=${flight.speed},
-                    latitude=${flight.latitude}, longitude=${flight.longitude},
-                    heading=${flight.heading}, vertical_rate=${flight.vertical_rate},
-                    detection_timestamp=NOW(), taxonomy_tag=${flight.taxonomyTag},
-                    threat_score=${flight.threatScore}, flagged=${flight.flagged},
-                    flagged_reasons=${flight.flaggedReasons.join('; ')},
-                    owner_operator=${flight.ownerOperator||null},
-                    aircraft_type=${flight.aircraftType||null},
-                    aircraft_type_desc=${flight.aircraftTypeDesc||null},
-                    is_military=${flight.isMilitary},
-                    shell_auto_detected=${flight.shellAutoDetected},
-                    shell_detection_reason=${flight.shellDetectionReason||null},
-                    data_source=${flight.source},
-                    sha256_hash=${sha256Hash}
-                  WHERE id=${existing[0].id}`;
+                const prevAlt = Number(existing[0].altitude) || 0;
+                const newAlt = flight.altitude || 0;
+                
+                // ============ EVIDENCE PRESERVATION ============
+                // If previous record had meaningful altitude (airborne) and new is 0 (ground),
+                // INSERT a new record instead of overwriting — preserves violation evidence
+                const wasAirborne = prevAlt > 0;
+                const nowOnGround = newAlt === 0 && flight.speed === 0;
+                // Also insert new record if altitude changed significantly (>2000ft difference)
+                // to preserve flight trajectory for forensic reconstruction
+                const significantAltChange = wasAirborne && Math.abs(newAlt - prevAlt) > 2000;
+                
+                if ((wasAirborne && nowOnGround) || significantAltChange) {
+                  // Don't overwrite — fall through to INSERT below
+                  // This preserves the previous altitude reading as evidence
                 } else {
-                  await sql`UPDATE live_flight_detections_rows SET
-                    altitude=${flight.altitude}, speed=${flight.speed},
-                    latitude=${flight.latitude}, longitude=${flight.longitude},
-                    heading=${flight.heading}, vertical_rate=${flight.vertical_rate},
-                    detection_timestamp=NOW(), taxonomy_tag=${flight.taxonomyTag},
-                    threat_score=${flight.threatScore}, flagged=${flight.flagged},
-                    flagged_reasons=${flight.flaggedReasons.join('; ')},
-                    sha256_hash=${sha256Hash}
-                  WHERE id=${existing[0].id}`;
+                  if (hasRichCols) {
+                    await sql`UPDATE live_flight_detections_rows SET
+                      altitude=${flight.altitude}, speed=${flight.speed},
+                      latitude=${flight.latitude}, longitude=${flight.longitude},
+                      heading=${flight.heading}, vertical_rate=${flight.vertical_rate},
+                      detection_timestamp=NOW(), taxonomy_tag=${flight.taxonomyTag},
+                      threat_score=${flight.threatScore}, flagged=${flight.flagged},
+                      flagged_reasons=${flight.flaggedReasons.join('; ')},
+                      owner_operator=${flight.ownerOperator||null},
+                      aircraft_type=${flight.aircraftType||null},
+                      aircraft_type_desc=${flight.aircraftTypeDesc||null},
+                      is_military=${flight.isMilitary},
+                      shell_auto_detected=${flight.shellAutoDetected},
+                      shell_detection_reason=${flight.shellDetectionReason||null},
+                      data_source=${flight.source},
+                      sha256_hash=${sha256Hash}
+                    WHERE id=${existing[0].id}`;
+                  } else {
+                    await sql`UPDATE live_flight_detections_rows SET
+                      altitude=${flight.altitude}, speed=${flight.speed},
+                      latitude=${flight.latitude}, longitude=${flight.longitude},
+                      heading=${flight.heading}, vertical_rate=${flight.vertical_rate},
+                      detection_timestamp=NOW(), taxonomy_tag=${flight.taxonomyTag},
+                      threat_score=${flight.threatScore}, flagged=${flight.flagged},
+                      flagged_reasons=${flight.flaggedReasons.join('; ')},
+                      sha256_hash=${sha256Hash}
+                    WHERE id=${existing[0].id}`;
+                  }
+                  updated++;
+                  continue;
                 }
-                updated++;
-              } else {
-                if (hasRichCols) {
-                  await sql`INSERT INTO live_flight_detections_rows (
-                    id, icao_code, registration, callsign, altitude, speed,
-                    latitude, longitude, heading, vertical_rate,
-                    detection_timestamp, created_at, taxonomy_tag,
-                    threat_score, tier_level, flagged, flagged_reasons,
-                    owner_operator, aircraft_type, aircraft_type_desc,
-                    is_military, data_source, shell_auto_detected, shell_detection_reason,
-                    sha256_hash
-                  ) VALUES (
-                    ${crypto.randomUUID()}, ${flight.hex}, ${flight.registration},
-                    ${flight.callsign}, ${flight.altitude}, ${flight.speed},
-                    ${flight.latitude}, ${flight.longitude}, ${flight.heading},
-                    ${flight.vertical_rate}, NOW(), NOW(),
-                    ${flight.taxonomyTag}, ${flight.threatScore}, ${flight.tierLevel},
-                    ${flight.flagged}, ${flight.flaggedReasons.join('; ')},
-                    ${flight.ownerOperator||null}, ${flight.aircraftType||null},
-                    ${flight.aircraftTypeDesc||null}, ${flight.isMilitary},
-                    ${flight.source}, ${flight.shellAutoDetected},
-                    ${flight.shellDetectionReason||null},
-                    ${sha256Hash}
-                  )`;
-                } else {
-                  await sql`INSERT INTO live_flight_detections_rows (
-                    id, icao_code, registration, callsign, altitude, speed,
-                    latitude, longitude, heading, vertical_rate,
-                    detection_timestamp, created_at, taxonomy_tag,
-                    threat_score, tier_level, flagged, flagged_reasons,
-                    sha256_hash
-                  ) VALUES (
-                    ${crypto.randomUUID()}, ${flight.hex}, ${flight.registration},
-                    ${flight.callsign}, ${flight.altitude}, ${flight.speed},
-                    ${flight.latitude}, ${flight.longitude}, ${flight.heading},
-                    ${flight.vertical_rate}, NOW(), NOW(),
-                    ${flight.taxonomyTag}, ${flight.threatScore}, ${flight.tierLevel},
-                    ${flight.flagged}, ${flight.flaggedReasons.join('; ')},
-                    ${sha256Hash}
-                  )`;
-                }
-                inserted++;
               }
+              // INSERT — new aircraft OR evidence-preservation fall-through
+              if (hasRichCols) {
+                await sql`INSERT INTO live_flight_detections_rows (
+                  id, icao_code, registration, callsign, altitude, speed,
+                  latitude, longitude, heading, vertical_rate,
+                  detection_timestamp, created_at, taxonomy_tag,
+                  threat_score, tier_level, flagged, flagged_reasons,
+                  owner_operator, aircraft_type, aircraft_type_desc,
+                  is_military, data_source, shell_auto_detected, shell_detection_reason,
+                  sha256_hash
+                ) VALUES (
+                  ${crypto.randomUUID()}, ${flight.hex}, ${flight.registration},
+                  ${flight.callsign}, ${flight.altitude}, ${flight.speed},
+                  ${flight.latitude}, ${flight.longitude}, ${flight.heading},
+                  ${flight.vertical_rate}, NOW(), NOW(),
+                  ${flight.taxonomyTag}, ${flight.threatScore}, ${flight.tierLevel},
+                  ${flight.flagged}, ${flight.flaggedReasons.join('; ')},
+                  ${flight.ownerOperator||null}, ${flight.aircraftType||null},
+                  ${flight.aircraftTypeDesc||null}, ${flight.isMilitary},
+                  ${flight.source}, ${flight.shellAutoDetected},
+                  ${flight.shellDetectionReason||null},
+                  ${sha256Hash}
+                )`;
+              } else {
+                await sql`INSERT INTO live_flight_detections_rows (
+                  id, icao_code, registration, callsign, altitude, speed,
+                  latitude, longitude, heading, vertical_rate,
+                  detection_timestamp, created_at, taxonomy_tag,
+                  threat_score, tier_level, flagged, flagged_reasons,
+                  sha256_hash
+                ) VALUES (
+                  ${crypto.randomUUID()}, ${flight.hex}, ${flight.registration},
+                  ${flight.callsign}, ${flight.altitude}, ${flight.speed},
+                  ${flight.latitude}, ${flight.longitude}, ${flight.heading},
+                  ${flight.vertical_rate}, NOW(), NOW(),
+                  ${flight.taxonomyTag}, ${flight.threatScore}, ${flight.tierLevel},
+                  ${flight.flagged}, ${flight.flaggedReasons.join('; ')},
+                  ${sha256Hash}
+                )`;
+              }
+              inserted++;
             } catch (e) {
               console.error(`DB err ${flight.registration}:`, e instanceof Error ? e.message : e);
             }

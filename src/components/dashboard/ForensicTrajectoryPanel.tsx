@@ -87,6 +87,7 @@ export default function ForensicTrajectoryPanel() {
       toast.error('Enter an aircraft registration (e.g., N478CA)');
       return;
     }
+    setIsLoading(true);
     try {
       const result = await queryDatabase('getAircraftTrajectory', {
         registration: registration.trim().toUpperCase(),
@@ -97,6 +98,8 @@ export default function ForensicTrajectoryPanel() {
       toast.success(`Loaded ${Array.isArray(data) ? data.length : 0} trajectory points for ${registration.toUpperCase()}`);
     } catch (e) {
       toast.error('Failed to load trajectory');
+    } finally {
+      setIsLoading(false);
     }
   }, [registration, timeWindow, queryDatabase]);
 

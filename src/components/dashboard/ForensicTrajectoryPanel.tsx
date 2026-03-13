@@ -65,7 +65,15 @@ const severityColors: Record<string, string> = {
 };
 
 export default function ForensicTrajectoryPanel() {
-  const { queryDatabase, isLoading } = useNeonDatabase();
+  const [isLoading, setIsLoading] = useState(false);
+
+  const queryDatabase = useCallback(async (action: string, params: Record<string, unknown> = {}) => {
+    const { data, error } = await supabase.functions.invoke('neon-query', {
+      body: { action, ...params },
+    });
+    if (error) throw error;
+    return data;
+  }, []);
   const [registration, setRegistration] = useState('');
   const [timeWindow, setTimeWindow] = useState('90 days');
   const [trajectory, setTrajectory] = useState<TrajectoryPoint[]>([]);

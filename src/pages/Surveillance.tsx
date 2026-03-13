@@ -43,6 +43,11 @@ export default function Surveillance() {
           </div>
         </div>
 
+        {/* 📊 FORENSIC TRAJECTORY & VIOLATIONS EVIDENCE LOG */}
+        <section>
+          <ForensicTrajectoryPanel />
+        </section>
+
         {/* 🧠 AUTONOMOUS WATCHTOWER - Bias-Free AI Detection */}
         <section>
           <AutonomousWatchtower />

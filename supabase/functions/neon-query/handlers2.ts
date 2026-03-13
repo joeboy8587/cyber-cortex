@@ -573,6 +573,110 @@ export async function handleAction2(action: string, body: Record<string, any>, s
       }
     }
 
+    // ============== FORENSIC TRAJECTORY & VIOLATIONS ==============
+    case 'getAircraftTrajectory': {
+      const { registration, timeWindow = '90 days', limit: trajLimit = 500 } = body;
+      if (!registration) return { error: 'Registration is required' };
+      const safeReg = registration.replace(/[^a-zA-Z0-9]/g, '');
+      try {
+        const trajectory = await sql.unsafe(`
+          SELECT registration, COALESCE(detection_timestamp, created_at) as event_time,
+            COALESCE(altitude, 0) as altitude, COALESCE(speed, 0) as speed,
+            latitude, longitude, COALESCE(heading, 0) as heading,
+            COALESCE(icao_code, '') as hex, COALESCE(callsign, '') as callsign,
+            COALESCE(threat_score, 0) as threat_score, COALESCE(flagged, false) as is_flagged,
+            flagged_reasons, taxonomy_tag,
+            CASE 
+              WHEN COALESCE(altitude, 0) > 0 AND COALESCE(altitude, 0) < 500 THEN 'CRITICAL'
+              WHEN COALESCE(altitude, 0) >= 500 AND COALESCE(altitude, 0) < 1000 THEN 'WARNING'
+              WHEN COALESCE(altitude, 0) >= 1000 AND COALESCE(altitude, 0) < 1500 THEN 'CAUTION'
+              ELSE 'NORMAL'
+            END as violation_severity
+          FROM live_flight_detections_rows
+          WHERE registration = '${safeReg}'
+            AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${timeWindow}'
+            AND COALESCE(altitude, 0) > 0
+          ORDER BY COALESCE(detection_timestamp, created_at) ASC
+          LIMIT ${parseInt(String(trajLimit))}
+        `);
+        return { data: trajectory, registration: safeReg, count: trajectory.length };
+      } catch (e) {
+        return { error: (e as Error).message };
+      }
+    }
+
+    case 'getAltitudeViolations': {
+      const { timeWindow: vioWindow = '90 days', minAltitude = 0, maxAltitude = 1000, limit: vioLimit = 200 } = body;
+      try {
+        const violations = await sql.unsafe(`
+          SELECT registration, COALESCE(detection_timestamp, created_at) as event_time,
+            COALESCE(altitude, 0) as altitude, COALESCE(speed, 0) as speed,
+            latitude, longitude, COALESCE(heading, 0) as heading,
+            COALESCE(threat_score, 0) as threat_score, COALESCE(flagged, false) as is_flagged,
+            flagged_reasons, taxonomy_tag,
+            CASE 
+              WHEN COALESCE(altitude, 0) < 500 THEN 'CRITICAL: 91.119 Violation (<500ft)'
+              WHEN COALESCE(altitude, 0) < 1000 THEN 'WARNING: Low Altitude (<1000ft)'
+              ELSE 'CAUTION'
+            END as violation_severity
+          FROM live_flight_detections_rows
+          WHERE COALESCE(altitude, 0) > ${parseInt(String(minAltitude))}
+            AND COALESCE(altitude, 0) < ${parseInt(String(maxAltitude))}
+            AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${vioWindow}'
+          ORDER BY COALESCE(detection_timestamp, created_at) DESC
+          LIMIT ${parseInt(String(vioLimit))}
+        `);
+
+        // Summary stats
+        const stats = await sql.unsafe(`
+          SELECT 
+            COUNT(*) as total_violations,
+            COUNT(DISTINCT registration) as unique_aircraft,
+            COUNT(*) FILTER (WHERE COALESCE(altitude, 0) < 500) as critical_count,
+            COUNT(*) FILTER (WHERE COALESCE(altitude, 0) >= 500 AND COALESCE(altitude, 0) < 1000) as warning_count,
+            MIN(COALESCE(altitude, 0)) as min_altitude,
+            AVG(COALESCE(altitude, 0))::int as avg_altitude
+          FROM live_flight_detections_rows
+          WHERE COALESCE(altitude, 0) > 0 AND COALESCE(altitude, 0) < 1000
+            AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${vioWindow}'
+        `);
+
+        return { 
+          data: violations, 
+          stats: stats[0] || {},
+          count: violations.length 
+        };
+      } catch (e) {
+        return { error: (e as Error).message };
+      }
+    }
+
+    case 'getViolationAircraft': {
+      const { timeWindow: vaWindow = '90 days' } = body;
+      try {
+        const aircraft = await sql.unsafe(`
+          SELECT registration, 
+            COUNT(*) as violation_count,
+            COUNT(*) FILTER (WHERE COALESCE(altitude, 0) < 500) as critical_violations,
+            MIN(COALESCE(altitude, 0)) as min_altitude,
+            AVG(COALESCE(altitude, 0))::int as avg_violation_altitude,
+            MIN(COALESCE(detection_timestamp, created_at)) as first_violation,
+            MAX(COALESCE(detection_timestamp, created_at)) as last_violation,
+            taxonomy_tag
+          FROM live_flight_detections_rows
+          WHERE COALESCE(altitude, 0) > 0 AND COALESCE(altitude, 0) < 1000
+            AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${vaWindow}'
+            AND registration IS NOT NULL AND registration != ''
+          GROUP BY registration, taxonomy_tag
+          ORDER BY violation_count DESC
+          LIMIT 50
+        `);
+        return { data: aircraft };
+      } catch (e) {
+        return { error: (e as Error).message };
+      }
+    }
+
     default:
       return null; // Signal "not handled" back to main router
   }

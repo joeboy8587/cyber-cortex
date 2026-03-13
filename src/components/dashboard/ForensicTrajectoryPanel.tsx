@@ -9,8 +9,6 @@ import { supabase } from '@/integrations/supabase/client';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Area, AreaChart, BarChart, Bar, Cell } from 'recharts';
 import { AlertTriangle, Search, Plane, Shield, Download, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
-import { AlertTriangle, Search, Plane, Shield, Download, RefreshCw } from 'lucide-react';
-import { toast } from 'sonner';
 
 interface TrajectoryPoint {
   registration: string;

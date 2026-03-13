@@ -22,6 +22,7 @@ import { NullIcaoForensicPanel } from "@/components/dashboard/NullIcaoForensicPa
 import F24RadarUploader from "@/components/dashboard/F24RadarUploader";
 import { AutonomousWatchtower } from "@/components/dashboard/AutonomousWatchtower";
 import UnmaskHQSystem from "@/components/dashboard/UnmaskHQSystem";
+import ForensicTrajectoryPanel from "@/components/dashboard/ForensicTrajectoryPanel";
 
 export default function Surveillance() {
   return (

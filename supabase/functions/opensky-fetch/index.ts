@@ -774,8 +774,9 @@ serve(async (req) => {
                   updated++;
                   continue;
                 }
-              } else {
-                if (hasRichCols) {
+              }
+              // INSERT — new aircraft OR evidence-preservation fall-through
+              {
                   await sql`INSERT INTO live_flight_detections_rows (
                     id, icao_code, registration, callsign, altitude, speed,
                     latitude, longitude, heading, vertical_rate,

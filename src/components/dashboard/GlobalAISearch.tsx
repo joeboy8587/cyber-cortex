@@ -6,19 +6,17 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { 
   Search, Sparkles, Send, StopCircle, Loader2, 
   Database, FileText, Plane, Activity, Users,
-  AlertTriangle, MapPin, Clock, ExternalLink
+  AlertTriangle, MapPin, Clock, ExternalLink, Layers, Shield
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 
-interface SearchResult {
-  id: string;
-  source: string;
-  type: string;
-  title: string;
-  snippet: string;
-  relevance: number;
-  timestamp?: string;
-  metadata?: Record<string, unknown>;
+interface VectorResult {
+  source_table: string;
+  source_id: string;
+  text_content: string;
+  similarity: string;
+  category: string;
+  content_type?: string;
 }
 
 interface SearchSuggestion {
@@ -34,10 +32,26 @@ const suggestions: SearchSuggestion[] = [
   { query: "What patterns exist between N-numbers and criminal enterprises?", category: "Analysis" },
 ];
 
+const categoryConfig: Record<string, { icon: React.ReactNode; color: string; label: string }> = {
+  surveillance: { icon: <Plane className="w-3.5 h-3.5" />, color: "text-blue-400", label: "Surveillance" },
+  biometric: { icon: <Activity className="w-3.5 h-3.5" />, color: "text-red-400", label: "Biometric" },
+  kcso: { icon: <Shield className="w-3.5 h-3.5" />, color: "text-orange-400", label: "KCSO" },
+  legal: { icon: <FileText className="w-3.5 h-3.5" />, color: "text-yellow-400", label: "Legal" },
+  enterprise: { icon: <Users className="w-3.5 h-3.5" />, color: "text-purple-400", label: "Enterprise" },
+  josiah: { icon: <Sparkles className="w-3.5 h-3.5" />, color: "text-cyan-400", label: "Josiah AI" },
+  custody: { icon: <Database className="w-3.5 h-3.5" />, color: "text-green-400", label: "Custody" },
+  timeline: { icon: <Clock className="w-3.5 h-3.5" />, color: "text-emerald-400", label: "Timeline" },
+  watchtower: { icon: <AlertTriangle className="w-3.5 h-3.5" />, color: "text-amber-400", label: "Watchtower" },
+  document: { icon: <FileText className="w-3.5 h-3.5" />, color: "text-indigo-400", label: "Document" },
+  other: { icon: <Layers className="w-3.5 h-3.5" />, color: "text-muted-foreground", label: "Other" },
+};
+
 export function GlobalAISearch() {
   const [query, setQuery] = useState("");
   const [isSearching, setIsSearching] = useState(false);
-  const [results, setResults] = useState<SearchResult[]>([]);
+  const [isVectorSearching, setIsVectorSearching] = useState(false);
+  const [vectorResults, setVectorResults] = useState<VectorResult[]>([]);
+  const [tablesSearched, setTablesSearched] = useState(0);
   const [aiResponse, setAiResponse] = useState("");
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -47,12 +61,40 @@ export function GlobalAISearch() {
     if (!q.trim()) return;
 
     setIsSearching(true);
+    setIsVectorSearching(true);
     setError(null);
     setAiResponse("");
-    setResults([]);
+    setVectorResults([]);
+    setTablesSearched(0);
 
     abortRef.current = new AbortController();
 
+    // Run AI search and vector search in parallel
+    const aiPromise = runAISearch(q);
+    const vectorPromise = runVectorSearch(q);
+
+    await Promise.allSettled([aiPromise, vectorPromise]);
+    setIsSearching(false);
+  };
+
+  const runVectorSearch = async (q: string) => {
+    try {
+      const { data, error } = await supabase.functions.invoke('semantic-search', {
+        body: { action: 'multi_search', query: q, limit: 20 }
+      });
+
+      if (error) throw new Error(error.message);
+      
+      setVectorResults(data?.results || []);
+      setTablesSearched(data?.tables_searched || 0);
+    } catch (err) {
+      console.error("Vector search error:", err);
+    } finally {
+      setIsVectorSearching(false);
+    }
+  };
+
+  const runAISearch = async (q: string) => {
     try {
       const response = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ai-search`,
@@ -63,17 +105,13 @@ export function GlobalAISearch() {
             Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
           },
           body: JSON.stringify({ query: q }),
-          signal: abortRef.current.signal,
+          signal: abortRef.current?.signal,
         }
       );
 
       if (!response.ok) {
-        if (response.status === 429) {
-          throw new Error("Rate limit exceeded. Please try again later.");
-        }
-        if (response.status === 402) {
-          throw new Error("Usage limit reached. Please add credits.");
-        }
+        if (response.status === 429) throw new Error("Rate limit exceeded.");
+        if (response.status === 402) throw new Error("Usage limit reached.");
         throw new Error("Search failed");
       }
 
@@ -110,62 +148,15 @@ export function GlobalAISearch() {
               setAiResponse(fullResponse);
             }
           } catch {
-            // Incomplete JSON, continue
+            // Incomplete JSON
           }
         }
       }
-
-      // Parse structured results from AI response
-      parseResults(fullResponse);
-
     } catch (err) {
       if ((err as Error).name !== "AbortError") {
         setError((err as Error).message);
       }
-    } finally {
-      setIsSearching(false);
     }
-  };
-
-  const parseResults = (response: string) => {
-    // Extract structured data mentions from the response
-    const mockResults: SearchResult[] = [];
-    
-    // Pattern matching for different data types mentioned
-    if (response.toLowerCase().includes("flight") || response.toLowerCase().includes("aircraft")) {
-      mockResults.push({
-        id: "flight-1",
-        source: "Flight Detections",
-        type: "aircraft",
-        title: "XXB MLAT Detection Records",
-        snippet: "Found references to flight data in response",
-        relevance: 0.95,
-      });
-    }
-    
-    if (response.toLowerCase().includes("biometric") || response.toLowerCase().includes("health")) {
-      mockResults.push({
-        id: "bio-1",
-        source: "Biometric Monitoring",
-        type: "health",
-        title: "Biometric Correlation Data",
-        snippet: "Health metrics and biometric anomalies detected",
-        relevance: 0.88,
-      });
-    }
-
-    if (response.toLowerCase().includes("company") || response.toLowerCase().includes("enterprise")) {
-      mockResults.push({
-        id: "corp-1",
-        source: "Criminal Enterprise Network",
-        type: "organization",
-        title: "Shell Company Analysis",
-        snippet: "Corporate structure and ownership patterns",
-        relevance: 0.82,
-      });
-    }
-
-    setResults(mockResults);
   };
 
   const handleCancel = () => {
@@ -173,26 +164,36 @@ export function GlobalAISearch() {
     setIsSearching(false);
   };
 
-  const getSourceIcon = (type: string) => {
-    switch (type) {
-      case "aircraft": return <Plane className="w-4 h-4" />;
-      case "health": return <Activity className="w-4 h-4" />;
-      case "organization": return <Users className="w-4 h-4" />;
-      case "legal": return <FileText className="w-4 h-4" />;
-      case "location": return <MapPin className="w-4 h-4" />;
-      default: return <Database className="w-4 h-4" />;
-    }
+  const getSimilarityColor = (sim: string) => {
+    const val = parseFloat(sim);
+    if (val >= 0.85) return "text-green-400";
+    if (val >= 0.70) return "text-yellow-400";
+    return "text-muted-foreground";
   };
+
+  // Group vector results by category
+  const groupedResults = vectorResults.reduce<Record<string, VectorResult[]>>((acc, r) => {
+    const cat = r.category || "other";
+    if (!acc[cat]) acc[cat] = [];
+    acc[cat].push(r);
+    return acc;
+  }, {});
 
   return (
     <CyberPanel
       title="Global AI-Powered Search"
       icon={<Sparkles />}
       headerActions={
-        <Badge variant="outline" className="text-xs">
-          <Database className="w-3 h-3 mr-1" />
-          2.2M Records
-        </Badge>
+        <div className="flex items-center gap-2">
+          <Badge variant="outline" className="text-xs">
+            <Layers className="w-3 h-3 mr-1" />
+            238 Vector Tables
+          </Badge>
+          <Badge variant="outline" className="text-xs">
+            <Database className="w-3 h-3 mr-1" />
+            18.9M Records
+          </Badge>
+        </div>
       }
     >
       <div className="p-4 space-y-4">
@@ -204,28 +205,17 @@ export function GlobalAISearch() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-            placeholder="Ask anything across all evidence modalities..."
+            placeholder="Semantic search across all 238 vectorized evidence tables..."
             className="w-full pl-10 pr-24 py-3 bg-input border border-border rounded-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
           />
           <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
             {isSearching ? (
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={handleCancel}
-                className="h-8"
-              >
+              <Button variant="destructive" size="sm" onClick={handleCancel} className="h-8">
                 <StopCircle className="w-4 h-4 mr-1" />
                 Stop
               </Button>
             ) : (
-              <Button
-                variant="default"
-                size="sm"
-                onClick={() => handleSearch()}
-                disabled={!query.trim()}
-                className="h-8"
-              >
+              <Button variant="default" size="sm" onClick={() => handleSearch()} disabled={!query.trim()} className="h-8">
                 <Send className="w-4 h-4 mr-1" />
                 Search
               </Button>
@@ -234,7 +224,7 @@ export function GlobalAISearch() {
         </div>
 
         {/* Quick Suggestions */}
-        {!aiResponse && !isSearching && (
+        {!aiResponse && !isSearching && vectorResults.length === 0 && (
           <div className="space-y-2">
             <p className="text-xs text-muted-foreground">Suggested queries:</p>
             <div className="flex flex-wrap gap-2">
@@ -243,15 +233,10 @@ export function GlobalAISearch() {
                   key={i}
                   variant="outline"
                   size="sm"
-                  onClick={() => {
-                    setQuery(s.query);
-                    handleSearch(s.query);
-                  }}
+                  onClick={() => { setQuery(s.query); handleSearch(s.query); }}
                   className="text-xs h-7"
                 >
-                  <Badge variant="secondary" className="mr-1 text-[10px]">
-                    {s.category}
-                  </Badge>
+                  <Badge variant="secondary" className="mr-1 text-[10px]">{s.category}</Badge>
                   {s.query.slice(0, 40)}...
                 </Button>
               ))}
@@ -267,8 +252,64 @@ export function GlobalAISearch() {
           </div>
         )}
 
+        {/* Vector Search Results */}
+        {(vectorResults.length > 0 || isVectorSearching) && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Layers className="w-4 h-4 text-primary" />
+                <span className="text-sm font-medium">Semantic Vector Results</span>
+                {isVectorSearching && <Loader2 className="w-4 h-4 animate-spin text-primary" />}
+              </div>
+              {tablesSearched > 0 && (
+                <span className="text-xs text-muted-foreground">
+                  {vectorResults.length} matches across {tablesSearched} tables
+                </span>
+              )}
+            </div>
+            
+            <ScrollArea className="h-[250px]">
+              <div className="space-y-3">
+                {Object.entries(groupedResults).map(([category, results]) => {
+                  const config = categoryConfig[category] || categoryConfig.other;
+                  return (
+                    <div key={category} className="space-y-1">
+                      <div className={`flex items-center gap-1.5 text-xs font-medium ${config.color}`}>
+                        {config.icon}
+                        {config.label} ({results.length})
+                      </div>
+                      {results.map((result, idx) => (
+                        <div
+                          key={`${result.source_table}-${result.source_id}-${idx}`}
+                          className="p-2.5 bg-muted/20 border border-border/50 rounded hover:bg-muted/40 transition-colors"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="text-[10px] font-mono text-muted-foreground truncate">
+                                  {result.source_table.replace(/_vectors$/, '')}
+                                </span>
+                                <span className={`text-[10px] font-bold ${getSimilarityColor(result.similarity)}`}>
+                                  {(parseFloat(result.similarity) * 100).toFixed(1)}%
+                                </span>
+                              </div>
+                              <p className="text-xs text-foreground line-clamp-2">
+                                {result.text_content}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
+            </ScrollArea>
+          </div>
+        )}
+
         {/* AI Response */}
-        {(aiResponse || isSearching) && (
+        {(aiResponse || (isSearching && !isVectorSearching)) && (
           <div className="space-y-3">
             <div className="flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-primary" />
@@ -278,46 +319,10 @@ export function GlobalAISearch() {
             <ScrollArea className="h-[200px]">
               <div className="prose prose-sm prose-invert max-w-none">
                 <p className="text-sm text-foreground whitespace-pre-wrap">
-                  {aiResponse || "Analyzing your query across 2.2 million records..."}
+                  {aiResponse || "Analyzing your query across 18.9 million records..."}
                 </p>
               </div>
             </ScrollArea>
-          </div>
-        )}
-
-        {/* Structured Results */}
-        {results.length > 0 && (
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-muted-foreground">
-                Related data sources ({results.length})
-              </span>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-              {results.map((result) => (
-                <div
-                  key={result.id}
-                  className="p-3 bg-muted/30 border border-border rounded hover:bg-muted/50 transition-colors cursor-pointer"
-                >
-                  <div className="flex items-start gap-2">
-                    <span className="text-primary">{getSourceIcon(result.type)}</span>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <Badge variant="outline" className="text-[10px]">
-                          {result.source}
-                        </Badge>
-                        <span className="text-[10px] text-success">
-                          {(result.relevance * 100).toFixed(0)}% match
-                        </span>
-                      </div>
-                      <p className="text-sm font-medium truncate mt-1">{result.title}</p>
-                      <p className="text-xs text-muted-foreground truncate">{result.snippet}</p>
-                    </div>
-                    <ExternalLink className="w-3 h-3 text-muted-foreground" />
-                  </div>
-                </div>
-              ))}
-            </div>
           </div>
         )}
 
@@ -325,11 +330,11 @@ export function GlobalAISearch() {
         <div className="flex items-center justify-between text-xs text-muted-foreground border-t border-border pt-2">
           <span className="flex items-center gap-1">
             <Sparkles className="w-3 h-3" />
-            Powered by Lovable AI • Gemini 2.5 Flash
+            Dual-engine: Semantic Vectors + Lovable AI
           </span>
           <span className="flex items-center gap-1">
             <Clock className="w-3 h-3" />
-            Indexes updated: {new Date().toLocaleDateString()}
+            238 tables • 18.9M records vectorized
           </span>
         </div>
       </div>

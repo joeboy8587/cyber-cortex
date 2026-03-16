@@ -7,9 +7,10 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { supabase } from '@/integrations/supabase/client';
 import { 
   Link2, Database, Activity, Shield, Play, RefreshCw, 
-  CheckCircle2, AlertTriangle, Clock, Zap, Target, FileText
+  CheckCircle2, AlertTriangle, Clock, Zap, Target, FileText, Download
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { ForensicExportPanel } from './ForensicExportPanel';
 
 interface LinkageStats {
   forensicEvents: number;
@@ -54,6 +55,7 @@ export function ForensicLinkageHub() {
   const [isLoading, setIsLoading] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [isTurboRunning, setIsTurboRunning] = useState(false);
+  const [showExport, setShowExport] = useState(false);
   const [progress, setProgress] = useState(0);
   const [currentStep, setCurrentStep] = useState('');
   const [turboTable, setTurboTable] = useState('live_flight_detections_rows');
@@ -246,6 +248,13 @@ export function ForensicLinkageHub() {
           Full Backfill
         </Button>
         <Button 
+          onClick={() => setShowExport(!showExport)}
+          className="bg-red-500/20 hover:bg-red-500/30 border border-red-500/50 text-red-400"
+        >
+          <Download className="w-4 h-4 mr-2" />
+          Federal Export
+        </Button>
+        <Button 
           onClick={fetchStats}
           disabled={isLoading}
           variant="ghost"
@@ -261,6 +270,13 @@ export function ForensicLinkageHub() {
           </div>
         )}
       </div>
+
+      {/* Federal Export Panel */}
+      {showExport && (
+        <div className="mb-6 p-4 rounded-lg border border-red-500/30 bg-red-500/5">
+          <ForensicExportPanel onClose={() => setShowExport(false)} />
+        </div>
+      )}
 
       {/* Stats Grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mb-6">

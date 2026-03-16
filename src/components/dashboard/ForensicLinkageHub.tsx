@@ -55,6 +55,7 @@ export function ForensicLinkageHub() {
   const [isLoading, setIsLoading] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [isTurboRunning, setIsTurboRunning] = useState(false);
+  const [showExport, setShowExport] = useState(false);
   const [progress, setProgress] = useState(0);
   const [currentStep, setCurrentStep] = useState('');
   const [turboTable, setTurboTable] = useState('live_flight_detections_rows');

@@ -248,6 +248,13 @@ export function ForensicLinkageHub() {
           Full Backfill
         </Button>
         <Button 
+          onClick={() => setShowExport(!showExport)}
+          className="bg-red-500/20 hover:bg-red-500/30 border border-red-500/50 text-red-400"
+        >
+          <Download className="w-4 h-4 mr-2" />
+          Federal Export
+        </Button>
+        <Button 
           onClick={fetchStats}
           disabled={isLoading}
           variant="ghost"

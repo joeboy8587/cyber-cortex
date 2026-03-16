@@ -271,6 +271,13 @@ export function ForensicLinkageHub() {
         )}
       </div>
 
+      {/* Federal Export Panel */}
+      {showExport && (
+        <div className="mb-6 p-4 rounded-lg border border-red-500/30 bg-red-500/5">
+          <ForensicExportPanel onClose={() => setShowExport(false)} />
+        </div>
+      )}
+
       {/* Stats Grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mb-6">
         <div className="p-4 rounded-lg bg-card/50 border border-border/50">

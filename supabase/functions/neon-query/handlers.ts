@@ -280,7 +280,7 @@ export async function handleAction(action: string, body: Record<string, any>, sq
         const count = await sql`SELECT COUNT(DISTINCT registration) as c FROM live_flight_detections_rows
           WHERE (callsign ~ '^(REACH|PAT|RCH|EVAC|PHI|CAL|CARE|AIR1|LIFE|CHP|CBP|ICE|DHS)'
             OR registration ~ '^N[789][0-9]{2}(FA|KC|AM)'
-            OR taxonomy_tag IN ('xxb_military', 'xxb_tier1_priority', 'xxb_kcso')
+            OR taxonomy_tag IN ('xxb_military', 'xxb_tier1_priority', 'xxb_kcso', 'military_asset', 'tier1_priority', 'tier0_kcso')
             OR registration ~ '^[0-9]{2}-[0-9]{5}$') AND registration IS NOT NULL AND registration != ''`;
         return { data: { alignmentRecordsCreated: parseInt(count[0]?.c || '0') } };
       } catch (e) { return { data: { alignmentRecordsCreated: 0 } }; }

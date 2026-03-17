@@ -23,7 +23,7 @@ export async function handleAction(action: string, body: Record<string, any>, sq
             WHERE registration IS NOT NULL
               AND registration != ''
               AND (
-                taxonomy_tag IN ('xxb_tier2_shell', 'xxb_shell', 'xxb_kcso_shell', 'xxb_tier1_priority', 'xxb_kcso')
+                taxonomy_tag IN ('xxb_tier2_shell', 'xxb_shell', 'xxb_kcso_shell', 'xxb_tier1_priority', 'xxb_kcso', 'tier2_shell', 'tier1_priority', 'tier0_kcso')
                 OR registration ~ '^N7[89][0-9]'
                 OR registration ~ '^N[0-9]+FF$'
                 OR registration ~ '^N[0-9]+KC$'

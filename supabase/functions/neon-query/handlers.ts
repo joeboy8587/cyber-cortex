@@ -188,7 +188,7 @@ export async function handleAction(action: string, body: Record<string, any>, sq
       try {
         const count = await sql`SELECT COUNT(DISTINCT registration) as c FROM live_flight_detections_rows
           WHERE registration IS NOT NULL AND registration != ''
-          AND (taxonomy_tag IN ('xxb_medical_air','xxb_tier1_priority') OR registration ~ '^N[0-9]+RX$'
+          AND (taxonomy_tag IN ('xxb_medical_air','xxb_tier1_priority','medical_air','tier1_priority') OR registration ~ '^N[0-9]+RX$'
             OR callsign ILIKE '%MED%' OR callsign ILIKE '%LIFE%' OR callsign ILIKE '%MERCY%'
             OR callsign ILIKE '%REACH%' OR callsign ILIKE '%PHI%' OR callsign ILIKE '%CARE%'
             OR callsign ILIKE '%CAL%' OR callsign ILIKE '%AIR1%' OR callsign ILIKE '%EVAC%')`;

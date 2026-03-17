@@ -181,8 +181,8 @@ export function DeepCorrelationEngine() {
             action: "customQuery",
             query: `
               SELECT COUNT(*) as orphaned_flagged
-              FROM flagged_aircraft_rows_rows f
-              WHERE NOT EXISTS (
+              FROM live_flight_detections_rows f
+              WHERE f.flagged = true AND NOT EXISTS (
                 SELECT 1 FROM biometric_vector_correlations bvc
                 WHERE bvc.matched_aircraft::text ILIKE '%' || COALESCE(f.hex, f.flight, '') || '%'
               )

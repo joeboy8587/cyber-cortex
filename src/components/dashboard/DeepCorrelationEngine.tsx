@@ -230,7 +230,7 @@ export function DeepCorrelationEngine() {
 
       // Flagged Aircraft -> Biometric correlations
       corrMatrix.push({
-        source_table: 'flagged_aircraft_rows_rows',
+        source_table: 'live_flight_detections (flagged)',
         target_table: 'biometric_vector_correlations',
         correlation_type: 'Aircraft Match',
         linked_records: counts.flagged_count - orphanedFlightCount,

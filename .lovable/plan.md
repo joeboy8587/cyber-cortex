@@ -1,85 +1,65 @@
 
 
-# Tamper-Proof Data Protection for 355 Neon Tables
+## Deep Analysis: Live Flight Tracking Improvements
 
-## The Problem
-With Ceramic removed, the 15M+ records across 355 tables need protection against scrubbing, tampering, and unauthorized modification. SHA-256 hashing per-row is already in place, but individual hashes can be recomputed if someone gains DB access -- they could change data AND update the hash to match.
+### Console Errors Found
 
-## The Solution: Append-Only Merkle Audit Ledger
+1. **`relation "flagged_aircraft_rows_rows" does not exist`** — Referenced in 12 files across frontend and edge functions. This table no longer exists in the Neon database but is still queried by: `ThreatMatrix`, `BaselineDefensePanel`, `BradfordHillDashboard`, `ShellCompanyMatrix`, `DeepCorrelationEngine`, `DatabaseCoverageDashboard`, `GenevaConventionAnalysis`, `josiah-chat`, and `neon-query` allowed-tables lists. Every reference needs to be migrated to `live_flight_detections_rows` (the actual archive) with equivalent filtering.
 
-A **Merkle chain** stored in an immutable audit table. Each audit entry includes the hash of the previous entry, creating a tamper-evident chain where altering any historical record breaks every subsequent link. This is the same principle Bitcoin uses, but without needing a blockchain network.
+### Tagging & Classification Issues
 
-### How It Works
+2. **Stale `xxb_live` fallback tag** — `LiveFlightTracker.tsx:122` defaults to `taxonomy_tag: 'xxb_live'` when the API response has no tag. Per the XXB cleanup memory, `xxb_live` was renamed to `normal_traffic`. This fallback should be `'normal_traffic'`.
 
-```text
-Record A hash: abc123
-    |
-Audit Entry 1: hash(abc123 + "genesis") = def456
-    |
-Record B hash: ghi789
-    |
-Audit Entry 2: hash(ghi789 + def456) = jkl012
-    |
-Record C hash: mno345
-    |
-Audit Entry 3: hash(mno345 + jkl012) = pqr678
-```
+3. **Stale `xxb_military` check** — `LiveFlightTracker.tsx:128` checks `f.taxonomyTag === 'xxb_military'` for military classification. Should be `'military_asset'`.
 
-If someone scrubs Record B and recomputes its SHA-256, Audit Entry 2 still contains the ORIGINAL hash chained to Entry 1. The chain breaks -- tampering is provably detected.
+4. **Tier-to-threat mapping gap** — `LiveFlightTracker.tsx:127` maps tierLevel 0 to `'normal'` (falls through the ternary). Tier 0 is KCSO/Critical and should map to `'critical'`.
 
-### Architecture
+5. **UnifiedFlight interface missing fields** — `owner_operator`, `aircraft_type`, `aircraft_type_desc`, `shell_auto_detected`, `shell_detection_reason` are used via `(flight as any)` casts in the tracker but not in the TypeScript interface, reducing type safety.
 
-**1. New Supabase table: `evidence_merkle_ledger`**
-- `id` (uuid, PK)
-- `sequence_number` (bigint, auto-increment) -- monotonic ordering
-- `source_table` (text) -- which Neon table
-- `source_id` (text) -- row identifier
-- `record_hash` (text) -- the SHA-256 of the source row
-- `previous_chain_hash` (text) -- hash of the previous ledger entry
-- `chain_hash` (text) -- hash(record_hash + previous_chain_hash)
-- `anchored_at` (timestamptz) -- when this entry was chained
-- `batch_id` (text) -- group entries by processing batch
+6. **Legacy `xxb_*` tags in neon-query handlers** — `handlers.ts` still filters by `xxb_military`, `xxb_tier1_priority`, `xxb_kcso` instead of the cleaned taxonomy (`military_asset`, `tier1_priority`, `tier0_kcso`).
 
-RLS: append-only (INSERT for investigators, SELECT for investigators, NO update/delete for anyone).
+### Plan
 
-**2. New edge function: `merkle-anchor`**
-- Reads unhashed records from Neon (via existing evidence-fingerprint infrastructure)
-- For each record's SHA-256 hash, appends a chained entry to the ledger
-- Returns chain verification status
+#### 1. Fix `flagged_aircraft_rows_rows` references (6 frontend + 3 edge function files)
+Replace all queries against the non-existent table with equivalent queries against `live_flight_detections_rows` using `WHERE flagged = true` or appropriate taxonomy filters:
+- `ThreatMatrix.tsx` — query `live_flight_detections_rows WHERE flagged = true ORDER BY threat_score DESC`
+- `BaselineDefensePanel.tsx` — count from `live_flight_detections_rows WHERE flagged = true`
+- `BradfordHillDashboard.tsx` — count/distinct from same
+- `ShellCompanyMatrix.tsx` — select from `live_flight_detections_rows WHERE shell_auto_detected = true OR taxonomy_tag LIKE 'tier%'`
+- `DeepCorrelationEngine.tsx` — update all 5 references
+- `DatabaseCoverageDashboard.tsx` — update table list
+- `GenevaConventionAnalysis.tsx` — update count query
+- `josiah-chat/index.ts` — update subquery
+- `neon-query/index.ts` — remove from allowed tables, add `live_flight_detections_rows` if not already there
 
-**3. Periodic chain verification**
-- Walk the ledger, recompute each `chain_hash` from `record_hash + previous_chain_hash`
-- Any break = tampering detected, with exact location identified
+#### 2. Fix taxonomy tag fallbacks in LiveFlightTracker
+- Line 122: `'xxb_live'` → `'normal_traffic'`
+- Line 128: `'xxb_military'` → `'military_asset'`
+- Line 127: Fix tier 0 mapping — add `f.tierLevel === 0 ? 'critical' :` before the existing ternary
 
-**4. Enhanced UI: upgrade ChainOfCustodyPanel**
-- Add "Anchor to Merkle Chain" button alongside existing hash operations
-- Show chain length, last anchor time, verification status
-- Add "Verify Chain Integrity" button that walks the full chain
+#### 3. Upgrade UnifiedFlight interface
+Add `owner_operator`, `aircraft_type`, `aircraft_type_desc`, `shell_auto_detected`, `shell_detection_reason`, and `vertical_rate` to the `UnifiedFlight` interface. Remove `(flight as any)` casts in the tracker.
 
-### Why This Beats Ceramic (For This Use Case)
-
-| Feature | Ceramic | Merkle Ledger |
-|---------|---------|---------------|
-| Setup complexity | External network, DID keys, SDK | Single DB table + edge function |
-| Speed | Slow (network consensus) | Fast (direct DB writes) |
-| Cost | Network fees | Free (uses existing infra) |
-| Legal admissibility | Novel, untested | Hash chains accepted in federal court |
-| Offline resilience | Needs network | Works with just your DB |
-| Tampering detection | Yes | Yes -- chain breaks are provable |
-| 355-table scale | Impractical | Handles millions of entries |
-
-### Implementation Steps
-
-1. Create `evidence_merkle_ledger` table in Lovable Cloud with strict append-only RLS
-2. Build `merkle-anchor` edge function that chains SHA-256 hashes from Neon into the ledger
-3. Add chain verification logic to the edge function
-4. Update `ChainOfCustodyPanel` with Merkle chain controls (anchor, verify, stats)
-5. Add periodic auto-anchoring option (runs on scan intervals)
+#### 4. Clean legacy `xxb_*` tags in neon-query handlers
+Update `handlers.ts` taxonomy filters to use canonical tags (`tier0_kcso`, `tier1_priority`, `military_asset`) while keeping backward-compatible `OR` clauses for historical records.
 
 ### Technical Details
 
-- The ledger lives in Lovable Cloud (not Neon), creating a **separation of concerns** -- even if Neon is compromised, the Merkle chain in Lovable Cloud preserves the original hash sequence
-- Append-only RLS means no one (not even admins) can UPDATE or DELETE ledger entries via the API
-- Chain verification is O(n) but can be batched -- verify last 1000 entries in seconds
-- Each batch anchor processes up to 500 records per invocation to stay within edge function limits
+```text
+Files to edit:
+├── src/hooks/useNeonDatabase.ts          (UnifiedFlight interface)
+├── src/components/dashboard/LiveFlightTracker.tsx (tag fixes, type fixes)
+├── src/components/dashboard/ThreatMatrix.tsx
+├── src/components/dashboard/BaselineDefensePanel.tsx
+├── src/components/dashboard/BradfordHillDashboard.tsx
+├── src/components/dashboard/ShellCompanyMatrix.tsx
+├── src/components/dashboard/DeepCorrelationEngine.tsx
+├── src/components/dashboard/DatabaseCoverageDashboard.tsx
+├── src/components/dashboard/GenevaConventionAnalysis.tsx
+├── supabase/functions/josiah-chat/index.ts
+├── supabase/functions/neon-query/index.ts
+└── supabase/functions/neon-query/handlers.ts
+```
+
+Total: 12 files. No database migrations needed — all changes are query/code-level.
 

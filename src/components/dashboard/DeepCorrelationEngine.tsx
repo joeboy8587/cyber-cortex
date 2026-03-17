@@ -84,7 +84,7 @@ export function DeepCorrelationEngine() {
         { key: 'ocr_holding_count', query: 'SELECT COUNT(*) as cnt FROM ocr_aircraft_holding_patterns' },
         { key: 'ocr_screenshot_count', query: 'SELECT COUNT(*) as cnt FROM screenshot_ocr_data' },
         { key: 'reflections_count', query: 'SELECT COUNT(*) as cnt FROM josiah_reflections_rows' },
-        { key: 'flagged_count', query: 'SELECT COUNT(*) as cnt FROM flagged_aircraft_rows_rows' },
+        { key: 'flagged_count', query: 'SELECT COUNT(*) as cnt FROM live_flight_detections_rows WHERE flagged = true' },
       ];
 
       const counts: Record<string, number> = {};

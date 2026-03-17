@@ -226,7 +226,7 @@ serve(async (req) => {
         }
 
         case 'updateRecord': {
-          const allowedUpdateTables = ['aircraft_registry_enriched','operator_profiles_enriched','flagged_aircraft_rows_rows','shell_companies','criminal_enterprise_command_structure','live_flight_detections_rows'];
+          const allowedUpdateTables = ['aircraft_registry_enriched','operator_profiles_enriched','shell_companies','criminal_enterprise_command_structure','live_flight_detections_rows'];
           if (!table || !allowedUpdateTables.includes(table)) throw new Error(`Update not allowed for table: ${table}`);
           if (!data || typeof data !== 'object' || !where) throw new Error('Data object and where clause are required');
           const setClauses = Object.keys(data).map((col, i) => `"${col.replace(/[^a-zA-Z0-9_]/g, '')}" = $${i + 1}`).join(', ');

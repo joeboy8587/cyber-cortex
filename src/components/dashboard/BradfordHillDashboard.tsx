@@ -45,7 +45,8 @@ export function BradfordHillDashboard() {
           action: "customQuery",
           query: `
             SELECT COUNT(*) as total, COUNT(DISTINCT icao_code) as unique_hex 
-            FROM flagged_aircraft_rows_rows
+            FROM live_flight_detections_rows
+            WHERE flagged = true
           `
         }
       });

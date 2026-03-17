@@ -272,7 +272,7 @@ export function DeepCorrelationEngine() {
           sample_ids: []
         },
         {
-          table_name: 'flagged_aircraft_rows_rows',
+          table_name: 'live_flight_detections (flagged)',
           orphaned_count: orphanedFlightCount,
           total_count: counts.flagged_count,
           orphan_percent: counts.flagged_count > 0 

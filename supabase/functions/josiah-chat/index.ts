@@ -461,7 +461,7 @@ Example conversions:
         (SELECT COUNT(*) FROM josiah_reflections_rows) as reflections,
         (SELECT COUNT(*) FROM aircraft_registry_enriched) as aircraft,
         (SELECT COUNT(*) FROM biometric_vector_correlations) as bio_correlations,
-        (SELECT COUNT(*) FROM flagged_aircraft_rows_rows) as flagged_aircraft,
+        (SELECT COUNT(*) FROM live_flight_detections_rows WHERE flagged = true) as flagged_aircraft,
         (SELECT COUNT(*) FROM four_factor_correlations) as correlations
     `.catch(() => [{ flights: 0, biometrics: 0, enterprise: 0, shells: 0, reflections: 0, aircraft: 0, bio_correlations: 0, flagged_aircraft: 0, correlations: 0 }]);
     

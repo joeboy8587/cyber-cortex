@@ -401,19 +401,19 @@ export function LiveFlightTracker() {
                   </div>
                 </div>
                 {/* Rich ADS-B data row */}
-                {((flight as any).owner_operator || (flight as any).aircraft_type || (flight as any).shell_auto_detected) && (
+                {(flight.owner_operator || flight.aircraft_type || flight.shell_auto_detected) && (
                   <div className="mt-1.5 flex flex-wrap gap-1.5 text-xs">
-                    {(flight as any).owner_operator && (
-                      <span className={`px-1.5 py-0.5 rounded font-mono ${(flight as any).shell_auto_detected ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30' : 'bg-muted text-muted-foreground'}`}>
-                        👤 {(flight as any).owner_operator}
+                    {flight.owner_operator && (
+                      <span className={`px-1.5 py-0.5 rounded font-mono ${flight.shell_auto_detected ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30' : 'bg-muted text-muted-foreground'}`}>
+                        👤 {flight.owner_operator}
                       </span>
                     )}
-                    {(flight as any).aircraft_type && (
+                    {flight.aircraft_type && (
                       <span className="px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-mono">
-                        ✈ {(flight as any).aircraft_type}{(flight as any).aircraft_type_desc ? ` (${(flight as any).aircraft_type_desc})` : ''}
+                        ✈ {flight.aircraft_type}{flight.aircraft_type_desc ? ` (${flight.aircraft_type_desc})` : ''}
                       </span>
                     )}
-                    {(flight as any).shell_auto_detected && (
+                    {flight.shell_auto_detected && (
                       <Badge variant="outline" className="text-purple-400 border-purple-500/50 text-[10px] h-5">
                         🕵 SHELL DETECTED
                       </Badge>

@@ -195,7 +195,7 @@ serve(async (req) => {
         }
 
         case 'insertRecord': {
-          const allowedTables = ['aircraft_registry_enriched','operator_profiles_enriched','flagged_aircraft_rows_rows','criminal_enterprise_command_structure','live_flight_detections_rows','biometric_monitoring','ocr_aircraft_holding_patterns','daily_event_imports','josiah_reflections_rows','pattern_recognition_enriched','legal_findings','forensic_violation_citations','legal_intel_extractions','aircraft_violations'];
+          const allowedTables = ['aircraft_registry_enriched','operator_profiles_enriched','criminal_enterprise_command_structure','live_flight_detections_rows','biometric_monitoring','ocr_aircraft_holding_patterns','daily_event_imports','josiah_reflections_rows','pattern_recognition_enriched','legal_findings','forensic_violation_citations','legal_intel_extractions','aircraft_violations'];
           if (!table || !allowedTables.includes(table)) throw new Error(`Insert not allowed for table: ${table}`);
           if (!data || typeof data !== 'object') throw new Error('Data object is required');
           const columns = Object.keys(data);
@@ -226,7 +226,7 @@ serve(async (req) => {
         }
 
         case 'updateRecord': {
-          const allowedUpdateTables = ['aircraft_registry_enriched','operator_profiles_enriched','flagged_aircraft_rows_rows','shell_companies','criminal_enterprise_command_structure','live_flight_detections_rows'];
+          const allowedUpdateTables = ['aircraft_registry_enriched','operator_profiles_enriched','shell_companies','criminal_enterprise_command_structure','live_flight_detections_rows'];
           if (!table || !allowedUpdateTables.includes(table)) throw new Error(`Update not allowed for table: ${table}`);
           if (!data || typeof data !== 'object' || !where) throw new Error('Data object and where clause are required');
           const setClauses = Object.keys(data).map((col, i) => `"${col.replace(/[^a-zA-Z0-9_]/g, '')}" = $${i + 1}`).join(', ');

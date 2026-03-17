@@ -45,7 +45,7 @@ export default function BaselineDefensePanel() {
             body: { action: "customQuery", query: "SELECT COUNT(*) as count FROM live_flight_detections_rows" }
           }),
           supabase.functions.invoke("neon-query", {
-            body: { action: "customQuery", query: "SELECT COUNT(*) as count FROM flagged_aircraft_rows_rows" }
+            body: { action: "customQuery", query: "SELECT COUNT(*) as count FROM live_flight_detections_rows WHERE flagged = true" }
           }),
           supabase.functions.invoke("neon-query", {
             body: { action: "customQuery", query: "SELECT COUNT(*) as count FROM aircraft_registry_enriched" }

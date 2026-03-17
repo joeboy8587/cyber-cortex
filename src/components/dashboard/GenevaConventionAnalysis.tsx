@@ -165,7 +165,8 @@ export default function GenevaConventionAnalysis() {
           action: 'customQuery',
           query: `
             SELECT COUNT(*) as total_patterns
-            FROM flagged_aircraft_rows_rows
+            FROM live_flight_detections_rows
+            WHERE flagged = true
           `
         }
       });

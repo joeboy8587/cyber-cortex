@@ -67,7 +67,10 @@ export const ShellCompanyMatrix = () => {
           body: {
             action: 'customQuery',
             query: `
-              SELECT * FROM flagged_aircraft_rows_rows
+              SELECT registration, taxonomy_tag, threat_score, flagged_reasons, created_at,
+                     altitude, callsign
+              FROM live_flight_detections_rows
+              WHERE flagged = true OR taxonomy_tag LIKE 'tier%' OR taxonomy_tag LIKE 'xxb_tier%'
               ORDER BY created_at DESC NULLS LAST
               LIMIT 100
             `

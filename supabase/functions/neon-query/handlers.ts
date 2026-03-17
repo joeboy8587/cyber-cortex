@@ -23,7 +23,7 @@ export async function handleAction(action: string, body: Record<string, any>, sq
             WHERE registration IS NOT NULL
               AND registration != ''
               AND (
-                taxonomy_tag IN ('xxb_tier2_shell', 'xxb_shell', 'xxb_kcso_shell', 'xxb_tier1_priority', 'xxb_kcso')
+                taxonomy_tag IN ('xxb_tier2_shell', 'xxb_shell', 'xxb_kcso_shell', 'xxb_tier1_priority', 'xxb_kcso', 'tier2_shell', 'tier1_priority', 'tier0_kcso')
                 OR registration ~ '^N7[89][0-9]'
                 OR registration ~ '^N[0-9]+FF$'
                 OR registration ~ '^N[0-9]+KC$'
@@ -188,7 +188,7 @@ export async function handleAction(action: string, body: Record<string, any>, sq
       try {
         const count = await sql`SELECT COUNT(DISTINCT registration) as c FROM live_flight_detections_rows
           WHERE registration IS NOT NULL AND registration != ''
-          AND (taxonomy_tag IN ('xxb_medical_air','xxb_tier1_priority') OR registration ~ '^N[0-9]+RX$'
+          AND (taxonomy_tag IN ('xxb_medical_air','xxb_tier1_priority','medical_air','tier1_priority') OR registration ~ '^N[0-9]+RX$'
             OR callsign ILIKE '%MED%' OR callsign ILIKE '%LIFE%' OR callsign ILIKE '%MERCY%'
             OR callsign ILIKE '%REACH%' OR callsign ILIKE '%PHI%' OR callsign ILIKE '%CARE%'
             OR callsign ILIKE '%CAL%' OR callsign ILIKE '%AIR1%' OR callsign ILIKE '%EVAC%')`;
@@ -233,7 +233,7 @@ export async function handleAction(action: string, body: Record<string, any>, sq
             FROM live_flight_detections_rows
             WHERE (callsign ~ '^(REACH|PAT|RCH|EVAC|PHI|CAL|CARE|AIR1|LIFE|CHP|N[0-9]+HP|CBP|ICE|DHS)'
               OR registration ~ '^N[789][0-9]{2}(FA|KC|AM)'
-              OR taxonomy_tag IN ('xxb_military', 'xxb_tier1_priority', 'xxb_kcso')
+              OR taxonomy_tag IN ('xxb_military', 'xxb_tier1_priority', 'xxb_kcso', 'military_asset', 'tier1_priority', 'tier0_kcso')
               OR registration ~ '^[0-9]{2}-[0-9]{5}$')
               AND registration IS NOT NULL AND registration != ''
             GROUP BY 1, 2, registration HAVING COUNT(*) >= 2
@@ -280,7 +280,7 @@ export async function handleAction(action: string, body: Record<string, any>, sq
         const count = await sql`SELECT COUNT(DISTINCT registration) as c FROM live_flight_detections_rows
           WHERE (callsign ~ '^(REACH|PAT|RCH|EVAC|PHI|CAL|CARE|AIR1|LIFE|CHP|CBP|ICE|DHS)'
             OR registration ~ '^N[789][0-9]{2}(FA|KC|AM)'
-            OR taxonomy_tag IN ('xxb_military', 'xxb_tier1_priority', 'xxb_kcso')
+            OR taxonomy_tag IN ('xxb_military', 'xxb_tier1_priority', 'xxb_kcso', 'military_asset', 'tier1_priority', 'tier0_kcso')
             OR registration ~ '^[0-9]{2}-[0-9]{5}$') AND registration IS NOT NULL AND registration != ''`;
         return { data: { alignmentRecordsCreated: parseInt(count[0]?.c || '0') } };
       } catch (e) { return { data: { alignmentRecordsCreated: 0 } }; }

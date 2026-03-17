@@ -29,7 +29,7 @@ const INTEGRATED_TABLES = new Set([
   'live_flight_detections_rows',
   'live_flight_detections',
   'biometric_monitoring',
-  'flagged_aircraft_rows_rows',
+  // flagged_aircraft_rows_rows removed - flagged flights are in live_flight_detections_rows
   'josiah_reflections_rows',
   'aircraft_registry_enriched',
   'aircraft_registry_enhanced_rows',

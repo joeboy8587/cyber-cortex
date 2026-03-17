@@ -84,7 +84,7 @@ export function DeepCorrelationEngine() {
         { key: 'ocr_holding_count', query: 'SELECT COUNT(*) as cnt FROM ocr_aircraft_holding_patterns' },
         { key: 'ocr_screenshot_count', query: 'SELECT COUNT(*) as cnt FROM screenshot_ocr_data' },
         { key: 'reflections_count', query: 'SELECT COUNT(*) as cnt FROM josiah_reflections_rows' },
-        { key: 'flagged_count', query: 'SELECT COUNT(*) as cnt FROM flagged_aircraft_rows_rows' },
+        { key: 'flagged_count', query: 'SELECT COUNT(*) as cnt FROM live_flight_detections_rows WHERE flagged = true' },
       ];
 
       const counts: Record<string, number> = {};
@@ -181,8 +181,8 @@ export function DeepCorrelationEngine() {
             action: "customQuery",
             query: `
               SELECT COUNT(*) as orphaned_flagged
-              FROM flagged_aircraft_rows_rows f
-              WHERE NOT EXISTS (
+              FROM live_flight_detections_rows f
+              WHERE f.flagged = true AND NOT EXISTS (
                 SELECT 1 FROM biometric_vector_correlations bvc
                 WHERE bvc.matched_aircraft::text ILIKE '%' || COALESCE(f.hex, f.flight, '') || '%'
               )
@@ -230,7 +230,7 @@ export function DeepCorrelationEngine() {
 
       // Flagged Aircraft -> Biometric correlations
       corrMatrix.push({
-        source_table: 'flagged_aircraft_rows_rows',
+        source_table: 'live_flight_detections (flagged)',
         target_table: 'biometric_vector_correlations',
         correlation_type: 'Aircraft Match',
         linked_records: counts.flagged_count - orphanedFlightCount,
@@ -272,7 +272,7 @@ export function DeepCorrelationEngine() {
           sample_ids: []
         },
         {
-          table_name: 'flagged_aircraft_rows_rows',
+          table_name: 'live_flight_detections (flagged)',
           orphaned_count: orphanedFlightCount,
           total_count: counts.flagged_count,
           orphan_percent: counts.flagged_count > 0 

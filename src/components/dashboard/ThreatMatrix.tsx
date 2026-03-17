@@ -46,12 +46,16 @@ export function ThreatMatrix() {
           LIMIT 10
         `).catch(() => []),
         customQuery(`
-          SELECT registration, flag_reason as threat_type, 
-                 detection_count as total_violations,
-                 avg_altitude, risk_score as escalation_level,
-                 last_detected as last_seen
-          FROM flagged_aircraft_rows_rows
-          ORDER BY risk_score DESC
+          SELECT registration, 
+                 COALESCE(flagged_reasons, 'Flagged Aircraft') as threat_type, 
+                 COUNT(*) as total_violations,
+                 ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as avg_altitude, 
+                 MAX(COALESCE(threat_score, 1)) as escalation_level,
+                 MAX(detection_timestamp) as last_seen
+          FROM live_flight_detections_rows
+          WHERE flagged = true
+          GROUP BY registration, flagged_reasons
+          ORDER BY MAX(COALESCE(threat_score, 1)) DESC
           LIMIT 10
         `).catch(() => [])
       ]);

@@ -62,6 +62,12 @@ export interface UnifiedFlight {
   data_source: 'live_detection' | 'surveillance_feed';
   threat_level: 'critical' | 'high' | 'medium' | 'normal';
   is_military: boolean;
+  owner_operator?: string;
+  aircraft_type?: string;
+  aircraft_type_desc?: string;
+  shell_auto_detected?: boolean;
+  shell_detection_reason?: string;
+  vertical_rate?: number;
 }
 
 const MAX_RETRIES = 3;

@@ -46,6 +46,11 @@ export default function DataTools() {
           <DBHealthMonitor />
         </section>
 
+        {/* Flagged Aircraft Import */}
+        <section>
+          <FlaggedAircraftImporter />
+        </section>
+
         {/* Comprehensive Data Audit */}
         <section>
           <ComprehensiveDataAudit />

@@ -56,15 +56,15 @@ export default function BaselineDefensePanel() {
         ]);
 
         setStats({
-          totalTables: parseInt(tableCountRes.data?.data?.[0]?.count || "238"),
-          totalRecords: statsRes.data?.data?.totalRecords || 703604,
-          biometricRecords: parseInt(biometricRes.data?.data?.[0]?.count || "7418"),
-          flightDetections: parseInt(flightRes.data?.data?.[0]?.count || "101646"),
-          flaggedAircraft: parseInt(flaggedRes.data?.data?.[0]?.count || "35514"),
-          aircraftRegistry: parseInt(registryRes.data?.data?.[0]?.count || "4240"),
-          peakHeartRate: hrStatsRes.data?.data?.[0]?.peak || 138,
-          avgHeartRate: Math.round(parseFloat(hrStatsRes.data?.data?.[0]?.avg || "104")),
-          minHeartRate: hrStatsRes.data?.data?.[0]?.min || 83
+          totalTables: parseInt(tableCountRes.data?.data?.[0]?.count || "0"),
+          totalRecords: statsRes.data?.data?.totalRecords || 0,
+          biometricRecords: parseInt(biometricRes.data?.data?.[0]?.count || "0"),
+          flightDetections: parseInt(flightRes.data?.data?.[0]?.count || "0"),
+          flaggedAircraft: parseInt(flaggedRes.data?.data?.[0]?.count || "0"),
+          aircraftRegistry: parseInt(registryRes.data?.data?.[0]?.count || "0"),
+          peakHeartRate: hrStatsRes.data?.data?.[0]?.peak || 0,
+          avgHeartRate: Math.round(parseFloat(hrStatsRes.data?.data?.[0]?.avg || "0")),
+          minHeartRate: hrStatsRes.data?.data?.[0]?.min || 0
         });
       } catch (error) {
         console.error("Failed to fetch verified stats:", error);

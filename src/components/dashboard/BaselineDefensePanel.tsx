@@ -56,15 +56,15 @@ export default function BaselineDefensePanel() {
         ]);
 
         setStats({
-          totalTables: parseInt(tableCountRes.data?.data?.[0]?.count || "238"),
-          totalRecords: statsRes.data?.data?.totalRecords || 703604,
-          biometricRecords: parseInt(biometricRes.data?.data?.[0]?.count || "7418"),
-          flightDetections: parseInt(flightRes.data?.data?.[0]?.count || "101646"),
-          flaggedAircraft: parseInt(flaggedRes.data?.data?.[0]?.count || "35514"),
-          aircraftRegistry: parseInt(registryRes.data?.data?.[0]?.count || "4240"),
-          peakHeartRate: hrStatsRes.data?.data?.[0]?.peak || 138,
-          avgHeartRate: Math.round(parseFloat(hrStatsRes.data?.data?.[0]?.avg || "104")),
-          minHeartRate: hrStatsRes.data?.data?.[0]?.min || 83
+          totalTables: parseInt(tableCountRes.data?.data?.[0]?.count || "0"),
+          totalRecords: statsRes.data?.data?.totalRecords || 0,
+          biometricRecords: parseInt(biometricRes.data?.data?.[0]?.count || "0"),
+          flightDetections: parseInt(flightRes.data?.data?.[0]?.count || "0"),
+          flaggedAircraft: parseInt(flaggedRes.data?.data?.[0]?.count || "0"),
+          aircraftRegistry: parseInt(registryRes.data?.data?.[0]?.count || "0"),
+          peakHeartRate: hrStatsRes.data?.data?.[0]?.peak || 0,
+          avgHeartRate: Math.round(parseFloat(hrStatsRes.data?.data?.[0]?.avg || "0")),
+          minHeartRate: hrStatsRes.data?.data?.[0]?.min || 0
         });
       } catch (error) {
         console.error("Failed to fetch verified stats:", error);
@@ -79,38 +79,38 @@ export default function BaselineDefensePanel() {
   const defenseCategories = [
     {
       name: "Temporal Baseline Established",
-      status: "VERIFIED",
+      status: loading ? "LOADING" : stats?.biometricRecords ? "VERIFIED" : "PENDING",
       description: "Multi-year continuous biometric monitoring provides irrefutable baseline",
-      evidence: `${stats?.biometricRecords?.toLocaleString() || "7,418"} biometric readings with timestamps`,
-      strength: 95
+      evidence: loading ? "Loading from database..." : `${stats?.biometricRecords?.toLocaleString() ?? "—"} biometric readings with timestamps`,
+      strength: stats?.biometricRecords ? 95 : 0
     },
     {
       name: "Heart Rate Variance Documented",
-      status: "VERIFIED",
+      status: loading ? "LOADING" : stats?.peakHeartRate ? "VERIFIED" : "PENDING",
       description: "Clear statistical deviation from baseline during aircraft proximity events",
-      evidence: `Range: ${stats?.minHeartRate || 83}-${stats?.peakHeartRate || 138} BPM (Avg: ${stats?.avgHeartRate || 104} BPM)`,
-      strength: 92
+      evidence: loading ? "Loading from database..." : `Range: ${stats?.minHeartRate ?? "—"}-${stats?.peakHeartRate ?? "—"} BPM (Avg: ${stats?.avgHeartRate ?? "—"} BPM)`,
+      strength: stats?.peakHeartRate ? 92 : 0
     },
     {
       name: "Aircraft Correlation Events",
-      status: "VERIFIED",
+      status: loading ? "LOADING" : stats?.flightDetections ? "VERIFIED" : "PENDING",
       description: "Flight detections temporally aligned with physiological responses",
-      evidence: `${stats?.flightDetections?.toLocaleString() || "101,646"} flight detection records`,
-      strength: 98
+      evidence: loading ? "Loading from database..." : `${stats?.flightDetections?.toLocaleString() ?? "—"} flight detection records`,
+      strength: stats?.flightDetections ? 98 : 0
     },
     {
       name: "Flagged Aircraft Registry",
-      status: "VERIFIED",
+      status: loading ? "LOADING" : stats?.flaggedAircraft ? "VERIFIED" : "PENDING",
       description: "Suspicious aircraft identified through pattern analysis",
-      evidence: `${stats?.flaggedAircraft?.toLocaleString() || "35,514"} flagged aircraft entries`,
-      strength: 88
+      evidence: loading ? "Loading from database..." : `${stats?.flaggedAircraft?.toLocaleString() ?? "—"} flagged aircraft entries`,
+      strength: stats?.flaggedAircraft ? 88 : 0
     },
     {
       name: "Comprehensive Data Coverage",
-      status: "VERIFIED",
+      status: loading ? "LOADING" : stats?.totalTables ? "VERIFIED" : "PENDING",
       description: "Database spans multiple evidence categories for cross-validation",
-      evidence: `${stats?.totalTables || 238} tables, ${stats?.totalRecords?.toLocaleString() || "703,604"} total records`,
-      strength: 100
+      evidence: loading ? "Loading from database..." : `${stats?.totalTables ?? "—"} tables, ${stats?.totalRecords?.toLocaleString() ?? "—"} total records`,
+      strength: stats?.totalTables ? 100 : 0
     }
   ];
 
@@ -205,8 +205,8 @@ export default function BaselineDefensePanel() {
       {/* Legal Summary */}
       <div className="mt-6 pt-4 border-t border-border">
         <p className="text-xs text-muted-foreground">
-          <strong className="text-success">Legal Significance:</strong> The presence of {stats?.totalRecords?.toLocaleString() || "703,604"}+ 
-          records across {stats?.totalTables || 238} database tables with continuous timestamp data completely eliminates 
+          <strong className="text-success">Legal Significance:</strong> The presence of {stats?.totalRecords?.toLocaleString() ?? "—"}+ 
+          records across {stats?.totalTables ?? "—"} database tables with continuous timestamp data completely eliminates 
           any "no baseline" defense strategy. This empirical foundation meets federal evidence standards for establishing 
           causation per Bradford Hill criteria.
         </p>

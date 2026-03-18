@@ -20,6 +20,7 @@ import { ComprehensiveDataAudit } from "@/components/dashboard/ComprehensiveData
 import { ChainOfCustodyPanel } from "@/components/dashboard/ChainOfCustodyPanel";
 import { MerkleChainPanel } from "@/components/dashboard/MerkleChainPanel";
 import { DBHealthMonitor } from "@/components/dashboard/DBHealthMonitor";
+import FlaggedAircraftImporter from "@/components/dashboard/FlaggedAircraftImporter";
 
 export default function DataTools() {
   return (
@@ -43,6 +44,11 @@ export default function DataTools() {
         {/* Live DB Health Monitor - top priority */}
         <section>
           <DBHealthMonitor />
+        </section>
+
+        {/* Flagged Aircraft Import */}
+        <section>
+          <FlaggedAircraftImporter />
         </section>
 
         {/* Comprehensive Data Audit */}

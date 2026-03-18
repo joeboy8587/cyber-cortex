@@ -195,7 +195,7 @@ serve(async (req) => {
         }
 
         case 'insertRecord': {
-          const allowedTables = ['aircraft_registry_enriched','operator_profiles_enriched','criminal_enterprise_command_structure','live_flight_detections_rows','biometric_monitoring','ocr_aircraft_holding_patterns','daily_event_imports','josiah_reflections_rows','pattern_recognition_enriched','legal_findings','forensic_violation_citations','legal_intel_extractions','aircraft_violations'];
+          const allowedTables = ['aircraft_registry_enriched','operator_profiles_enriched','criminal_enterprise_command_structure','live_flight_detections_rows','biometric_monitoring','ocr_aircraft_holding_patterns','daily_event_imports','josiah_reflections_rows','pattern_recognition_enriched','legal_findings','forensic_violation_citations','legal_intel_extractions','aircraft_violations','flagged_aircraft_rows_rows'];
           if (!table || !allowedTables.includes(table)) throw new Error(`Insert not allowed for table: ${table}`);
           if (!data || typeof data !== 'object') throw new Error('Data object is required');
           const columns = Object.keys(data);
@@ -207,7 +207,7 @@ serve(async (req) => {
         }
 
         case 'batchInsert': {
-          const allowedTables = ['aircraft_registry_enriched','operator_profiles_enriched','live_flight_detections_rows','biometric_monitoring','ocr_aircraft_holding_patterns','daily_event_imports','josiah_reflections_rows','legal_findings','forensic_violation_citations','legal_intel_extractions','aircraft_violations'];
+          const allowedTables = ['aircraft_registry_enriched','operator_profiles_enriched','live_flight_detections_rows','biometric_monitoring','ocr_aircraft_holding_patterns','daily_event_imports','josiah_reflections_rows','legal_findings','forensic_violation_citations','legal_intel_extractions','aircraft_violations','flagged_aircraft_rows_rows'];
           if (!table || !allowedTables.includes(table)) throw new Error(`Batch insert not allowed for table: ${table}`);
           if (!Array.isArray(data) || data.length === 0) throw new Error('Data array is required');
           const columns = Object.keys(data[0] || {});
@@ -311,7 +311,7 @@ serve(async (req) => {
         }
 
         case 'getDashboardCounts': {
-          const counts = await sql`SELECT (SELECT COUNT(*) FROM live_flight_detections_rows) as total_flights, (SELECT COUNT(*) FROM live_flight_detections_rows WHERE flagged=true) as flagged_flights, (SELECT COUNT(*) FROM flagged_aircraft_rows_rows) as flagged_aircraft, (SELECT COUNT(*) FROM shell_companies) as shell_companies, (SELECT COUNT(*) FROM criminal_enterprise_command_structure) as criminal_entities, (SELECT COUNT(*) FROM operator_profiles_enriched) as operators, (SELECT COUNT(*) FROM biometric_monitoring) as biometric_records, (SELECT COUNT(DISTINCT taxonomy_tag) FROM live_flight_detections_rows WHERE taxonomy_tag IS NOT NULL) as taxonomy_categories`;
+          const counts = await sql`SELECT (SELECT COUNT(*) FROM live_flight_detections_rows) as total_flights, (SELECT COUNT(*) FROM live_flight_detections_rows WHERE flagged=true) as flagged_flights, (SELECT COUNT(*) FROM flagged_aircraft_rows_rows) as flagged_aircraft, (SELECT COUNT(*) FROM shell_companies) as shell_companies, (SELECT COUNT(*) FROM criminal_enterprise_command_structure) as criminal_entities, (SELECT COUNT(*) FROM operator_profiles_enriched) as operators, (SELECT COUNT(*) FROM biometric_monitoring) as biometric_records, (SELECT COUNT(DISTINCT taxonomy_tag) FROM live_flight_detections_rows WHERE taxonomy_tag IS NOT NULL) as taxonomy_categories`.catch(() => [{}]);
           result = (counts[0] as any) || {};
           break;
         }

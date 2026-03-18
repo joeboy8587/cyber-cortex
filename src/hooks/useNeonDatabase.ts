@@ -115,27 +115,10 @@ export function useNeonDatabase() {
     const existing = inFlightRef.current.get(key);
     if (existing) return existing as any;
 
-    const fallbackFor = () => {
-      switch (action) {
-        case 'getTables':
-        case 'getTableData':
-        case 'getTableSchema':
-        case 'unifiedFlightQuery':
-          return [];
-        case 'getStats':
-          return { tableCount: 0, totalRecords: 0 } satisfies DatabaseStats;
-        case 'getDataSourceStatus':
-          return {
-            live_detections: { total: 0, lastUpdate: null, recentCount: 0 },
-            surveillance_feed: { total: 0, lastUpdate: null, recentCount: 0 },
-            biometrics: { total: 0, lastUpdate: null, recentCount: 0 },
-            timestamp: new Date().toISOString()
-          } satisfies DataSourceStatus;
-        case 'customQuery':
-          return [];
-        default:
-          return null;
-      }
+    // CRITICAL: No fallback data. Real data only. Errors must propagate so
+    // the UI can show a clear "data unavailable" state rather than stale numbers.
+    const fallbackFor = (): never => {
+      throw new Error(`Database query failed for action: ${action}. Real data required — no fallback data permitted.`);
     };
 
     const run = (async () => {

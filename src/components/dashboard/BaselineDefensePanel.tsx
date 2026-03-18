@@ -205,8 +205,8 @@ export default function BaselineDefensePanel() {
       {/* Legal Summary */}
       <div className="mt-6 pt-4 border-t border-border">
         <p className="text-xs text-muted-foreground">
-          <strong className="text-success">Legal Significance:</strong> The presence of {stats?.totalRecords?.toLocaleString() || "703,604"}+ 
-          records across {stats?.totalTables || 238} database tables with continuous timestamp data completely eliminates 
+          <strong className="text-success">Legal Significance:</strong> The presence of {stats?.totalRecords?.toLocaleString() ?? "—"}+ 
+          records across {stats?.totalTables ?? "—"} database tables with continuous timestamp data completely eliminates 
           any "no baseline" defense strategy. This empirical foundation meets federal evidence standards for establishing 
           causation per Bradford Hill criteria.
         </p>

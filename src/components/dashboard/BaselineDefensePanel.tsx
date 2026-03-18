@@ -79,38 +79,38 @@ export default function BaselineDefensePanel() {
   const defenseCategories = [
     {
       name: "Temporal Baseline Established",
-      status: "VERIFIED",
+      status: loading ? "LOADING" : stats?.biometricRecords ? "VERIFIED" : "PENDING",
       description: "Multi-year continuous biometric monitoring provides irrefutable baseline",
-      evidence: `${stats?.biometricRecords?.toLocaleString() || "7,418"} biometric readings with timestamps`,
-      strength: 95
+      evidence: loading ? "Loading from database..." : `${stats?.biometricRecords?.toLocaleString() ?? "—"} biometric readings with timestamps`,
+      strength: stats?.biometricRecords ? 95 : 0
     },
     {
       name: "Heart Rate Variance Documented",
-      status: "VERIFIED",
+      status: loading ? "LOADING" : stats?.peakHeartRate ? "VERIFIED" : "PENDING",
       description: "Clear statistical deviation from baseline during aircraft proximity events",
-      evidence: `Range: ${stats?.minHeartRate || 83}-${stats?.peakHeartRate || 138} BPM (Avg: ${stats?.avgHeartRate || 104} BPM)`,
-      strength: 92
+      evidence: loading ? "Loading from database..." : `Range: ${stats?.minHeartRate ?? "—"}-${stats?.peakHeartRate ?? "—"} BPM (Avg: ${stats?.avgHeartRate ?? "—"} BPM)`,
+      strength: stats?.peakHeartRate ? 92 : 0
     },
     {
       name: "Aircraft Correlation Events",
-      status: "VERIFIED",
+      status: loading ? "LOADING" : stats?.flightDetections ? "VERIFIED" : "PENDING",
       description: "Flight detections temporally aligned with physiological responses",
-      evidence: `${stats?.flightDetections?.toLocaleString() || "101,646"} flight detection records`,
-      strength: 98
+      evidence: loading ? "Loading from database..." : `${stats?.flightDetections?.toLocaleString() ?? "—"} flight detection records`,
+      strength: stats?.flightDetections ? 98 : 0
     },
     {
       name: "Flagged Aircraft Registry",
-      status: "VERIFIED",
+      status: loading ? "LOADING" : stats?.flaggedAircraft ? "VERIFIED" : "PENDING",
       description: "Suspicious aircraft identified through pattern analysis",
-      evidence: `${stats?.flaggedAircraft?.toLocaleString() || "35,514"} flagged aircraft entries`,
-      strength: 88
+      evidence: loading ? "Loading from database..." : `${stats?.flaggedAircraft?.toLocaleString() ?? "—"} flagged aircraft entries`,
+      strength: stats?.flaggedAircraft ? 88 : 0
     },
     {
       name: "Comprehensive Data Coverage",
-      status: "VERIFIED",
+      status: loading ? "LOADING" : stats?.totalTables ? "VERIFIED" : "PENDING",
       description: "Database spans multiple evidence categories for cross-validation",
-      evidence: `${stats?.totalTables || 238} tables, ${stats?.totalRecords?.toLocaleString() || "703,604"} total records`,
-      strength: 100
+      evidence: loading ? "Loading from database..." : `${stats?.totalTables ?? "—"} tables, ${stats?.totalRecords?.toLocaleString() ?? "—"} total records`,
+      strength: stats?.totalTables ? 100 : 0
     }
   ];
 

@@ -237,7 +237,7 @@ export default function DataQualityAudit() {
                     <span className="text-xs text-muted-foreground">Null/Zero</span>
                   </div>
                   <div className="text-2xl font-bold text-red-400">
-                    {formatNumber(ingestionStats.coordinateStats.nullCoordinates + ingestionStats.coordinateStats.zeroCoordinates)}
+                    {formatNumber((ingestionStats.coordinateStats.nullCoordinates || 0) + (ingestionStats.coordinateStats.zeroCoordinates || 0))}
                   </div>
                 </div>
                 <div className="bg-background/30 rounded-lg p-4 border border-purple-500/20">
@@ -285,7 +285,7 @@ export default function DataQualityAudit() {
                 <Progress value={ingestionStats.coordinateStats.validationRate} className="h-2" />
                 <div className="flex justify-between text-xs text-muted-foreground mt-1">
                   <span>Valid: {formatNumber(ingestionStats.coordinateStats.validCoordinates)}</span>
-                  <span>Invalid: {formatNumber(ingestionStats.coordinateStats.nullCoordinates + ingestionStats.coordinateStats.zeroCoordinates)}</span>
+                  <span>Invalid: {formatNumber((ingestionStats.coordinateStats.nullCoordinates || 0) + (ingestionStats.coordinateStats.zeroCoordinates || 0))}</span>
                 </div>
               </div>
 
@@ -363,7 +363,7 @@ export default function DataQualityAudit() {
                       <div className="flex justify-between items-center">
                         <span className="text-sm font-mono text-cyan-400">{formatNumber(t.count)}</span>
                         <span className="text-xs text-green-400">
-                          {t.count > 0 ? Math.round((t.withCoords / t.count) * 100) : 0}% ✓
+                          {t.count > 0 ? Math.round(((t.withCoords || 0) / t.count) * 100) : 0}% ✓
                         </span>
                       </div>
                     </div>

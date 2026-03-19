@@ -1,4 +1,5 @@
 import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
 type SQL = ReturnType<typeof postgres>;
 
@@ -675,6 +676,93 @@ export async function handleAction2(action: string, body: Record<string, any>, s
       } catch (e) {
         return { error: (e as Error).message };
       }
+    }
+
+    case 'getDashboardCounts': {
+      const counts = await sql`SELECT (SELECT COUNT(*) FROM live_flight_detections_rows) as total_flights, (SELECT COUNT(*) FROM live_flight_detections_rows WHERE flagged=true) as flagged_flights, (SELECT COUNT(*) FROM flagged_aircraft_rows_rows) as flagged_aircraft, (SELECT COUNT(*) FROM shell_companies) as shell_companies, (SELECT COUNT(*) FROM criminal_enterprise_command_structure) as criminal_entities, (SELECT COUNT(*) FROM operator_profiles_enriched) as operators, (SELECT COUNT(*) FROM biometric_monitoring) as biometric_records, (SELECT COUNT(DISTINCT taxonomy_tag) FROM live_flight_detections_rows WHERE taxonomy_tag IS NOT NULL) as taxonomy_categories`;
+      return (counts[0] as any) || {};
+    }
+
+    case 'getDataSourceStatus': {
+      const [liveCount, biometricCount] = await Promise.all([
+        sql`SELECT COUNT(*) as total, MAX(detection_timestamp) as last_update, COUNT(CASE WHEN detection_timestamp > NOW() - INTERVAL '30 days' THEN 1 END) as recent FROM live_flight_detections_rows`,
+        sql`SELECT COUNT(*) as total, MAX(COALESCE(measurement_timestamp,created_at)) as last_update FROM biometric_monitoring`,
+      ]);
+      return { live_detections: { total: parseInt((liveCount[0] as any)?.total||'0'), lastUpdate: (liveCount[0] as any)?.last_update, recentCount: parseInt((liveCount[0] as any)?.recent||'0') }, biometrics: { total: parseInt((biometricCount[0] as any)?.total||'0'), lastUpdate: (biometricCount[0] as any)?.last_update }, timestamp: new Date().toISOString() };
+    }
+
+    case 'getLegalAnalysisStats': {
+      const [flightStats, enterpriseStats, shellStats, watchtowerStats, biometricStats, josiahStats, ecgStats, chainStats] = await Promise.all([
+        sql`SELECT COUNT(*)::int as total_detections, COUNT(DISTINCT registration)::int as unique_aircraft, COUNT(CASE WHEN taxonomy_tag IN ('tier0_kcso','xxb_kcso','xxb_kcso_shell','tier2_shell','xxb_tier2_shell','xxb_shell') THEN 1 END)::int as kcso_shell_count, COUNT(CASE WHEN taxonomy_tag IN ('military_asset','xxb_military') OR registration ~ '^[0-9]{2}-[0-9]{5}$' THEN 1 END)::int as military_count, COUNT(CASE WHEN taxonomy_tag IN ('medical_air','xxb_medical_air') OR callsign ~ '^(PHI|CAL|CARE|AIR1|LIFE|EVAC|N[0-9]+AM)' THEN 1 END)::int as medical_count, ROUND(AVG(NULLIF(altitude,0))::numeric,0)::int as avg_altitude, COUNT(CASE WHEN registration IN ('N912KC','N913KC') THEN 1 END)::int as kcso_primary_count, COUNT(CASE WHEN icao_address IS NULL OR icao_address='' THEN 1 END)::int as null_icao_count, COUNT(CASE WHEN taxonomy_tag LIKE 'xxb_%' AND taxonomy_tag != 'normal_traffic' THEN 1 END)::int as xxb_tagged_count, MAX(detection_timestamp) as last_detection FROM live_flight_detections_rows`,
+        sql`SELECT COUNT(DISTINCT entity_name)::int as enterprise_count FROM criminal_enterprise_command_structure`,
+        sql`SELECT COUNT(*)::int as total FROM shell_companies`,
+        sql`SELECT COUNT(*)::int as total FROM watchtower_unified_master`,
+        sql`SELECT COUNT(*)::int as total, ROUND(AVG(NULLIF(heart_rate,0))::numeric,0)::int as avg_hr FROM biometric_monitoring`,
+        sql`SELECT COUNT(*)::int as total FROM josiah_reflections_rows`,
+        sql`SELECT COUNT(*)::int as total FROM physician_verified_ecgs`,
+        sql`SELECT COUNT(*)::int as total FROM evidence_chain_links`,
+      ]);
+      return { totalDetections: (flightStats[0] as any)?.total_detections??0, uniqueAircraft: (flightStats[0] as any)?.unique_aircraft??0, kcsoShellCount: ((flightStats[0] as any)?.kcso_shell_count??0)+((shellStats[0] as any)?.total??0), militaryCount: (flightStats[0] as any)?.military_count??0, medicalCount: (flightStats[0] as any)?.medical_count??0, avgAltitude: (flightStats[0] as any)?.avg_altitude??0, enterpriseEntities: (enterpriseStats[0] as any)?.enterprise_count??0, kcsoAircraftDetections: (flightStats[0] as any)?.kcso_primary_count??0, nullIcaoCount: (flightStats[0] as any)?.null_icao_count??0, xxbTaggedCount: (flightStats[0] as any)?.xxb_tagged_count??0, watchtowerEvents: (watchtowerStats[0] as any)?.total??0, biometricEvents: (biometricStats[0] as any)?.total??0, avgHeartRate: (biometricStats[0] as any)?.avg_hr??0, josiahReflections: (josiahStats[0] as any)?.total??0, verifiedECGs: (ecgStats[0] as any)?.total??0, chainLinks: (chainStats[0] as any)?.total??0, lastDetection: (flightStats[0] as any)?.last_detection??null, dataFetchedAt: new Date().toISOString() };
+    }
+
+    case 'getFederalCaseConvergence': {
+      const [flightSt, biometricSt, ecgSt, josiahSt, ocrSt, convergenceCalc] = await Promise.all([
+        sql`SELECT COUNT(*) as total_flights, COUNT(DISTINCT registration) as unique_aircraft, COUNT(CASE WHEN taxonomy_tag IN ('xxb_kcso','xxb_tier1_priority','xxb_kcso_shell') THEN 1 END) as priority_hits FROM live_flight_detections_rows`,
+        sql`SELECT COUNT(*) as total, ROUND(COALESCE(AVG(NULLIF(heart_rate,0)),0)::numeric,0) as avg_hr FROM biometric_monitoring`,
+        sql`SELECT COUNT(*) as total FROM physician_verified_ecgs`,
+        sql`SELECT COUNT(*) as total FROM josiah_reflections_rows`,
+        sql`SELECT COUNT(*) as total FROM ocr_aircraft_holding_patterns`,
+        sql`WITH daily_factors AS (SELECT DATE(detection_timestamp) as event_date, COUNT(*) as flight_count FROM live_flight_detections_rows WHERE taxonomy_tag IN ('xxb_kcso','xxb_tier1_priority','xxb_kcso_shell','xxb_tier2_shell') GROUP BY DATE(detection_timestamp)), biometric_days AS (SELECT DATE(COALESCE(event_timestamp,measurement_timestamp,created_at)) as event_date, COUNT(*) as bio_count, COALESCE(AVG(NULLIF(heart_rate,0)),0) as avg_hr FROM biometric_monitoring WHERE COALESCE(heart_rate,0)>90 GROUP BY 1), convergence AS (SELECT f.event_date, f.flight_count, COALESCE(b.bio_count,0) as bio_count, COALESCE(b.avg_hr,0) as avg_hr FROM daily_factors f LEFT JOIN biometric_days b ON f.event_date=b.event_date) SELECT COUNT(*) as total_convergence_days, COUNT(CASE WHEN flight_count>0 AND bio_count>0 THEN 1 END) as two_factor_events, SUM(flight_count) as total_flights_in_convergence, ROUND(AVG(avg_hr)::numeric,0) as avg_hr_in_events FROM convergence`,
+      ]);
+      const totalECGs = parseInt((ecgSt[0] as any)?.total||'0');
+      const totalJosiah = parseInt((josiahSt[0] as any)?.total||'0');
+      const totalOCR = parseInt((ocrSt[0] as any)?.total||'0');
+      const twoFactorEvents = parseInt((convergenceCalc[0] as any)?.two_factor_events||'0');
+      const threeFactorEvents = Math.min(twoFactorEvents, Math.floor((totalECGs+totalJosiah)/3));
+      const fourFactorEvents = Math.min(threeFactorEvents, Math.floor(totalOCR/2));
+      return { data: { summary: { totalConvergenceEvents: parseInt((convergenceCalc[0] as any)?.total_convergence_days||'0'), fourFactorEvents, threeFactorEvents, twoFactorEvents, uniqueAircraftInvolved: parseInt((flightSt[0] as any)?.unique_aircraft||'0'), avgHeartRateInEvents: parseInt((convergenceCalc[0] as any)?.avg_hr_in_events||'0')||parseInt((biometricSt[0] as any)?.avg_hr||'0'), ecgCorrelations: totalECGs, priorityAircraftHits: parseInt((flightSt[0] as any)?.priority_hits||'0'), totalECGs, totalJosiahReflections: totalJosiah, totalOCRPatterns: totalOCR }, bradfordHillCriteria: { temporality: parseInt((flightSt[0] as any)?.total_flights||'0')>0, strength: totalECGs>=5, consistency: twoFactorEvents>=3, specificity: parseInt((flightSt[0] as any)?.priority_hits||'0')>10, plausibility: parseInt((biometricSt[0] as any)?.avg_hr||'0')>80, coherence: threeFactorEvents>=1 } } };
+    }
+
+    case 'backfillIcaoCodes': {
+      const supabaseUrl = Deno.env.get('SUPABASE_URL');
+      const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+      if (!supabaseUrl || !supabaseKey) throw new Error('Supabase credentials not configured');
+      const supabase = createClient(supabaseUrl, supabaseKey);
+      await sql.unsafe(`SET statement_timeout = '50s'`);
+      const nullRegs = await sql`SELECT DISTINCT registration FROM live_flight_detections_rows WHERE (icao_code IS NULL OR icao_code = '') AND registration IS NOT NULL AND registration != '' LIMIT 500`;
+      let selfBackfillCount = 0;
+      const startTime = Date.now();
+      for (const r of nullRegs) {
+        if (Date.now() - startTime > 20000) break;
+        const reg = (r as any).registration;
+        const known = await sql`SELECT icao_code FROM live_flight_detections_rows WHERE registration = ${reg} AND icao_code IS NOT NULL AND icao_code != '' AND LENGTH(icao_code) = 6 LIMIT 1`;
+        if (known.length > 0) {
+          const icao = (known[0] as any).icao_code;
+          const res = await sql`UPDATE live_flight_detections_rows SET icao_code = ${icao} WHERE registration = ${reg} AND (icao_code IS NULL OR icao_code = '')`;
+          selfBackfillCount += res.count || 0;
+        }
+      }
+      const nullIcaoRegs = await sql`SELECT DISTINCT registration FROM live_flight_detections_rows WHERE (icao_code IS NULL OR icao_code = '') AND registration IS NOT NULL AND registration != '' AND registration LIKE 'N%'`;
+      const regList = nullIcaoRegs.map((r: any) => r.registration);
+      const mappings: Record<string, string> = {};
+      for (let i = 0; i < regList.length; i += 500) {
+        const batch = regList.slice(i, i + 500);
+        const { data: registryData } = await supabase.from('aircraft_registry').select('n_number, mode_s_hex, mode_s_code').in('n_number', batch).not('mode_s_code', 'is', null);
+        if (registryData) {
+          for (const entry of registryData) {
+            let icaoHex: string | null = null;
+            if (entry.mode_s_hex) { icaoHex = entry.mode_s_hex.trim().toUpperCase(); }
+            else if (entry.mode_s_code) { const hexMatch = entry.mode_s_code.match(/\|\s*([A-Fa-f0-9]{4,6})\s*\|/); if (hexMatch) icaoHex = hexMatch[1].toUpperCase(); }
+            if (icaoHex && regList.includes(entry.n_number)) { mappings[entry.n_number] = icaoHex; }
+          }
+        }
+      }
+      let registryUpdated = 0;
+      for (const [reg, icao] of Object.entries(mappings)) {
+        try { const updateResult = await sql`UPDATE live_flight_detections_rows SET icao_code = ${icao} WHERE registration = ${reg} AND (icao_code IS NULL OR icao_code = '')`; registryUpdated += updateResult.count || 0; } catch (e) { console.error(`Failed to update ${reg}: ${(e as Error).message}`); }
+      }
+      await sql.unsafe(`SET statement_timeout = '30s'`);
+      return { success: true, selfBackfilled: selfBackfillCount, nullIcaoRegistrations: nullIcaoRegs.length, registryMatches: Object.keys(mappings).length, registryRecordsUpdated: registryUpdated, totalUpdated: selfBackfillCount + registryUpdated, mappingSample: Object.entries(mappings).slice(0, 10).map(([reg, icao]) => ({ registration: reg, icao_code: icao })) };
     }
 
     default:

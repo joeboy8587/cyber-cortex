@@ -363,7 +363,7 @@ export default function DataQualityAudit() {
                       <div className="flex justify-between items-center">
                         <span className="text-sm font-mono text-cyan-400">{formatNumber(t.count)}</span>
                         <span className="text-xs text-green-400">
-                          {t.count > 0 ? Math.round((t.withCoords / t.count) * 100) : 0}% ✓
+                          {t.count > 0 ? Math.round(((t.withCoords || 0) / t.count) * 100) : 0}% ✓
                         </span>
                       </div>
                     </div>

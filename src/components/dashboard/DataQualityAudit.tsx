@@ -285,7 +285,7 @@ export default function DataQualityAudit() {
                 <Progress value={ingestionStats.coordinateStats.validationRate} className="h-2" />
                 <div className="flex justify-between text-xs text-muted-foreground mt-1">
                   <span>Valid: {formatNumber(ingestionStats.coordinateStats.validCoordinates)}</span>
-                  <span>Invalid: {formatNumber(ingestionStats.coordinateStats.nullCoordinates + ingestionStats.coordinateStats.zeroCoordinates)}</span>
+                  <span>Invalid: {formatNumber((ingestionStats.coordinateStats.nullCoordinates || 0) + (ingestionStats.coordinateStats.zeroCoordinates || 0))}</span>
                 </div>
               </div>
 

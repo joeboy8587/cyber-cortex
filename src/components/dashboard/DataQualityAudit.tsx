@@ -237,7 +237,7 @@ export default function DataQualityAudit() {
                     <span className="text-xs text-muted-foreground">Null/Zero</span>
                   </div>
                   <div className="text-2xl font-bold text-red-400">
-                    {formatNumber(ingestionStats.coordinateStats.nullCoordinates + ingestionStats.coordinateStats.zeroCoordinates)}
+                    {formatNumber((ingestionStats.coordinateStats.nullCoordinates || 0) + (ingestionStats.coordinateStats.zeroCoordinates || 0))}
                   </div>
                 </div>
                 <div className="bg-background/30 rounded-lg p-4 border border-purple-500/20">

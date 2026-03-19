@@ -298,15 +298,38 @@ serve(async (req) => {
 
         case 'getIngestionStats': {
           const [coordStats, taxonomyStats, flagStats, uniqueStats] = await Promise.all([
-            sql`SELECT COUNT(*) as total_records, COUNT(CASE WHEN latitude IS NOT NULL AND longitude IS NOT NULL AND latitude != 0 AND longitude != 0 THEN 1 END) as valid_coordinates, COUNT(CASE WHEN latitude IS NULL OR longitude IS NULL THEN 1 END) as null_coordinates, COUNT(CASE WHEN latitude BETWEEN 35.20 AND 35.60 AND longitude BETWEEN -119.25 AND -118.75 THEN 1 END) as kern_county_flights FROM live_flight_detections_rows`,
-            sql`SELECT COALESCE(taxonomy_tag,'untagged') as taxonomy_tag, COUNT(*) as count FROM live_flight_detections_rows GROUP BY taxonomy_tag ORDER BY count DESC LIMIT 15`,
-            sql`SELECT COUNT(CASE WHEN flagged=true THEN 1 END) as flagged, COUNT(CASE WHEN flagged=false OR flagged IS NULL THEN 1 END) as unflagged FROM live_flight_detections_rows`,
-            sql`SELECT COUNT(DISTINCT registration) as unique_registrations, COUNT(DISTINCT icao_code) as unique_icao_codes FROM live_flight_detections_rows WHERE registration IS NOT NULL AND registration != '' AND registration != 'N/A'`,
+            sql`SELECT COUNT(*) as total_records,
+              COUNT(CASE WHEN latitude IS NOT NULL AND longitude IS NOT NULL AND latitude != 0 AND longitude != 0 THEN 1 END) as valid_coordinates,
+              COUNT(CASE WHEN latitude IS NULL OR longitude IS NULL THEN 1 END) as null_coordinates,
+              COUNT(CASE WHEN (latitude = 0 AND longitude = 0) THEN 1 END) as zero_coordinates,
+              COUNT(CASE WHEN latitude BETWEEN 35.20 AND 35.60 AND longitude BETWEEN -119.25 AND -118.75 THEN 1 END) as kern_county_flights
+            FROM live_flight_detections_rows`,
+            sql`SELECT COALESCE(taxonomy_tag,'untagged') as taxonomy_tag, COUNT(*) as count,
+              COUNT(CASE WHEN latitude IS NOT NULL AND longitude IS NOT NULL AND latitude != 0 AND longitude != 0 THEN 1 END) as with_coords
+            FROM live_flight_detections_rows GROUP BY taxonomy_tag ORDER BY count DESC LIMIT 15`,
+            sql`SELECT
+              COUNT(CASE WHEN flagged=true THEN 1 END) as flagged,
+              COUNT(CASE WHEN flagged=false OR flagged IS NULL THEN 1 END) as unflagged,
+              COUNT(CASE WHEN taxonomy_tag IN ('tier0_kcso','xxb_tier0_kcso','xxb_kcso','xxb_kcso_shell','tier1_priority','xxb_tier1_priority') THEN 1 END) as tier1,
+              COUNT(CASE WHEN taxonomy_tag IN ('tier2_shell','xxb_tier2_shell','xxb_shell') THEN 1 END) as tier2,
+              COUNT(CASE WHEN taxonomy_tag IN ('low_alt_suspicious','xxb_low_alt_suspicious','military_asset','xxb_military') THEN 1 END) as tier3,
+              COUNT(CASE WHEN taxonomy_tag NOT IN ('tier0_kcso','xxb_tier0_kcso','xxb_kcso','xxb_kcso_shell','tier1_priority','xxb_tier1_priority','tier2_shell','xxb_tier2_shell','xxb_shell','low_alt_suspicious','xxb_low_alt_suspicious','military_asset','xxb_military') OR taxonomy_tag IS NULL THEN 1 END) as tier4plus
+            FROM live_flight_detections_rows WHERE flagged = true`,
+            sql`SELECT COUNT(DISTINCT registration) as unique_registrations, COUNT(DISTINCT icao_code) as unique_icao_codes, COUNT(DISTINCT callsign) as unique_callsigns FROM live_flight_detections_rows WHERE registration IS NOT NULL AND registration != '' AND registration != 'N/A'`,
           ]);
           const cs = (coordStats[0] as any) || {};
           const totalRecords = parseInt(cs.total_records) || 0;
           const validCoords = parseInt(cs.valid_coordinates) || 0;
-          result = { coordinateStats: { totalRecords, validCoordinates: validCoords, nullCoordinates: parseInt(cs.null_coordinates)||0, kernCountyFlights: parseInt(cs.kern_county_flights)||0, validationRate: totalRecords > 0 ? parseFloat(((validCoords/totalRecords)*100).toFixed(1)) : 0 }, taxonomyDistribution: taxonomyStats.map((t: any) => ({ tag: t.taxonomy_tag, count: parseInt(t.count) })), flagStats: { flagged: parseInt((flagStats[0] as any)?.flagged)||0, unflagged: parseInt((flagStats[0] as any)?.unflagged)||0 }, uniqueIdentifiers: { registrations: parseInt((uniqueStats[0] as any)?.unique_registrations)||0, icaoCodes: parseInt((uniqueStats[0] as any)?.unique_icao_codes)||0 }, timestamp: new Date().toISOString() };
+          const nullCoords = parseInt(cs.null_coordinates) || 0;
+          const zeroCoords = parseInt(cs.zero_coordinates) || 0;
+          const fs = (flagStats[0] as any) || {};
+          result = {
+            coordinateStats: { totalRecords, validCoordinates: validCoords, nullCoordinates: nullCoords, zeroCoordinates: zeroCoords, kernCountyFlights: parseInt(cs.kern_county_flights)||0, validationRate: totalRecords > 0 ? parseFloat(((validCoords/totalRecords)*100).toFixed(1)) : 0 },
+            taxonomyDistribution: taxonomyStats.map((t: any) => ({ tag: t.taxonomy_tag, count: parseInt(t.count), withCoords: parseInt(t.with_coords) || 0 })),
+            flagStats: { flagged: parseInt(fs.flagged)||0, unflagged: parseInt(fs.unflagged)||0, tier1: parseInt(fs.tier1)||0, tier2: parseInt(fs.tier2)||0, tier3: parseInt(fs.tier3)||0, tier4plus: parseInt(fs.tier4plus)||0 },
+            uniqueIdentifiers: { registrations: parseInt((uniqueStats[0] as any)?.unique_registrations)||0, icaoCodes: parseInt((uniqueStats[0] as any)?.unique_icao_codes)||0, callsigns: parseInt((uniqueStats[0] as any)?.unique_callsigns)||0 },
+            timestamp: new Date().toISOString()
+          };
           break;
         }
 

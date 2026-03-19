@@ -98,8 +98,8 @@ serve(async (req) => {
         const rows = await sql`
           SELECT
             schemaname,
-            tablename,
-            indexname,
+            relname AS tablename,
+            indexrelname AS indexname,
             idx_scan,
             idx_tup_read,
             idx_tup_fetch,

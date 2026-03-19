@@ -98,8 +98,8 @@ serve(async (req) => {
         const rows = await sql`
           SELECT
             schemaname,
-            tablename,
-            indexname,
+            relname AS tablename,
+            indexrelname AS indexname,
             idx_scan,
             idx_tup_read,
             idx_tup_fetch,
@@ -249,7 +249,7 @@ serve(async (req) => {
             ORDER BY n_dead_tup DESC LIMIT 5
           `,
           sql`
-            SELECT indexname, tablename, idx_scan,
+            SELECT indexrelname AS indexname, relname AS tablename, idx_scan,
               pg_size_pretty(pg_relation_size(indexrelid)) AS size
             FROM pg_stat_user_indexes
             WHERE idx_scan = 0

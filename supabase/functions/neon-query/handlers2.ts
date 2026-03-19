@@ -765,7 +765,18 @@ export async function handleAction2(action: string, body: Record<string, any>, s
       return { success: true, selfBackfilled: selfBackfillCount, nullIcaoRegistrations: nullIcaoRegs.length, registryMatches: Object.keys(mappings).length, registryRecordsUpdated: registryUpdated, totalUpdated: selfBackfillCount + registryUpdated, mappingSample: Object.entries(mappings).slice(0, 10).map(([reg, icao]) => ({ registration: reg, icao_code: icao })) };
     }
 
+    case 'scanAllTables': {
+      const allTables = await sql`
+        SELECT c.relname AS table, c.reltuples::bigint AS rows
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.relkind = 'r' AND n.nspname = 'public'
+        ORDER BY c.reltuples DESC
+      `;
+      return { data: { allTables } };
+    }
+
     default:
-      return null; // Signal "not handled" back to main router
+      return null;
   }
 }

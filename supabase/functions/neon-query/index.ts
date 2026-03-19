@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+// createClient moved to handlers2.ts to reduce boot parse time
 // Lazy-loaded to avoid BOOT_ERROR from combined file size exceeding Deno parse limits
 let _handleAction: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
 let _handleAction2: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;

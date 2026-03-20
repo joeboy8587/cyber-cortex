@@ -58,10 +58,10 @@ interface ViolationStats {
 }
 
 const severityColors: Record<string, string> = {
-  CRITICAL: '#ef4444',
-  WARNING: '#f59e0b',
-  CAUTION: '#3b82f6',
-  NORMAL: '#22c55e',
+  CRITICAL: 'hsl(var(--destructive))',
+  WARNING: 'hsl(var(--warning))',
+  CAUTION: 'hsl(var(--primary))',
+  NORMAL: 'hsl(var(--success))',
 };
 
 export default function ForensicTrajectoryPanel() {
@@ -238,9 +238,9 @@ export default function ForensicTrajectoryPanel() {
                         contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', fontSize: 12 }}
                         labelStyle={{ color: 'hsl(var(--foreground))' }}
                       />
-                      <ReferenceLine y={500} stroke="#ef4444" strokeDasharray="5 5" label={{ value: '500ft CRITICAL', fill: '#ef4444', fontSize: 10 }} />
-                      <ReferenceLine y={1000} stroke="#f59e0b" strokeDasharray="5 5" label={{ value: '1000ft WARNING', fill: '#f59e0b', fontSize: 10 }} />
-                      <ReferenceLine y={1500} stroke="#3b82f6" strokeDasharray="3 3" label={{ value: '1500ft CAUTION', fill: '#3b82f6', fontSize: 10 }} />
+                       <ReferenceLine y={500} stroke="hsl(var(--destructive))" strokeDasharray="5 5" label={{ value: '500ft CRITICAL', fill: 'hsl(var(--destructive))', fontSize: 10 }} />
+                       <ReferenceLine y={1000} stroke="hsl(var(--warning))" strokeDasharray="5 5" label={{ value: '1000ft WARNING', fill: 'hsl(var(--warning))', fontSize: 10 }} />
+                       <ReferenceLine y={1500} stroke="hsl(var(--primary))" strokeDasharray="3 3" label={{ value: '1500ft CAUTION', fill: 'hsl(var(--primary))', fontSize: 10 }} />
                       <Area
                         type="monotone"
                         dataKey="altitude"
@@ -249,7 +249,7 @@ export default function ForensicTrajectoryPanel() {
                         strokeWidth={2}
                         dot={(props: any) => {
                           const color = severityColors[props.payload?.severity] || 'hsl(var(--primary))';
-                          return <circle cx={props.cx} cy={props.cy} r={props.payload?.severity === 'CRITICAL' ? 5 : 3} fill={color} stroke={color} />;
+                           return <circle key={`dot-${props.cx}-${props.cy}-${props.payload?.time ?? 'unknown'}`} cx={props.cx} cy={props.cy} r={props.payload?.severity === 'CRITICAL' ? 5 : 3} fill={color} stroke={color} />;
                         }}
                       />
                     </AreaChart>

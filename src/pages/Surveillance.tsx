@@ -23,6 +23,7 @@ import F24RadarUploader from "@/components/dashboard/F24RadarUploader";
 import { AutonomousWatchtower } from "@/components/dashboard/AutonomousWatchtower";
 import UnmaskHQSystem from "@/components/dashboard/UnmaskHQSystem";
 import ForensicTrajectoryPanel from "@/components/dashboard/ForensicTrajectoryPanel";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export default function Surveillance() {
   return (
@@ -43,87 +44,99 @@ export default function Surveillance() {
           </div>
         </div>
 
-        {/* 📊 FORENSIC TRAJECTORY & VIOLATIONS EVIDENCE LOG */}
-        <section>
-          <ForensicTrajectoryPanel />
-        </section>
+        <Tabs defaultValue="investigation" className="space-y-6">
+          <div className="rounded-lg border border-border/50 bg-background/40 p-3">
+            <div className="mb-3 flex flex-col gap-1">
+              <h2 className="font-mono text-sm uppercase tracking-[0.2em] text-foreground">
+                Load panels on demand
+              </h2>
+              <p className="text-xs text-muted-foreground">
+                Tabs reduce first-load pressure on the backend and prevent startup request stampedes.
+              </p>
+            </div>
 
-        {/* 🧠 AUTONOMOUS WATCHTOWER - Bias-Free AI Detection */}
-        <section>
-          <AutonomousWatchtower />
-        </section>
-
-        {/* 🎯 UNMASK HQ - Landing Cluster & Base Detection */}
-        <section>
-          <UnmaskHQSystem />
-        </section>
-
-        {/* 🔥 BIOMETRIC BATTLE MAP - Real-Time Overlay */}
-        <section>
-          <BiometricBattleMap />
-        </section>
-
-        {/* Map & Live Tracker */}
-        <section className="space-y-6">
-          <AircraftMapVisualization />
-          <LiveFlightTracker />
-        </section>
-
-        {/* 👻 NULL ICAO FORENSIC INVESTIGATOR */}
-        <section>
-          <NullIcaoForensicPanel />
-        </section>
-
-        {/* 🔥 ADS-B SPOOFING DETECTOR - Real-Time Masking Detection */}
-        <section>
-          <ADSBSpoofingDetector />
-        </section>
-
-        {/* Direct Correlation */}
-        <section>
-          <DirectAircraftCorrelation />
-        </section>
-
-        {/* Pattern Analysis */}
-        <section className="space-y-6">
-          <HammerAnvilPatternPanel />
-          <HighLowOperationsPanel />
-          <FlightSaturationAnalyzer />
-        </section>
-
-        {/* Fleet Tracking */}
-        <section className="space-y-6">
-          <FleetTrackingLedger />
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-            <AircraftAlertSystem />
-            <OperatorEnrichmentPanel />
+            <TabsList className="grid h-auto grid-cols-2 gap-2 bg-transparent p-0 lg:grid-cols-6">
+              <TabsTrigger value="investigation">Investigation</TabsTrigger>
+              <TabsTrigger value="live">Live Ops</TabsTrigger>
+              <TabsTrigger value="watchtower">Watchtower</TabsTrigger>
+              <TabsTrigger value="patterns">Patterns</TabsTrigger>
+              <TabsTrigger value="monitoring">Monitoring</TabsTrigger>
+              <TabsTrigger value="intake">Intake</TabsTrigger>
+            </TabsList>
           </div>
-        </section>
 
-        {/* Military Tracking */}
-        <section className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-          <MilitaryAircraftPanel />
-          <CanadianMilitaryTracker />
-        </section>
+          <TabsContent value="investigation" className="space-y-6">
+            <section>
+              <ForensicTrajectoryPanel />
+            </section>
+            <section>
+              <DirectAircraftCorrelation />
+            </section>
+            <section>
+              <NullIcaoForensicPanel />
+            </section>
+          </TabsContent>
 
-        {/* ADSB & Spoofing */}
-        <section className="space-y-6">
-          <ADSBSpoofingAudit />
-          <AlaskaAirlinesDashboard />
-        </section>
+          <TabsContent value="live" className="space-y-6">
+            <section className="space-y-6">
+              <AircraftMapVisualization />
+              <LiveFlightTracker />
+            </section>
+            <section>
+              <AircraftAlertSystem />
+            </section>
+          </TabsContent>
 
-        {/* Pattern Analysis Tools */}
-        <section className="space-y-6">
-          <DeepPatternAnalyzer />
-          <PatternCoordinationAnalysis />
-          <InfrastructureCorrelation />
-        </section>
+          <TabsContent value="watchtower" className="space-y-6">
+            <section>
+              <AutonomousWatchtower />
+            </section>
+            <section>
+              <UnmaskHQSystem />
+            </section>
+            <section>
+              <BiometricBattleMap />
+            </section>
+          </TabsContent>
 
-        {/* Data Upload */}
-        <section className="space-y-6">
-          <F24RadarUploader />
-          <FlightDataScraper />
-        </section>
+          <TabsContent value="patterns" className="space-y-6">
+            <section className="space-y-6">
+              <HammerAnvilPatternPanel />
+              <HighLowOperationsPanel />
+              <FlightSaturationAnalyzer />
+            </section>
+            <section className="space-y-6">
+              <DeepPatternAnalyzer />
+              <PatternCoordinationAnalysis />
+              <InfrastructureCorrelation />
+            </section>
+          </TabsContent>
+
+          <TabsContent value="monitoring" className="space-y-6">
+            <section>
+              <ADSBSpoofingDetector />
+            </section>
+            <section className="space-y-6">
+              <ADSBSpoofingAudit />
+              <AlaskaAirlinesDashboard />
+            </section>
+            <section className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+              <MilitaryAircraftPanel />
+              <CanadianMilitaryTracker />
+            </section>
+          </TabsContent>
+
+          <TabsContent value="intake" className="space-y-6">
+            <section className="space-y-6">
+              <FleetTrackingLedger />
+              <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+                <OperatorEnrichmentPanel />
+                <F24RadarUploader />
+              </div>
+              <FlightDataScraper />
+            </section>
+          </TabsContent>
+        </Tabs>
       </div>
     </DashboardLayout>
   );

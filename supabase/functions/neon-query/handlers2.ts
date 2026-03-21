@@ -776,6 +776,79 @@ export async function handleAction2(action: string, body: Record<string, any>, s
       return { data: { allTables } };
     }
 
+    // ============== TAXONOMY ==============
+    case 'getTaxonomy':
+    case 'taxonomyStats': {
+      try {
+        const taxonomy = await sql`
+          SELECT COALESCE(taxonomy_tag, 'untagged') as tag, COUNT(*)::int as count,
+            COUNT(CASE WHEN flagged = true THEN 1 END)::int as flagged_count,
+            ROUND(AVG(COALESCE(altitude, 0))::numeric, 0)::int as avg_altitude,
+            COUNT(DISTINCT registration)::int as unique_aircraft
+          FROM live_flight_detections_rows
+          GROUP BY taxonomy_tag
+          ORDER BY count DESC
+        `;
+        return { data: taxonomy };
+      } catch (e) {
+        console.error('taxonomyStats error:', e);
+        return { data: [] };
+      }
+    }
+
+    // ============== ENTERPRISE PROFILES ==============
+    case 'getEnterpriseProfiles': {
+      try {
+        const profiles = await sql`
+          SELECT
+            COALESCE(registration, icao_code) as registration,
+            COUNT(*)::int as detection_count,
+            COALESCE(AVG(threat_score), 0) as avg_threat_score,
+            MIN(detection_timestamp) as first_seen,
+            MAX(detection_timestamp) as last_seen
+          FROM live_flight_detections_rows
+          WHERE registration IS NOT NULL AND registration != ''
+          GROUP BY COALESCE(registration, icao_code)
+          HAVING COUNT(*) > 5
+          ORDER BY COUNT(*) DESC
+          LIMIT 25
+        `;
+        const stats = await sql`
+          SELECT COUNT(DISTINCT registration)::int as total_aircraft,
+            COUNT(*)::int as total_detections,
+            COUNT(CASE WHEN flagged = true THEN 1 END)::int as flagged_flights
+          FROM live_flight_detections_rows
+          WHERE registration IS NOT NULL AND registration != ''
+        `;
+        return {
+          profiles: profiles || [],
+          stats: {
+            totalAircraft: parseInt((stats[0] as any)?.total_aircraft || '0'),
+            totalDetections: parseInt((stats[0] as any)?.total_detections || '0'),
+            totalFlagged: parseInt((stats[0] as any)?.flagged_flights || '0')
+          }
+        };
+      } catch (e) {
+        console.error('getEnterpriseProfiles error:', e);
+        return { profiles: [], stats: {} };
+      }
+    }
+
+    // ============== KCSO BUDGET DATA ==============
+    case 'getKCSOBudgetData': {
+      try {
+        const budgetData = await sql`
+          SELECT aircraft_tail_number, year, budget, purchases, spending_patterns
+          FROM kcso_aircraft_budget_history
+          ORDER BY year DESC, aircraft_tail_number
+        `.catch(() => []);
+        return { data: budgetData };
+      } catch (e) {
+        console.error('getKCSOBudgetData error:', e);
+        return { data: [] };
+      }
+    }
+
     default:
       return null;
   }

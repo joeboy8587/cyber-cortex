@@ -50,8 +50,8 @@ export const AlaskaAirlinesDashboard = () => {
     peakHour: 19 // 7 PM
   });
 
-  // Target callsigns from investigation
-  const TARGET_CALLSIGNS = ['ASA1310', 'ASA559', 'ASA711', 'QXE2456', 'SKW3307'];
+  // Target callsigns derived from detection patterns (loaded dynamically)
+  const [targetCallsigns, setTargetCallsigns] = useState<string[]>([]);
 
   const fetchAlaskaData = useCallback(async () => {
     setLoading(true);

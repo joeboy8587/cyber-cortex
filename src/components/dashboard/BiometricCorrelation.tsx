@@ -13,15 +13,13 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { toast } from "sonner";
 
-// Priority aircraft registrations for filtering
-const PRIORITY_AIRCRAFT = [
-  'N912KC', 'N913KC', 'N743AM', 'N229AM', 'N790FA', 'N788FA', 
-  'N791FA', 'N997SE', 'N2464D', 'N766ME', 'N118SY', 'N156HP', 'N739HP'
-];
+// Priority aircraft loaded dynamically from investigation config
+// These are populated on mount from getInvestigationConfig
+let _cachedPriorityAircraft: string[] | null = null;
 
-const KCSO_AIRCRAFT = ['N912KC', 'N913KC'];
-const SHELL_COMPANY_AIRCRAFT = ['N790FA', 'N788FA', 'N791FA', 'N997SE', 'N2464D'];
-const MEDICAL_AIRCRAFT = ['N743AM', 'N229AM', 'N766ME'];
+const DEFAULT_KCSO_AIRCRAFT = ['N912KC', 'N913KC'];
+const DEFAULT_SHELL_COMPANY_AIRCRAFT = ['N790FA', 'N788FA', 'N791FA', 'N997SE', 'N2464D'];
+const DEFAULT_MEDICAL_AIRCRAFT = ['N743AM', 'N229AM', 'N766ME'];
 
 interface Correlation {
   biometric_id: string;

@@ -14,7 +14,8 @@ interface StreamConfig {
   description: string;
 }
 
-const streamConfigs: StreamConfig[] = [
+// Dynamic stream discovery - no longer hardcoded
+const STATIC_STREAMS: StreamConfig[] = [
   {
     name: "ADS-B Flight Tracking",
     icon: Radio,

@@ -68,6 +68,9 @@ export default function Surveillance() {
 
           <TabsContent value="investigation" className="space-y-6">
             <section>
+              <TaxonomyBridgePanel />
+            </section>
+            <section>
               <ForensicTrajectoryPanel />
             </section>
             <section>

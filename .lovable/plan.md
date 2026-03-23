@@ -1,85 +1,118 @@
 
 
-# Tamper-Proof Data Protection for 355 Neon Tables
+# Command Center Deep Audit: Hardcoded Data & Improvement Plan
 
-## The Problem
-With Ceramic removed, the 15M+ records across 355 tables need protection against scrubbing, tampering, and unauthorized modification. SHA-256 hashing per-row is already in place, but individual hashes can be recomputed if someone gains DB access -- they could change data AND update the hash to match.
+## Findings Summary
 
-## The Solution: Append-Only Merkle Audit Ledger
+The archive has grown to 900+ tables with vectors, but the command center still contains significant hardcoded data and missed connections. Here is the full audit.
 
-A **Merkle chain** stored in an immutable audit table. Each audit entry includes the hash of the previous entry, creating a tamper-evident chain where altering any historical record breaks every subsequent link. This is the same principle Bitcoin uses, but without needing a blockchain network.
+---
 
-### How It Works
+## HARDCODED DATA FOUND (Must Be Replaced with Live Neon Queries)
 
-```text
-Record A hash: abc123
-    |
-Audit Entry 1: hash(abc123 + "genesis") = def456
-    |
-Record B hash: ghi789
-    |
-Audit Entry 2: hash(ghi789 + def456) = jkl012
-    |
-Record C hash: mno345
-    |
-Audit Entry 3: hash(mno345 + jkl012) = pqr678
+### Critical: Fully Hardcoded Components
+
+1. **ShellNetworkGraph.tsx** — `KNOWN_ENTERPRISE` array (lines 46-118): 7 entities with hardcoded names, threat scores, RICO indicators, and linked aircraft. Should query `criminal_enterprise_command_structure` + `shell_companies` + `aircraft_registry` from Neon.
+
+2. **NullHypothesisPanel.tsx** — `hypothesisTests` array (lines 15-57): 6 hypothesis results with hardcoded statistics ("91× temporal enrichment", "Aircraft present only 18.1% of time"). Also `expectedKCSOAircraft` and `shellCompanyLinks` arrays (lines 60-71). All should be computed live from actual detection counts and correlation data.
+
+3. **ShellCompanyInvestigator.tsx** — Ownership layers (lines 90-160): Entire RICO hierarchy hardcoded with entity names, jurisdictions, risk scores, and RICO indicators. Should query Neon tables (`criminal_enterprise_command_structure`, `operator_profiles_enriched`, `shell_companies`).
+
+4. **KCSOBudgetTimeline.tsx** — `KCSO_AIRCRAFT_DATA` array (lines 47-264): ~220 lines of hardcoded budget data. Has a DB import function but still renders from the local array. Should query `kcso_aircraft_budget_history` from Neon after import.
+
+5. **HammerAnvilPatternPanel.tsx** — `trackedAircraft` initial state (lines 73-104): Hardcoded aircraft with operator names, models, and roles. Should initialize from `kcso_fleet` or `aircraft_registry` tables.
+
+6. **BiometricCorrelation.tsx** — `PRIORITY_AIRCRAFT` array (line 17): Hardcoded list of 13 tail numbers. Should query from `live_flight_detections_rows WHERE flagged = true` or a dedicated priority list table.
+
+7. **AlaskaAirlinesDashboard.tsx** — `TARGET_CALLSIGNS` array (line 54): Hardcoded callsigns. Should be queryable from a configuration table or derived from detection patterns.
+
+### Medium: Partially Hardcoded
+
+8. **HighLowOperationsPanel.tsx** — Reference text mentions "N912KC, N913KC" by name in JSX description (line 171). Should be dynamic.
+
+9. **DataStreams.tsx** — Only 5 stream categories hardcoded. With 900+ tables, should dynamically discover and group all available data streams.
+
+---
+
+## IMPROVEMENT PLAN
+
+### Phase 1: Purge Hardcoded Data (Immediate)
+
+**Task 1: Create `getInvestigationConfig` handler in neon-query**
+- New handler that queries priority aircraft, shell companies, and enterprise structure from Neon tables
+- Returns: priority_aircraft list, shell_company_network, enterprise_hierarchy, hypothesis_metrics
+- Tables: `criminal_enterprise_command_structure`, `shell_companies`, `operator_profiles_enriched`, `kcso_fleet`, `aircraft_registry`
+
+**Task 2: Refactor 7 components to use live data**
+- ShellNetworkGraph: Replace `KNOWN_ENTERPRISE` with Neon query
+- NullHypothesisPanel: Compute hypothesis stats from actual detection ratios
+- ShellCompanyInvestigator: Query ownership layers from Neon
+- KCSOBudgetTimeline: Read from `kcso_aircraft_budget_history` after verifying import
+- HammerAnvilPatternPanel: Initialize tracked aircraft from `kcso_fleet`
+- BiometricCorrelation: Query flagged aircraft list dynamically
+- AlaskaAirlinesDashboard: Derive target callsigns from detection patterns
+
+### Phase 2: Expand Data Coverage
+
+**Task 3: Dynamic Data Stream Discovery**
+- Replace 5 hardcoded stream configs in DataStreams.tsx with a query that discovers all table categories from the 900+ table archive
+- Group by schema pattern (biometric_*, flight_*, legal_*, josiah_*, vector_*, etc.)
+
+**Task 4: Vector Search Integration**
+- The 238+ vector tables are underutilized. Add a "Vector Coverage" panel showing which evidence domains have semantic search capability
+- Surface vector table health (row counts, dimensionality) in the Data Tools hub
+
+### Phase 3: Live Flight Enhancement
+
+**Task 5: Unified Live + Archive Flight View**
+- Ensure the Live Flight Tracker merges real-time API data with the 19.7M+ archive seamlessly
+- Add archive depth indicator showing how far back historical data extends per aircraft
+
+---
+
+## Technical Approach
+
+### New neon-query handler: `getInvestigationConfig`
+```sql
+-- Priority aircraft from actual flagged detections
+SELECT DISTINCT registration FROM live_flight_detections_rows 
+WHERE flagged = true AND registration IS NOT NULL;
+
+-- Enterprise structure from Neon
+SELECT * FROM criminal_enterprise_command_structure ORDER BY tier;
+
+-- Shell companies from Neon  
+SELECT * FROM shell_companies;
+
+-- KCSO fleet from Neon
+SELECT * FROM kcso_fleet;
 ```
 
-If someone scrubs Record B and recomputes its SHA-256, Audit Entry 2 still contains the ORIGINAL hash chained to Entry 1. The chain breaks -- tampering is provably detected.
+### Component refactoring pattern
+Each hardcoded component gets a `useEffect` that loads its config from the new handler, with the hardcoded array as a temporary fallback only if the query fails (graceful degradation).
 
-### Architecture
+---
 
-**1. New Supabase table: `evidence_merkle_ledger`**
-- `id` (uuid, PK)
-- `sequence_number` (bigint, auto-increment) -- monotonic ordering
-- `source_table` (text) -- which Neon table
-- `source_id` (text) -- row identifier
-- `record_hash` (text) -- the SHA-256 of the source row
-- `previous_chain_hash` (text) -- hash of the previous ledger entry
-- `chain_hash` (text) -- hash(record_hash + previous_chain_hash)
-- `anchored_at` (timestamptz) -- when this entry was chained
-- `batch_id` (text) -- group entries by processing batch
+## Files to Modify
 
-RLS: append-only (INSERT for investigators, SELECT for investigators, NO update/delete for anyone).
+| File | Change |
+|------|--------|
+| `supabase/functions/neon-query/handlers2.ts` | Add `getInvestigationConfig` handler |
+| `src/components/dashboard/ShellNetworkGraph.tsx` | Replace `KNOWN_ENTERPRISE` with live query |
+| `src/components/dashboard/NullHypothesisPanel.tsx` | Compute stats from real data |
+| `src/components/dashboard/ShellCompanyInvestigator.tsx` | Query ownership from Neon |
+| `src/components/dashboard/KCSOBudgetTimeline.tsx` | Switch to DB-first rendering |
+| `src/components/dashboard/HammerAnvilPatternPanel.tsx` | Init from `kcso_fleet` |
+| `src/components/dashboard/BiometricCorrelation.tsx` | Dynamic priority list |
+| `src/components/dashboard/AlaskaAirlinesDashboard.tsx` | Derive callsigns from data |
+| `src/components/dashboard/DataStreams.tsx` | Dynamic stream discovery |
 
-**2. New edge function: `merkle-anchor`**
-- Reads unhashed records from Neon (via existing evidence-fingerprint infrastructure)
-- For each record's SHA-256 hash, appends a chained entry to the ledger
-- Returns chain verification status
+---
 
-**3. Periodic chain verification**
-- Walk the ledger, recompute each `chain_hash` from `record_hash + previous_chain_hash`
-- Any break = tampering detected, with exact location identified
-
-**4. Enhanced UI: upgrade ChainOfCustodyPanel**
-- Add "Anchor to Merkle Chain" button alongside existing hash operations
-- Show chain length, last anchor time, verification status
-- Add "Verify Chain Integrity" button that walks the full chain
-
-### Why This Beats Ceramic (For This Use Case)
-
-| Feature | Ceramic | Merkle Ledger |
-|---------|---------|---------------|
-| Setup complexity | External network, DID keys, SDK | Single DB table + edge function |
-| Speed | Slow (network consensus) | Fast (direct DB writes) |
-| Cost | Network fees | Free (uses existing infra) |
-| Legal admissibility | Novel, untested | Hash chains accepted in federal court |
-| Offline resilience | Needs network | Works with just your DB |
-| Tampering detection | Yes | Yes -- chain breaks are provable |
-| 355-table scale | Impractical | Handles millions of entries |
-
-### Implementation Steps
-
-1. Create `evidence_merkle_ledger` table in Lovable Cloud with strict append-only RLS
-2. Build `merkle-anchor` edge function that chains SHA-256 hashes from Neon into the ledger
-3. Add chain verification logic to the edge function
-4. Update `ChainOfCustodyPanel` with Merkle chain controls (anchor, verify, stats)
-5. Add periodic auto-anchoring option (runs on scan intervals)
-
-### Technical Details
-
-- The ledger lives in Lovable Cloud (not Neon), creating a **separation of concerns** -- even if Neon is compromised, the Merkle chain in Lovable Cloud preserves the original hash sequence
-- Append-only RLS means no one (not even admins) can UPDATE or DELETE ledger entries via the API
-- Chain verification is O(n) but can be batched -- verify last 1000 entries in seconds
-- Each batch anchor processes up to 500 records per invocation to stay within edge function limits
+## Priority Order
+1. **getInvestigationConfig handler** — single backend endpoint to power all refactored components
+2. **ShellNetworkGraph + NullHypothesisPanel** — most visible hardcoded data, highest legal risk if stale
+3. **KCSOBudgetTimeline** — switch to DB-first after confirming import
+4. **Remaining components** — BiometricCorrelation, HammerAnvil, Alaska, DataStreams
+5. **Vector coverage panel** — surface the 238+ vector tables
 

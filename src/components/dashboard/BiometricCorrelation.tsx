@@ -782,7 +782,7 @@ export function BiometricCorrelation() {
                       {fleetConvergences.slice(0, 30).map((conv, i) => {
                         const key = `${conv.biometric_timestamp}-${i}`;
                         const isExpanded = expandedConvergences.has(key);
-                        const priorityCount = conv.aircraft.filter(a => PRIORITY_AIRCRAFT.includes(a.registration)).length;
+                        const priorityCount = conv.aircraft.filter(a => priorityAircraft.includes(a.registration)).length;
                         const lowAltCount = conv.aircraft.filter(a => a.altitude !== undefined && a.altitude < 5000).length;
                         
                         return (

@@ -187,39 +187,6 @@ export function ShellNetworkGraph() {
         }
       });
 
-      // 3. Enrich from aircraft_registry (Neon)
-      const registryData = extractNeonData(shellResp.data);
-      registryData.forEach((r: any) => {
-        const regName = r.registrant_name?.trim();
-        const nNumber = r.n_number?.trim();
-        if (!regName || !nNumber) return;
-
-        const operatorId = regName.toLowerCase().replace(/[\s\/]+/g, "_");
-        const aircraftId = nNumber.toLowerCase();
-
-        addNode({
-          id: operatorId,
-          name: regName,
-          type: "shell",
-          tier: 2,
-          ricoIndicators: ["FAA_REGISTERED"],
-          connections: 0,
-          threatScore: 45
-        });
-
-        addNode({
-          id: aircraftId,
-          name: nNumber,
-          type: "aircraft",
-          tier: 4,
-          ricoIndicators: [],
-          connections: 0,
-          threatScore: 35
-        });
-
-        addLink(operatorId, aircraftId, "registration", 0.6);
-      });
-
       // Calculate RICO score
       const tier0 = nodes.filter(n => n.tier === 0).length;
       const tier1 = nodes.filter(n => n.tier === 1).length;

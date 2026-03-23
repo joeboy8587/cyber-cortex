@@ -373,9 +373,9 @@ export function BiometricCorrelation() {
   const filteredCorrelations = useMemo(() => {
     switch (filterMode) {
       case 'priority':
-        return correlations.filter(c => PRIORITY_AIRCRAFT.includes(c.aircraft_id));
+        return correlations.filter(c => priorityAircraft.includes(c.aircraft_id));
       case 'kcso':
-        return correlations.filter(c => KCSO_AIRCRAFT.includes(c.aircraft_id));
+        return correlations.filter(c => kcsoAircraft.includes(c.aircraft_id));
       case 'low-altitude':
         return correlations.filter(c => c.altitude !== undefined && c.altitude < 5000);
       case 'high-strength':

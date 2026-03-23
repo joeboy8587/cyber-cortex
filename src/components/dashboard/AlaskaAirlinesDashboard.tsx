@@ -113,7 +113,7 @@ export const AlaskaAirlinesDashboard = () => {
           min_altitude: parseFloat(row.min_altitude as string) || 0,
           first_seen: (row.first_seen as string) || '',
           last_seen: (row.last_seen as string) || '',
-          is_target: TARGET_CALLSIGNS.includes(callsign)
+          is_target: targetCallsigns.includes(callsign)
         };
       });
 

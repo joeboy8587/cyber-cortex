@@ -120,46 +120,6 @@ export const KCSOBudgetTimeline: React.FC = () => {
     }
   };
 
-  // Check DB record count
-  useEffect(() => {
-    checkDbRecords();
-  }, []);
-
-  const checkDbRecords = async () => {
-    try {
-      const { data, error } = await supabase.functions.invoke('neon-query', {
-        body: { action: 'getKCSOBudgetData' }
-      });
-      if (!error && data?.data) {
-        setDbRecordCount(data.data.length);
-      }
-    } catch {
-      setDbRecordCount(null);
-    }
-  };
-
-  const importToDatabase = async () => {
-    setIsImporting(true);
-    try {
-      const { data, error } = await supabase.functions.invoke('neon-query', {
-        body: { 
-          action: 'importKCSOBudgetData',
-          data: KCSO_AIRCRAFT_DATA
-        }
-      });
-
-      if (error) throw error;
-      
-      toast.success(`Imported ${data?.inserted || KCSO_AIRCRAFT_DATA.length} records to kcso_aircraft_budget_history`);
-      checkDbRecords();
-    } catch (err) {
-      console.error('Import error:', err);
-      toast.error('Failed to import data to database');
-    } finally {
-      setIsImporting(false);
-    }
-  };
-
   const formatCurrency = (amount: number | null) => {
     if (amount === null) return 'N/A';
     return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(amount);
@@ -182,14 +142,28 @@ export const KCSOBudgetTimeline: React.FC = () => {
 
   return (
     <CyberPanel title="KCSO Aircraft Budget Timeline" className="col-span-full">
+      {isLoading ? (
+        <div className="flex items-center justify-center py-12">
+          <RefreshCw className="h-6 w-6 animate-spin text-primary" />
+        </div>
+      ) : budgetData.length === 0 ? (
+        <div className="p-6 text-center text-muted-foreground">
+          <p className="text-sm">No budget data loaded from database.</p>
+          <Button onClick={loadBudgetData} variant="outline" size="sm" className="mt-3">
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Retry Load
+          </Button>
+        </div>
+      ) : (
+        <>
       {/* Header Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <div className="bg-background/50 border border-border/50 rounded-lg p-3">
           <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
             <Plane className="h-3 w-3" />
             Records
           </div>
-          <div className="text-xl font-bold text-foreground">{KCSO_AIRCRAFT_DATA.length}</div>
+          <div className="text-xl font-bold text-foreground">{budgetData.length}</div>
         </div>
         <div className="bg-background/50 border border-border/50 rounded-lg p-3">
           <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
@@ -211,15 +185,6 @@ export const KCSOBudgetTimeline: React.FC = () => {
             Citations
           </div>
           <div className="text-xl font-bold text-blue-400">{citationCount}</div>
-        </div>
-        <div className="bg-background/50 border border-border/50 rounded-lg p-3">
-          <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
-            <Database className="h-3 w-3" />
-            In NeonDB
-          </div>
-          <div className="text-xl font-bold text-purple-400">
-            {dbRecordCount !== null ? dbRecordCount : '—'}
-          </div>
         </div>
       </div>
 

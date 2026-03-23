@@ -42,8 +42,8 @@ interface NetworkData {
   totalExposure: number;
 }
 
-// Known RICO enterprise structure from investigation
-const KNOWN_ENTERPRISE: Array<{
+// Fallback only used if Neon query fails
+const FALLBACK_ENTERPRISE: Array<{
   name: string;
   type: NetworkNode["type"];
   tier: number;
@@ -51,71 +51,8 @@ const KNOWN_ENTERPRISE: Array<{
   threatScore: number;
   linkedAircraft: string[];
   linkedEntities: string[];
-}> = [
-  {
-    name: "KCSO Aviation Unit",
-    type: "agency",
-    tier: 0,
-    ricoIndicators: ["COMMAND_LEVEL", "STATE_ACTOR", "FLEET_CONTROL"],
-    threatScore: 98,
-    linkedAircraft: ["N912KC", "N913KC", "N597E"],
-    linkedEntities: ["ALF IX LLC", "Air Methods / Mercy Air"]
-  },
-  {
-    name: "ALF IX LLC",
-    type: "shell",
-    tier: 0,
-    ricoIndicators: ["SHELL_STRUCTURE", "NOMINEE_DIRECTORS", "FLEET_CONTROL"],
-    threatScore: 95,
-    linkedAircraft: ["N788FA", "N790FA", "N791FA"],
-    linkedEntities: ["AERO EQUITIES", "CHRISTIANSEN AVIATION"]
-  },
-  {
-    name: "AERO EQUITIES",
-    type: "shell",
-    tier: 1,
-    ricoIndicators: ["SHELL_STRUCTURE", "SHARED_AGENT", "OWNERSHIP_OBFUSCATION"],
-    threatScore: 88,
-    linkedAircraft: ["N997SE"],
-    linkedEntities: ["ALF IX LLC"]
-  },
-  {
-    name: "CHRISTIANSEN AVIATION",
-    type: "shell",
-    tier: 1,
-    ricoIndicators: ["SHELL_STRUCTURE", "OPERATIONAL_CONTROL"],
-    threatScore: 82,
-    linkedAircraft: [],
-    linkedEntities: ["ALF IX LLC"]
-  },
-  {
-    name: "Air Methods / Mercy Air",
-    type: "contractor",
-    tier: 2,
-    ricoIndicators: ["MEDICAL_FRAUD", "OPERATIONAL_COVER", "FCA_VIOLATIONS"],
-    threatScore: 78,
-    linkedAircraft: ["N224AM", "N229AM", "N230AM", "N743AM"],
-    linkedEntities: ["KCSO Aviation Unit"]
-  },
-  {
-    name: "AE Industrial Partners",
-    type: "contractor",
-    tier: 2,
-    ricoIndicators: ["FUNDING_SOURCE", "PRIVATE_EQUITY"],
-    threatScore: 65,
-    linkedAircraft: [],
-    linkedEntities: ["Redwire Corp"]
-  },
-  {
-    name: "Redwire Corp",
-    type: "contractor",
-    tier: 3,
-    ricoIndicators: ["INFRASTRUCTURE", "NAT_SECURITY_CONTRACTOR"],
-    threatScore: 55,
-    linkedAircraft: [],
-    linkedEntities: ["AE Industrial Partners"]
-  },
-];
+}> = [];
+
 
 export function ShellNetworkGraph() {
   const [isLoading, setIsLoading] = useState(false);

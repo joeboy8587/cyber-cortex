@@ -840,7 +840,7 @@ export function BiometricCorrelation() {
                             <CollapsibleContent>
                               <div className="ml-6 mt-1 space-y-1">
                                 {conv.aircraft.map((ac, j) => {
-                                  const isPriority = PRIORITY_AIRCRAFT.includes(ac.registration);
+                                  const isPriority = priorityAircraft.includes(ac.registration);
                                   const isLowAlt = ac.altitude !== undefined && ac.altitude < 5000;
                                   
                                   return (

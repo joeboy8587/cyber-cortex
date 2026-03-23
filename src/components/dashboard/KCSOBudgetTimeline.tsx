@@ -190,22 +190,9 @@ export const KCSOBudgetTimeline: React.FC = () => {
 
       {/* Actions */}
       <div className="flex flex-wrap items-center gap-2 mb-4">
-        <Button 
-          onClick={importToDatabase} 
-          disabled={isImporting}
-          size="sm"
-          className="bg-green-600 hover:bg-green-700"
-        >
-          {isImporting ? (
-            <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-          ) : (
-            <Upload className="h-4 w-4 mr-2" />
-          )}
-          Import to NeonDB
-        </Button>
-        <Button onClick={checkDbRecords} variant="outline" size="sm">
+        <Button onClick={loadBudgetData} variant="outline" size="sm">
           <RefreshCw className="h-4 w-4 mr-2" />
-          Check DB
+          Reload Data
         </Button>
         <div className="flex-1" />
         <select 

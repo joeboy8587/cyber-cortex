@@ -1,4 +1,5 @@
 import { DashboardLayout } from "@/components/DashboardLayout";
+import TaxonomyBridgePanel from "@/components/dashboard/TaxonomyBridgePanel";
 import AircraftMapVisualization from "@/components/dashboard/AircraftMapVisualization";
 import { LiveFlightTracker } from "@/components/dashboard/LiveFlightTracker";
 import { DirectAircraftCorrelation } from "@/components/dashboard/DirectAircraftCorrelation";
@@ -66,6 +67,9 @@ export default function Surveillance() {
           </div>
 
           <TabsContent value="investigation" className="space-y-6">
+            <section>
+              <TaxonomyBridgePanel />
+            </section>
             <section>
               <ForensicTrajectoryPanel />
             </section>

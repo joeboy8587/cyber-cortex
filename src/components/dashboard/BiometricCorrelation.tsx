@@ -679,7 +679,7 @@ export function BiometricCorrelation() {
                   <div className="space-y-3 pr-3">
                     {filteredCorrelations.slice(0, 50).map((corr, i) => {
                       const isLowAltitude = corr.altitude !== undefined && corr.altitude < 5000;
-                      const isPriority = PRIORITY_AIRCRAFT.includes(corr.aircraft_id);
+                      const isPriority = priorityAircraft.includes(corr.aircraft_id);
                       
                       return (
                         <div key={`${corr.biometric_id}-${corr.aircraft_id}-${i}`} className="relative pl-4 border-l-2 border-border">

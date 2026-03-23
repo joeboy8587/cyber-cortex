@@ -849,6 +849,159 @@ export async function handleAction2(action: string, body: Record<string, any>, s
       }
     }
 
+    // ============== TAXONOMY BRIDGE: RAW → ENRICHED ==============
+    case 'getUnfilteredStats': {
+      try {
+        const [totals, tagDist, ghostCheck] = await Promise.all([
+          sql`SELECT COUNT(*)::int as total,
+            COUNT(CASE WHEN registration IS NOT NULL AND registration != '' THEN 1 END)::int as with_reg,
+            COUNT(CASE WHEN icao_code IS NOT NULL AND icao_code != '' THEN 1 END)::int as with_icao,
+            COUNT(CASE WHEN latitude IS NOT NULL AND longitude IS NOT NULL THEN 1 END)::int as with_coords,
+            MIN(detection_timestamp) as earliest,
+            MAX(detection_timestamp) as latest
+          FROM unfilterd_detections`,
+          sql`SELECT COALESCE(taxonomy_tag, 'untagged') as tag, COUNT(*)::int as count
+            FROM unfilterd_detections GROUP BY taxonomy_tag ORDER BY count DESC`.catch(() => []),
+          sql`SELECT registration, COUNT(*)::int as raw_count,
+            (SELECT COUNT(*)::int FROM live_flight_detections_rows l WHERE l.registration = u.registration) as enriched_count
+          FROM unfilterd_detections u
+          WHERE registration IS NOT NULL AND registration != ''
+          GROUP BY registration ORDER BY raw_count DESC LIMIT 30`,
+        ]);
+        return { totals: totals[0], taxonomyDistribution: tagDist, crossReference: ghostCheck };
+      } catch (e) {
+        console.error('getUnfilteredStats error:', e);
+        return { error: String((e as Error).message) };
+      }
+    }
+
+    case 'bridgeTaxonomy': {
+      const startTime = Date.now();
+      try {
+        await sql`ALTER TABLE unfilterd_detections ADD COLUMN IF NOT EXISTS taxonomy_tag TEXT`.catch(() => {});
+        await sql`ALTER TABLE unfilterd_detections ADD COLUMN IF NOT EXISTS matched_live_id TEXT`.catch(() => {});
+        await sql`ALTER TABLE unfilterd_detections ADD COLUMN IF NOT EXISTS match_method TEXT`.catch(() => {});
+
+        const regMatched = await sql`
+          WITH unmatched AS (
+            SELECT id, registration, detection_timestamp FROM unfilterd_detections
+            WHERE taxonomy_tag IS NULL AND registration IS NOT NULL AND registration != ''
+            LIMIT 2000
+          ),
+          best_match AS (
+            SELECT DISTINCT ON (u.id) u.id as raw_id, l.taxonomy_tag, l.id::text as live_id, 'registration_temporal' as method
+            FROM unmatched u
+            JOIN live_flight_detections_rows l ON l.registration = u.registration
+              AND l.detection_timestamp BETWEEN u.detection_timestamp - INTERVAL '5 minutes' AND u.detection_timestamp + INTERVAL '5 minutes'
+            WHERE l.taxonomy_tag IS NOT NULL
+            ORDER BY u.id, ABS(EXTRACT(EPOCH FROM (l.detection_timestamp - u.detection_timestamp)))
+          )
+          UPDATE unfilterd_detections d SET taxonomy_tag = bm.taxonomy_tag, matched_live_id = bm.live_id, match_method = bm.method
+          FROM best_match bm WHERE d.id = bm.raw_id RETURNING d.id
+        `;
+
+        const icaoMatched = await sql`
+          WITH unmatched AS (
+            SELECT id, icao_code, detection_timestamp FROM unfilterd_detections
+            WHERE taxonomy_tag IS NULL AND icao_code IS NOT NULL AND icao_code != '' AND (registration IS NULL OR registration = '')
+            LIMIT 2000
+          ),
+          best_match AS (
+            SELECT DISTINCT ON (u.id) u.id as raw_id, l.taxonomy_tag, l.id::text as live_id, 'icao_temporal' as method
+            FROM unmatched u
+            JOIN live_flight_detections_rows l ON l.icao_code = u.icao_code
+              AND l.detection_timestamp BETWEEN u.detection_timestamp - INTERVAL '3 minutes' AND u.detection_timestamp + INTERVAL '3 minutes'
+            WHERE l.taxonomy_tag IS NOT NULL
+            ORDER BY u.id, ABS(EXTRACT(EPOCH FROM (l.detection_timestamp - u.detection_timestamp)))
+          )
+          UPDATE unfilterd_detections d SET taxonomy_tag = bm.taxonomy_tag, matched_live_id = bm.live_id, match_method = bm.method
+          FROM best_match bm WHERE d.id = bm.raw_id RETURNING d.id
+        `;
+
+        const spatialMatched = await sql`
+          WITH unmatched AS (
+            SELECT id, detection_timestamp, latitude, longitude FROM unfilterd_detections
+            WHERE taxonomy_tag IS NULL AND latitude IS NOT NULL AND longitude IS NOT NULL
+            LIMIT 1000
+          ),
+          best_match AS (
+            SELECT DISTINCT ON (u.id) u.id as raw_id, l.taxonomy_tag, l.id::text as live_id, 'spatial_temporal' as method
+            FROM unmatched u
+            JOIN live_flight_detections_rows l ON
+              ABS(l.latitude - u.latitude) < 0.005 AND ABS(l.longitude - u.longitude) < 0.005
+              AND l.detection_timestamp BETWEEN u.detection_timestamp - INTERVAL '3 seconds' AND u.detection_timestamp + INTERVAL '3 seconds'
+            WHERE l.taxonomy_tag IS NOT NULL AND l.latitude IS NOT NULL AND l.longitude IS NOT NULL
+            ORDER BY u.id, ABS(EXTRACT(EPOCH FROM (l.detection_timestamp - u.detection_timestamp)))
+          )
+          UPDATE unfilterd_detections d SET taxonomy_tag = bm.taxonomy_tag, matched_live_id = bm.live_id, match_method = bm.method
+          FROM best_match bm WHERE d.id = bm.raw_id RETURNING d.id
+        `;
+
+        const elapsed = Date.now() - startTime;
+        const summary = await sql`
+          SELECT COUNT(*)::int as total,
+            COUNT(CASE WHEN taxonomy_tag IS NOT NULL THEN 1 END)::int as tagged,
+            COUNT(CASE WHEN match_method = 'registration_temporal' THEN 1 END)::int as reg_matched,
+            COUNT(CASE WHEN match_method = 'icao_temporal' THEN 1 END)::int as icao_matched,
+            COUNT(CASE WHEN match_method = 'spatial_temporal' THEN 1 END)::int as spatial_matched
+          FROM unfilterd_detections
+        `;
+
+        return {
+          success: true,
+          batch: {
+            registrationMatched: Array.isArray(regMatched) ? regMatched.length : 0,
+            icaoMatched: Array.isArray(icaoMatched) ? icaoMatched.length : 0,
+            spatialMatched: Array.isArray(spatialMatched) ? spatialMatched.length : 0,
+          },
+          overall: summary[0],
+          elapsedMs: elapsed,
+        };
+      } catch (e) {
+        console.error('bridgeTaxonomy error:', e);
+        return { error: String((e as Error).message), elapsedMs: Date.now() - startTime };
+      }
+    }
+
+    case 'getGhostAircraftReport': {
+      try {
+        const ghosts = await sql`
+          WITH live_summary AS (
+            SELECT registration, COUNT(*)::int as live_count,
+              COUNT(CASE WHEN icao_code LIKE 'XXA%' OR icao_code LIKE 'XXB%' OR icao_code = '' OR icao_code IS NULL THEN 1 END)::int as synthetic_icao_count,
+              ROUND(AVG(COALESCE(altitude,0))::numeric,0) as avg_alt,
+              MIN(detection_timestamp) as first_seen, MAX(detection_timestamp) as last_seen,
+              (array_agg(taxonomy_tag ORDER BY detection_timestamp DESC))[1] as primary_tag
+            FROM live_flight_detections_rows
+            WHERE registration IS NOT NULL AND registration != ''
+              AND taxonomy_tag IN ('tier0_kcso','xxb_tier0_kcso','tier1_priority','xxb_tier1_priority',
+                'tier2_shell','xxb_tier2_shell','xxb_kcso','xxb_kcso_shell','military_asset','xxb_military',
+                'low_alt_suspicious','xxb_low_alt_suspicious')
+            GROUP BY registration
+          ),
+          raw_counts AS (
+            SELECT registration, COUNT(*)::int as raw_count
+            FROM unfilterd_detections WHERE registration IS NOT NULL AND registration != ''
+            GROUP BY registration
+          )
+          SELECT ls.registration, ls.live_count, COALESCE(rc.raw_count, 0) as raw_count,
+            ls.synthetic_icao_count, ls.avg_alt, ls.first_seen, ls.last_seen, ls.primary_tag,
+            CASE
+              WHEN COALESCE(rc.raw_count, 0) = 0 THEN 'GHOST'
+              WHEN rc.raw_count < ls.live_count * 0.1 THEN 'SEMI-GHOST'
+              WHEN ls.synthetic_icao_count > ls.live_count * 0.5 THEN 'MLAT-DEPENDENT'
+              ELSE 'VERIFIED'
+            END as ghost_status
+          FROM live_summary ls LEFT JOIN raw_counts rc ON rc.registration = ls.registration
+          ORDER BY COALESCE(rc.raw_count, 0) ASC, ls.live_count DESC LIMIT 100
+        `;
+        return { data: ghosts };
+      } catch (e) {
+        console.error('getGhostAircraftReport error:', e);
+        return { data: [], error: String((e as Error).message) };
+      }
+    }
+
     default:
       return null;
   }

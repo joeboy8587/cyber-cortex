@@ -1163,6 +1163,142 @@ export async function handleAction2(action: string, body: Record<string, any>, s
       }
     }
 
+    case 'getInvestigationConfig': {
+      try {
+        const [priorityAircraft, enterpriseStructure, shellCompanies, kcsoFleet, detectionStats, shellDetections] = await Promise.all([
+          sql`SELECT DISTINCT registration FROM live_flight_detections_rows 
+              WHERE flagged = true AND registration IS NOT NULL AND registration != '' 
+              ORDER BY registration LIMIT 50`,
+          sql`SELECT * FROM criminal_enterprise_command_structure ORDER BY tier, entity_name LIMIT 100`,
+          sql`SELECT * FROM shell_companies ORDER BY company_name LIMIT 50`,
+          sql`SELECT * FROM kcso_fleet ORDER BY tail_number LIMIT 20`,
+          sql`WITH total AS (SELECT COUNT(*) as total FROM live_flight_detections_rows),
+              flagged AS (SELECT COUNT(*) as flagged FROM live_flight_detections_rows WHERE flagged = true),
+              kern AS (SELECT COUNT(*) as kern FROM live_flight_detections_rows WHERE latitude BETWEEN 35.20 AND 35.60 AND longitude BETWEEN -119.25 AND -118.75),
+              low_alt AS (SELECT COUNT(*) as low FROM live_flight_detections_rows WHERE altitude::numeric < 1000 AND altitude::numeric > 0),
+              time_present AS (
+                SELECT COUNT(DISTINCT DATE(detection_timestamp)) as days_with_flights,
+                  (SELECT COUNT(DISTINCT DATE(detection_timestamp)) FROM live_flight_detections_rows) as total_days
+                FROM live_flight_detections_rows WHERE flagged = true
+              )
+              SELECT t.total, f.flagged, k.kern, l.low, tp.days_with_flights, tp.total_days
+              FROM total t, flagged f, kern k, low_alt l, time_present tp`,
+          sql`SELECT registration, COUNT(*) as detection_count 
+              FROM live_flight_detections_rows 
+              WHERE registration IN ('N788FA','N787FA','N790FA','N791FA','N997SE','N2464D','N172CA')
+              GROUP BY registration`
+        ]);
+
+        // Compute hypothesis metrics from real data
+        const stats = detectionStats[0] || {};
+        const totalRecords = parseInt(String(stats.total || '0'));
+        const flaggedRecords = parseInt(String(stats.flagged || '0'));
+        const kernRecords = parseInt(String(stats.kern || '0'));
+        const lowAltRecords = parseInt(String(stats.low || '0'));
+        const daysWithFlights = parseInt(String(stats.days_with_flights || '0'));
+        const totalDays = parseInt(String(stats.total_days || '1'));
+        const aircraftPresentPct = totalDays > 0 ? ((daysWithFlights / totalDays) * 100).toFixed(1) : '0';
+        const controlPct = totalRecords > 0 ? (((totalRecords - flaggedRecords) / totalRecords) * 100).toFixed(1) : '0';
+
+        return {
+          priority_aircraft: priorityAircraft.map((r: any) => r.registration),
+          enterprise_hierarchy: enterpriseStructure,
+          shell_companies: shellCompanies,
+          kcso_fleet: kcsoFleet,
+          shell_detections: shellDetections.reduce((acc: Record<string, number>, r: any) => {
+            acc[r.registration] = parseInt(String(r.detection_count || '0'));
+            return acc;
+          }, {}),
+          hypothesis_metrics: {
+            total_records: totalRecords,
+            flagged_records: flaggedRecords,
+            kern_county_records: kernRecords,
+            low_altitude_records: lowAltRecords,
+            aircraft_present_pct: parseFloat(aircraftPresentPct),
+            control_data_pct: parseFloat(controlPct),
+            days_with_flagged_flights: daysWithFlights,
+            total_monitored_days: totalDays
+          }
+        };
+      } catch (e) {
+        console.error('getInvestigationConfig error:', e);
+        return { error: String((e as Error).message) };
+      }
+    }
+
+    case 'getKCSOBudgetData': {
+      try {
+        const data = await sql`SELECT * FROM kcso_aircraft_budget_history ORDER BY year, aircraft_tail_number`;
+        return { data };
+      } catch (e) {
+        console.error('getKCSOBudgetData error:', e);
+        return { data: [], error: String((e as Error).message) };
+      }
+    }
+
+    case 'getEnterpriseProfiles': {
+      try {
+        const data = await sql`SELECT * FROM criminal_enterprise_command_structure ORDER BY tier, entity_name LIMIT 100`;
+        return { data };
+      } catch (e) {
+        console.error('getEnterpriseProfiles error:', e);
+        return { data: [], error: String((e as Error).message) };
+      }
+    }
+
+    case 'getTaxonomy': {
+      try {
+        const data = await sql`SELECT COALESCE(taxonomy_tag, 'untagged') as tag, COUNT(*) as count 
+          FROM live_flight_detections_rows GROUP BY taxonomy_tag ORDER BY count DESC LIMIT 30`;
+        return { data };
+      } catch (e) {
+        console.error('getTaxonomy error:', e);
+        return { data: [], error: String((e as Error).message) };
+      }
+    }
+
+    case 'taxonomyStats': {
+      try {
+        const data = await sql`SELECT COALESCE(taxonomy_tag, 'untagged') as tag, COUNT(*) as count,
+          COUNT(CASE WHEN flagged = true THEN 1 END) as flagged_count,
+          COALESCE(AVG(altitude::numeric), 0) as avg_altitude
+          FROM live_flight_detections_rows GROUP BY taxonomy_tag ORDER BY count DESC LIMIT 30`;
+        return { data };
+      } catch (e) {
+        console.error('taxonomyStats error:', e);
+        return { data: [], error: String((e as Error).message) };
+      }
+    }
+
+    case 'getTableCategories': {
+      try {
+        const data = await sql`
+          SELECT 
+            CASE 
+              WHEN tablename LIKE 'biometric%' THEN 'Biometric'
+              WHEN tablename LIKE '%flight%' OR tablename LIKE '%aircraft%' OR tablename LIKE '%adsb%' THEN 'Flight/ADS-B'
+              WHEN tablename LIKE '%legal%' OR tablename LIKE '%violation%' OR tablename LIKE '%rico%' THEN 'Legal/Violations'
+              WHEN tablename LIKE '%vector%' THEN 'Vector/AI'
+              WHEN tablename LIKE 'josiah%' THEN 'Josiah AI'
+              WHEN tablename LIKE '%shell%' OR tablename LIKE '%enterprise%' THEN 'Shell/Enterprise'
+              WHEN tablename LIKE '%evidence%' OR tablename LIKE '%forensic%' THEN 'Evidence/Forensic'
+              WHEN tablename LIKE '%ocr%' OR tablename LIKE '%radar%' OR tablename LIKE '%screenshot%' THEN 'OCR/Visual'
+              ELSE 'Other'
+            END as category,
+            COUNT(*) as table_count,
+            SUM(c.reltuples::bigint) as total_records
+          FROM pg_tables t
+          JOIN pg_class c ON c.relname = t.tablename
+          JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = t.schemaname
+          WHERE t.schemaname = 'public'
+          GROUP BY 1 ORDER BY total_records DESC`;
+        return { data };
+      } catch (e) {
+        console.error('getTableCategories error:', e);
+        return { data: [], error: String((e as Error).message) };
+      }
+    }
+
     default:
       return null;
   }

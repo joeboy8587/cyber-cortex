@@ -1007,39 +1007,40 @@ export async function handleAction2(action: string, body: Record<string, any>, s
       const { scanType = 'full', days = 7 } = body;
       try {
         const results: any = { timestamp: new Date().toISOString(), anomalies: [], stats: {} };
+        // Performance: use recent-N sampling to avoid full table scans on 19.7M records
+        const sampleSize = days <= 3 ? 50000 : days <= 7 ? 150000 : 300000;
 
-        // 1. LOITERING DETECTION: Aircraft staying within ~2nm radius for 30+ minutes
+        // 1. LOITERING DETECTION: Aircraft in same grid cell for 30+ min
         if (scanType === 'full' || scanType === 'loitering') {
           const loitering = await sql`
-            WITH position_sessions AS (
+            WITH recent AS (
+              SELECT registration, hex, detection_timestamp, latitude, longitude, altitude, speed
+              FROM live_flight_detections_rows
+              WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+              ORDER BY detection_timestamp DESC
+              LIMIT ${sampleSize}
+            ),
+            position_sessions AS (
               SELECT
                 md5(COALESCE(registration, hex, 'unknown')) as anon_id,
                 DATE_TRUNC('hour', detection_timestamp) as session_hour,
                 ROUND(latitude::numeric, 2) as grid_lat,
                 ROUND(longitude::numeric, 2) as grid_lng,
                 COUNT(*) as pings,
-                MIN(detection_timestamp) as first_ping,
-                MAX(detection_timestamp) as last_ping,
                 EXTRACT(EPOCH FROM MAX(detection_timestamp) - MIN(detection_timestamp)) / 60.0 as duration_minutes,
                 ROUND(AVG(altitude::numeric), 0) as avg_alt,
                 ROUND(AVG(speed::numeric), 0) as avg_speed
-              FROM live_flight_detections_rows
-              WHERE detection_timestamp > NOW() - make_interval(days => ${days})
-                AND latitude IS NOT NULL AND longitude IS NOT NULL
+              FROM recent
               GROUP BY 1, 2, 3, 4
               HAVING EXTRACT(EPOCH FROM MAX(detection_timestamp) - MIN(detection_timestamp)) / 60.0 >= 30
             )
-            SELECT anon_id, session_hour, grid_lat, grid_lng, pings,
-              ROUND(duration_minutes::numeric, 1) as duration_minutes,
-              avg_alt, avg_speed, first_ping, last_ping,
-              CASE
-                WHEN duration_minutes >= 120 THEN 'CRITICAL'
-                WHEN duration_minutes >= 60 THEN 'HIGH'
-                ELSE 'MEDIUM'
-              END as severity
+            SELECT *, CASE
+              WHEN duration_minutes >= 120 THEN 'CRITICAL'
+              WHEN duration_minutes >= 60 THEN 'HIGH'
+              ELSE 'MEDIUM'
+            END as severity
             FROM position_sessions
-            ORDER BY duration_minutes DESC
-            LIMIT 50
+            ORDER BY duration_minutes DESC LIMIT 50
           `;
           results.anomalies.push(...loitering.map((l: any) => ({
             type: 'ANOMALOUS_LOITERING',
@@ -1052,37 +1053,37 @@ export async function handleAction2(action: string, body: Record<string, any>, s
             avg_speed_kts: parseInt(l.avg_speed || '0'),
             pings: parseInt(l.pings),
             session_hour: l.session_hour,
-            description: `Aircraft held position within grid cell for ${l.duration_minutes} min at ${l.avg_alt}ft avg`
+            description: `Aircraft held position within grid cell for ${parseFloat(l.duration_minutes).toFixed(1)} min at ${l.avg_alt}ft avg`
           })));
         }
 
-        // 2. LOW-ALTITUDE ANOMALY: Sub-1000ft without airport proximity pattern
+        // 2. LOW-ALTITUDE ANOMALY: Sub-1000ft (FAA §91.119)
         if (scanType === 'full' || scanType === 'lowAltitude') {
           const lowAlt = await sql`
-            WITH low_flights AS (
-              SELECT
-                md5(COALESCE(registration, hex, 'unknown')) as anon_id,
-                DATE(detection_timestamp) as flight_date,
-                COUNT(*) as low_pings,
-                ROUND(AVG(altitude::numeric), 0) as avg_alt,
-                ROUND(MIN(altitude::numeric), 0) as min_alt,
-                ROUND(AVG(speed::numeric), 0) as avg_speed,
-                COUNT(DISTINCT DATE_TRUNC('hour', detection_timestamp)) as hours_active
+            WITH recent AS (
+              SELECT registration, hex, detection_timestamp, altitude, speed
               FROM live_flight_detections_rows
-              WHERE detection_timestamp > NOW() - make_interval(days => ${days})
-                AND altitude::numeric > 0 AND altitude::numeric < 1000
-              GROUP BY 1, 2
-              HAVING COUNT(*) >= 3
+              WHERE altitude::numeric > 0 AND altitude::numeric < 1000
+              ORDER BY detection_timestamp DESC
+              LIMIT ${sampleSize}
             )
-            SELECT anon_id, flight_date, low_pings, avg_alt, min_alt, avg_speed, hours_active,
+            SELECT
+              md5(COALESCE(registration, hex, 'unknown')) as anon_id,
+              DATE(detection_timestamp) as flight_date,
+              COUNT(*) as low_pings,
+              ROUND(AVG(altitude::numeric), 0) as avg_alt,
+              ROUND(MIN(altitude::numeric), 0) as min_alt,
+              ROUND(AVG(speed::numeric), 0) as avg_speed,
+              COUNT(DISTINCT DATE_TRUNC('hour', detection_timestamp)) as hours_active,
               CASE
-                WHEN avg_alt < 500 AND low_pings >= 10 THEN 'CRITICAL'
-                WHEN avg_alt < 500 THEN 'HIGH'
+                WHEN AVG(altitude::numeric) < 500 AND COUNT(*) >= 10 THEN 'CRITICAL'
+                WHEN AVG(altitude::numeric) < 500 THEN 'HIGH'
                 ELSE 'MEDIUM'
               END as severity
-            FROM low_flights
-            ORDER BY avg_alt ASC, low_pings DESC
-            LIMIT 50
+            FROM recent
+            GROUP BY 1, 2
+            HAVING COUNT(*) >= 3
+            ORDER BY avg_alt ASC, low_pings DESC LIMIT 50
           `;
           results.anomalies.push(...lowAlt.map((l: any) => ({
             type: 'LOW_ALTITUDE_ANOMALY',
@@ -1099,25 +1100,30 @@ export async function handleAction2(action: string, body: Record<string, any>, s
           })));
         }
 
-        // 3. TECHNICAL STEALTH ANOMALY: XXA/XXB taxonomy or null-ICAO signals
+        // 3. TECHNICAL STEALTH ANOMALY: XXA/XXB/null-ICAO signals
         if (scanType === 'full' || scanType === 'stealth') {
           const stealth = await sql`
-            SELECT
-              COALESCE(taxonomy_tag, 'NO_TAG') as signal_class,
-              COUNT(*) as detection_count,
-              COUNT(DISTINCT md5(COALESCE(registration, hex, 'unknown'))) as unique_sources,
-              ROUND(AVG(altitude::numeric), 0) as avg_alt,
-              COUNT(*) FILTER (WHERE altitude::numeric < 1000 AND altitude::numeric > 0) as low_alt_count,
-              MIN(detection_timestamp) as first_seen,
-              MAX(detection_timestamp) as last_seen,
-              COUNT(DISTINCT DATE(detection_timestamp)) as active_days
-            FROM live_flight_detections_rows
-            WHERE detection_timestamp > NOW() - make_interval(days => ${days})
-              AND (
+            WITH recent AS (
+              SELECT taxonomy_tag, registration, hex, altitude, detection_timestamp, icao_code
+              FROM live_flight_detections_rows
+              WHERE (
                 taxonomy_tag IN ('xxb_ghost', 'xxb_unknown', 'xxb_stealth', 'military_asset')
                 OR (icao_code IS NULL AND registration IS NULL)
                 OR (hex LIKE 'XXA%' OR hex LIKE 'xxa%')
               )
+              ORDER BY detection_timestamp DESC
+              LIMIT ${sampleSize}
+            )
+            SELECT
+              COALESCE(taxonomy_tag, 'NO_TAG') as signal_class,
+              COUNT(*) as detection_count,
+              COUNT(DISTINCT md5(COALESCE(registration, hex, 'unknown'))) as unique_sources,
+              ROUND(AVG(NULLIF(altitude::numeric, 0)), 0) as avg_alt,
+              COUNT(*) FILTER (WHERE altitude::numeric < 1000 AND altitude::numeric > 0) as low_alt_count,
+              MIN(detection_timestamp) as first_seen,
+              MAX(detection_timestamp) as last_seen,
+              COUNT(DISTINCT DATE(detection_timestamp)) as active_days
+            FROM recent
             GROUP BY taxonomy_tag
             ORDER BY detection_count DESC
           `;
@@ -1146,7 +1152,7 @@ export async function handleAction2(action: string, body: Record<string, any>, s
           high: highCount,
           medium: mediumCount,
           anomaly_score: Math.min(10, (criticalCount * 3 + highCount * 2 + mediumCount * 0.5)).toFixed(1),
-          scan_days: days,
+          scan_window: `Most recent ${sampleSize.toLocaleString()} records (~${days} day equivalent)`,
           methodology: 'Zero-Knowledge Physics-Based Detection (FAA Part 91.119 baseline)'
         };
 

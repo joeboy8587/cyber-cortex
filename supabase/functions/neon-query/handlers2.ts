@@ -1002,6 +1002,161 @@ export async function handleAction2(action: string, body: Record<string, any>, s
       }
     }
 
+    // ============== ANONYMOUS ANOMALY DETECTION (ZERO-KNOWLEDGE) ==============
+    case 'anonymousAnomalyScan': {
+      const { scanType = 'full', days = 7 } = body;
+      try {
+        const results: any = { timestamp: new Date().toISOString(), anomalies: [], stats: {} };
+
+        // 1. LOITERING DETECTION: Aircraft staying within ~2nm radius for 30+ minutes
+        if (scanType === 'full' || scanType === 'loitering') {
+          const loitering = await sql`
+            WITH position_sessions AS (
+              SELECT
+                md5(COALESCE(registration, hex, 'unknown')) as anon_id,
+                DATE_TRUNC('hour', detection_timestamp) as session_hour,
+                ROUND(latitude::numeric, 2) as grid_lat,
+                ROUND(longitude::numeric, 2) as grid_lng,
+                COUNT(*) as pings,
+                MIN(detection_timestamp) as first_ping,
+                MAX(detection_timestamp) as last_ping,
+                EXTRACT(EPOCH FROM MAX(detection_timestamp) - MIN(detection_timestamp)) / 60.0 as duration_minutes,
+                ROUND(AVG(altitude::numeric), 0) as avg_alt,
+                ROUND(AVG(speed::numeric), 0) as avg_speed
+              FROM live_flight_detections_rows
+              WHERE detection_timestamp > NOW() - make_interval(days => ${days})
+                AND latitude IS NOT NULL AND longitude IS NOT NULL
+              GROUP BY 1, 2, 3, 4
+              HAVING EXTRACT(EPOCH FROM MAX(detection_timestamp) - MIN(detection_timestamp)) / 60.0 >= 30
+            )
+            SELECT anon_id, session_hour, grid_lat, grid_lng, pings,
+              ROUND(duration_minutes::numeric, 1) as duration_minutes,
+              avg_alt, avg_speed, first_ping, last_ping,
+              CASE
+                WHEN duration_minutes >= 120 THEN 'CRITICAL'
+                WHEN duration_minutes >= 60 THEN 'HIGH'
+                ELSE 'MEDIUM'
+              END as severity
+            FROM position_sessions
+            ORDER BY duration_minutes DESC
+            LIMIT 50
+          `;
+          results.anomalies.push(...loitering.map((l: any) => ({
+            type: 'ANOMALOUS_LOITERING',
+            severity: l.severity,
+            anon_id: l.anon_id,
+            grid_lat: l.grid_lat,
+            grid_lng: l.grid_lng,
+            duration_minutes: parseFloat(l.duration_minutes),
+            avg_altitude_ft: parseInt(l.avg_alt || '0'),
+            avg_speed_kts: parseInt(l.avg_speed || '0'),
+            pings: parseInt(l.pings),
+            session_hour: l.session_hour,
+            description: `Aircraft held position within grid cell for ${l.duration_minutes} min at ${l.avg_alt}ft avg`
+          })));
+        }
+
+        // 2. LOW-ALTITUDE ANOMALY: Sub-1000ft without airport proximity pattern
+        if (scanType === 'full' || scanType === 'lowAltitude') {
+          const lowAlt = await sql`
+            WITH low_flights AS (
+              SELECT
+                md5(COALESCE(registration, hex, 'unknown')) as anon_id,
+                DATE(detection_timestamp) as flight_date,
+                COUNT(*) as low_pings,
+                ROUND(AVG(altitude::numeric), 0) as avg_alt,
+                ROUND(MIN(altitude::numeric), 0) as min_alt,
+                ROUND(AVG(speed::numeric), 0) as avg_speed,
+                COUNT(DISTINCT DATE_TRUNC('hour', detection_timestamp)) as hours_active
+              FROM live_flight_detections_rows
+              WHERE detection_timestamp > NOW() - make_interval(days => ${days})
+                AND altitude::numeric > 0 AND altitude::numeric < 1000
+              GROUP BY 1, 2
+              HAVING COUNT(*) >= 3
+            )
+            SELECT anon_id, flight_date, low_pings, avg_alt, min_alt, avg_speed, hours_active,
+              CASE
+                WHEN avg_alt < 500 AND low_pings >= 10 THEN 'CRITICAL'
+                WHEN avg_alt < 500 THEN 'HIGH'
+                ELSE 'MEDIUM'
+              END as severity
+            FROM low_flights
+            ORDER BY avg_alt ASC, low_pings DESC
+            LIMIT 50
+          `;
+          results.anomalies.push(...lowAlt.map((l: any) => ({
+            type: 'LOW_ALTITUDE_ANOMALY',
+            severity: l.severity,
+            anon_id: l.anon_id,
+            date: l.flight_date,
+            low_pings: parseInt(l.low_pings),
+            avg_altitude_ft: parseInt(l.avg_alt),
+            min_altitude_ft: parseInt(l.min_alt),
+            avg_speed_kts: parseInt(l.avg_speed),
+            hours_active: parseInt(l.hours_active),
+            faa_reference: '14 CFR § 91.119',
+            description: `Sub-1000ft operation: ${l.low_pings} detections at avg ${l.avg_alt}ft (min ${l.min_alt}ft)`
+          })));
+        }
+
+        // 3. TECHNICAL STEALTH ANOMALY: XXA/XXB taxonomy or null-ICAO signals
+        if (scanType === 'full' || scanType === 'stealth') {
+          const stealth = await sql`
+            SELECT
+              COALESCE(taxonomy_tag, 'NO_TAG') as signal_class,
+              COUNT(*) as detection_count,
+              COUNT(DISTINCT md5(COALESCE(registration, hex, 'unknown'))) as unique_sources,
+              ROUND(AVG(altitude::numeric), 0) as avg_alt,
+              COUNT(*) FILTER (WHERE altitude::numeric < 1000 AND altitude::numeric > 0) as low_alt_count,
+              MIN(detection_timestamp) as first_seen,
+              MAX(detection_timestamp) as last_seen,
+              COUNT(DISTINCT DATE(detection_timestamp)) as active_days
+            FROM live_flight_detections_rows
+            WHERE detection_timestamp > NOW() - make_interval(days => ${days})
+              AND (
+                taxonomy_tag IN ('xxb_ghost', 'xxb_unknown', 'xxb_stealth', 'military_asset')
+                OR (icao_code IS NULL AND registration IS NULL)
+                OR (hex LIKE 'XXA%' OR hex LIKE 'xxa%')
+              )
+            GROUP BY taxonomy_tag
+            ORDER BY detection_count DESC
+          `;
+          results.anomalies.push(...stealth.map((s: any) => ({
+            type: 'TECHNICAL_STEALTH_ANOMALY',
+            severity: parseInt(s.detection_count) > 100 ? 'CRITICAL' : parseInt(s.detection_count) > 20 ? 'HIGH' : 'MEDIUM',
+            signal_class: s.signal_class,
+            detection_count: parseInt(s.detection_count),
+            unique_sources: parseInt(s.unique_sources),
+            avg_altitude_ft: parseInt(s.avg_alt || '0'),
+            low_alt_count: parseInt(s.low_alt_count),
+            active_days: parseInt(s.active_days),
+            first_seen: s.first_seen,
+            last_seen: s.last_seen,
+            description: `${s.signal_class}: ${s.detection_count} detections from ${s.unique_sources} anonymous source(s) over ${s.active_days} days`
+          })));
+        }
+
+        // 4. Aggregate anomaly score
+        const criticalCount = results.anomalies.filter((a: any) => a.severity === 'CRITICAL').length;
+        const highCount = results.anomalies.filter((a: any) => a.severity === 'HIGH').length;
+        const mediumCount = results.anomalies.filter((a: any) => a.severity === 'MEDIUM').length;
+        results.stats = {
+          total_anomalies: results.anomalies.length,
+          critical: criticalCount,
+          high: highCount,
+          medium: mediumCount,
+          anomaly_score: Math.min(10, (criticalCount * 3 + highCount * 2 + mediumCount * 0.5)).toFixed(1),
+          scan_days: days,
+          methodology: 'Zero-Knowledge Physics-Based Detection (FAA Part 91.119 baseline)'
+        };
+
+        return results;
+      } catch (e) {
+        console.error('anonymousAnomalyScan error:', e);
+        return { anomalies: [], stats: {}, error: String((e as Error).message) };
+      }
+    }
+
     default:
       return null;
   }

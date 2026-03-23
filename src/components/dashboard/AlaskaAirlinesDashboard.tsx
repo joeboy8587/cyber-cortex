@@ -53,6 +53,28 @@ export const AlaskaAirlinesDashboard = () => {
   // Target callsigns derived from detection patterns (loaded dynamically)
   const [targetCallsigns, setTargetCallsigns] = useState<string[]>([]);
 
+  // Load target callsigns from detection patterns
+  useEffect(() => {
+    const loadTargets = async () => {
+      try {
+        const { data } = await supabase.functions.invoke('neon-query', {
+          body: {
+            action: 'customQuery',
+            query: `SELECT DISTINCT callsign FROM live_flight_detections_rows 
+                    WHERE callsign LIKE 'ASA%' OR callsign LIKE 'QXE%' OR callsign LIKE 'SKW%'
+                    AND flagged = true AND callsign IS NOT NULL
+                    ORDER BY callsign LIMIT 20`
+          }
+        });
+        const rows = extractNeonData(data);
+        if (rows.length > 0) {
+          setTargetCallsigns(rows.map((r: any) => r.callsign).filter(Boolean));
+        }
+      } catch { /* use empty default */ }
+    };
+    loadTargets();
+  }, []);
+
   const fetchAlaskaData = useCallback(async () => {
     setLoading(true);
     try {

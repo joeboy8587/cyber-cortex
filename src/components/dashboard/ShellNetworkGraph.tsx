@@ -63,34 +63,21 @@ export function ShellNetworkGraph() {
     setIsLoading(true);
 
     try {
-      // Query entity_registry + live detections for additional shell companies
-      const [entityResp, shellResp] = await Promise.all([
+      // Query live enterprise config from Neon
+      const [configResp, entityResp] = await Promise.all([
+        supabase.functions.invoke("neon-query", {
+          body: { action: "getInvestigationConfig" }
+        }),
         supabase.from("entity_registry")
           .select("canonical_identifier, entity_type, threat_classification, aliases, metadata")
           .in("entity_type", ["shell_company", "contractor", "agency", "operator"])
           .limit(50),
-        supabase.functions.invoke("neon-query", {
-          body: {
-            action: "customQuery",
-            query: `
-              SELECT 
-                registrant_name,
-                n_number,
-                registrant_type,
-                registrant_city,
-                registrant_state
-              FROM aircraft_registry
-              WHERE registrant_name ILIKE '%LLC%' 
-                 OR registrant_name ILIKE '%INC%'
-                 OR registrant_name ILIKE '%CORP%'
-                 OR registrant_name ILIKE '%TRUST%'
-                 OR n_number IN ('N912KC','N913KC','N597E','N788FA','N790FA','N791FA','N997SE','N224AM','N229AM','N230AM','N743AM')
-              ORDER BY registrant_name
-              LIMIT 60
-            `
-          }
-        })
       ]);
+
+      const config = configResp.data || {};
+      const enterpriseHierarchy = extractNeonData(config.enterprise_hierarchy) || [];
+      const shellCompanies = extractNeonData(config.shell_companies) || [];
+      const kcsoFleet = extractNeonData(config.kcso_fleet) || [];
 
       const nodes: NetworkNode[] = [];
       const links: NetworkLink[] = [];

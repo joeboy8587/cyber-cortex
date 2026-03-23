@@ -99,45 +99,74 @@ export function ShellNetworkGraph() {
         }
       };
 
-      // 1. Seed from known enterprise structure
-      KNOWN_ENTERPRISE.forEach(entity => {
-        const entityId = entity.name.toLowerCase().replace(/[\s\/]+/g, "_");
+      // 1. Build from live enterprise hierarchy (from criminal_enterprise_command_structure)
+      enterpriseHierarchy.forEach((entity: any) => {
+        const entityId = (entity.entity_name || '').toLowerCase().replace(/[\s\/]+/g, "_");
+        const linkedAircraft = Array.isArray(entity.linked_aircraft) ? entity.linked_aircraft : 
+          typeof entity.linked_aircraft === 'string' ? entity.linked_aircraft.replace(/[{}]/g, '').split(',').filter(Boolean) : [];
+        const linkedEntities = Array.isArray(entity.linked_entities) ? entity.linked_entities :
+          typeof entity.linked_entities === 'string' ? entity.linked_entities.replace(/[{}]/g, '').split(',').filter(Boolean) : [];
+        const ricoIndicators = Array.isArray(entity.rico_indicators) ? entity.rico_indicators :
+          typeof entity.rico_indicators === 'string' ? entity.rico_indicators.replace(/[{}]/g, '').split(',').filter(Boolean) : [];
+
         addNode({
           id: entityId,
-          name: entity.name,
-          type: entity.type,
-          tier: entity.tier,
-          ricoIndicators: [...entity.ricoIndicators],
+          name: entity.entity_name || entityId,
+          type: entity.entity_type === 'shell_company' ? 'shell' :
+                entity.entity_type === 'agency' ? 'agency' :
+                entity.entity_type === 'contractor' ? 'contractor' : 'individual',
+          tier: parseInt(String(entity.tier || '3')),
+          ricoIndicators: ricoIndicators,
           connections: 0,
-          threatScore: entity.threatScore
+          threatScore: parseInt(String(entity.threat_score || '50'))
         });
 
-        // Add aircraft nodes
-        entity.linkedAircraft.forEach(reg => {
-          const aircraftId = reg.toLowerCase();
-          addNode({
-            id: aircraftId,
-            name: reg,
-            type: "aircraft",
-            tier: 4,
-            ricoIndicators: [],
-            connections: 0,
-            threatScore: 40
-          });
+        linkedAircraft.forEach((reg: string) => {
+          const aircraftId = reg.trim().toLowerCase();
+          if (!aircraftId) return;
+          addNode({ id: aircraftId, name: reg.trim(), type: "aircraft", tier: 4, ricoIndicators: [], connections: 0, threatScore: 40 });
           addLink(entityId, aircraftId, "ownership", 0.9);
         });
-      });
 
-      // Add inter-entity links from known structure
-      KNOWN_ENTERPRISE.forEach(entity => {
-        const entityId = entity.name.toLowerCase().replace(/[\s\/]+/g, "_");
-        entity.linkedEntities.forEach(target => {
-          const targetId = target.toLowerCase().replace(/[\s\/]+/g, "_");
-          if (nodeMap.has(targetId)) {
-            addLink(entityId, targetId, "operational", 0.7);
-          }
+        linkedEntities.forEach((target: string) => {
+          const targetId = target.trim().toLowerCase().replace(/[\s\/]+/g, "_");
+          if (nodeMap.has(targetId)) addLink(entityId, targetId, "operational", 0.7);
         });
       });
+
+      // 1b. Add shell companies from shell_companies table
+      shellCompanies.forEach((sc: any) => {
+        const scId = (sc.company_name || '').toLowerCase().replace(/[\s\/]+/g, "_");
+        if (!scId || nodeMap.has(scId)) return;
+        addNode({
+          id: scId, name: sc.company_name, type: "shell", tier: 2,
+          ricoIndicators: sc.rico_indicators ? [sc.rico_indicators] : ["SHELL_STRUCTURE"],
+          connections: 0, threatScore: parseInt(String(sc.risk_score || '70'))
+        });
+      });
+
+      // 1c. Add KCSO fleet aircraft
+      kcsoFleet.forEach((f: any) => {
+        const aircraftId = (f.tail_number || '').toLowerCase();
+        if (!aircraftId) return;
+        addNode({ id: aircraftId, name: f.tail_number, type: "aircraft", tier: 4, ricoIndicators: [], connections: 0, threatScore: 45 });
+        // Link to KCSO if it exists
+        const kcsoId = "kcso_aviation_unit";
+        if (nodeMap.has(kcsoId)) addLink(kcsoId, aircraftId, "ownership", 0.95);
+      });
+
+      // If no enterprise data was loaded, use fallback
+      if (enterpriseHierarchy.length === 0 && FALLBACK_ENTERPRISE.length > 0) {
+        FALLBACK_ENTERPRISE.forEach(entity => {
+          const entityId = entity.name.toLowerCase().replace(/[\s\/]+/g, "_");
+          addNode({ id: entityId, name: entity.name, type: entity.type, tier: entity.tier, ricoIndicators: [...entity.ricoIndicators], connections: 0, threatScore: entity.threatScore });
+          entity.linkedAircraft.forEach(reg => {
+            const aircraftId = reg.toLowerCase();
+            addNode({ id: aircraftId, name: reg, type: "aircraft", tier: 4, ricoIndicators: [], connections: 0, threatScore: 40 });
+            addLink(entityId, aircraftId, "ownership", 0.9);
+          });
+        });
+      }
 
       // 2. Enrich from entity_registry (Supabase)
       const entities = entityResp.data || [];

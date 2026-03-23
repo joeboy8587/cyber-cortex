@@ -46,7 +46,7 @@ interface AircraftBudgetData {
 // Data loaded from NeonDB - no hardcoded fallback
 export const KCSOBudgetTimeline: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
-  const [isImporting, setIsImporting] = useState(false);
+  
   const [budgetData, setBudgetData] = useState<AircraftBudgetData[]>([]);
   const [selectedAircraft, setSelectedAircraft] = useState<string>('all');
   const [selectedYear, setSelectedYear] = useState<number | null>(null);

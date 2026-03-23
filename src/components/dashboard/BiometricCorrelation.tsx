@@ -110,9 +110,9 @@ const calculateHarmScore = (hr: number, hrv?: number, stressLevel?: string): num
 
 // Categorize aircraft
 const categorizeAircraft = (registration: string): 'kcso' | 'shell' | 'medical' | 'military' | 'unknown' => {
-  if (KCSO_AIRCRAFT.includes(registration)) return 'kcso';
-  if (SHELL_COMPANY_AIRCRAFT.includes(registration)) return 'shell';
-  if (MEDICAL_AIRCRAFT.includes(registration)) return 'medical';
+  if (DEFAULT_KCSO_AIRCRAFT.includes(registration)) return 'kcso';
+  if (DEFAULT_SHELL_COMPANY_AIRCRAFT.includes(registration)) return 'shell';
+  if (DEFAULT_MEDICAL_AIRCRAFT.includes(registration)) return 'medical';
   if (registration.match(/^(AF|NAVY|ARMY|USMC|CG)/i)) return 'military';
   return 'unknown';
 };

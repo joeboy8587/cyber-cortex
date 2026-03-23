@@ -299,7 +299,7 @@ export const KCSOBudgetTimeline: React.FC = () => {
         <TabsContent value="purchases">
           <ScrollArea className="h-[500px]">
             <div className="space-y-2">
-              {KCSO_AIRCRAFT_DATA.flatMap((record, rIdx) => 
+              {budgetData.flatMap((record, rIdx) => 
                 record.purchases.map((p, pIdx) => (
                   <div key={`${rIdx}-${pIdx}`} className="bg-background/30 border border-border/50 rounded-lg p-3">
                     <div className="flex items-center gap-2 mb-2">
@@ -324,7 +324,7 @@ export const KCSOBudgetTimeline: React.FC = () => {
           <ScrollArea className="h-[500px]">
             <div className="space-y-1">
               {[...new Set(
-                KCSO_AIRCRAFT_DATA.flatMap(r => [
+                budgetData.flatMap(r => [
                   r.aircraft_tail_number_citation,
                   r.year_citation,
                   r.budget_citation,
@@ -334,8 +334,8 @@ export const KCSOBudgetTimeline: React.FC = () => {
               )].map((url, idx) => (
                 <div key={idx} className="flex items-center gap-2 text-sm text-cyan-400 hover:text-cyan-300">
                   <ExternalLink className="h-3 w-3 flex-shrink-0" />
-                  <a href={url!} target="_blank" rel="noopener noreferrer" className="truncate hover:underline">
-                    {url}
+                  <a href={url as string} target="_blank" rel="noopener noreferrer" className="truncate hover:underline">
+                    {url as string}
                   </a>
                 </div>
               ))}
@@ -343,6 +343,8 @@ export const KCSOBudgetTimeline: React.FC = () => {
           </ScrollArea>
         </TabsContent>
       </Tabs>
+      </>
+      )}
     </CyberPanel>
   );
 };

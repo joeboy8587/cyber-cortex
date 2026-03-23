@@ -236,7 +236,7 @@ export const AlaskaAirlinesDashboard = () => {
           <RefreshCw className={`h-3 w-3 mr-1 ${loading ? 'animate-spin' : ''}`} />
           Refresh
         </Button>
-        {TARGET_CALLSIGNS.map(cs => (
+        {targetCallsigns.map(cs => (
           <Badge key={cs} variant="outline" className="font-mono text-xs bg-red-500/10 border-red-500/30 text-red-400">
             <Target className="h-3 w-3 mr-1" />
             {cs}

@@ -32,7 +32,7 @@ interface ScanResult {
     high: number;
     medium: number;
     anomaly_score: string;
-    scan_days: number;
+    scan_window?: string;
     methodology: string;
   };
   timestamp: string;

@@ -123,6 +123,8 @@ export function BiometricCorrelation() {
   const [fleetConvergences, setFleetConvergences] = useState<FleetConvergence[]>([]);
   const [topAircraft, setTopAircraft] = useState<TopAircraft[]>([]);
   const [biometricSources, setBiometricSources] = useState<BiometricSource[]>([]);
+  const [priorityAircraft, setPriorityAircraft] = useState<string[]>([...DEFAULT_KCSO_AIRCRAFT, ...DEFAULT_SHELL_COMPANY_AIRCRAFT, ...DEFAULT_MEDICAL_AIRCRAFT]);
+  const [kcsoAircraft, setKcsoAircraft] = useState<string[]>(DEFAULT_KCSO_AIRCRAFT);
   const [stats, setStats] = useState<Stats>({
     totalBiometric: 0,
     totalAircraft: 0,

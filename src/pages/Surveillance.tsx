@@ -1,5 +1,6 @@
 import { DashboardLayout } from "@/components/DashboardLayout";
 import TaxonomyBridgePanel from "@/components/dashboard/TaxonomyBridgePanel";
+import AnonymousAnomalyAuditor from "@/components/dashboard/AnonymousAnomalyAuditor";
 import AircraftMapVisualization from "@/components/dashboard/AircraftMapVisualization";
 import { LiveFlightTracker } from "@/components/dashboard/LiveFlightTracker";
 import { DirectAircraftCorrelation } from "@/components/dashboard/DirectAircraftCorrelation";

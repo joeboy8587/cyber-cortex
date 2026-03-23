@@ -184,11 +184,18 @@ serve(async (req) => {
       }
     }
 
-    // ========== STEP 1: ANALYZE RECENT DETECTIONS ==========
-    // Cascading time windows: try requested window, then expand if empty
+    // ========== STEP 1: ANALYZE RECENT DETECTIONS (GEOFENCED TO OILDALE/BAKERSFIELD) ==========
+    // Strict ~15-mile geofence: Oildale/Bakersfield corridor
+    const GEO_LAT_MIN = 35.20;
+    const GEO_LAT_MAX = 35.60;
+    const GEO_LON_MIN = -119.25;
+    const GEO_LON_MAX = -118.75;
+
     const DETECTION_COLUMNS = `id, registration, callsign, altitude, latitude, longitude,
                detection_timestamp, icao_code, speed, heading, vertical_rate,
                flagged, flagged_reasons, taxonomy_tag, owner_operator, shell_auto_detected`;
+    const GEO_FILTER = `AND latitude BETWEEN ${GEO_LAT_MIN} AND ${GEO_LAT_MAX}
+                        AND longitude BETWEEN ${GEO_LON_MIN} AND ${GEO_LON_MAX}`;
     let recentDetections: any[] = [];
     let effectiveWindowMinutes = windowMinutes;
     const fallbackWindows = [windowMinutes, 120, 360, 1440, 4320]; // requested → 2h → 6h → 24h → 72h
@@ -199,13 +206,14 @@ serve(async (req) => {
           sql.unsafe(`SELECT ${DETECTION_COLUMNS}
           FROM live_flight_detections_rows
           WHERE detection_timestamp > NOW() AT TIME ZONE 'UTC' - INTERVAL '${fw} minutes'
+          ${GEO_FILTER}
           LIMIT 1000`),
           12000, `detections_${fw}min`
         );
         if (recentDetections.length > 0) {
           effectiveWindowMinutes = fw;
           if (fw > windowMinutes) {
-            proactiveAlerts.push(`⚠️ No data in last ${windowMinutes}min — expanded to ${fw}min window (${recentDetections.length} detections).`);
+            proactiveAlerts.push(`⚠️ No data in last ${windowMinutes}min — expanded to ${fw}min window (${recentDetections.length} detections in Oildale/Bakersfield zone).`);
           }
           break;
         }
@@ -214,18 +222,20 @@ serve(async (req) => {
       }
     }
 
-    // Last resort: most recent records from live_flight_detections_rows (no time filter)
+    // Last resort: most recent records within geofence (no time filter)
     if (recentDetections.length === 0) {
       try {
         recentDetections = await withTimeout(
           sql.unsafe(`SELECT ${DETECTION_COLUMNS}
           FROM live_flight_detections_rows
+          WHERE latitude BETWEEN ${GEO_LAT_MIN} AND ${GEO_LAT_MAX}
+            AND longitude BETWEEN ${GEO_LON_MIN} AND ${GEO_LON_MAX}
           ORDER BY detection_timestamp DESC
           LIMIT 1000`),
           12000, "rows_latest_fallback"
         );
         if (recentDetections.length > 0) {
-          proactiveAlerts.push(`⚠️ Using latest archived records (${recentDetections.length}) — live feed may be stale.`);
+          proactiveAlerts.push(`⚠️ Using latest archived records (${recentDetections.length}) in Oildale/Bakersfield zone — live feed may be stale.`);
         }
       } catch (e2) {
         console.error("All detection queries failed:", e2 instanceof Error ? e2.message : e2);

@@ -145,6 +145,25 @@ export function BiometricCorrelation() {
   const [lookbackDays, setLookbackDays] = useState(365); // Show ALL historic data
   const [expandedConvergences, setExpandedConvergences] = useState<Set<string>>(new Set());
 
+  // Load priority aircraft from investigation config
+  useEffect(() => {
+    const loadConfig = async () => {
+      try {
+        const { data } = await supabase.functions.invoke('neon-query', {
+          body: { action: 'getInvestigationConfig' }
+        });
+        if (data?.priority_aircraft && Array.isArray(data.priority_aircraft) && data.priority_aircraft.length > 0) {
+          setPriorityAircraft(data.priority_aircraft);
+        }
+        if (data?.kcso_fleet && Array.isArray(data.kcso_fleet)) {
+          const kcsoRegs = data.kcso_fleet.map((f: any) => f.tail_number).filter(Boolean);
+          if (kcsoRegs.length > 0) setKcsoAircraft(kcsoRegs);
+        }
+      } catch { /* use defaults */ }
+    };
+    loadConfig();
+  }, []);
+
   const fetchCorrelations = useCallback(async () => {
     setLoading(true);
     try {

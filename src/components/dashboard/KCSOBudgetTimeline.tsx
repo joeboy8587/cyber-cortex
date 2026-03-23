@@ -111,14 +111,6 @@ export const KCSOBudgetTimeline: React.FC = () => {
     }
   };
 
-  const importToDatabase = async () => {
-    setIsImporting(true);
-    try {
-      toast.info('Budget data should be imported via the Data Tools hub');
-    } finally {
-      setIsImporting(false);
-    }
-  };
 
   const formatCurrency = (amount: number | null) => {
     if (amount === null) return 'N/A';

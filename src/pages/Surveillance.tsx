@@ -46,7 +46,7 @@ export default function Surveillance() {
           </div>
         </div>
 
-        <Tabs defaultValue="investigation" className="space-y-6">
+        <Tabs defaultValue="auditor" className="space-y-6">
           <div className="rounded-lg border border-border/50 bg-background/40 p-3">
             <div className="mb-3 flex flex-col gap-1">
               <h2 className="font-mono text-sm uppercase tracking-[0.2em] text-foreground">
@@ -57,7 +57,8 @@ export default function Surveillance() {
               </p>
             </div>
 
-            <TabsList className="grid h-auto grid-cols-2 gap-2 bg-transparent p-0 lg:grid-cols-6">
+            <TabsList className="grid h-auto grid-cols-2 gap-2 bg-transparent p-0 lg:grid-cols-7">
+              <TabsTrigger value="auditor">Blind Audit</TabsTrigger>
               <TabsTrigger value="investigation">Investigation</TabsTrigger>
               <TabsTrigger value="live">Live Ops</TabsTrigger>
               <TabsTrigger value="watchtower">Watchtower</TabsTrigger>
@@ -66,6 +67,12 @@ export default function Surveillance() {
               <TabsTrigger value="intake">Intake</TabsTrigger>
             </TabsList>
           </div>
+
+          <TabsContent value="auditor" className="space-y-6">
+            <section>
+              <AnonymousAnomalyAuditor />
+            </section>
+          </TabsContent>
 
           <TabsContent value="investigation" className="space-y-6">
             <section>

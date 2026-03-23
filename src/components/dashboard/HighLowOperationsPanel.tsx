@@ -167,8 +167,8 @@ export const HighLowOperationsPanel = () => {
         </div>
         <p className="text-sm text-foreground/80">
           High-Low Split Operations involve coordinated aircraft at different altitudes. High-altitude 
-          assets (SIGINT platforms, E-2D Hawkeye) provide signals intelligence while low-altitude 
-          aircraft (N912KC, N913KC) conduct visual/tactical surveillance. Pattern correlates with 
+          assets (SIGINT platforms) provide signals intelligence while low-altitude 
+          aircraft conduct visual/tactical surveillance. Pattern correlates with 
           biometric stress responses.
         </p>
       </div>

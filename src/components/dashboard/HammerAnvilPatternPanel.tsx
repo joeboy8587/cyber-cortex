@@ -69,41 +69,49 @@ export function HammerAnvilPatternPanel() {
 
   const [activeTab, setActiveTab] = useState("tracking");
   
-  // Tracked aircraft state
-  const [trackedAircraft, setTrackedAircraft] = useState<TrackedAircraft[]>([
-    {
-      registration: "N597E",
-      callsign: "KCSO1",
-      role: "hammer",
-      status: "tracking",
-      altitude: null,
-      groundSpeed: null,
-      heading: null,
-      latitude: null,
-      longitude: null,
-      lastUpdate: new Date().toISOString(),
-      signalStrength: 0,
-      operator: "County of Kern",
-      model: "Bell UH-1H Huey II"
-    },
-    {
-      registration: "N229AM",
-      callsign: "MED229",
-      role: "anvil",
-      status: "tracking",
-      altitude: null,
-      groundSpeed: null,
-      heading: null,
-      latitude: null,
-      longitude: null,
-      lastUpdate: new Date().toISOString(),
-      signalStrength: 0,
-      operator: "First Citizens Bank (Trustee)",
-      model: "Bell 407"
-    }
-  ]);
+  // Tracked aircraft state - loaded from KCSO fleet on mount
+  const [trackedAircraft, setTrackedAircraft] = useState<TrackedAircraft[]>([]);
   const [isLiveTracking, setIsLiveTracking] = useState(false);
   const [trackingInterval, setTrackingInterval] = useState<NodeJS.Timeout | null>(null);
+
+  // Load tracked aircraft from kcso_fleet
+  useEffect(() => {
+    const loadFleet = async () => {
+      try {
+        const { data } = await supabase.functions.invoke('neon-query', {
+          body: { action: 'getInvestigationConfig' }
+        });
+        const fleet = Array.isArray(data?.kcso_fleet) ? data.kcso_fleet : [];
+        if (fleet.length > 0) {
+          const mapped: TrackedAircraft[] = fleet.slice(0, 6).map((f: any, i: number) => ({
+            registration: f.tail_number || '',
+            callsign: f.tail_number || '',
+            role: i % 2 === 0 ? "hammer" as const : "anvil" as const,
+            status: "tracking" as const,
+            altitude: null, groundSpeed: null, heading: null,
+            latitude: null, longitude: null,
+            lastUpdate: new Date().toISOString(),
+            signalStrength: 0,
+            operator: "County of Kern",
+            model: f.model || 'Unknown'
+          }));
+          setTrackedAircraft(mapped);
+        } else {
+          // Fallback to minimal default
+          setTrackedAircraft([
+            { registration: "N912KC", callsign: "KCSO1", role: "hammer", status: "tracking", altitude: null, groundSpeed: null, heading: null, latitude: null, longitude: null, lastUpdate: new Date().toISOString(), signalStrength: 0, operator: "County of Kern", model: "Airbus H125" },
+            { registration: "N913KC", callsign: "KCSO2", role: "anvil", status: "tracking", altitude: null, groundSpeed: null, heading: null, latitude: null, longitude: null, lastUpdate: new Date().toISOString(), signalStrength: 0, operator: "County of Kern", model: "Airbus H125" }
+          ]);
+        }
+      } catch {
+        setTrackedAircraft([
+          { registration: "N912KC", callsign: "KCSO1", role: "hammer", status: "tracking", altitude: null, groundSpeed: null, heading: null, latitude: null, longitude: null, lastUpdate: new Date().toISOString(), signalStrength: 0, operator: "County of Kern", model: "Airbus H125" },
+          { registration: "N913KC", callsign: "KCSO2", role: "anvil", status: "tracking", altitude: null, groundSpeed: null, heading: null, latitude: null, longitude: null, lastUpdate: new Date().toISOString(), signalStrength: 0, operator: "County of Kern", model: "Airbus H125" }
+        ]);
+      }
+    };
+    loadFleet();
+  }, []);
 
   const fetchLivePositions = useCallback(async () => {
     try {

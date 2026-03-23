@@ -13,15 +13,13 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { toast } from "sonner";
 
-// Priority aircraft registrations for filtering
-const PRIORITY_AIRCRAFT = [
-  'N912KC', 'N913KC', 'N743AM', 'N229AM', 'N790FA', 'N788FA', 
-  'N791FA', 'N997SE', 'N2464D', 'N766ME', 'N118SY', 'N156HP', 'N739HP'
-];
+// Priority aircraft loaded dynamically from investigation config
+// These are populated on mount from getInvestigationConfig
+let _cachedPriorityAircraft: string[] | null = null;
 
-const KCSO_AIRCRAFT = ['N912KC', 'N913KC'];
-const SHELL_COMPANY_AIRCRAFT = ['N790FA', 'N788FA', 'N791FA', 'N997SE', 'N2464D'];
-const MEDICAL_AIRCRAFT = ['N743AM', 'N229AM', 'N766ME'];
+const DEFAULT_KCSO_AIRCRAFT = ['N912KC', 'N913KC'];
+const DEFAULT_SHELL_COMPANY_AIRCRAFT = ['N790FA', 'N788FA', 'N791FA', 'N997SE', 'N2464D'];
+const DEFAULT_MEDICAL_AIRCRAFT = ['N743AM', 'N229AM', 'N766ME'];
 
 interface Correlation {
   biometric_id: string;
@@ -112,9 +110,9 @@ const calculateHarmScore = (hr: number, hrv?: number, stressLevel?: string): num
 
 // Categorize aircraft
 const categorizeAircraft = (registration: string): 'kcso' | 'shell' | 'medical' | 'military' | 'unknown' => {
-  if (KCSO_AIRCRAFT.includes(registration)) return 'kcso';
-  if (SHELL_COMPANY_AIRCRAFT.includes(registration)) return 'shell';
-  if (MEDICAL_AIRCRAFT.includes(registration)) return 'medical';
+  if (DEFAULT_KCSO_AIRCRAFT.includes(registration)) return 'kcso';
+  if (DEFAULT_SHELL_COMPANY_AIRCRAFT.includes(registration)) return 'shell';
+  if (DEFAULT_MEDICAL_AIRCRAFT.includes(registration)) return 'medical';
   if (registration.match(/^(AF|NAVY|ARMY|USMC|CG)/i)) return 'military';
   return 'unknown';
 };
@@ -125,6 +123,8 @@ export function BiometricCorrelation() {
   const [fleetConvergences, setFleetConvergences] = useState<FleetConvergence[]>([]);
   const [topAircraft, setTopAircraft] = useState<TopAircraft[]>([]);
   const [biometricSources, setBiometricSources] = useState<BiometricSource[]>([]);
+  const [priorityAircraft, setPriorityAircraft] = useState<string[]>([...DEFAULT_KCSO_AIRCRAFT, ...DEFAULT_SHELL_COMPANY_AIRCRAFT, ...DEFAULT_MEDICAL_AIRCRAFT]);
+  const [kcsoAircraft, setKcsoAircraft] = useState<string[]>(DEFAULT_KCSO_AIRCRAFT);
   const [stats, setStats] = useState<Stats>({
     totalBiometric: 0,
     totalAircraft: 0,
@@ -144,6 +144,25 @@ export function BiometricCorrelation() {
   const [timeWindow, setTimeWindow] = useState(5); // minutes
   const [lookbackDays, setLookbackDays] = useState(365); // Show ALL historic data
   const [expandedConvergences, setExpandedConvergences] = useState<Set<string>>(new Set());
+
+  // Load priority aircraft from investigation config
+  useEffect(() => {
+    const loadConfig = async () => {
+      try {
+        const { data } = await supabase.functions.invoke('neon-query', {
+          body: { action: 'getInvestigationConfig' }
+        });
+        if (data?.priority_aircraft && Array.isArray(data.priority_aircraft) && data.priority_aircraft.length > 0) {
+          setPriorityAircraft(data.priority_aircraft);
+        }
+        if (data?.kcso_fleet && Array.isArray(data.kcso_fleet)) {
+          const kcsoRegs = data.kcso_fleet.map((f: any) => f.tail_number).filter(Boolean);
+          if (kcsoRegs.length > 0) setKcsoAircraft(kcsoRegs);
+        }
+      } catch { /* use defaults */ }
+    };
+    loadConfig();
+  }, []);
 
   const fetchCorrelations = useCallback(async () => {
     setLoading(true);
@@ -373,9 +392,9 @@ export function BiometricCorrelation() {
   const filteredCorrelations = useMemo(() => {
     switch (filterMode) {
       case 'priority':
-        return correlations.filter(c => PRIORITY_AIRCRAFT.includes(c.aircraft_id));
+        return correlations.filter(c => priorityAircraft.includes(c.aircraft_id));
       case 'kcso':
-        return correlations.filter(c => KCSO_AIRCRAFT.includes(c.aircraft_id));
+        return correlations.filter(c => kcsoAircraft.includes(c.aircraft_id));
       case 'low-altitude':
         return correlations.filter(c => c.altitude !== undefined && c.altitude < 5000);
       case 'high-strength':
@@ -392,7 +411,7 @@ export function BiometricCorrelation() {
   const filteredTopAircraft = useMemo(() => {
     switch (filterMode) {
       case 'priority':
-        return topAircraft.filter(a => PRIORITY_AIRCRAFT.includes(a.registration));
+        return topAircraft.filter(a => priorityAircraft.includes(a.registration));
       case 'kcso':
         return topAircraft.filter(a => a.category === 'kcso');
       case 'low-altitude':
@@ -679,7 +698,7 @@ export function BiometricCorrelation() {
                   <div className="space-y-3 pr-3">
                     {filteredCorrelations.slice(0, 50).map((corr, i) => {
                       const isLowAltitude = corr.altitude !== undefined && corr.altitude < 5000;
-                      const isPriority = PRIORITY_AIRCRAFT.includes(corr.aircraft_id);
+                      const isPriority = priorityAircraft.includes(corr.aircraft_id);
                       
                       return (
                         <div key={`${corr.biometric_id}-${corr.aircraft_id}-${i}`} className="relative pl-4 border-l-2 border-border">
@@ -782,7 +801,7 @@ export function BiometricCorrelation() {
                       {fleetConvergences.slice(0, 30).map((conv, i) => {
                         const key = `${conv.biometric_timestamp}-${i}`;
                         const isExpanded = expandedConvergences.has(key);
-                        const priorityCount = conv.aircraft.filter(a => PRIORITY_AIRCRAFT.includes(a.registration)).length;
+                        const priorityCount = conv.aircraft.filter(a => priorityAircraft.includes(a.registration)).length;
                         const lowAltCount = conv.aircraft.filter(a => a.altitude !== undefined && a.altitude < 5000).length;
                         
                         return (
@@ -840,7 +859,7 @@ export function BiometricCorrelation() {
                             <CollapsibleContent>
                               <div className="ml-6 mt-1 space-y-1">
                                 {conv.aircraft.map((ac, j) => {
-                                  const isPriority = PRIORITY_AIRCRAFT.includes(ac.registration);
+                                  const isPriority = priorityAircraft.includes(ac.registration);
                                   const isLowAlt = ac.altitude !== undefined && ac.altitude < 5000;
                                   
                                   return (

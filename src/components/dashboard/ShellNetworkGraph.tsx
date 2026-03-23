@@ -42,8 +42,8 @@ interface NetworkData {
   totalExposure: number;
 }
 
-// Known RICO enterprise structure from investigation
-const KNOWN_ENTERPRISE: Array<{
+// Fallback only used if Neon query fails
+const FALLBACK_ENTERPRISE: Array<{
   name: string;
   type: NetworkNode["type"];
   tier: number;
@@ -51,71 +51,8 @@ const KNOWN_ENTERPRISE: Array<{
   threatScore: number;
   linkedAircraft: string[];
   linkedEntities: string[];
-}> = [
-  {
-    name: "KCSO Aviation Unit",
-    type: "agency",
-    tier: 0,
-    ricoIndicators: ["COMMAND_LEVEL", "STATE_ACTOR", "FLEET_CONTROL"],
-    threatScore: 98,
-    linkedAircraft: ["N912KC", "N913KC", "N597E"],
-    linkedEntities: ["ALF IX LLC", "Air Methods / Mercy Air"]
-  },
-  {
-    name: "ALF IX LLC",
-    type: "shell",
-    tier: 0,
-    ricoIndicators: ["SHELL_STRUCTURE", "NOMINEE_DIRECTORS", "FLEET_CONTROL"],
-    threatScore: 95,
-    linkedAircraft: ["N788FA", "N790FA", "N791FA"],
-    linkedEntities: ["AERO EQUITIES", "CHRISTIANSEN AVIATION"]
-  },
-  {
-    name: "AERO EQUITIES",
-    type: "shell",
-    tier: 1,
-    ricoIndicators: ["SHELL_STRUCTURE", "SHARED_AGENT", "OWNERSHIP_OBFUSCATION"],
-    threatScore: 88,
-    linkedAircraft: ["N997SE"],
-    linkedEntities: ["ALF IX LLC"]
-  },
-  {
-    name: "CHRISTIANSEN AVIATION",
-    type: "shell",
-    tier: 1,
-    ricoIndicators: ["SHELL_STRUCTURE", "OPERATIONAL_CONTROL"],
-    threatScore: 82,
-    linkedAircraft: [],
-    linkedEntities: ["ALF IX LLC"]
-  },
-  {
-    name: "Air Methods / Mercy Air",
-    type: "contractor",
-    tier: 2,
-    ricoIndicators: ["MEDICAL_FRAUD", "OPERATIONAL_COVER", "FCA_VIOLATIONS"],
-    threatScore: 78,
-    linkedAircraft: ["N224AM", "N229AM", "N230AM", "N743AM"],
-    linkedEntities: ["KCSO Aviation Unit"]
-  },
-  {
-    name: "AE Industrial Partners",
-    type: "contractor",
-    tier: 2,
-    ricoIndicators: ["FUNDING_SOURCE", "PRIVATE_EQUITY"],
-    threatScore: 65,
-    linkedAircraft: [],
-    linkedEntities: ["Redwire Corp"]
-  },
-  {
-    name: "Redwire Corp",
-    type: "contractor",
-    tier: 3,
-    ricoIndicators: ["INFRASTRUCTURE", "NAT_SECURITY_CONTRACTOR"],
-    threatScore: 55,
-    linkedAircraft: [],
-    linkedEntities: ["AE Industrial Partners"]
-  },
-];
+}> = [];
+
 
 export function ShellNetworkGraph() {
   const [isLoading, setIsLoading] = useState(false);
@@ -126,34 +63,21 @@ export function ShellNetworkGraph() {
     setIsLoading(true);
 
     try {
-      // Query entity_registry + live detections for additional shell companies
-      const [entityResp, shellResp] = await Promise.all([
+      // Query live enterprise config from Neon
+      const [configResp, entityResp] = await Promise.all([
+        supabase.functions.invoke("neon-query", {
+          body: { action: "getInvestigationConfig" }
+        }),
         supabase.from("entity_registry")
           .select("canonical_identifier, entity_type, threat_classification, aliases, metadata")
           .in("entity_type", ["shell_company", "contractor", "agency", "operator"])
           .limit(50),
-        supabase.functions.invoke("neon-query", {
-          body: {
-            action: "customQuery",
-            query: `
-              SELECT 
-                registrant_name,
-                n_number,
-                registrant_type,
-                registrant_city,
-                registrant_state
-              FROM aircraft_registry
-              WHERE registrant_name ILIKE '%LLC%' 
-                 OR registrant_name ILIKE '%INC%'
-                 OR registrant_name ILIKE '%CORP%'
-                 OR registrant_name ILIKE '%TRUST%'
-                 OR n_number IN ('N912KC','N913KC','N597E','N788FA','N790FA','N791FA','N997SE','N224AM','N229AM','N230AM','N743AM')
-              ORDER BY registrant_name
-              LIMIT 60
-            `
-          }
-        })
       ]);
+
+      const config = configResp.data || {};
+      const enterpriseHierarchy = extractNeonData(config.enterprise_hierarchy) || [];
+      const shellCompanies = extractNeonData(config.shell_companies) || [];
+      const kcsoFleet = extractNeonData(config.kcso_fleet) || [];
 
       const nodes: NetworkNode[] = [];
       const links: NetworkLink[] = [];
@@ -175,45 +99,74 @@ export function ShellNetworkGraph() {
         }
       };
 
-      // 1. Seed from known enterprise structure
-      KNOWN_ENTERPRISE.forEach(entity => {
-        const entityId = entity.name.toLowerCase().replace(/[\s\/]+/g, "_");
+      // 1. Build from live enterprise hierarchy (from criminal_enterprise_command_structure)
+      enterpriseHierarchy.forEach((entity: any) => {
+        const entityId = (entity.entity_name || '').toLowerCase().replace(/[\s\/]+/g, "_");
+        const linkedAircraft = Array.isArray(entity.linked_aircraft) ? entity.linked_aircraft : 
+          typeof entity.linked_aircraft === 'string' ? entity.linked_aircraft.replace(/[{}]/g, '').split(',').filter(Boolean) : [];
+        const linkedEntities = Array.isArray(entity.linked_entities) ? entity.linked_entities :
+          typeof entity.linked_entities === 'string' ? entity.linked_entities.replace(/[{}]/g, '').split(',').filter(Boolean) : [];
+        const ricoIndicators = Array.isArray(entity.rico_indicators) ? entity.rico_indicators :
+          typeof entity.rico_indicators === 'string' ? entity.rico_indicators.replace(/[{}]/g, '').split(',').filter(Boolean) : [];
+
         addNode({
           id: entityId,
-          name: entity.name,
-          type: entity.type,
-          tier: entity.tier,
-          ricoIndicators: [...entity.ricoIndicators],
+          name: entity.entity_name || entityId,
+          type: entity.entity_type === 'shell_company' ? 'shell' :
+                entity.entity_type === 'agency' ? 'agency' :
+                entity.entity_type === 'contractor' ? 'contractor' : 'individual',
+          tier: parseInt(String(entity.tier || '3')),
+          ricoIndicators: ricoIndicators,
           connections: 0,
-          threatScore: entity.threatScore
+          threatScore: parseInt(String(entity.threat_score || '50'))
         });
 
-        // Add aircraft nodes
-        entity.linkedAircraft.forEach(reg => {
-          const aircraftId = reg.toLowerCase();
-          addNode({
-            id: aircraftId,
-            name: reg,
-            type: "aircraft",
-            tier: 4,
-            ricoIndicators: [],
-            connections: 0,
-            threatScore: 40
-          });
+        linkedAircraft.forEach((reg: string) => {
+          const aircraftId = reg.trim().toLowerCase();
+          if (!aircraftId) return;
+          addNode({ id: aircraftId, name: reg.trim(), type: "aircraft", tier: 4, ricoIndicators: [], connections: 0, threatScore: 40 });
           addLink(entityId, aircraftId, "ownership", 0.9);
         });
-      });
 
-      // Add inter-entity links from known structure
-      KNOWN_ENTERPRISE.forEach(entity => {
-        const entityId = entity.name.toLowerCase().replace(/[\s\/]+/g, "_");
-        entity.linkedEntities.forEach(target => {
-          const targetId = target.toLowerCase().replace(/[\s\/]+/g, "_");
-          if (nodeMap.has(targetId)) {
-            addLink(entityId, targetId, "operational", 0.7);
-          }
+        linkedEntities.forEach((target: string) => {
+          const targetId = target.trim().toLowerCase().replace(/[\s\/]+/g, "_");
+          if (nodeMap.has(targetId)) addLink(entityId, targetId, "operational", 0.7);
         });
       });
+
+      // 1b. Add shell companies from shell_companies table
+      shellCompanies.forEach((sc: any) => {
+        const scId = (sc.company_name || '').toLowerCase().replace(/[\s\/]+/g, "_");
+        if (!scId || nodeMap.has(scId)) return;
+        addNode({
+          id: scId, name: sc.company_name, type: "shell", tier: 2,
+          ricoIndicators: sc.rico_indicators ? [sc.rico_indicators] : ["SHELL_STRUCTURE"],
+          connections: 0, threatScore: parseInt(String(sc.risk_score || '70'))
+        });
+      });
+
+      // 1c. Add KCSO fleet aircraft
+      kcsoFleet.forEach((f: any) => {
+        const aircraftId = (f.tail_number || '').toLowerCase();
+        if (!aircraftId) return;
+        addNode({ id: aircraftId, name: f.tail_number, type: "aircraft", tier: 4, ricoIndicators: [], connections: 0, threatScore: 45 });
+        // Link to KCSO if it exists
+        const kcsoId = "kcso_aviation_unit";
+        if (nodeMap.has(kcsoId)) addLink(kcsoId, aircraftId, "ownership", 0.95);
+      });
+
+      // If no enterprise data was loaded, use fallback
+      if (enterpriseHierarchy.length === 0 && FALLBACK_ENTERPRISE.length > 0) {
+        FALLBACK_ENTERPRISE.forEach(entity => {
+          const entityId = entity.name.toLowerCase().replace(/[\s\/]+/g, "_");
+          addNode({ id: entityId, name: entity.name, type: entity.type, tier: entity.tier, ricoIndicators: [...entity.ricoIndicators], connections: 0, threatScore: entity.threatScore });
+          entity.linkedAircraft.forEach(reg => {
+            const aircraftId = reg.toLowerCase();
+            addNode({ id: aircraftId, name: reg, type: "aircraft", tier: 4, ricoIndicators: [], connections: 0, threatScore: 40 });
+            addLink(entityId, aircraftId, "ownership", 0.9);
+          });
+        });
+      }
 
       // 2. Enrich from entity_registry (Supabase)
       const entities = entityResp.data || [];
@@ -232,39 +185,6 @@ export function ShellNetworkGraph() {
             threatScore: 50
           });
         }
-      });
-
-      // 3. Enrich from aircraft_registry (Neon)
-      const registryData = extractNeonData(shellResp.data);
-      registryData.forEach((r: any) => {
-        const regName = r.registrant_name?.trim();
-        const nNumber = r.n_number?.trim();
-        if (!regName || !nNumber) return;
-
-        const operatorId = regName.toLowerCase().replace(/[\s\/]+/g, "_");
-        const aircraftId = nNumber.toLowerCase();
-
-        addNode({
-          id: operatorId,
-          name: regName,
-          type: "shell",
-          tier: 2,
-          ricoIndicators: ["FAA_REGISTERED"],
-          connections: 0,
-          threatScore: 45
-        });
-
-        addNode({
-          id: aircraftId,
-          name: nNumber,
-          type: "aircraft",
-          tier: 4,
-          ricoIndicators: [],
-          connections: 0,
-          threatScore: 35
-        });
-
-        addLink(operatorId, aircraftId, "registration", 0.6);
       });
 
       // Calculate RICO score

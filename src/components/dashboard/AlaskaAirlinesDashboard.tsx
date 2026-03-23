@@ -50,8 +50,30 @@ export const AlaskaAirlinesDashboard = () => {
     peakHour: 19 // 7 PM
   });
 
-  // Target callsigns from investigation
-  const TARGET_CALLSIGNS = ['ASA1310', 'ASA559', 'ASA711', 'QXE2456', 'SKW3307'];
+  // Target callsigns derived from detection patterns (loaded dynamically)
+  const [targetCallsigns, setTargetCallsigns] = useState<string[]>([]);
+
+  // Load target callsigns from detection patterns
+  useEffect(() => {
+    const loadTargets = async () => {
+      try {
+        const { data } = await supabase.functions.invoke('neon-query', {
+          body: {
+            action: 'customQuery',
+            query: `SELECT DISTINCT callsign FROM live_flight_detections_rows 
+                    WHERE callsign LIKE 'ASA%' OR callsign LIKE 'QXE%' OR callsign LIKE 'SKW%'
+                    AND flagged = true AND callsign IS NOT NULL
+                    ORDER BY callsign LIMIT 20`
+          }
+        });
+        const rows = extractNeonData(data);
+        if (rows.length > 0) {
+          setTargetCallsigns(rows.map((r: any) => r.callsign).filter(Boolean));
+        }
+      } catch { /* use empty default */ }
+    };
+    loadTargets();
+  }, []);
 
   const fetchAlaskaData = useCallback(async () => {
     setLoading(true);
@@ -113,7 +135,7 @@ export const AlaskaAirlinesDashboard = () => {
           min_altitude: parseFloat(row.min_altitude as string) || 0,
           first_seen: (row.first_seen as string) || '',
           last_seen: (row.last_seen as string) || '',
-          is_target: TARGET_CALLSIGNS.includes(callsign)
+          is_target: targetCallsigns.includes(callsign)
         };
       });
 
@@ -236,7 +258,7 @@ export const AlaskaAirlinesDashboard = () => {
           <RefreshCw className={`h-3 w-3 mr-1 ${loading ? 'animate-spin' : ''}`} />
           Refresh
         </Button>
-        {TARGET_CALLSIGNS.map(cs => (
+        {targetCallsigns.map(cs => (
           <Badge key={cs} variant="outline" className="font-mono text-xs bg-red-500/10 border-red-500/30 text-red-400">
             <Target className="h-3 w-3 mr-1" />
             {cs}

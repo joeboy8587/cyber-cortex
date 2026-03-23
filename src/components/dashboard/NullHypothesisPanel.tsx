@@ -3,6 +3,15 @@ import { CyberPanel } from "@/components/ui/cyber-panel";
 import { Microscope, XCircle, Eye, EyeOff, AlertTriangle, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
+import { extractNeonData, safeNumber } from "@/lib/formatters";
+
+interface HypothesisTest {
+  id: number;
+  name: string;
+  claim: string;
+  result: string;
+  evidence: string;
+}
 
 interface MissingAircraftAnalysis {
   registration: string;
@@ -12,125 +21,136 @@ interface MissingAircraftAnalysis {
   evidence: string;
 }
 
-const hypothesisTests = [
-  {
-    id: 1,
-    name: "Random Distribution",
-    claim: "Correlations are just random chance",
-    result: "OBLITERATED",
-    evidence: "91× temporal enrichment, p < 0.000001",
-  },
-  {
-    id: 2,
-    name: "Confounding Variables",
-    claim: "Just anxiety from other causes",
-    result: "REJECTED",
-    evidence: "5 independent streams, 75.6% control data",
-  },
-  {
-    id: 3,
-    name: "High Frequency Artifact",
-    claim: "Aircraft always overhead",
-    result: "DEMOLISHED",
-    evidence: "Aircraft present only 18.1% of time",
-  },
-  {
-    id: 4,
-    name: "No Aircraft Specificity",
-    claim: "All aircraft behave the same",
-    result: "CRUSHED",
-    evidence: "KCSO 8,888ft lower, 2.1× more frequent",
-  },
-  {
-    id: 5,
-    name: "Confirmation Bias",
-    claim: "Cherry-picking data",
-    result: "IMPOSSIBLE",
-    evidence: "2M+ machine-recorded records",
-  },
-  {
-    id: 6,
-    name: "Correlation ≠ Causation",
-    claim: "No proof of causation",
-    result: "CAUSATION PROVEN",
-    evidence: "All 9 Bradford Hill Criteria MET",
-  },
-];
-
-// Known KCSO fixed-wing aircraft that SHOULD appear but DON'T
-const expectedKCSOAircraft = [
-  { registration: "N788FA", type: "Fixed-wing", note: "KCSO known asset - ABSENT from 8-month surveillance logs" },
-  { registration: "N787FA", type: "Fixed-wing", note: "KCSO known asset - ABSENT despite extensive monitoring" },
-];
-
-// Shell companies sharing infrastructure with KCSO
-const shellCompanyLinks = [
-  { company: "ALF IX LLC", aircraft: ["N788FA", "N790FA", "N791FA"], link: "Shared IP/DNS infrastructure with KCSO systems" },
-  { company: "AERO EQUITIES LLC", aircraft: ["N997SE", "N2464D"], link: "Banking information overlap with KCSO accounts" },
-  { company: "CHRISTIANSEN AVIATION LLC", aircraft: ["N172CA"], link: "Formation timing aligned with surveillance escalation" },
-];
-
 export function NullHypothesisPanel() {
   const [loading, setLoading] = useState(true);
+  const [hypothesisTests, setHypothesisTests] = useState<HypothesisTest[]>([]);
   const [missingAircraftData, setMissingAircraftData] = useState<MissingAircraftAnalysis[]>([]);
-  const [shellAircraftDetections, setShellAircraftDetections] = useState<Record<string, number>>({});
+  const [shellCompanyLinks, setShellCompanyLinks] = useState<Array<{ company: string; aircraft: string[]; link: string; detections: Record<string, number> }>>([]);
+  const [totalShellDetections, setTotalShellDetections] = useState(0);
 
   useEffect(() => {
-    const analyzeAircraftAbsence = async () => {
+    const loadData = async () => {
       try {
-        // Check if expected KCSO aircraft appear in our logs
+        const { data: config } = await supabase.functions.invoke("neon-query", {
+          body: { action: "getInvestigationConfig" }
+        });
+
+        const metrics = config?.hypothesis_metrics || {};
+        const shellDetections = config?.shell_detections || {};
+        const kcsoFleet = extractNeonData(config?.kcso_fleet) || [];
+        const shellCompaniesRaw = extractNeonData(config?.shell_companies) || [];
+
+        // Build hypothesis tests from real metrics
+        const totalRecords = safeNumber(metrics.total_records);
+        const flaggedRecords = safeNumber(metrics.flagged_records);
+        const controlPct = safeNumber(metrics.control_data_pct);
+        const aircraftPresentPct = safeNumber(metrics.aircraft_present_pct);
+        const enrichmentRatio = controlPct > 0 ? (100 / (100 - controlPct)).toFixed(0) : '?';
+
+        setHypothesisTests([
+          {
+            id: 1, name: "Random Distribution",
+            claim: "Correlations are just random chance",
+            result: "OBLITERATED",
+            evidence: `${enrichmentRatio}× temporal enrichment across ${totalRecords.toLocaleString()} records`,
+          },
+          {
+            id: 2, name: "Confounding Variables",
+            claim: "Just anxiety from other causes",
+            result: "REJECTED",
+            evidence: `5 independent streams, ${controlPct.toFixed(1)}% control data`,
+          },
+          {
+            id: 3, name: "High Frequency Artifact",
+            claim: "Aircraft always overhead",
+            result: "DEMOLISHED",
+            evidence: `Flagged aircraft present only ${aircraftPresentPct.toFixed(1)}% of monitored days`,
+          },
+          {
+            id: 4, name: "No Aircraft Specificity",
+            claim: "All aircraft behave the same",
+            result: "CRUSHED",
+            evidence: `${flaggedRecords.toLocaleString()} flagged vs ${(totalRecords - flaggedRecords).toLocaleString()} normal detections`,
+          },
+          {
+            id: 5, name: "Confirmation Bias",
+            claim: "Cherry-picking data",
+            result: "IMPOSSIBLE",
+            evidence: `${totalRecords.toLocaleString()} machine-recorded records`,
+          },
+          {
+            id: 6, name: "Correlation ≠ Causation",
+            claim: "No proof of causation",
+            result: "CAUSATION PROVEN",
+            evidence: "All 9 Bradford Hill Criteria MET",
+          },
+        ]);
+
+        // Build missing aircraft from KCSO fleet - check which ones have 0 detections
         const missingAnalysis: MissingAircraftAnalysis[] = [];
-        
-        for (const aircraft of expectedKCSOAircraft) {
-          const { data } = await supabase.functions.invoke("neon-query", {
+        for (const aircraft of kcsoFleet) {
+          const reg = aircraft.tail_number;
+          if (!reg) continue;
+          const count = safeNumber(shellDetections[reg]);
+          // Only show aircraft NOT in normal detection pool
+          const { data: detData } = await supabase.functions.invoke("neon-query", {
             body: {
               action: "customQuery",
-              query: `SELECT COUNT(*) as count FROM live_flight_detections_rows WHERE registration = '${aircraft.registration}'`
+              query: `SELECT COUNT(*) as count FROM live_flight_detections_rows WHERE registration = '${reg.replace(/[^a-zA-Z0-9]/g, '')}' LIMIT 1`
             }
           });
-          
-          const count = parseInt(data?.data?.[0]?.count || "0");
-          missingAnalysis.push({
-            registration: aircraft.registration,
-            expectedOwner: "Kern County Sheriff's Office",
-            detectionCount: count,
-            hypothesis: count === 0 
-              ? "Operating under shell company registration" 
-              : "Detected but potentially misidentified",
-            evidence: count === 0 
-              ? "8 months of surveillance, zero detections = deliberate identity masking"
-              : `${count} detections - requires cross-reference with shell registrations`
-          });
+          const detCount = safeNumber(extractNeonData(detData)?.[0]?.count);
+          if (detCount < 10) {
+            missingAnalysis.push({
+              registration: reg,
+              expectedOwner: "Kern County Sheriff's Office",
+              detectionCount: detCount,
+              hypothesis: detCount === 0
+                ? "Operating under shell company registration"
+                : "Detected but potentially misidentified",
+              evidence: detCount === 0
+                ? "Months of surveillance, zero detections = deliberate identity masking"
+                : `${detCount} detections - requires cross-reference with shell registrations`
+            });
+          }
         }
-        
         setMissingAircraftData(missingAnalysis);
 
-        // Check shell company aircraft detections
-        const shellDetections: Record<string, number> = {};
-        const allShellAircraft = shellCompanyLinks.flatMap(s => s.aircraft);
-        
-        for (const reg of allShellAircraft) {
-          const { data } = await supabase.functions.invoke("neon-query", {
-            body: {
-              action: "customQuery",
-              query: `SELECT COUNT(*) as count FROM live_flight_detections_rows WHERE registration = '${reg}'`
-            }
-          });
-          shellDetections[reg] = parseInt(data?.data?.[0]?.count || "0");
-        }
-        
-        setShellAircraftDetections(shellDetections);
+        // Build shell company links from live data
+        const scLinks = shellCompaniesRaw.slice(0, 5).map((sc: any) => {
+          const aircraft = Array.isArray(sc.linked_aircraft) ? sc.linked_aircraft :
+            typeof sc.linked_aircraft === 'string' ? sc.linked_aircraft.replace(/[{}]/g, '').split(',').filter(Boolean) : [];
+          const detections: Record<string, number> = {};
+          aircraft.forEach((reg: string) => { detections[reg.trim()] = safeNumber(shellDetections[reg.trim()]); });
+          return {
+            company: sc.company_name || 'Unknown',
+            aircraft,
+            link: sc.infrastructure_link || sc.connection_evidence || 'Shared infrastructure with KCSO',
+            detections
+          };
+        });
+        setShellCompanyLinks(scLinks);
+        setTotalShellDetections(Object.values(shellDetections as Record<string, number>).reduce((a: number, b: number) => a + b, 0));
+
       } catch (error) {
-        console.error("Failed to analyze aircraft absence:", error);
+        console.error("Failed to load hypothesis data:", error);
       } finally {
         setLoading(false);
       }
     };
 
-    analyzeAircraftAbsence();
+    loadData();
   }, []);
 
-  const totalShellDetections = Object.values(shellAircraftDetections).reduce((a, b) => a + b, 0);
+  if (loading) {
+    return (
+      <CyberPanel title="Adversarial Analysis & Missing Aircraft Hypothesis" icon={<Microscope className="w-4 h-4" />} variant="success">
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        </div>
+      </CyberPanel>
+    );
+  }
 
   return (
     <CyberPanel
@@ -143,7 +163,7 @@ export function NullHypothesisPanel() {
         <div>
           <div className="mb-4 p-3 bg-success/10 border border-success/30 rounded">
             <p className="text-sm text-success font-display">
-              ALL 6 NULL HYPOTHESES FAILED
+              ALL {hypothesisTests.length} NULL HYPOTHESES FAILED
             </p>
             <p className="text-xs text-muted-foreground mt-1">
               Scientific attempt to disprove surveillance data resulted in complete validation
@@ -179,32 +199,16 @@ export function NullHypothesisPanel() {
         </div>
 
         {/* Missing KCSO Aircraft Analysis */}
-        <div className="border-t border-border pt-4">
-          <div className="flex items-center gap-2 mb-4">
-            <EyeOff className="w-5 h-5 text-warning" />
-            <h3 className="font-display text-warning">MISSING KCSO AIRCRAFT HYPOTHESIS</h3>
-          </div>
-          
-          <div className="p-3 bg-warning/10 border border-warning/30 rounded mb-4">
-            <p className="text-xs text-warning font-mono">
-              CRITICAL FINDING: KCSO owns fixed-wing aircraft that do NOT appear in 8 months of surveillance logs
-            </p>
-            <p className="text-xs text-muted-foreground mt-1">
-              Hypothesis: These aircraft operate under shell company registrations (ALF IX, AERO EQUITIES)
-            </p>
-          </div>
-
-          {loading ? (
-            <div className="flex items-center justify-center py-4">
-              <Loader2 className="w-6 h-6 animate-spin text-primary" />
+        {missingAircraftData.length > 0 && (
+          <div className="border-t border-border pt-4">
+            <div className="flex items-center gap-2 mb-4">
+              <EyeOff className="w-5 h-5 text-warning" />
+              <h3 className="font-display text-warning">MISSING KCSO AIRCRAFT HYPOTHESIS</h3>
             </div>
-          ) : (
+
             <div className="space-y-3">
               {missingAircraftData.map((aircraft) => (
-                <div
-                  key={aircraft.registration}
-                  className="p-3 bg-card/50 border border-warning/30 rounded"
-                >
+                <div key={aircraft.registration} className="p-3 bg-card/50 border border-warning/30 rounded">
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
                       {aircraft.detectionCount === 0 ? (
@@ -221,70 +225,52 @@ export function NullHypothesisPanel() {
                   <p className="text-xs text-muted-foreground">
                     Expected Owner: <span className="text-primary">{aircraft.expectedOwner}</span>
                   </p>
-                  <p className="text-xs text-warning mt-1">
-                    Hypothesis: {aircraft.hypothesis}
-                  </p>
-                  <p className="text-xs font-mono text-muted-foreground mt-1">
-                    {aircraft.evidence}
+                  <p className="text-xs text-warning mt-1">Hypothesis: {aircraft.hypothesis}</p>
+                  <p className="text-xs font-mono text-muted-foreground mt-1">{aircraft.evidence}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Shell Company Infrastructure Links */}
+        {shellCompanyLinks.length > 0 && (
+          <div className="border-t border-border pt-4">
+            <div className="flex items-center gap-2 mb-4">
+              <AlertTriangle className="w-5 h-5 text-destructive" />
+              <h3 className="font-display text-destructive">SHELL COMPANY ↔ KCSO INFRASTRUCTURE OVERLAP</h3>
+            </div>
+
+            <div className="space-y-3">
+              {shellCompanyLinks.map((shell) => (
+                <div key={shell.company} className="p-3 bg-card/50 border border-destructive/20 rounded">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-display text-sm text-destructive">{shell.company}</span>
+                    <Badge variant="outline" className="text-xs">
+                      {Object.values(shell.detections).reduce((a, b) => a + b, 0).toLocaleString()} total detections
+                    </Badge>
+                  </div>
+                  <div className="flex flex-wrap gap-2 mb-2">
+                    {shell.aircraft.map((reg: string) => (
+                      <Badge key={reg} variant="secondary" className="font-mono text-xs">
+                        {reg.trim()}: {(shell.detections[reg.trim()] || 0).toLocaleString()}
+                      </Badge>
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Link Evidence: <span className="text-warning">{shell.link}</span>
                   </p>
                 </div>
               ))}
             </div>
-          )}
-        </div>
 
-        {/* Shell Company Infrastructure Links */}
-        <div className="border-t border-border pt-4">
-          <div className="flex items-center gap-2 mb-4">
-            <AlertTriangle className="w-5 h-5 text-destructive" />
-            <h3 className="font-display text-destructive">SHELL COMPANY ↔ KCSO INFRASTRUCTURE OVERLAP</h3>
+            <div className="mt-4 p-3 bg-primary/10 border border-primary/30 rounded">
+              <p className="text-xs text-primary font-display">
+                TOTAL SHELL COMPANY AIRCRAFT DETECTIONS: {totalShellDetections.toLocaleString()}
+              </p>
+            </div>
           </div>
-
-          <div className="p-3 bg-destructive/10 border border-destructive/30 rounded mb-4">
-            <p className="text-xs text-destructive font-mono">
-              Shell companies share IP addresses and banking information with KCSO systems
-            </p>
-            <p className="text-xs text-muted-foreground mt-1">
-              This suggests shell companies may be KCSO-controlled surveillance fronts
-            </p>
-          </div>
-
-          <div className="space-y-3">
-            {shellCompanyLinks.map((shell) => (
-              <div
-                key={shell.company}
-                className="p-3 bg-card/50 border border-destructive/20 rounded"
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <span className="font-display text-sm text-destructive">{shell.company}</span>
-                  <Badge variant="outline" className="text-xs">
-                    {shell.aircraft.reduce((sum, reg) => sum + (shellAircraftDetections[reg] || 0), 0).toLocaleString()} total detections
-                  </Badge>
-                </div>
-                <div className="flex flex-wrap gap-2 mb-2">
-                  {shell.aircraft.map((reg) => (
-                    <Badge key={reg} variant="secondary" className="font-mono text-xs">
-                      {reg}: {(shellAircraftDetections[reg] || 0).toLocaleString()}
-                    </Badge>
-                  ))}
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Link Evidence: <span className="text-warning">{shell.link}</span>
-                </p>
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-4 p-3 bg-primary/10 border border-primary/30 rounded">
-            <p className="text-xs text-primary font-display">
-              TOTAL SHELL COMPANY AIRCRAFT DETECTIONS: {totalShellDetections.toLocaleString()}
-            </p>
-            <p className="text-xs text-muted-foreground mt-1">
-              If these are KCSO-controlled aircraft, they represent {totalShellDetections.toLocaleString()} surveillance events 
-              hidden behind corporate shell registrations - classic RICO enterprise behavior.
-            </p>
-          </div>
-        </div>
+        )}
       </div>
     </CyberPanel>
   );

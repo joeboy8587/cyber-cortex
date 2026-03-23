@@ -43,249 +43,25 @@ interface AircraftBudgetData {
   spending_patterns_citation: string;
 }
 
-// The imported JSON data
-const KCSO_AIRCRAFT_DATA: AircraftBudgetData[] = [
-  {
-    "aircraft_tail_number": "N912KC",
-    "aircraft_tail_number_citation": "http://www.policeaviationnews.com/Acrobat/325PanMay2023.pdf",
-    "year": 2020,
-    "year_citation": "https://www.scanriverside.com/viewtopic.php?t=1300",
-    "budget": null,
-    "budget_citation": null,
-    "purchases": [],
-    "spending_patterns": "Aircraft N912KC did not exist in 2020. Kern County Sheriff's Office was operating aging MD500 and Bell OH-58A+ helicopters from 1960s-era fleet. Evaluation and vetting process for new helicopters began, with flight demonstrations conducted throughout 2020 and 2021. Staffing levels were cut around this time.",
-    "spending_patterns_citation": "https://www.scanriverside.com/viewtopic.php?t=1300"
-  },
-  {
-    "aircraft_tail_number": "N913KC",
-    "aircraft_tail_number_citation": "http://www.policeaviationnews.com/Acrobat/325PanMay2023.pdf",
-    "year": 2020,
-    "year_citation": "https://www.scanriverside.com/viewtopic.php?t=1300",
-    "budget": null,
-    "budget_citation": null,
-    "purchases": [],
-    "spending_patterns": "Aircraft N913KC did not exist in 2020. Kern County Sheriff's Office was operating aging MD500 and Bell OH-58A+ helicopters from 1960s-era fleet. Evaluation and vetting process for new helicopters began, with flight demonstrations conducted throughout 2020 and 2021. Staffing levels were cut around this time.",
-    "spending_patterns_citation": "https://www.scanriverside.com/viewtopic.php?t=1300"
-  },
-  {
-    "aircraft_tail_number": "N912KC",
-    "aircraft_tail_number_citation": "http://www.policeaviationnews.com/Acrobat/325PanMay2023.pdf",
-    "year": 2021,
-    "year_citation": "https://www.scanriverside.com/viewtopic.php?t=1300",
-    "budget": null,
-    "budget_citation": null,
-    "purchases": [],
-    "spending_patterns": "Aircraft N912KC did not exist in 2021. Kern County Sheriff's Office continued operating aging MD500 and Bell OH-58A+ helicopters. Flight demonstrations for new helicopter evaluation continued throughout 2021.",
-    "spending_patterns_citation": "https://www.scanriverside.com/viewtopic.php?t=1300"
-  },
-  {
-    "aircraft_tail_number": "N913KC",
-    "aircraft_tail_number_citation": "http://www.policeaviationnews.com/Acrobat/325PanMay2023.pdf",
-    "year": 2021,
-    "year_citation": "https://www.scanriverside.com/viewtopic.php?t=1300",
-    "budget": null,
-    "budget_citation": null,
-    "purchases": [],
-    "spending_patterns": "Aircraft N913KC did not exist in 2021. Kern County Sheriff's Office continued operating aging MD500 and Bell OH-58A+ helicopters. Flight demonstrations for new helicopter evaluation continued throughout 2021.",
-    "spending_patterns_citation": "https://www.scanriverside.com/viewtopic.php?t=1300"
-  },
-  {
-    "aircraft_tail_number": "N912KC",
-    "aircraft_tail_number_citation": "http://www.policeaviationnews.com/Acrobat/325PanMay2023.pdf",
-    "year": 2022,
-    "year_citation": "https://www.scanriverside.com/viewtopic.php?t=1300",
-    "budget": 6000000,
-    "budget_citation": "https://www.kget.com/news/local-news/sheriffs-office-buys-new-helicopters-for-12-million/",
-    "purchases": [
-      {
-        "item": "Airbus H125 helicopter order (c/n 9252)",
-        "item_citation": "http://www.policeaviationnews.com/Acrobat/325PanMay2023.pdf",
-        "vendor": "Airbus Helicopters Inc.",
-        "vendor_citation": "https://www.scanriverside.com/viewtopic.php?t=1300",
-        "amount": 6000000,
-        "amount_citation": "https://www.kget.com/news/local-news/sheriffs-office-buys-new-helicopters-for-12-million/",
-        "date": "2022-03-10",
-        "date_citation": "https://www.scanriverside.com/viewtopic.php?t=1300"
-      }
-    ],
-    "spending_patterns": "Kern County Sheriff's Office ordered new Airbus H125 helicopter N912KC on March 10, 2022 for $6 million as part of $12 million fleet modernization plan. Board of Supervisors approved the purchase. Aircraft not yet delivered or operational in 2022. Rising fuel costs noted during this period.",
-    "spending_patterns_citation": "https://www.scanriverside.com/viewtopic.php?t=1300"
-  },
-  {
-    "aircraft_tail_number": "N913KC",
-    "aircraft_tail_number_citation": "http://www.policeaviationnews.com/Acrobat/325PanMay2023.pdf",
-    "year": 2022,
-    "year_citation": "https://www.scanriverside.com/viewtopic.php?t=1300",
-    "budget": 6000000,
-    "budget_citation": "https://www.kget.com/news/local-news/sheriffs-office-buys-new-helicopters-for-12-million/",
-    "purchases": [
-      {
-        "item": "Airbus H125 helicopter order (c/n 9262)",
-        "item_citation": "http://www.policeaviationnews.com/Acrobat/325PanMay2023.pdf",
-        "vendor": "Airbus Helicopters Inc.",
-        "vendor_citation": "https://www.scanriverside.com/viewtopic.php?t=1300",
-        "amount": 6000000,
-        "amount_citation": "https://www.kget.com/news/local-news/sheriffs-office-buys-new-helicopters-for-12-million/",
-        "date": "2022-03-10",
-        "date_citation": "https://www.scanriverside.com/viewtopic.php?t=1300"
-      }
-    ],
-    "spending_patterns": "Kern County Sheriff's Office ordered new Airbus H125 helicopter N913KC on March 10, 2022 for $6 million as part of $12 million fleet modernization plan. Board of Supervisors approved the purchase. Aircraft not yet delivered or operational in 2022. Rising fuel costs noted during this period.",
-    "spending_patterns_citation": "https://www.scanriverside.com/viewtopic.php?t=1300"
-  },
-  {
-    "aircraft_tail_number": "N912KC",
-    "aircraft_tail_number_citation": "http://www.policeaviationnews.com/Acrobat/325PanMay2023.pdf",
-    "year": 2023,
-    "year_citation": "https://www.scanriverside.com/viewtopic.php?t=1300",
-    "budget": 6000000,
-    "budget_citation": "https://www.kget.com/news/local-news/sheriffs-office-buys-new-helicopters-for-12-million/",
-    "purchases": [
-      {
-        "item": "Airbus H125 helicopter (c/n 9252)",
-        "item_citation": "http://www.policeaviationnews.com/Acrobat/325PanMay2023.pdf",
-        "vendor": "Airbus Helicopters Inc.",
-        "vendor_citation": "https://www.scanriverside.com/viewtopic.php?t=1300",
-        "amount": 6000000,
-        "amount_citation": "https://www.kget.com/news/local-news/sheriffs-office-buys-new-helicopters-for-12-million/",
-        "date": "2023-04",
-        "date_citation": "http://www.policeaviationnews.com/Acrobat/331PANNovember2023.pdf"
-      },
-      {
-        "item": "Fit-out and modifications including 380HDc FLIR, Shotover moving map system, Spectrolab SX-16 searchlight, Axnes wireless intercom, and Garmin autopilot",
-        "item_citation": "https://www.heliopsmag.com/heliops/articles/the-third-generation-kern-county-sheriffs-office-upgrades-to-the-h125/",
-        "vendor": "Hangar 1 Avionics",
-        "vendor_citation": "https://www.scanriverside.com/viewtopic.php?t=1300",
-        "amount": null,
-        "amount_citation": null,
-        "date": "2023",
-        "date_citation": "https://www.scanriverside.com/viewtopic.php?t=1300"
-      },
-      {
-        "item": "New tools for mechanics (un-budgeted)",
-        "item_citation": "https://www.heliopsmag.com/heliops/articles/the-third-generation-kern-county-sheriffs-office-upgrades-to-the-h125/",
-        "vendor": null,
-        "vendor_citation": null,
-        "amount": null,
-        "amount_citation": null,
-        "date": "2023",
-        "date_citation": "https://www.heliopsmag.com/heliops/articles/the-third-generation-kern-county-sheriffs-office-upgrades-to-the-h125/"
-      }
-    ],
-    "spending_patterns": "Aircraft ordered March 10, 2022 as part of fleet modernization to replace 1960s-era Bell OH-58A helicopters. Delivered April 2023, operational by summer 2023. Unit operates on self-billing system where annual operating budget is billed for every flight hour, with funds transferred to long-term account for consumables, maintenance, overhauls, and repairs. Budgets for 1,500 combined yearly flight hours for both H125s. As of February 2025, accumulated over 600 flight hours. Maintenance performed in-house. Staffing levels cut around 2020, being rebuilt to support increased flight hours and return of Search and Rescue program.",
-    "spending_patterns_citation": "https://www.heliopsmag.com/heliops/articles/the-third-generation-kern-county-sheriffs-office-upgrades-to-the-h125/"
-  },
-  {
-    "aircraft_tail_number": "N912KC",
-    "aircraft_tail_number_citation": "http://www.policeaviationnews.com/Acrobat/325PanMay2023.pdf",
-    "year": 2024,
-    "year_citation": "https://www.heliopsmag.com/heliops/articles/the-third-generation-kern-county-sheriffs-office-upgrades-to-the-h125/",
-    "budget": null,
-    "budget_citation": null,
-    "purchases": [
-      {
-        "item": "Search and Rescue equipment replacement",
-        "item_citation": "https://www.heliopsmag.com/heliops/articles/the-third-generation-kern-county-sheriffs-office-upgrades-to-the-h125/",
-        "vendor": null,
-        "vendor_citation": null,
-        "amount": null,
-        "amount_citation": null,
-        "date": "2024",
-        "date_citation": "https://www.heliopsmag.com/heliops/articles/the-third-generation-kern-county-sheriffs-office-upgrades-to-the-h125/"
-      }
-    ],
-    "spending_patterns": "Operational year with ongoing maintenance and operational costs. Unit continues self-billing system budgeting for flight hours. Search and Rescue program returned requiring future spending on equipment replacement after multi-year hiatus.",
-    "spending_patterns_citation": "https://www.heliopsmag.com/heliops/articles/the-third-generation-kern-county-sheriffs-office-upgrades-to-the-h125/"
-  },
-  {
-    "aircraft_tail_number": "N912KC",
-    "aircraft_tail_number_citation": "http://www.policeaviationnews.com/Acrobat/325PanMay2023.pdf",
-    "year": 2025,
-    "year_citation": "https://www.heliopsmag.com/heliops/articles/the-third-generation-kern-county-sheriffs-office-upgrades-to-the-h125/",
-    "budget": null,
-    "budget_citation": null,
-    "purchases": [],
-    "spending_patterns": "Continued operations with over 600 flight hours accumulated by February 2025. In-house maintenance continues. Planning for third H125 purchase in 2026-2027 pending county finances.",
-    "spending_patterns_citation": "https://www.heliopsmag.com/heliops/articles/the-third-generation-kern-county-sheriffs-office-upgrades-to-the-h125/"
-  },
-  {
-    "aircraft_tail_number": "N913KC",
-    "aircraft_tail_number_citation": "http://www.policeaviationnews.com/Acrobat/325PanMay2023.pdf",
-    "year": 2023,
-    "year_citation": "https://www.scanriverside.com/viewtopic.php?t=1300",
-    "budget": 6000000,
-    "budget_citation": "https://www.kget.com/news/local-news/sheriffs-office-buys-new-helicopters-for-12-million/",
-    "purchases": [
-      {
-        "item": "Airbus H125 helicopter (c/n 9262)",
-        "item_citation": "http://www.policeaviationnews.com/Acrobat/325PanMay2023.pdf",
-        "vendor": "Airbus Helicopters Inc.",
-        "vendor_citation": "https://www.scanriverside.com/viewtopic.php?t=1300",
-        "amount": 6000000,
-        "amount_citation": "https://www.kget.com/news/local-news/sheriffs-office-buys-new-helicopters-for-12-million/",
-        "date": "2023-04",
-        "date_citation": "http://www.policeaviationnews.com/Acrobat/325PanMay2023.pdf"
-      },
-      {
-        "item": "Fit-out and modifications including 380HDc FLIR, Shotover moving map system, Spectrolab SX-16 searchlight, Axnes wireless intercom, and Garmin autopilot",
-        "item_citation": "https://www.heliopsmag.com/heliops/articles/the-third-generation-kern-county-sheriffs-office-upgrades-to-the-h125/",
-        "vendor": "Hangar 1 Avionics",
-        "vendor_citation": "https://www.scanriverside.com/viewtopic.php?t=1300",
-        "amount": null,
-        "amount_citation": null,
-        "date": "2023",
-        "date_citation": "https://www.scanriverside.com/viewtopic.php?t=1300"
-      }
-    ],
-    "spending_patterns": "Aircraft ordered March 10, 2022 as part of fleet modernization to replace 1960s-era Bell OH-58A helicopters. Delivered April 2023, operational by summer 2023. Unit operates on self-billing system where annual operating budget is billed for every flight hour, with funds transferred to long-term account for consumables, maintenance, overhauls, and repairs. Budgets for 1,500 combined yearly flight hours for both H125s. As of February 2025, accumulated over 600 flight hours. Maintenance performed in-house.",
-    "spending_patterns_citation": "https://www.heliopsmag.com/heliops/articles/the-third-generation-kern-county-sheriffs-office-upgrades-to-the-h125/"
-  },
-  {
-    "aircraft_tail_number": "N913KC",
-    "aircraft_tail_number_citation": "http://www.policeaviationnews.com/Acrobat/325PanMay2023.pdf",
-    "year": 2024,
-    "year_citation": "https://www.heliopsmag.com/heliops/articles/the-third-generation-kern-county-sheriffs-office-upgrades-to-the-h125/",
-    "budget": null,
-    "budget_citation": null,
-    "purchases": [],
-    "spending_patterns": "Operational year with ongoing maintenance and operational costs. Unit continues self-billing system budgeting for flight hours.",
-    "spending_patterns_citation": "https://www.heliopsmag.com/heliops/articles/the-third-generation-kern-county-sheriffs-office-upgrades-to-the-h125/"
-  },
-  {
-    "aircraft_tail_number": "N913KC",
-    "aircraft_tail_number_citation": "http://www.policeaviationnews.com/Acrobat/325PanMay2023.pdf",
-    "year": 2025,
-    "year_citation": "https://www.heliopsmag.com/heliops/articles/the-third-generation-kern-county-sheriffs-office-upgrades-to-the-h125/",
-    "budget": null,
-    "budget_citation": null,
-    "purchases": [],
-    "spending_patterns": "Continued operations with over 600 flight hours accumulated by February 2025. In-house maintenance continues.",
-    "spending_patterns_citation": "https://www.heliopsmag.com/heliops/articles/the-third-generation-kern-county-sheriffs-office-upgrades-to-the-h125/"
-  }
-];
-
+// Data loaded from NeonDB - no hardcoded fallback
 export const KCSOBudgetTimeline: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
-  const [isImporting, setIsImporting] = useState(false);
-  const [dbRecordCount, setDbRecordCount] = useState<number | null>(null);
+  
+  const [budgetData, setBudgetData] = useState<AircraftBudgetData[]>([]);
   const [selectedAircraft, setSelectedAircraft] = useState<string>('all');
   const [selectedYear, setSelectedYear] = useState<number | null>(null);
 
-  // Get unique years and aircraft
-  const years = [...new Set(KCSO_AIRCRAFT_DATA.map(d => d.year))].sort();
-  const aircraft = [...new Set(KCSO_AIRCRAFT_DATA.map(d => d.aircraft_tail_number))];
-
-  // Filter data
-  const filteredData = KCSO_AIRCRAFT_DATA.filter(d => {
+  // Derived values
+  const years = [...new Set(budgetData.map(d => d.year))].sort();
+  const aircraft = [...new Set(budgetData.map(d => d.aircraft_tail_number))];
+  const filteredData = budgetData.filter(d => {
     if (selectedAircraft !== 'all' && d.aircraft_tail_number !== selectedAircraft) return false;
     if (selectedYear !== null && d.year !== selectedYear) return false;
     return true;
   });
-
-  // Calculate summary stats
-  const totalBudget = KCSO_AIRCRAFT_DATA.reduce((sum, d) => sum + (d.budget || 0), 0);
-  const totalPurchases = KCSO_AIRCRAFT_DATA.reduce((sum, d) => sum + d.purchases.length, 0);
-  const citationCount = KCSO_AIRCRAFT_DATA.reduce((count, d) => {
+  const totalBudget = budgetData.reduce((sum, d) => sum + (d.budget || 0), 0);
+  const totalPurchases = budgetData.reduce((sum, d) => sum + d.purchases.length, 0);
+  const citationCount = budgetData.reduce((count, d) => {
     let c = 0;
     if (d.aircraft_tail_number_citation) c++;
     if (d.year_citation) c++;
@@ -300,45 +76,41 @@ export const KCSOBudgetTimeline: React.FC = () => {
     return count + c;
   }, 0);
 
-  // Check DB record count
   useEffect(() => {
-    checkDbRecords();
+    loadBudgetData();
   }, []);
 
-  const checkDbRecords = async () => {
+  const loadBudgetData = async () => {
+    setIsLoading(true);
     try {
       const { data, error } = await supabase.functions.invoke('neon-query', {
         body: { action: 'getKCSOBudgetData' }
       });
-      if (!error && data?.data) {
-        setDbRecordCount(data.data.length);
+      if (!error && data?.data && Array.isArray(data.data) && data.data.length > 0) {
+        // Map DB rows to our interface
+        const mapped: AircraftBudgetData[] = data.data.map((row: any) => ({
+          aircraft_tail_number: row.aircraft_tail_number || '',
+          aircraft_tail_number_citation: row.aircraft_tail_number_citation || '',
+          year: parseInt(String(row.year || '0')),
+          year_citation: row.year_citation || '',
+          budget: row.budget ? parseFloat(String(row.budget)) : null,
+          budget_citation: row.budget_citation || null,
+          purchases: Array.isArray(row.purchases) ? row.purchases : 
+            typeof row.purchases === 'string' ? JSON.parse(row.purchases || '[]') : [],
+          spending_patterns: row.spending_patterns || '',
+          spending_patterns_citation: row.spending_patterns_citation || ''
+        }));
+        setBudgetData(mapped);
+      } else {
+        console.warn('No budget data in DB yet - use Import button');
       }
-    } catch {
-      setDbRecordCount(null);
-    }
-  };
-
-  const importToDatabase = async () => {
-    setIsImporting(true);
-    try {
-      const { data, error } = await supabase.functions.invoke('neon-query', {
-        body: { 
-          action: 'importKCSOBudgetData',
-          data: KCSO_AIRCRAFT_DATA
-        }
-      });
-
-      if (error) throw error;
-      
-      toast.success(`Imported ${data?.inserted || KCSO_AIRCRAFT_DATA.length} records to kcso_aircraft_budget_history`);
-      checkDbRecords();
     } catch (err) {
-      console.error('Import error:', err);
-      toast.error('Failed to import data to database');
+      console.error('Failed to load budget data:', err);
     } finally {
-      setIsImporting(false);
+      setIsLoading(false);
     }
   };
+
 
   const formatCurrency = (amount: number | null) => {
     if (amount === null) return 'N/A';
@@ -362,14 +134,28 @@ export const KCSOBudgetTimeline: React.FC = () => {
 
   return (
     <CyberPanel title="KCSO Aircraft Budget Timeline" className="col-span-full">
+      {isLoading ? (
+        <div className="flex items-center justify-center py-12">
+          <RefreshCw className="h-6 w-6 animate-spin text-primary" />
+        </div>
+      ) : budgetData.length === 0 ? (
+        <div className="p-6 text-center text-muted-foreground">
+          <p className="text-sm">No budget data loaded from database.</p>
+          <Button onClick={loadBudgetData} variant="outline" size="sm" className="mt-3">
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Retry Load
+          </Button>
+        </div>
+      ) : (
+        <>
       {/* Header Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <div className="bg-background/50 border border-border/50 rounded-lg p-3">
           <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
             <Plane className="h-3 w-3" />
             Records
           </div>
-          <div className="text-xl font-bold text-foreground">{KCSO_AIRCRAFT_DATA.length}</div>
+          <div className="text-xl font-bold text-foreground">{budgetData.length}</div>
         </div>
         <div className="bg-background/50 border border-border/50 rounded-lg p-3">
           <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
@@ -392,35 +178,13 @@ export const KCSOBudgetTimeline: React.FC = () => {
           </div>
           <div className="text-xl font-bold text-blue-400">{citationCount}</div>
         </div>
-        <div className="bg-background/50 border border-border/50 rounded-lg p-3">
-          <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
-            <Database className="h-3 w-3" />
-            In NeonDB
-          </div>
-          <div className="text-xl font-bold text-purple-400">
-            {dbRecordCount !== null ? dbRecordCount : '—'}
-          </div>
-        </div>
       </div>
 
       {/* Actions */}
       <div className="flex flex-wrap items-center gap-2 mb-4">
-        <Button 
-          onClick={importToDatabase} 
-          disabled={isImporting}
-          size="sm"
-          className="bg-green-600 hover:bg-green-700"
-        >
-          {isImporting ? (
-            <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-          ) : (
-            <Upload className="h-4 w-4 mr-2" />
-          )}
-          Import to NeonDB
-        </Button>
-        <Button onClick={checkDbRecords} variant="outline" size="sm">
+        <Button onClick={loadBudgetData} variant="outline" size="sm">
           <RefreshCw className="h-4 w-4 mr-2" />
-          Check DB
+          Reload Data
         </Button>
         <div className="flex-1" />
         <select 
@@ -514,7 +278,7 @@ export const KCSOBudgetTimeline: React.FC = () => {
         <TabsContent value="purchases">
           <ScrollArea className="h-[500px]">
             <div className="space-y-2">
-              {KCSO_AIRCRAFT_DATA.flatMap((record, rIdx) => 
+              {budgetData.flatMap((record, rIdx) => 
                 record.purchases.map((p, pIdx) => (
                   <div key={`${rIdx}-${pIdx}`} className="bg-background/30 border border-border/50 rounded-lg p-3">
                     <div className="flex items-center gap-2 mb-2">
@@ -539,7 +303,7 @@ export const KCSOBudgetTimeline: React.FC = () => {
           <ScrollArea className="h-[500px]">
             <div className="space-y-1">
               {[...new Set(
-                KCSO_AIRCRAFT_DATA.flatMap(r => [
+                budgetData.flatMap(r => [
                   r.aircraft_tail_number_citation,
                   r.year_citation,
                   r.budget_citation,
@@ -549,8 +313,8 @@ export const KCSOBudgetTimeline: React.FC = () => {
               )].map((url, idx) => (
                 <div key={idx} className="flex items-center gap-2 text-sm text-cyan-400 hover:text-cyan-300">
                   <ExternalLink className="h-3 w-3 flex-shrink-0" />
-                  <a href={url!} target="_blank" rel="noopener noreferrer" className="truncate hover:underline">
-                    {url}
+                  <a href={url as string} target="_blank" rel="noopener noreferrer" className="truncate hover:underline">
+                    {url as string}
                   </a>
                 </div>
               ))}
@@ -558,6 +322,8 @@ export const KCSOBudgetTimeline: React.FC = () => {
           </ScrollArea>
         </TabsContent>
       </Tabs>
+      </>
+      )}
     </CyberPanel>
   );
 };

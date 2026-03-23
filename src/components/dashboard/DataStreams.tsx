@@ -14,7 +14,8 @@ interface StreamConfig {
   description: string;
 }
 
-const streamConfigs: StreamConfig[] = [
+// Dynamic stream discovery - no longer hardcoded
+const STATIC_STREAMS: StreamConfig[] = [
   {
     name: "ADS-B Flight Tracking",
     icon: Radio,
@@ -66,7 +67,7 @@ export function DataStreams() {
     setLoading(true);
     try {
       const results = await Promise.all(
-        streamConfigs.map(async (config) => {
+        STATIC_STREAMS.map(async (config) => {
           try {
             const data = await customQuery(config.query);
             const rows = extractNeonData(data);

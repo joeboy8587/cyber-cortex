@@ -46,121 +46,102 @@ export function ShellCompanyInvestigator() {
     const target = entityName || searchQuery;
 
     try {
-      // Fetch shell company data
-      const { data: shellData } = await supabase.functions.invoke("neon-query", {
-        body: {
-          action: "customQuery",
-          query: `SELECT * FROM shell_company_evidence_rows 
-                  WHERE company_name ILIKE '%${target}%' 
-                  OR connected_entities::text ILIKE '%${target}%'
-                  LIMIT 20`
-        }
+      // Fetch live enterprise structure and shell companies from Neon
+      const [configResp, shellDataResp] = await Promise.all([
+        supabase.functions.invoke("neon-query", {
+          body: { action: "getInvestigationConfig" }
+        }),
+        supabase.functions.invoke("neon-query", {
+          body: {
+            action: "customQuery",
+            query: `SELECT * FROM shell_company_evidence_rows 
+                    WHERE company_name ILIKE '%${target.replace(/'/g, "''")}%' 
+                    OR connected_entities::text ILIKE '%${target.replace(/'/g, "''")}%'
+                    LIMIT 20`
+          }
+        })
+      ]);
+
+      const config = configResp.data || {};
+      const enterprise = Array.isArray(config.enterprise_hierarchy) ? config.enterprise_hierarchy : [];
+      const shellCompanies = Array.isArray(config.shell_companies) ? config.shell_companies : [];
+      const kcsoFleet = Array.isArray(config.kcso_fleet) ? config.kcso_fleet : [];
+
+      // Group enterprise entities by tier into ownership layers
+      const tierMap = new Map<number, ShellEntity[]>();
+
+      enterprise.forEach((e: any, idx: number) => {
+        const tier = parseInt(String(e.tier || '2'));
+        const linkedAircraft = Array.isArray(e.linked_aircraft) ? e.linked_aircraft :
+          typeof e.linked_aircraft === 'string' ? e.linked_aircraft.replace(/[{}]/g, '').split(',').filter(Boolean) : [];
+        const ricoIndicators = Array.isArray(e.rico_indicators) ? e.rico_indicators :
+          typeof e.rico_indicators === 'string' ? e.rico_indicators.replace(/[{}]/g, '').split(',').filter(Boolean) : [];
+
+        const entity: ShellEntity = {
+          id: String(idx + 1),
+          name: e.entity_name || 'Unknown',
+          type: e.entity_type === 'shell_company' ? 'shell' :
+                e.entity_type === 'pe_fund' ? 'pe_fund' :
+                e.entity_type === 'holding' ? 'holding' : 'operating',
+          jurisdiction: e.jurisdiction || 'Unknown',
+          connectedAircraft: linkedAircraft.map((a: string) => a.trim()),
+          upstreamOwners: [],
+          downstreamAssets: [],
+          riskScore: parseInt(String(e.threat_score || e.risk_score || '50')),
+          ricoIndicators
+        };
+
+        if (!tierMap.has(tier)) tierMap.set(tier, []);
+        tierMap.get(tier)!.push(entity);
       });
 
-      // Fetch aircraft ownership
-      const { data: aircraftData } = await supabase.functions.invoke("neon-query", {
-        body: {
-          action: "customQuery",
-          query: `SELECT DISTINCT registration, operator, taxonomy_tag
-                  FROM live_flight_detections_rows
-                  WHERE operator ILIKE '%${target}%'
-                  OR registration IN ('N790FA', 'N791FA', 'N912KC', 'N913KC')
-                  LIMIT 30`
-        }
+      // Add shell companies that weren't in enterprise hierarchy
+      shellCompanies.forEach((sc: any, idx: number) => {
+        const exists = enterprise.some((e: any) =>
+          (e.entity_name || '').toLowerCase() === (sc.company_name || '').toLowerCase()
+        );
+        if (exists) return;
+        const tier = 3;
+        const entity: ShellEntity = {
+          id: `sc-${idx}`,
+          name: sc.company_name || 'Unknown',
+          type: 'shell',
+          jurisdiction: sc.jurisdiction || sc.state || 'Unknown',
+          connectedAircraft: [],
+          upstreamOwners: [],
+          downstreamAssets: [],
+          riskScore: parseInt(String(sc.risk_score || '70')),
+          ricoIndicators: ['SHELL_STRUCTURE']
+        };
+        if (!tierMap.has(tier)) tierMap.set(tier, []);
+        tierMap.get(tier)!.push(entity);
       });
 
-      // Generate ownership layers based on known structure
-      const layers: OwnershipLayer[] = [
-        {
-          level: 1,
-          entities: [
-            {
-              id: "1",
-              name: "AE Industrial Partners",
-              type: "pe_fund",
-              jurisdiction: "Delaware",
-              connectedAircraft: [],
-              upstreamOwners: ["Institutional LPs", "HNW Investors"],
-              downstreamAssets: ["Redwire Corporation", "AERO EQUITIES LLC"],
-              riskScore: 75,
-              ricoIndicators: ["Multi-layer ownership", "Defense contractor ties"]
-            }
-          ]
-        },
-        {
-          level: 2,
-          entities: [
-            {
-              id: "2",
-              name: "AERO EQUITIES LLC",
-              type: "holding",
-              jurisdiction: "Delaware",
-              connectedAircraft: [],
-              upstreamOwners: ["AE Industrial Partners"],
-              downstreamAssets: ["ALF IX LLC", "CHRISTIANSEN AVIATION LLC"],
-              riskScore: 85,
-              ricoIndicators: ["Nominee directors", "No operational presence"]
-            },
-            {
-              id: "3",
-              name: "Redwire Corporation",
-              type: "operating",
-              jurisdiction: "Florida",
-              connectedAircraft: [],
-              upstreamOwners: ["AE Industrial Partners"],
-              downstreamAssets: ["Government contracts"],
-              riskScore: 60,
-              ricoIndicators: ["DoD contractor", "Space surveillance tech"]
-            }
-          ]
-        },
-        {
-          level: 3,
-          entities: [
-            {
-              id: "4",
-              name: "ALF IX LLC",
-              type: "shell",
-              jurisdiction: "Delaware",
-              connectedAircraft: ["N790FA", "N791FA"],
-              upstreamOwners: ["AERO EQUITIES LLC"],
-              downstreamAssets: [],
-              riskScore: 95,
-              ricoIndicators: ["Aircraft obscured ownership", "No public filings", "Shared registered agent"]
-            },
-            {
-              id: "5",
-              name: "CHRISTIANSEN AVIATION LLC",
-              type: "shell",
-              jurisdiction: "Wyoming",
-              connectedAircraft: [],
-              upstreamOwners: ["AERO EQUITIES LLC"],
-              downstreamAssets: [],
-              riskScore: 90,
-              ricoIndicators: ["Wyoming privacy", "No operational history"]
-            }
-          ]
-        },
-        {
-          level: 4,
-          entities: [
-            {
-              id: "6",
-              name: "County of Kern (KCSO)",
-              type: "operating",
-              jurisdiction: "California",
-              connectedAircraft: ["N912KC", "N913KC", "N597E"],
-              upstreamOwners: ["California State"],
-              downstreamAssets: ["Aviation Unit"],
-              riskScore: 100,
-              ricoIndicators: ["Government misuse", "Surveillance targeting", "Coroner control"]
-            }
-          ]
-        }
-      ];
+      // Add KCSO as operating entity if not already present
+      if (!enterprise.some((e: any) => (e.entity_name || '').includes('Kern'))) {
+        const kcsoAircraft = kcsoFleet.map((f: any) => f.tail_number).filter(Boolean);
+        const kcsoEntity: ShellEntity = {
+          id: 'kcso',
+          name: 'County of Kern (KCSO)',
+          type: 'operating',
+          jurisdiction: 'California',
+          connectedAircraft: kcsoAircraft,
+          upstreamOwners: ['California State'],
+          downstreamAssets: ['Aviation Unit'],
+          riskScore: 100,
+          ricoIndicators: ['Government misuse', 'Surveillance targeting']
+        };
+        const tier = Math.max(...Array.from(tierMap.keys()), 0) + 1;
+        tierMap.set(tier, [kcsoEntity]);
+      }
+
+      // Convert to layers
+      const layers: OwnershipLayer[] = Array.from(tierMap.entries())
+        .sort(([a], [b]) => a - b)
+        .map(([level, entities]) => ({ level, entities }));
 
       setOwnershipLayers(layers);
-      toast.success(`Traced ${layers.reduce((sum, l) => sum + l.entities.length, 0)} entities`);
+      toast.success(`Traced ${layers.reduce((sum, l) => sum + l.entities.length, 0)} entities from live data`);
 
     } catch (err) {
       console.error("Investigation error:", err);

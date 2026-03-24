@@ -336,21 +336,43 @@ export function AutonomousWatchtower() {
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                   <div className="p-3 rounded-lg border border-border bg-card">
                     <p className="text-xs text-muted-foreground">Baselines</p>
-                    <p className="text-lg font-bold">{scanResult.summary.aircraft_baselines}</p>
+                    <p className="text-lg font-bold">{scanResult.summary.aircraft_baselines ?? 0}</p>
                   </div>
                   <div className="p-3 rounded-lg border border-border bg-card">
                     <p className="text-xs text-muted-foreground">Analyzed</p>
-                    <p className="text-lg font-bold">{scanResult.summary.recent_detections_analyzed.toLocaleString()}</p>
+                    <p className="text-lg font-bold">{(scanResult.summary.recent_detections_analyzed ?? scanResult.summary.recent_detections ?? 0).toLocaleString()}</p>
                   </div>
                   <div className="p-3 rounded-lg border border-destructive/30 bg-destructive/5">
                     <p className="text-xs text-destructive">Critical</p>
-                    <p className="text-lg font-bold text-destructive">{scanResult.summary.critical_flags}</p>
+                    <p className="text-lg font-bold text-destructive">{scanResult.summary.critical_flags ?? 0}</p>
                   </div>
                   <div className="p-3 rounded-lg border border-border bg-card">
                     <p className="text-xs text-muted-foreground">Bio Corr</p>
-                    <p className="text-lg font-bold">{scanResult.summary.bio_correlations}</p>
+                    <p className="text-lg font-bold">{scanResult.summary.bio_correlations ?? 0}</p>
                   </div>
                 </div>
+
+                {/* Certainty Breakdown */}
+                {scanResult.summary.certainty_breakdown && (
+                  <div className="grid grid-cols-4 gap-2">
+                    <div className="p-2 rounded-lg border border-green-500/30 bg-green-500/5 text-center">
+                      <p className="text-sm font-bold text-green-400">{scanResult.summary.certainty_breakdown.absolute}</p>
+                      <p className="text-[10px] text-muted-foreground">Absolute</p>
+                    </div>
+                    <div className="p-2 rounded-lg border border-blue-500/30 bg-blue-500/5 text-center">
+                      <p className="text-sm font-bold text-blue-400">{scanResult.summary.certainty_breakdown.near}</p>
+                      <p className="text-[10px] text-muted-foreground">Near Cert.</p>
+                    </div>
+                    <div className="p-2 rounded-lg border border-orange-500/30 bg-orange-500/5 text-center">
+                      <p className="text-sm font-bold text-orange-400">{scanResult.summary.certainty_breakdown.high}</p>
+                      <p className="text-[10px] text-muted-foreground">High Conf.</p>
+                    </div>
+                    <div className="p-2 rounded-lg border border-border bg-card text-center">
+                      <p className="text-sm font-bold">{scanResult.summary.certainty_breakdown.statistical}</p>
+                      <p className="text-[10px] text-muted-foreground">Statistical</p>
+                    </div>
+                  </div>
+                )}
 
                 {scanResult.learning_insights.length > 0 && (
                   <div className="p-3 rounded-lg border border-primary/20 bg-primary/5">

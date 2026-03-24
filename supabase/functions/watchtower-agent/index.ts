@@ -216,17 +216,34 @@ serve(async (req) => {
         }
       }
 
-      // 4. Check for recent high-priority aircraft activity
-      const priorityActivity = await sql`
+      // 4. Check for recent high-priority aircraft activity (dynamic from kcso_fleet + flagged)
+      let priorityRegs: string[] = [];
+      try {
+        const kcsoFleet = await sql`SELECT tail_number FROM kcso_fleet`;
+        priorityRegs = kcsoFleet.map((r: any) => r.tail_number);
+      } catch { /* kcso_fleet may not exist in Neon */ }
+      if (priorityRegs.length === 0) {
+        // Fallback: query most-flagged aircraft
+        try {
+          const flagged = await sql`
+            SELECT DISTINCT registration FROM live_flight_detections_rows
+            WHERE flagged = true AND registration IS NOT NULL
+            ORDER BY registration LIMIT 20
+          `;
+          priorityRegs = flagged.map((r: any) => r.registration);
+        } catch { priorityRegs = []; }
+      }
+
+      const priorityActivity = priorityRegs.length > 0 ? await sql`
         SELECT registration, callsign, COUNT(*) as detection_count,
                MAX(detection_timestamp) as last_seen,
                AVG(altitude::numeric) as avg_altitude
         FROM live_flight_detections_rows
-        WHERE registration IN ('N912KC', 'N913KC', 'N229AM', 'N790FA', 'N788FA', 'N743AM')
+        WHERE registration = ANY(${priorityRegs})
           AND detection_timestamp > NOW() - INTERVAL '7 days'
         GROUP BY registration, callsign
         ORDER BY detection_count DESC
-      `;
+      ` : [];
 
       if (priorityActivity.length > 0) {
         const lowAltitude = priorityActivity.filter((a: any) => parseFloat(a.avg_altitude || 0) < 2000);

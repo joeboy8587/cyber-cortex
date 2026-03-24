@@ -207,7 +207,7 @@ serve(async (req) => {
         }
 
         case 'batchInsert': {
-          const allowedTables = ['aircraft_registry_enriched','operator_profiles_enriched','live_flight_detections_rows','biometric_monitoring','ocr_aircraft_holding_patterns','daily_event_imports','josiah_reflections_rows','legal_findings','forensic_violation_citations','legal_intel_extractions','aircraft_violations','flagged_aircraft_rows_rows'];
+          const allowedTables = ['aircraft_registry_enriched','operator_profiles_enriched','shell_companies','live_flight_detections_rows','biometric_monitoring','ocr_aircraft_holding_patterns','daily_event_imports','josiah_reflections_rows','legal_findings','forensic_violation_citations','legal_intel_extractions','aircraft_violations','flagged_aircraft_rows_rows'];
           if (!table || !allowedTables.includes(table)) throw new Error(`Batch insert not allowed for table: ${table}`);
           if (!Array.isArray(data) || data.length === 0) throw new Error('Data array is required');
           const columns = Object.keys(data[0] || {});

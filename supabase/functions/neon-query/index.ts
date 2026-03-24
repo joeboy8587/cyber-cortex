@@ -22,7 +22,15 @@ async function getHandler2() {
   return _handleAction2;
 }
 
-const VERSION = "2.9.0";
+async function getHandler3() {
+  if (!_handleAction3) {
+    const mod = await import("./handlers3.ts");
+    _handleAction3 = mod.handleAction3;
+  }
+  return _handleAction3;
+}
+
+const VERSION = "2.10.0";
 console.log(`neon-query v${VERSION} booting...`);
 
 const corsHeaders = {

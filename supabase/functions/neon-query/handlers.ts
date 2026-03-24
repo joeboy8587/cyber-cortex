@@ -307,8 +307,8 @@ export async function handleAction(action: string, body: Record<string, any>, sq
           FROM live_flight_detections_rows WHERE taxonomy_tag LIKE 'xxb%'
           GROUP BY DATE(detection_timestamp)
         ), bio_records AS (
-          SELECT DATE(COALESCE(event_timestamp, measurement_timestamp, created_at)) as bio_date, COUNT(*) as bio_count
-          FROM biometric_monitoring GROUP BY DATE(COALESCE(event_timestamp, measurement_timestamp, created_at))
+          SELECT DATE(COALESCE(measurement_timestamp, created_at)) as bio_date, COUNT(*) as bio_count
+          FROM biometric_monitoring GROUP BY DATE(COALESCE(measurement_timestamp, created_at))
         )
         SELECT x.flight_date, x.xxb_count, COALESCE(b.bio_count, 0) as bio_count,
           CASE WHEN COALESCE(b.bio_count, 0) = 0 THEN true ELSE false END as orphan_xxb

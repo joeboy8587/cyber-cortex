@@ -511,7 +511,7 @@ export default function DeepPatternAnalyzer() {
                         </div>
                         <div>
                           <span className="text-muted-foreground">Speed:</span>
-                          <span className="ml-1 font-bold">{aircraft.speed} kts</span>
+                          <span className="ml-1 font-bold">{aircraft?.speed ?? 'N/A'} kts</span>
                         </div>
                         <div>
                           <span className="text-muted-foreground">Time:</span>

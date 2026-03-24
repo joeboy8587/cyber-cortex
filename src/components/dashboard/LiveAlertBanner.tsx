@@ -400,7 +400,7 @@ export function LiveAlertBanner({
                     <div className="text-xs text-muted-foreground flex items-center gap-3 mt-1">
                       <span className="flex items-center gap-1">
                         <MapPin className="w-3 h-3" />
-                        {alert.altitude.toLocaleString()}ft
+                        {(alert?.altitude ?? 0).toLocaleString()}ft
                       </span>
                       <span>{alert.speed}kts</span>
                       <span className="text-primary">{alert.entity}</span>

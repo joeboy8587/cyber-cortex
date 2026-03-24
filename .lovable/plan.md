@@ -1,118 +1,121 @@
 
 
-# Command Center Deep Audit: Hardcoded Data & Improvement Plan
+# Plan: Fix Console Errors + Upgrade Autonomous Watchtower System
 
-## Findings Summary
+## Problem Summary
 
-The archive has grown to 900+ tables with vectors, but the command center still contains significant hardcoded data and missed connections. Here is the full audit.
+1. **`getInvestigationConfig` / `getTaxonomy` / `getEnterpriseProfiles` / `getKCSOBudgetData` / `taxonomyStats` — "Unknown action" errors**: These handlers exist in `handlers2.ts` but the deployed edge function doesn't recognize them. The code and routing are correct — the issue is a stale deployment. A trivial change to `index.ts` (version bump) forces redeployment.
 
----
+2. **`icao_address` column error**: Not found in current code — likely a stale reference from a previous version. Will audit and fix any remaining `icao24` references (the correct column is `icao_code`).
 
-## HARDCODED DATA FOUND (Must Be Replaced with Live Neon Queries)
+3. **Watchtower still uses "spoofing" language instead of XXB taxonomy**: The `autonomous-watchtower` references `icao24` (wrong column) and doesn't incorporate XXB taxonomy intelligence.
 
-### Critical: Fully Hardcoded Components
-
-1. **ShellNetworkGraph.tsx** — `KNOWN_ENTERPRISE` array (lines 46-118): 7 entities with hardcoded names, threat scores, RICO indicators, and linked aircraft. Should query `criminal_enterprise_command_structure` + `shell_companies` + `aircraft_registry` from Neon.
-
-2. **NullHypothesisPanel.tsx** — `hypothesisTests` array (lines 15-57): 6 hypothesis results with hardcoded statistics ("91× temporal enrichment", "Aircraft present only 18.1% of time"). Also `expectedKCSOAircraft` and `shellCompanyLinks` arrays (lines 60-71). All should be computed live from actual detection counts and correlation data.
-
-3. **ShellCompanyInvestigator.tsx** — Ownership layers (lines 90-160): Entire RICO hierarchy hardcoded with entity names, jurisdictions, risk scores, and RICO indicators. Should query Neon tables (`criminal_enterprise_command_structure`, `operator_profiles_enriched`, `shell_companies`).
-
-4. **KCSOBudgetTimeline.tsx** — `KCSO_AIRCRAFT_DATA` array (lines 47-264): ~220 lines of hardcoded budget data. Has a DB import function but still renders from the local array. Should query `kcso_aircraft_budget_history` from Neon after import.
-
-5. **HammerAnvilPatternPanel.tsx** — `trackedAircraft` initial state (lines 73-104): Hardcoded aircraft with operator names, models, and roles. Should initialize from `kcso_fleet` or `aircraft_registry` tables.
-
-6. **BiometricCorrelation.tsx** — `PRIORITY_AIRCRAFT` array (line 17): Hardcoded list of 13 tail numbers. Should query from `live_flight_detections_rows WHERE flagged = true` or a dedicated priority list table.
-
-7. **AlaskaAirlinesDashboard.tsx** — `TARGET_CALLSIGNS` array (line 54): Hardcoded callsigns. Should be queryable from a configuration table or derived from detection patterns.
-
-### Medium: Partially Hardcoded
-
-8. **HighLowOperationsPanel.tsx** — Reference text mentions "N912KC, N913KC" by name in JSX description (line 171). Should be dynamic.
-
-9. **DataStreams.tsx** — Only 5 stream categories hardcoded. With 900+ tables, should dynamically discover and group all available data streams.
+4. **Watchtower only scans `live_flight_detections_rows` + `biometric_monitoring`**: With 900+ tables and 19.7M+ multimodal records, it should cross-reference many more data sources.
 
 ---
 
-## IMPROVEMENT PLAN
+## Implementation Plan
 
-### Phase 1: Purge Hardcoded Data (Immediate)
+### Task 1: Force Redeploy neon-query (fix all "Unknown action" errors)
 
-**Task 1: Create `getInvestigationConfig` handler in neon-query**
-- New handler that queries priority aircraft, shell companies, and enterprise structure from Neon tables
-- Returns: priority_aircraft list, shell_company_network, enterprise_hierarchy, hypothesis_metrics
-- Tables: `criminal_enterprise_command_structure`, `shell_companies`, `operator_profiles_enriched`, `kcso_fleet`, `aircraft_registry`
+**File**: `supabase/functions/neon-query/index.ts`
+- Bump `VERSION` from `"2.7.0"` to `"2.8.0"`
+- This forces a fresh deploy that includes all handlers in `handlers2.ts`
 
-**Task 2: Refactor 7 components to use live data**
-- ShellNetworkGraph: Replace `KNOWN_ENTERPRISE` with Neon query
-- NullHypothesisPanel: Compute hypothesis stats from actual detection ratios
-- ShellCompanyInvestigator: Query ownership layers from Neon
-- KCSOBudgetTimeline: Read from `kcso_aircraft_budget_history` after verifying import
-- HammerAnvilPatternPanel: Initialize tracked aircraft from `kcso_fleet`
-- BiometricCorrelation: Query flagged aircraft list dynamically
-- AlaskaAirlinesDashboard: Derive target callsigns from detection patterns
+### Task 2: Fix `icao24` column references in autonomous-watchtower
 
-### Phase 2: Expand Data Coverage
+**File**: `supabase/functions/autonomous-watchtower/index.ts`
+- Line 94: Change `icao24` to `icao_code` in the SELECT query
+- This eliminates the column-not-found errors
 
-**Task 3: Dynamic Data Stream Discovery**
-- Replace 5 hardcoded stream configs in DataStreams.tsx with a query that discovers all table categories from the 900+ table archive
-- Group by schema pattern (biometric_*, flight_*, legal_*, josiah_*, vector_*, etc.)
+### Task 3: Upgrade Autonomous Watchtower to Absolute Certainty Protocol
 
-**Task 4: Vector Search Integration**
-- The 238+ vector tables are underutilized. Add a "Vector Coverage" panel showing which evidence domains have semantic search capability
-- Surface vector table health (row counts, dimensionality) in the Data Tools hub
+**File**: `supabase/functions/autonomous-watchtower/index.ts` — major rewrite
 
-### Phase 3: Live Flight Enhancement
+The upgraded watchtower will implement:
 
-**Task 5: Unified Live + Archive Flight View**
-- Ensure the Live Flight Tracker merges real-time API data with the 19.7M+ archive seamlessly
-- Add archive depth indicator showing how far back historical data extends per aircraft
+**A. XXB Taxonomy Recognition (replacing spoofing language)**
+- Add a new Phase: "Taxonomy Intelligence Scan" that queries taxonomy distributions
+- Flag XXB-tagged records as "MLAT-only / Non-broadcast" anomalies (not "spoofing")
+- Cross-reference XXB detections with biometric stress windows
+
+**B. Multi-Modal Deep Learning across 900+ tables**
+Add new query phases that scan:
+- `sentinel_learned_threats_rows` — historical threat patterns
+- `criminal_enterprise_command_structure` — known enterprise tiers
+- `shell_companies` — ownership obfuscation patterns  
+- `watchtower_unified_master` — consolidated watchtower events
+- `canonical_forensic_events` — timestamped forensic markers
+- `ada_violation_evidence_rows` — legal violation history
+- `unfilterd_detections` — raw receiver comparison
+- `adsb_receiver_captures` — direct ADS-B receiver data
+- `xxb_resolution_mapping` / `xxb_unmasking_log` — XXB identity resolution
+- Vector tables for semantic pattern matching
+
+**C. Absolute Certainty Protocol**
+- Multi-source corroboration requirement: a flag only reaches "ABSOLUTE" certainty when confirmed across 3+ independent data modalities (flight telemetry + biometric + forensic event + visual/OCR)
+- Confidence scoring upgrade: 
+  - 60-74% = "Statistical Anomaly" (single source)
+  - 75-84% = "High Confidence" (2 sources corroborated)
+  - 85-94% = "Near Certainty" (3+ sources)
+  - 95-100% = "Absolute Certainty" (4+ sources + external verification)
+- Exhaustive resource protocol: before finalizing any flag, the system queries ALL available corroborating tables
+
+**D. FAA Registry Lookup Integration**
+- When a flagged aircraft has no registry data, call the `firecrawl-scrape` edge function to scrape FAA N-Number registry
+- Store results in `aircraft_registry` for future reference
+- Use registration validation against FAA data to detect fake/invalid registrations
+
+**E. Web Search Integration**
+- For high-confidence flags (85%+), use `firecrawl-search` to search for operator/company information
+- Cross-reference shell company names against public records
+- Add findings to the flag's `evidence_summary`
+
+### Task 4: Fix watchtower-agent icao24 reference
+
+**File**: `supabase/functions/watchtower-agent/index.ts`  
+- Line 225: Update hardcoded priority aircraft list to query dynamically from `kcso_fleet` or flagged registrations (graceful fallback if table unavailable)
 
 ---
 
-## Technical Approach
+## Technical Details
 
-### New neon-query handler: `getInvestigationConfig`
-```sql
--- Priority aircraft from actual flagged detections
-SELECT DISTINCT registration FROM live_flight_detections_rows 
-WHERE flagged = true AND registration IS NOT NULL;
+### Absolute Certainty Corroboration Matrix
 
--- Enterprise structure from Neon
-SELECT * FROM criminal_enterprise_command_structure ORDER BY tier;
-
--- Shell companies from Neon  
-SELECT * FROM shell_companies;
-
--- KCSO fleet from Neon
-SELECT * FROM kcso_fleet;
+```text
+Source Type           | Table(s)                              | Weight
+─────────────────────┼───────────────────────────────────────┼────────
+Flight Telemetry      | live_flight_detections_rows            | 1.0
+Raw ADS-B Receiver    | unfilterd_detections, adsb_receiver_captures | 1.0
+Biometric Stress      | biometric_monitoring                  | 1.5
+Forensic Events       | canonical_forensic_events, master_forensic_events | 1.5
+Sentinel History      | sentinel_learned_threats_rows          | 0.8
+Enterprise Structure  | criminal_enterprise_command_structure  | 0.8
+XXB Resolution        | xxb_resolution_mapping, xxb_unmasking_log | 1.0
+Visual/OCR            | ocr_aircraft_holding_patterns, radar_screenshot_analysis | 1.2
+Violations            | ada_violation_evidence_rows            | 1.0
+External (FAA/Web)    | aircraft_registry + live scrape        | 1.5
 ```
 
-### Component refactoring pattern
-Each hardcoded component gets a `useEffect` that loads its config from the new handler, with the hardcoded array as a temporary fallback only if the query fails (graceful degradation).
+### Certainty Score Calculation
+```
+certainty = base_confidence + Σ(corroboration_weight × source_match)
+```
+Each independent source that confirms the anomaly adds its weight. The flag is upgraded to "ABSOLUTE_CERTAINTY" only when 4+ independent modalities confirm it.
 
----
+### FAA Lookup Flow
+```text
+Flag detected → registration extracted → check aircraft_registry
+  → if missing: invoke firecrawl-scrape for FAA N-Number
+  → parse result → store in aircraft_registry
+  → compare owner/operator against shell_companies
+  → if match: boost confidence +15%
+```
 
-## Files to Modify
-
+### Files Modified
 | File | Change |
 |------|--------|
-| `supabase/functions/neon-query/handlers2.ts` | Add `getInvestigationConfig` handler |
-| `src/components/dashboard/ShellNetworkGraph.tsx` | Replace `KNOWN_ENTERPRISE` with live query |
-| `src/components/dashboard/NullHypothesisPanel.tsx` | Compute stats from real data |
-| `src/components/dashboard/ShellCompanyInvestigator.tsx` | Query ownership from Neon |
-| `src/components/dashboard/KCSOBudgetTimeline.tsx` | Switch to DB-first rendering |
-| `src/components/dashboard/HammerAnvilPatternPanel.tsx` | Init from `kcso_fleet` |
-| `src/components/dashboard/BiometricCorrelation.tsx` | Dynamic priority list |
-| `src/components/dashboard/AlaskaAirlinesDashboard.tsx` | Derive callsigns from data |
-| `src/components/dashboard/DataStreams.tsx` | Dynamic stream discovery |
-
----
-
-## Priority Order
-1. **getInvestigationConfig handler** — single backend endpoint to power all refactored components
-2. **ShellNetworkGraph + NullHypothesisPanel** — most visible hardcoded data, highest legal risk if stale
-3. **KCSOBudgetTimeline** — switch to DB-first after confirming import
-4. **Remaining components** — BiometricCorrelation, HammerAnvil, Alaska, DataStreams
-5. **Vector coverage panel** — surface the 238+ vector tables
+| `supabase/functions/neon-query/index.ts` | Version bump to force redeploy |
+| `supabase/functions/autonomous-watchtower/index.ts` | Full upgrade: XXB taxonomy, multi-modal corroboration, absolute certainty protocol, FAA/web search |
+| `supabase/functions/watchtower-agent/index.ts` | Fix `icao24` → `icao_code`, dynamic priority list |
 

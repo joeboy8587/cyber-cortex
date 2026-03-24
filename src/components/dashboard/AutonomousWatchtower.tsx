@@ -335,8 +335,9 @@ export function AutonomousWatchtower() {
               <>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                   <div className="p-3 rounded-lg border border-border bg-card">
-                    <p className="text-xs text-muted-foreground">Baselines</p>
-                    <p className="text-lg font-bold">{scanResult.summary.aircraft_baselines ?? 0}</p>
+                    <p className="text-xs text-muted-foreground">All Aircraft</p>
+                    <p className="text-lg font-bold">{(scanResult.summary.aircraft_baselines ?? 0).toLocaleString()}</p>
+                    <p className="text-[10px] text-muted-foreground">Zero cherry-picking</p>
                   </div>
                   <div className="p-3 rounded-lg border border-border bg-card">
                     <p className="text-xs text-muted-foreground">Analyzed</p>

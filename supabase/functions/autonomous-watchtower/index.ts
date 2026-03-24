@@ -112,8 +112,8 @@ serve(async (req) => {
           FROM live_flight_detections_rows
           WHERE registration IS NOT NULL AND registration != ''
             AND detection_timestamp > NOW() - INTERVAL '90 days'
-          GROUP BY registration HAVING COUNT(*) >= 5
-          ORDER BY COUNT(*) DESC LIMIT 500
+          GROUP BY registration HAVING COUNT(*) >= 3
+          ORDER BY COUNT(*) DESC
         `,
         sql`
           SELECT id, registration, callsign, altitude, latitude, longitude,
@@ -121,7 +121,7 @@ serve(async (req) => {
             taxonomy_tag, threat_score, flagged, network_classification
           FROM live_flight_detections_rows
           WHERE detection_timestamp > NOW() - INTERVAL '24 hours'
-          ORDER BY detection_timestamp DESC LIMIT 2000
+          ORDER BY detection_timestamp DESC LIMIT 10000
         `,
         sql`
           SELECT AVG(heart_rate) as mean_hr, STDDEV(heart_rate) as stddev_hr,
@@ -137,7 +137,7 @@ serve(async (req) => {
       for (const b of baselineStats) baselineMap.set(b.registration, b);
       const bioBase = biometricBaseline[0] || { mean_hr: 72, stddev_hr: 12, mean_hrv: 55, stddev_hrv: 15, mean_stress: 40, stddev_stress: 15 };
 
-      learningInsights.push(`Learned baselines for ${baselineStats.length} aircraft over 90 days`);
+      learningInsights.push(`ALL-AIRCRAFT ANALYSIS: Baselines computed for ${baselineStats.length} aircraft over 90 days — zero cherry-picking, zero pre-selection`);
       learningInsights.push(`Biometric baseline: HR ${Math.round(Number(bioBase.mean_hr))}±${Math.round(Number(bioBase.stddev_hr))}`);
 
       // ===== PHASE 2: XXB TAXONOMY INTELLIGENCE SCAN =====

@@ -29,15 +29,29 @@ interface AutonomousFlag {
 interface ScanResult {
   scan_id: string;
   timestamp: string;
+  version?: string;
+  protocol?: string;
   summary: {
     aircraft_baselines: number;
-    recent_detections_analyzed: number;
+    recent_detections_analyzed?: number;
+    recent_detections?: number;
     flags_generated: number;
     flags_persisted: number;
     bio_correlations: number;
-    cross_references: number;
+    cross_references?: number;
     critical_flags: number;
-    high_flags: number;
+    high_flags?: number;
+    xxb_mlat_aircraft?: number;
+    sentinel_threats_loaded?: number;
+    shell_companies_loaded?: number;
+    faa_lookups?: number;
+    web_searches?: number;
+    certainty_breakdown?: {
+      absolute: number;
+      near: number;
+      high: number;
+      statistical: number;
+    };
   };
   flags: AutonomousFlag[];
   ai_analysis: string | null;
@@ -64,6 +78,8 @@ const TYPE_COLORS: Record<string, string> = {
   PHYSICS_VIOLATION: 'hsl(var(--destructive))',
   TEMPORAL_CONVERGENCE: 'hsl(45, 93%, 47%)',
   BIOMETRIC_CORRELATION: 'hsl(280, 65%, 60%)',
+  XXB_MLAT_ANOMALY: 'hsl(200, 70%, 50%)',
+  LOW_ALTITUDE_PATTERN: 'hsl(0, 80%, 55%)',
 };
 
 export function AutonomousWatchtower() {
@@ -235,9 +251,9 @@ export function AutonomousWatchtower() {
                 {Array.isArray(flag.cross_references) && flag.cross_references.length > 0 && (
                   <div>
                     <p className="text-[10px] font-medium text-muted-foreground mb-1">Cross-References</p>
-                    {flag.cross_references.map((ref, ri) => (
+                    {flag.cross_references.map((ref: any, ri) => (
                       <Badge key={ri} variant="outline" className="text-[10px] mr-1">
-                        {ref.source}: {ref.count} matches
+                        {ref.source || ref.type}{ref.count ? `: ${ref.count} matches` : ''}
                       </Badge>
                     ))}
                   </div>
@@ -320,21 +336,43 @@ export function AutonomousWatchtower() {
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                   <div className="p-3 rounded-lg border border-border bg-card">
                     <p className="text-xs text-muted-foreground">Baselines</p>
-                    <p className="text-lg font-bold">{scanResult.summary.aircraft_baselines}</p>
+                    <p className="text-lg font-bold">{scanResult.summary.aircraft_baselines ?? 0}</p>
                   </div>
                   <div className="p-3 rounded-lg border border-border bg-card">
                     <p className="text-xs text-muted-foreground">Analyzed</p>
-                    <p className="text-lg font-bold">{scanResult.summary.recent_detections_analyzed.toLocaleString()}</p>
+                    <p className="text-lg font-bold">{(scanResult.summary.recent_detections_analyzed ?? scanResult.summary.recent_detections ?? 0).toLocaleString()}</p>
                   </div>
                   <div className="p-3 rounded-lg border border-destructive/30 bg-destructive/5">
                     <p className="text-xs text-destructive">Critical</p>
-                    <p className="text-lg font-bold text-destructive">{scanResult.summary.critical_flags}</p>
+                    <p className="text-lg font-bold text-destructive">{scanResult.summary.critical_flags ?? 0}</p>
                   </div>
                   <div className="p-3 rounded-lg border border-border bg-card">
                     <p className="text-xs text-muted-foreground">Bio Corr</p>
-                    <p className="text-lg font-bold">{scanResult.summary.bio_correlations}</p>
+                    <p className="text-lg font-bold">{scanResult.summary.bio_correlations ?? 0}</p>
                   </div>
                 </div>
+
+                {/* Certainty Breakdown */}
+                {scanResult.summary.certainty_breakdown && (
+                  <div className="grid grid-cols-4 gap-2">
+                    <div className="p-2 rounded-lg border border-green-500/30 bg-green-500/5 text-center">
+                      <p className="text-sm font-bold text-green-400">{scanResult.summary.certainty_breakdown.absolute}</p>
+                      <p className="text-[10px] text-muted-foreground">Absolute</p>
+                    </div>
+                    <div className="p-2 rounded-lg border border-blue-500/30 bg-blue-500/5 text-center">
+                      <p className="text-sm font-bold text-blue-400">{scanResult.summary.certainty_breakdown.near}</p>
+                      <p className="text-[10px] text-muted-foreground">Near Cert.</p>
+                    </div>
+                    <div className="p-2 rounded-lg border border-orange-500/30 bg-orange-500/5 text-center">
+                      <p className="text-sm font-bold text-orange-400">{scanResult.summary.certainty_breakdown.high}</p>
+                      <p className="text-[10px] text-muted-foreground">High Conf.</p>
+                    </div>
+                    <div className="p-2 rounded-lg border border-border bg-card text-center">
+                      <p className="text-sm font-bold">{scanResult.summary.certainty_breakdown.statistical}</p>
+                      <p className="text-[10px] text-muted-foreground">Statistical</p>
+                    </div>
+                  </div>
+                )}
 
                 {scanResult.learning_insights.length > 0 && (
                   <div className="p-3 rounded-lg border border-primary/20 bg-primary/5">

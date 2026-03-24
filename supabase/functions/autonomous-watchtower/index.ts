@@ -112,8 +112,8 @@ serve(async (req) => {
           FROM live_flight_detections_rows
           WHERE registration IS NOT NULL AND registration != ''
             AND detection_timestamp > NOW() - INTERVAL '90 days'
-          GROUP BY registration HAVING COUNT(*) >= 5
-          ORDER BY COUNT(*) DESC LIMIT 500
+          GROUP BY registration HAVING COUNT(*) >= 3
+          ORDER BY COUNT(*) DESC
         `,
         sql`
           SELECT id, registration, callsign, altitude, latitude, longitude,

@@ -209,8 +209,8 @@ export default function ForensicTrajectoryPanel() {
               <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
                 {[
                   { label: 'Data Points', value: trajectory.length },
-                  { label: 'Min Altitude', value: `${Math.min(...trajectory.map(t => t.altitude))} ft` },
-                  { label: 'Max Altitude', value: `${Math.max(...trajectory.map(t => t.altitude))} ft` },
+                  { label: 'Min Altitude', value: `${Math.min(...trajectory.map(t => Number(t.altitude) || 0))} ft` },
+                  { label: 'Max Altitude', value: `${Math.max(...trajectory.map(t => Number(t.altitude) || 0))} ft` },
                   { label: 'Critical (<500ft)', value: trajectory.filter(t => t.violation_severity === 'CRITICAL').length, color: 'destructive' },
                   { label: 'Warning (<1000ft)', value: trajectory.filter(t => t.violation_severity === 'WARNING').length, color: 'secondary' },
                 ].map((s, i) => (

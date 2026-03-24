@@ -507,11 +507,11 @@ export default function DeepPatternAnalyzer() {
                       <div className="grid grid-cols-3 gap-2 text-xs">
                         <div>
                           <span className="text-muted-foreground">Alt:</span>
-                          <span className="ml-1 font-bold">{aircraft.altitude} ft</span>
+                          <span className="ml-1 font-bold">{aircraft?.altitude ?? 'N/A'} ft</span>
                         </div>
                         <div>
                           <span className="text-muted-foreground">Speed:</span>
-                          <span className="ml-1 font-bold">{aircraft.speed} kts</span>
+                          <span className="ml-1 font-bold">{aircraft?.speed ?? 'N/A'} kts</span>
                         </div>
                         <div>
                           <span className="text-muted-foreground">Time:</span>

@@ -121,7 +121,7 @@ serve(async (req) => {
             taxonomy_tag, threat_score, flagged, network_classification
           FROM live_flight_detections_rows
           WHERE detection_timestamp > NOW() - INTERVAL '24 hours'
-          ORDER BY detection_timestamp DESC LIMIT 2000
+          ORDER BY detection_timestamp DESC LIMIT 10000
         `,
         sql`
           SELECT AVG(heart_rate) as mean_hr, STDDEV(heart_rate) as stddev_hr,

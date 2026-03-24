@@ -21,7 +21,7 @@ async function getHandler2() {
   return _handleAction2;
 }
 
-const VERSION = "2.8.0";
+const VERSION = "2.9.0";
 console.log(`neon-query v${VERSION} booting...`);
 
 const corsHeaders = {
@@ -195,7 +195,7 @@ serve(async (req) => {
         }
 
         case 'insertRecord': {
-          const allowedTables = ['aircraft_registry_enriched','operator_profiles_enriched','criminal_enterprise_command_structure','live_flight_detections_rows','biometric_monitoring','ocr_aircraft_holding_patterns','daily_event_imports','josiah_reflections_rows','pattern_recognition_enriched','legal_findings','forensic_violation_citations','legal_intel_extractions','aircraft_violations','flagged_aircraft_rows_rows'];
+          const allowedTables = ['aircraft_registry_enriched','operator_profiles_enriched','criminal_enterprise_command_structure','shell_companies','live_flight_detections_rows','biometric_monitoring','ocr_aircraft_holding_patterns','daily_event_imports','josiah_reflections_rows','pattern_recognition_enriched','legal_findings','forensic_violation_citations','legal_intel_extractions','aircraft_violations','flagged_aircraft_rows_rows'];
           if (!table || !allowedTables.includes(table)) throw new Error(`Insert not allowed for table: ${table}`);
           if (!data || typeof data !== 'object') throw new Error('Data object is required');
           const columns = Object.keys(data);
@@ -207,7 +207,7 @@ serve(async (req) => {
         }
 
         case 'batchInsert': {
-          const allowedTables = ['aircraft_registry_enriched','operator_profiles_enriched','live_flight_detections_rows','biometric_monitoring','ocr_aircraft_holding_patterns','daily_event_imports','josiah_reflections_rows','legal_findings','forensic_violation_citations','legal_intel_extractions','aircraft_violations','flagged_aircraft_rows_rows'];
+          const allowedTables = ['aircraft_registry_enriched','operator_profiles_enriched','shell_companies','live_flight_detections_rows','biometric_monitoring','ocr_aircraft_holding_patterns','daily_event_imports','josiah_reflections_rows','legal_findings','forensic_violation_citations','legal_intel_extractions','aircraft_violations','flagged_aircraft_rows_rows'];
           if (!table || !allowedTables.includes(table)) throw new Error(`Batch insert not allowed for table: ${table}`);
           if (!Array.isArray(data) || data.length === 0) throw new Error('Data array is required');
           const columns = Object.keys(data[0] || {});

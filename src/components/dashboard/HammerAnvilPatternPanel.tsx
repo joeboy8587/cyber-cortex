@@ -514,7 +514,7 @@ export function HammerAnvilPatternPanel() {
           </div>
 
           {/* Coordination Status */}
-          {trackedAircraft.every(a => a.status === 'active') && (
+          {trackedAircraft.length >= 2 && trackedAircraft.every(a => a.status === 'active') && (
             <Alert className="border-red-500/30 bg-red-500/10">
               <Zap className="h-4 w-4 text-red-400" />
               <AlertTitle className="text-red-400">COORDINATED OPERATION DETECTED</AlertTitle>

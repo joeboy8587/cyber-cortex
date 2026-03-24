@@ -251,9 +251,9 @@ export function AutonomousWatchtower() {
                 {Array.isArray(flag.cross_references) && flag.cross_references.length > 0 && (
                   <div>
                     <p className="text-[10px] font-medium text-muted-foreground mb-1">Cross-References</p>
-                    {flag.cross_references.map((ref, ri) => (
+                    {flag.cross_references.map((ref: any, ri) => (
                       <Badge key={ri} variant="outline" className="text-[10px] mr-1">
-                        {ref.source}: {ref.count} matches
+                        {ref.source || ref.type}{ref.count ? `: ${ref.count} matches` : ''}
                       </Badge>
                     ))}
                   </div>

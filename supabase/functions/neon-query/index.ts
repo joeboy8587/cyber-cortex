@@ -4,6 +4,7 @@ import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
 // Lazy-loaded to avoid BOOT_ERROR from combined file size exceeding Deno parse limits
 let _handleAction: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
 let _handleAction2: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
+let _handleAction3: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
 
 async function getHandler1() {
   if (!_handleAction) {
@@ -21,7 +22,15 @@ async function getHandler2() {
   return _handleAction2;
 }
 
-const VERSION = "2.9.0";
+async function getHandler3() {
+  if (!_handleAction3) {
+    const mod = await import("./handlers3.ts");
+    _handleAction3 = mod.handleAction3;
+  }
+  return _handleAction3;
+}
+
+const VERSION = "2.10.0";
 console.log(`neon-query v${VERSION} booting...`);
 
 const corsHeaders = {
@@ -344,6 +353,9 @@ serve(async (req) => {
           const h2 = await getHandler2();
           const handlerResult2 = await h2(action, body, sql);
           if (handlerResult2 !== null) { result = handlerResult2; break; }
+          const h3 = await getHandler3();
+          const handlerResult3 = await h3(action, body, sql);
+          if (handlerResult3 !== null) { result = handlerResult3; break; }
           throw new Error(`Unknown action: ${action}`);
         }
       }

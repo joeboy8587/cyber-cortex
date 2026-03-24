@@ -1,5 +1,4 @@
 import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
 type SQL = ReturnType<typeof postgres>;
 

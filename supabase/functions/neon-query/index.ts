@@ -6,6 +6,65 @@ let _handleAction: ((action: string, body: Record<string, any>, sql: any) => Pro
 let _handleAction2: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
 let _handleAction3: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
 
+const HANDLER1_ACTIONS = new Set([
+  'getBehavioralAlignment',
+  'computeBehavioralAlignment',
+  'createBehavioralAlignmentTable',
+  'getMedicalBehavioralAlignment',
+  'computeMedicalBehavioralAlignment',
+  'createMedicalBehavioralAlignmentTable',
+  'getMilitaryGovBehavioralAlignment',
+  'computeMilitaryGovBehavioralAlignment',
+  'createMilitaryGovBehavioralAlignmentTable',
+  'provenanceAudit',
+  'sealSyntheticData',
+  'getDataProvenanceBreakdown',
+  'disableAutoTagger',
+  'retroactiveFlagging',
+  'biometricCollisionCheck',
+  'getValidatedXXB',
+]);
+
+const HANDLER2_ACTIONS = new Set([
+  'analyzeSaturation',
+  'getMultimodalCoverage',
+  'getFullTimelineStories',
+  'getDataCoverageStats',
+  'createPerformanceIndexes',
+  'syncKcsoFleet',
+  'importKCSOBudgetData',
+  'getUnmaskHQData',
+  'getUnmaskHQLandingTrails',
+  'c2014CohortScan',
+  'operatorEnrichment',
+  'xxbFlightAnalysis',
+  'getTopFlaggedAircraft',
+  'getAnomalousHexCodes',
+  'fixIcaoColumnMapping',
+  'getAircraftTrajectory',
+  'getAltitudeViolations',
+  'getViolationAircraft',
+]);
+
+const HANDLER3_ACTIONS = new Set([
+  'getDashboardCounts',
+  'getDataSourceStatus',
+  'getLegalAnalysisStats',
+  'getFederalCaseConvergence',
+  'backfillIcaoCodes',
+  'scanAllTables',
+  'getTaxonomy',
+  'taxonomyStats',
+  'getEnterpriseProfiles',
+  'getKCSOBudgetData',
+  'getUnfilteredStats',
+  'bridgeTaxonomy',
+  'getGhostAircraftReport',
+  'anonymousAnomalyScan',
+  'getInvestigationConfig',
+  'getTableCategories',
+]);
+
 async function getHandler1() {
   if (!_handleAction) {
     const mod = await import("./handlers.ts");
@@ -30,7 +89,7 @@ async function getHandler3() {
   return _handleAction3;
 }
 
-const VERSION = "2.10.0";
+const VERSION = "2.10.1";
 console.log(`neon-query v${VERSION} booting...`);
 
 const corsHeaders = {
@@ -346,16 +405,24 @@ serve(async (req) => {
         // getFederalCaseConvergence, backfillIcaoCodes → moved to handlers2.ts
 
         default: {
-          // Lazy-load handler modules only when needed
-          const h1 = await getHandler1();
-          const handlerResult = await h1(action, body, sql);
-          if (handlerResult !== null) { result = handlerResult; break; }
-          const h2 = await getHandler2();
-          const handlerResult2 = await h2(action, body, sql);
-          if (handlerResult2 !== null) { result = handlerResult2; break; }
-          const h3 = await getHandler3();
-          const handlerResult3 = await h3(action, body, sql);
-          if (handlerResult3 !== null) { result = handlerResult3; break; }
+          if (HANDLER1_ACTIONS.has(action)) {
+            const h1 = await getHandler1();
+            result = await h1(action, body, sql);
+            break;
+          }
+
+          if (HANDLER2_ACTIONS.has(action)) {
+            const h2 = await getHandler2();
+            result = await h2(action, body, sql);
+            break;
+          }
+
+          if (HANDLER3_ACTIONS.has(action)) {
+            const h3 = await getHandler3();
+            result = await h3(action, body, sql);
+            break;
+          }
+
           throw new Error(`Unknown action: ${action}`);
         }
       }

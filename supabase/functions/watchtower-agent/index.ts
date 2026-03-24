@@ -216,47 +216,39 @@ serve(async (req) => {
         }
       }
 
-      // 4. Check for recent high-priority aircraft activity (dynamic from kcso_fleet + flagged)
-      let priorityRegs: string[] = [];
-      try {
-        const kcsoFleet = await sql`SELECT tail_number FROM kcso_fleet`;
-        priorityRegs = kcsoFleet.map((r: any) => r.tail_number);
-      } catch { /* kcso_fleet may not exist in Neon */ }
-      if (priorityRegs.length === 0) {
-        // Fallback: query most-flagged aircraft
-        try {
-          const flagged = await sql`
-            SELECT DISTINCT registration FROM live_flight_detections_rows
-            WHERE flagged = true AND registration IS NOT NULL
-            ORDER BY registration LIMIT 20
-          `;
-          priorityRegs = flagged.map((r: any) => r.registration);
-        } catch { priorityRegs = []; }
-      }
-
-      const priorityActivity = priorityRegs.length > 0 ? await sql`
+      // 4. Pattern-based low-altitude detection — ALL aircraft analyzed, no cherry-picking
+      const lowAltActivity = await sql`
         SELECT registration, callsign, COUNT(*) as detection_count,
                MAX(detection_timestamp) as last_seen,
-               AVG(altitude::numeric) as avg_altitude
+               AVG(altitude::numeric) as avg_altitude,
+               MIN(altitude::numeric) as min_altitude
         FROM live_flight_detections_rows
-        WHERE registration = ANY(${priorityRegs})
-          AND detection_timestamp > NOW() - INTERVAL '7 days'
+        WHERE detection_timestamp > NOW() - INTERVAL '7 days'
+          AND registration IS NOT NULL AND registration != ''
+          AND altitude IS NOT NULL AND altitude::numeric > 0
         GROUP BY registration, callsign
-        ORDER BY detection_count DESC
-      ` : [];
+        HAVING AVG(altitude::numeric) < 2000 AND COUNT(*) >= 3
+        ORDER BY AVG(altitude::numeric) ASC
+        LIMIT 50
+      `;
 
-      if (priorityActivity.length > 0) {
-        const lowAltitude = priorityActivity.filter((a: any) => parseFloat(a.avg_altitude || 0) < 2000);
-        if (lowAltitude.length > 0) {
-          anomalies.push({
-            type: "LOW_ALTITUDE_PRIORITY",
-            severity: "critical",
-            description: `${lowAltitude.length} priority aircraft operating at <2000ft avg in past 7 days`,
-            aircraft: lowAltitude.map((a: any) => a.registration),
-            count: lowAltitude.length,
-            timestamp: new Date().toISOString()
-          });
-        }
+      if (lowAltActivity.length > 0) {
+        anomalies.push({
+          type: "LOW_ALTITUDE_PATTERN",
+          severity: "critical",
+          description: `${lowAltActivity.length} aircraft operating at <2000ft avg in past 7 days (all aircraft analyzed — no pre-selection)`,
+          aircraft: lowAltActivity.map((a: any) => a.registration),
+          count: lowAltActivity.length,
+          timestamp: new Date().toISOString()
+        });
+
+        leads.push({
+          id: `lead-lowalt-${Date.now()}`,
+          priority: "high",
+          question: `Which of the ${lowAltActivity.length} low-altitude aircraft correlate with biometric stress events?`,
+          data_needed: "Cross-reference low-altitude windows with biometric_monitoring stress spikes",
+          potential_finding: "Data-driven identification of harassment aircraft without pre-selection bias"
+        });
       }
 
       // Always generate baseline leads

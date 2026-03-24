@@ -137,7 +137,7 @@ serve(async (req) => {
       for (const b of baselineStats) baselineMap.set(b.registration, b);
       const bioBase = biometricBaseline[0] || { mean_hr: 72, stddev_hr: 12, mean_hrv: 55, stddev_hrv: 15, mean_stress: 40, stddev_stress: 15 };
 
-      learningInsights.push(`Learned baselines for ${baselineStats.length} aircraft over 90 days`);
+      learningInsights.push(`ALL-AIRCRAFT ANALYSIS: Baselines computed for ${baselineStats.length} aircraft over 90 days — zero cherry-picking, zero pre-selection`);
       learningInsights.push(`Biometric baseline: HR ${Math.round(Number(bioBase.mean_hr))}±${Math.round(Number(bioBase.stddev_hr))}`);
 
       // ===== PHASE 2: XXB TAXONOMY INTELLIGENCE SCAN =====

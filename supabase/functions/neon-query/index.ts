@@ -21,7 +21,7 @@ async function getHandler2() {
   return _handleAction2;
 }
 
-const VERSION = "2.8.0";
+const VERSION = "2.9.0";
 console.log(`neon-query v${VERSION} booting...`);
 
 const corsHeaders = {

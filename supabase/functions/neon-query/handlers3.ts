@@ -1,5 +1,4 @@
 import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
 type SQL = ReturnType<typeof postgres>;
 
@@ -51,10 +50,6 @@ export async function handleAction3(action: string, body: Record<string, any>, s
     }
 
     case 'backfillIcaoCodes': {
-      const supabaseUrl = Deno.env.get('SUPABASE_URL');
-      const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-      if (!supabaseUrl || !supabaseKey) throw new Error('Supabase credentials not configured');
-      const supabase = createClient(supabaseUrl, supabaseKey);
       await sql.unsafe(`SET statement_timeout = '50s'`);
       const nullRegs = await sql`SELECT DISTINCT registration FROM live_flight_detections_rows WHERE (icao_code IS NULL OR icao_code = '') AND registration IS NOT NULL AND registration != '' LIMIT 500`;
       let selfBackfillCount = 0;
@@ -74,13 +69,33 @@ export async function handleAction3(action: string, body: Record<string, any>, s
       const mappings: Record<string, string> = {};
       for (let i = 0; i < regList.length; i += 500) {
         const batch = regList.slice(i, i + 500);
-        const { data: registryData } = await supabase.from('aircraft_registry').select('n_number, mode_s_hex, mode_s_code').in('n_number', batch).not('mode_s_code', 'is', null);
-        if (registryData) {
-          for (const entry of registryData) {
-            let icaoHex: string | null = null;
-            if (entry.mode_s_hex) { icaoHex = entry.mode_s_hex.trim().toUpperCase(); }
-            else if (entry.mode_s_code) { const hexMatch = entry.mode_s_code.match(/\|\s*([A-Fa-f0-9]{4,6})\s*\|/); if (hexMatch) icaoHex = hexMatch[1].toUpperCase(); }
-            if (icaoHex && regList.includes(entry.n_number)) { mappings[entry.n_number] = icaoHex; }
+        if (batch.length === 0) continue;
+
+        const safeRegistrations = batch
+          .map((reg: string) => String(reg).replace(/[^a-zA-Z0-9]/g, ''))
+          .filter(Boolean);
+
+        if (safeRegistrations.length === 0) continue;
+
+        const inClause = safeRegistrations.map((reg) => `'${reg}'`).join(',');
+        const registryData = await sql.unsafe(`
+          SELECT n_number, mode_s_hex, mode_s_code
+          FROM aircraft_registry
+          WHERE n_number IN (${inClause})
+            AND mode_s_code IS NOT NULL
+        `);
+
+        for (const entry of registryData as any[]) {
+          let icaoHex: string | null = null;
+          if (entry.mode_s_hex) {
+            icaoHex = String(entry.mode_s_hex).trim().toUpperCase();
+          } else if (entry.mode_s_code) {
+            const hexMatch = String(entry.mode_s_code).match(/\|\s*([A-Fa-f0-9]{4,6})\s*\|/);
+            if (hexMatch) icaoHex = hexMatch[1].toUpperCase();
+          }
+
+          if (icaoHex && safeRegistrations.includes(String(entry.n_number))) {
+            mappings[String(entry.n_number)] = icaoHex;
           }
         }
       }

@@ -29,15 +29,29 @@ interface AutonomousFlag {
 interface ScanResult {
   scan_id: string;
   timestamp: string;
+  version?: string;
+  protocol?: string;
   summary: {
     aircraft_baselines: number;
-    recent_detections_analyzed: number;
+    recent_detections_analyzed?: number;
+    recent_detections?: number;
     flags_generated: number;
     flags_persisted: number;
     bio_correlations: number;
-    cross_references: number;
+    cross_references?: number;
     critical_flags: number;
-    high_flags: number;
+    high_flags?: number;
+    xxb_mlat_aircraft?: number;
+    sentinel_threats_loaded?: number;
+    shell_companies_loaded?: number;
+    faa_lookups?: number;
+    web_searches?: number;
+    certainty_breakdown?: {
+      absolute: number;
+      near: number;
+      high: number;
+      statistical: number;
+    };
   };
   flags: AutonomousFlag[];
   ai_analysis: string | null;

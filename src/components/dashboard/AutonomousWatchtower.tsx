@@ -78,6 +78,8 @@ const TYPE_COLORS: Record<string, string> = {
   PHYSICS_VIOLATION: 'hsl(var(--destructive))',
   TEMPORAL_CONVERGENCE: 'hsl(45, 93%, 47%)',
   BIOMETRIC_CORRELATION: 'hsl(280, 65%, 60%)',
+  XXB_MLAT_ANOMALY: 'hsl(200, 70%, 50%)',
+  LOW_ALTITUDE_PATTERN: 'hsl(0, 80%, 55%)',
 };
 
 export function AutonomousWatchtower() {

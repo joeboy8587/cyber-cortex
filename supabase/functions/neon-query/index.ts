@@ -353,6 +353,9 @@ serve(async (req) => {
           const h2 = await getHandler2();
           const handlerResult2 = await h2(action, body, sql);
           if (handlerResult2 !== null) { result = handlerResult2; break; }
+          const h3 = await getHandler3();
+          const handlerResult3 = await h3(action, body, sql);
+          if (handlerResult3 !== null) { result = handlerResult3; break; }
           throw new Error(`Unknown action: ${action}`);
         }
       }

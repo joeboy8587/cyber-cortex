@@ -274,7 +274,7 @@ export function LegalAnalysisAI() {
 
   return (
     <CyberPanel
-      title="Legal Analysis AI (Gemini Pro · 15.2M Records)"
+      title="Legal Analysis AI (Gemini Pro · 19.7M Records · 334K Correlations)"
       icon={<Scale className="w-4 h-4" />}
       className="h-full"
     >

@@ -446,6 +446,7 @@ export async function handleAction3(action: string, body: Record<string, any>, s
                 taxonomy_tag IN ('xxb_ghost', 'xxb_unknown', 'xxb_stealth', 'military_asset')
                 OR (icao_code IS NULL AND registration IS NULL)
               )
+                AND detection_timestamp > ${cutoff}::timestamptz
               ORDER BY detection_timestamp DESC
               LIMIT ${sampleSize}
             )

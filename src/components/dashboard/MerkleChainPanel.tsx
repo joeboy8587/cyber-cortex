@@ -15,6 +15,7 @@ import {
   Clock,
   Database,
   Layers,
+  Play,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -25,8 +26,10 @@ export function MerkleChainPanel() {
   const [coverage, setCoverage] = useState<any>(null);
   const [anchoring, setAnchoring] = useState(false);
   const [deepAnchoring, setDeepAnchoring] = useState(false);
+  const [continuousRunning, setContinuousRunning] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [loadingCoverage, setLoadingCoverage] = useState(false);
+  const [roundsCompleted, setRoundsCompleted] = useState(0);
 
   useEffect(() => {
     loadStats();
@@ -55,7 +58,7 @@ export function MerkleChainPanel() {
     try {
       setAnchoring(true);
       const result = await anchorBatch();
-      toast.success(`Anchored ${result.totalAnchored} records across ${result.tables.filter(t => t.anchored > 0).length} tables`);
+      toast.success(`Anchored ${result.totalAnchored} records`);
       await loadStats();
     } catch {
       toast.error('Merkle anchoring failed');
@@ -67,7 +70,7 @@ export function MerkleChainPanel() {
   const handleDeepAnchor = async () => {
     try {
       setDeepAnchoring(true);
-      const result = await anchorDeep(200);
+      const result = await anchorDeep(500);
       toast.success(`Deep anchored ${result.totalAnchored} records across ${result.tablesProcessed} tables`);
       await loadStats();
       if (coverage) await loadCoverage();
@@ -76,6 +79,32 @@ export function MerkleChainPanel() {
     } finally {
       setDeepAnchoring(false);
     }
+  };
+
+  const handleContinuousAnchor = async () => {
+    setContinuousRunning(true);
+    setRoundsCompleted(0);
+    const maxRounds = 10;
+
+    for (let i = 0; i < maxRounds; i++) {
+      if (!continuousRunning && i > 0) break; // allow stopping
+      try {
+        const result = await anchorDeep(500);
+        setRoundsCompleted(i + 1);
+        if (result.totalAnchored === 0) {
+          toast.success('All reachable tables fully anchored!');
+          break;
+        }
+        toast.info(`Round ${i + 1}: +${result.totalAnchored} anchored`);
+      } catch {
+        toast.error(`Round ${i + 1} failed`);
+        break;
+      }
+    }
+
+    await loadStats();
+    if (coverage) await loadCoverage();
+    setContinuousRunning(false);
   };
 
   const handleVerify = async () => {
@@ -120,15 +149,28 @@ export function MerkleChainPanel() {
           </Button>
           <Button size="sm" className="bg-cyan-600 hover:bg-cyan-700" onClick={handleAnchorBatch} disabled={anchoring}>
             {anchoring ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Anchor className="h-4 w-4 mr-1" />}
-            Anchor Hashed Tables
+            Anchor Hashed
           </Button>
-          <Button size="sm" className="bg-purple-600 hover:bg-purple-700" onClick={handleDeepAnchor} disabled={deepAnchoring}>
+          <Button size="sm" className="bg-purple-600 hover:bg-purple-700" onClick={handleDeepAnchor} disabled={deepAnchoring || continuousRunning}>
             {deepAnchoring ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Layers className="h-4 w-4 mr-1" />}
-            Deep Anchor All Tables
+            Deep Anchor
+          </Button>
+          <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={handleContinuousAnchor} disabled={continuousRunning || deepAnchoring}>
+            {continuousRunning ? (
+              <>
+                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                Round {roundsCompleted}/10
+              </>
+            ) : (
+              <>
+                <Play className="h-4 w-4 mr-1" />
+                Continuous (10 rounds)
+              </>
+            )}
           </Button>
           <Button size="sm" variant="default" onClick={handleVerify} disabled={verifying || (stats?.chainLength === 0)}>
             {verifying ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <ShieldCheck className="h-4 w-4 mr-1" />}
-            Verify Chain
+            Verify
           </Button>
           <Button size="sm" variant="outline" onClick={loadCoverage} disabled={loadingCoverage}>
             {loadingCoverage ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Database className="h-4 w-4 mr-1" />}
@@ -162,8 +204,8 @@ export function MerkleChainPanel() {
         {error && <div className="text-sm text-red-400 bg-red-500/10 p-2 rounded">{error}</div>}
 
         <div className="text-xs text-muted-foreground border-t border-border/20 pt-2">
-          <strong>Merkle Chain:</strong> Each entry's hash includes the previous entry's hash, creating an unbreakable chain across your entire Neon DB.
-          Deep Anchor covers tables without SHA-256 columns by computing hashes on-the-fly.
+          <strong>Merkle Chain:</strong> Each entry chains hash(record + previous), creating tamper-proof coverage across your entire Neon DB.
+          Use Continuous mode to anchor thousands of records across multiple rounds.
         </div>
       </div>
     </CyberPanel>
@@ -181,28 +223,31 @@ function StatBox({ icon, value, label, small }: { icon: React.ReactNode; value: 
 }
 
 function NeonCoverageView({ coverage }: { coverage: any }) {
+  const pct = coverage.overallCoverage;
   return (
     <div className="p-3 rounded-lg bg-purple-500/5 border border-purple-500/20 space-y-3">
       <div className="flex items-center gap-2 mb-1">
         <Database className="h-4 w-4 text-purple-400" />
         <span className="font-mono text-sm font-bold text-foreground">Neon DB Merkle Coverage</span>
-        <Badge className="bg-purple-500/20 text-purple-400 text-xs">{coverage.overallCoverage}%</Badge>
+        <Badge className="bg-purple-500/20 text-purple-400 text-xs">
+          {coverage.totalAnchored?.toLocaleString()} / {coverage.totalRows?.toLocaleString()} ({pct}%)
+        </Badge>
       </div>
       <div className="grid grid-cols-3 gap-3 text-xs font-mono">
         <div><span className="text-muted-foreground">Tables:</span> <span className="text-foreground">{coverage.totalNeonTables}</span></div>
         <div><span className="text-muted-foreground">Anchorable:</span> <span className="text-foreground">{coverage.anchorableTables}</span></div>
-        <div><span className="text-muted-foreground">Rows:</span> <span className="text-foreground">{coverage.totalRows?.toLocaleString()}</span></div>
+        <div><span className="text-muted-foreground">Anchored:</span> <span className="text-foreground font-bold">{coverage.totalAnchored?.toLocaleString()}</span></div>
       </div>
-      <Progress value={coverage.overallCoverage} className="h-2" />
+      <Progress value={Math.max(pct, pct > 0 ? 1 : 0)} className="h-2" />
       <div className="max-h-40 overflow-y-auto space-y-1">
         {coverage.tables?.filter((t: any) => t.totalRows > 0).slice(0, 30).map((t: any) => (
           <div key={t.table} className="flex items-center justify-between text-xs font-mono p-1.5 bg-background/30 rounded">
             <span className="text-foreground truncate max-w-[40%]">{t.table}</span>
             <div className="flex items-center gap-2">
               {t.hasSha256 && <Badge variant="outline" className="text-[9px] text-green-400 border-green-400/30">SHA</Badge>}
-              <span className="text-muted-foreground">{t.anchored}/{t.totalRows.toLocaleString()}</span>
-              <Badge variant="outline" className={`text-[10px] ${t.coverage > 50 ? 'text-green-400 border-green-400/30' : t.coverage > 0 ? 'text-yellow-400 border-yellow-400/30' : 'text-red-400 border-red-400/30'}`}>
-                {t.coverage}%
+              <span className="text-muted-foreground">{t.anchored.toLocaleString()}/{t.totalRows.toLocaleString()}</span>
+              <Badge variant="outline" className={`text-[10px] ${t.anchored > 0 ? 'text-green-400 border-green-400/30' : 'text-red-400 border-red-400/30'}`}>
+                {t.anchored > 0 ? `${t.coverage}%` : '—'}
               </Badge>
             </div>
           </div>

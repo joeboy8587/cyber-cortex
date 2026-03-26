@@ -8,7 +8,7 @@ import { supabase } from '@/integrations/supabase/client';
 export async function neonQuery(
   body: Record<string, unknown>,
   maxRetries = 3,
-): Promise<{ data: unknown; error: unknown }> {
+): Promise<{ data: any; error: any }> {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const { data, error } = await supabase.functions.invoke('neon-query', { body });
 

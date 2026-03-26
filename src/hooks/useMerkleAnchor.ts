@@ -29,7 +29,27 @@ interface AnchorResult {
 
 interface BatchAnchorResult {
   totalAnchored: number;
-  tables: { table: string; anchored: number; status: string; error?: string }[];
+  tables: { table: string; anchored: number; status: string; error?: string; remaining?: number }[];
+}
+
+interface DeepAnchorResult extends BatchAnchorResult {
+  tablesProcessed: number;
+}
+
+interface NeonCoverage {
+  totalNeonTables: number;
+  anchorableTables: number;
+  totalRows: number;
+  totalAnchored: number;
+  overallCoverage: number;
+  tables: {
+    table: string;
+    totalRows: number;
+    anchored: number;
+    hasSha256: boolean;
+    hasId: boolean;
+    coverage: number;
+  }[];
 }
 
 export function useMerkleAnchor() {

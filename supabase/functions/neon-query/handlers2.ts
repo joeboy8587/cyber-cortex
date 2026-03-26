@@ -716,18 +716,18 @@ export async function handleAction2(action: string, body: Record<string, any>, s
               AND registration IS NOT NULL AND registration != ''
             UNION ALL
             SELECT registration, COALESCE(altitude, 0) as altitude,
-              COALESCE(detection_timestamp, created_at) as event_time, taxonomy_tag
+              detection_timestamp as event_time, taxonomy_tag
             FROM unfilterd_detections
             WHERE COALESCE(altitude, 0) > 0 AND COALESCE(altitude, 0) < 1000
-              AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${vaWindow}'
+              AND detection_timestamp > NOW() - INTERVAL '${vaWindow}'
               AND registration IS NOT NULL AND registration != ''
             UNION ALL
-            SELECT registration, COALESCE(altitude, 0) as altitude,
-              COALESCE(detection_timestamp, created_at) as event_time, taxonomy_tag
+            SELECT COALESCE(flight, hex) as registration, COALESCE(alt, 0) as altitude,
+              COALESCE(flagged_at, created_at) as event_time, NULL as taxonomy_tag
             FROM flagged_aircraft_rows_rows
-            WHERE COALESCE(altitude, 0) > 0 AND COALESCE(altitude, 0) < 1000
-              AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${vaWindow}'
-              AND registration IS NOT NULL AND registration != ''
+            WHERE COALESCE(alt, 0) > 0 AND COALESCE(alt, 0) < 1000
+              AND COALESCE(flagged_at, created_at) > NOW() - INTERVAL '${vaWindow}'
+              AND (flight IS NOT NULL AND flight != '' OR hex IS NOT NULL AND hex != '')
           )
           SELECT registration, COUNT(*) as violation_count,
             COUNT(*) FILTER (WHERE altitude < 500) as critical_violations,

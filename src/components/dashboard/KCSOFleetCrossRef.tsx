@@ -16,6 +16,7 @@ import {
   TrendingUp
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
+import { neonQuery } from '@/lib/neonQueryRetry';
 import { toast } from 'sonner';
 
 interface FleetAircraft {

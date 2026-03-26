@@ -3,6 +3,7 @@ import { CyberPanel } from '@/components/ui/cyber-panel';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
+import { neonQuery } from '@/lib/neonQueryRetry';
 import { Shield, AlertTriangle, Clock, MapPin, Heart, FileText, RefreshCw } from 'lucide-react';
 
 interface KCSOEvent {

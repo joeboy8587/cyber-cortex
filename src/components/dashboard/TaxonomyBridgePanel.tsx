@@ -186,13 +186,14 @@ export default function TaxonomyBridgePanel() {
               <div className="flex items-start gap-2">
                 <AlertTriangle className="h-4 w-4 text-amber-400 mt-0.5" />
                 <div className="text-xs space-y-1">
-                  <p className="font-medium">Taxonomy Injector — 3-Phase Match</p>
+                  <p className="font-medium">Taxonomy Injector — 4-Phase Match</p>
                   <p className="text-muted-foreground">
-                    <strong>Phase 1:</strong> Registration + ±5min temporal window<br />
-                    <strong>Phase 2:</strong> ICAO code + ±3min temporal window<br />
-                    <strong>Phase 3:</strong> Spatial (±0.005°) + ±3sec temporal window
+                    <strong>Phase 0:</strong> Direct registration lookup (no temporal join)<br />
+                    <strong>Phase 1:</strong> Registration + ±10min temporal window<br />
+                    <strong>Phase 2:</strong> ICAO code + ±10min temporal window<br />
+                    <strong>Phase 3:</strong> Spatial (±0.01°) + ±30sec temporal window
                   </p>
-                  <p className="text-muted-foreground">Processes 2,000 records per batch. Run multiple times to cover all 7,610 records.</p>
+                  <p className="text-muted-foreground">Processes up to 5,000 records per batch. Run multiple times to cover all records.</p>
                 </div>
               </div>
             </div>
@@ -204,7 +205,8 @@ export default function TaxonomyBridgePanel() {
 
             {bridgeResult?.success && (
               <div className="space-y-3">
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-4 gap-2">
+                  <StatBox label="Direct Match" value={safeNum(bridgeResult.batch.directMatched).toString()} color="text-amber-400" />
                   <StatBox label="Reg. Matched" value={safeNum(bridgeResult.batch.registrationMatched).toString()} color="text-green-400" />
                   <StatBox label="ICAO Matched" value={safeNum(bridgeResult.batch.icaoMatched).toString()} color="text-blue-400" />
                   <StatBox label="Spatial Matched" value={safeNum(bridgeResult.batch.spatialMatched).toString()} color="text-purple-400" />

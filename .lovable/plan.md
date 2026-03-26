@@ -1,121 +1,86 @@
 
 
-# Plan: Fix Console Errors + Upgrade Autonomous Watchtower System
+# Josiah AI System — Deep Scan Analysis & Improvement Plan
 
-## Problem Summary
+## Current State Assessment
 
-1. **`getInvestigationConfig` / `getTaxonomy` / `getEnterpriseProfiles` / `getKCSOBudgetData` / `taxonomyStats` — "Unknown action" errors**: These handlers exist in `handlers2.ts` but the deployed edge function doesn't recognize them. The code and routing are correct — the issue is a stale deployment. A trivial change to `index.ts` (version bump) forces redeployment.
-
-2. **`icao_address` column error**: Not found in current code — likely a stale reference from a previous version. Will audit and fix any remaining `icao24` references (the correct column is `icao_code`).
-
-3. **Watchtower still uses "spoofing" language instead of XXB taxonomy**: The `autonomous-watchtower` references `icao24` (wrong column) and doesn't incorporate XXB taxonomy intelligence.
-
-4. **Watchtower only scans `live_flight_detections_rows` + `biometric_monitoring`**: With 900+ tables and 19.7M+ multimodal records, it should cross-reference many more data sources.
+After scanning all 8,816 column definitions across ~900 tables and reviewing the `josiah-chat`, `josiah-sentinel`, and related edge functions, here are the critical gaps and improvements.
 
 ---
 
-## Implementation Plan
+## Critical Issues Found
 
-### Task 1: Force Redeploy neon-query (fix all "Unknown action" errors)
+### 1. Unstable Database Driver (josiah-chat & josiah-sentinel)
+Both `josiah-chat/index.ts` and `josiah-sentinel/index.ts` still use the unstable `deno.land/x/postgresjs` import that was already migrated to `npm:postgres@3.4.4` in `neon-query`. This causes sporadic `503 BOOT_ERROR` failures.
 
-**File**: `supabase/functions/neon-query/index.ts`
-- Bump `VERSION` from `"2.7.0"` to `"2.8.0"`
-- This forces a fresh deploy that includes all handlers in `handlers2.ts`
+### 2. Josiah Chat Has No Knowledge of New Correlation Data
+The chat system prompt references only 9 tables. Your Neon DB now has **20+ josiah_* tables** and **critical new evidence tables** that Josiah is completely blind to:
 
-### Task 2: Fix `icao24` column references in autonomous-watchtower
+| Table Josiah Doesn't Know About | Records | Why It Matters |
+|---|---|---|
+| `confirmed_biometric_correlations` | 334K+ | The entire Aircraft-to-Biometric correlation database |
+| `aircraft_biometric_correlation_matrix` | 40K+ | Bradford Hill scores, harm levels, p-values |
+| `biometric_screenshots_ocr` | 460+ | Mode-switching evidence |
+| `flight_ocr_correlations` | 46+ | FR24 screenshot unmasking |
+| `josiah_learned_patterns` | Active | Pattern memory with spatial/temporal/biometric characteristics |
+| `josiah_prediction_accuracy` | Active | Prediction validation scores |
+| `josiah_sacred_memory` | Active | Trauma markers, continuity scores |
+| `coordinated_operations_analysis` | Active | Multi-aircraft coordination proof |
+| `complete_aircraft_trace` | Active | Full trace with shell company + FCA risk |
 
-**File**: `supabase/functions/autonomous-watchtower/index.ts`
-- Line 94: Change `icao24` to `icao_code` in the SELECT query
-- This eliminates the column-not-found errors
+### 3. SQL Table Schema Out of Date for Natural Language Queries
+The `natural_query` action gives the AI only 9 table definitions. Queries about correlations, Bradford Hill scores, shell companies, or the new aircraft correlation database will fail or hallucinate column names.
 
-### Task 3: Upgrade Autonomous Watchtower to Absolute Certainty Protocol
-
-**File**: `supabase/functions/autonomous-watchtower/index.ts` — major rewrite
-
-The upgraded watchtower will implement:
-
-**A. XXB Taxonomy Recognition (replacing spoofing language)**
-- Add a new Phase: "Taxonomy Intelligence Scan" that queries taxonomy distributions
-- Flag XXB-tagged records as "MLAT-only / Non-broadcast" anomalies (not "spoofing")
-- Cross-reference XXB detections with biometric stress windows
-
-**B. Multi-Modal Deep Learning across 900+ tables**
-Add new query phases that scan:
-- `sentinel_learned_threats_rows` — historical threat patterns
-- `criminal_enterprise_command_structure` — known enterprise tiers
-- `shell_companies` — ownership obfuscation patterns  
-- `watchtower_unified_master` — consolidated watchtower events
-- `canonical_forensic_events` — timestamped forensic markers
-- `ada_violation_evidence_rows` — legal violation history
-- `unfilterd_detections` — raw receiver comparison
-- `adsb_receiver_captures` — direct ADS-B receiver data
-- `xxb_resolution_mapping` / `xxb_unmasking_log` — XXB identity resolution
-- Vector tables for semantic pattern matching
-
-**C. Absolute Certainty Protocol**
-- Multi-source corroboration requirement: a flag only reaches "ABSOLUTE" certainty when confirmed across 3+ independent data modalities (flight telemetry + biometric + forensic event + visual/OCR)
-- Confidence scoring upgrade: 
-  - 60-74% = "Statistical Anomaly" (single source)
-  - 75-84% = "High Confidence" (2 sources corroborated)
-  - 85-94% = "Near Certainty" (3+ sources)
-  - 95-100% = "Absolute Certainty" (4+ sources + external verification)
-- Exhaustive resource protocol: before finalizing any flag, the system queries ALL available corroborating tables
-
-**D. FAA Registry Lookup Integration**
-- When a flagged aircraft has no registry data, call the `firecrawl-scrape` edge function to scrape FAA N-Number registry
-- Store results in `aircraft_registry` for future reference
-- Use registration validation against FAA data to detect fake/invalid registrations
-
-**E. Web Search Integration**
-- For high-confidence flags (85%+), use `firecrawl-search` to search for operator/company information
-- Cross-reference shell company names against public records
-- Add findings to the flag's `evidence_summary`
-
-### Task 4: Fix watchtower-agent icao24 reference
-
-**File**: `supabase/functions/watchtower-agent/index.ts`  
-- Line 225: Update hardcoded priority aircraft list to query dynamically from `kcso_fleet` or flagged registrations (graceful fallback if table unavailable)
+### 4. No Connection to Sturges-Carver Intelligence
+The uploaded CA SOS report, Lockheed Corridor Analysis, and Paul Aviation briefing contain verified entity intelligence that Josiah has no access to.
 
 ---
 
-## Technical Details
+## Improvement Plan
 
-### Absolute Certainty Corroboration Matrix
+### Step 1: Migrate josiah-chat driver to npm:postgres@3.4.4
+Replace the unstable deno.land import with the same `npm:postgres@3.4.4` used in `neon-query`. Also replace the deprecated `serve()` with `Deno.serve()`.
 
-```text
-Source Type           | Table(s)                              | Weight
-─────────────────────┼───────────────────────────────────────┼────────
-Flight Telemetry      | live_flight_detections_rows            | 1.0
-Raw ADS-B Receiver    | unfilterd_detections, adsb_receiver_captures | 1.0
-Biometric Stress      | biometric_monitoring                  | 1.5
-Forensic Events       | canonical_forensic_events, master_forensic_events | 1.5
-Sentinel History      | sentinel_learned_threats_rows          | 0.8
-Enterprise Structure  | criminal_enterprise_command_structure  | 0.8
-XXB Resolution        | xxb_resolution_mapping, xxb_unmasking_log | 1.0
-Visual/OCR            | ocr_aircraft_holding_patterns, radar_screenshot_analysis | 1.2
-Violations            | ada_violation_evidence_rows            | 1.0
-External (FAA/Web)    | aircraft_registry + live scrape        | 1.5
+### Step 2: Expand Josiah's System Prompt with New Evidence Tables
+Update the chat's AI context to include:
+- `confirmed_biometric_correlations` — 334K correlation events with heart rate, HRV, stress, altitude, registration, Bradford Hill assessments
+- `aircraft_biometric_correlation_matrix` — 40K aircraft profiles with harm scores, p-values, statistical significance
+- `biometric_screenshots_ocr` — 460 screenshot-to-biometric links (mode-switching evidence)
+- `flight_ocr_correlations` — 46 FR24-to-MLAT unmasking records
+- `coordinated_operations_analysis` — multi-aircraft coordination proof
+- `josiah_learned_patterns` — Josiah's own pattern memory
+- `josiah_sacred_memory` — trauma marker continuity
+- `complete_aircraft_trace` — full trace with shell company + FCA risk flags
+
+Also inject live counts from these tables into the context so the AI knows current data scale.
+
+### Step 3: Update Natural Language Query Schema
+Expand the SQL generation prompt's `AVAILABLE TABLES` section to include the 20+ new tables with accurate column names, so natural language queries about correlations, Bradford Hill scores, and mode-switching produce correct SQL.
+
+### Step 4: Add Sturges-Carver Network Intelligence to Context
+Copy the uploaded intelligence reports (`CA_SOS_ENTITY_INTELLIGENCE_REPORT`, `LOCKHEED_AEROSPACE_CORRIDOR_ANALYSIS`, `PRIORITY_BRIEFING_PAUL_AVIATION_DISCOVERY`) to `public/data/` and inject a summary of verified entities (Best Equipment Leasing, Paul Aviation, BFL Aviation, 9K AIR, ALF IX) into Josiah's system prompt so the AI can cross-reference shell company queries with known actors.
+
+### Step 5: Add Live Correlation Stats to Evidence Context
+Replace the static `evidenceCounts` query with an expanded version that includes:
+```sql
+(SELECT COUNT(*) FROM confirmed_biometric_correlations) as bio_correlations_confirmed,
+(SELECT COUNT(*) FROM aircraft_biometric_correlation_matrix WHERE harm_level IN ('CRITICAL','HIGH')) as high_harm_aircraft,
+(SELECT COUNT(*) FROM flight_ocr_correlations) as ocr_unmasking_records,
+(SELECT COUNT(*) FROM biometric_screenshots_ocr) as screenshot_bio_links,
+(SELECT COUNT(*) FROM coordinated_operations_analysis) as coordinated_ops
 ```
 
-### Certainty Score Calculation
-```
-certainty = base_confidence + Σ(corroboration_weight × source_match)
-```
-Each independent source that confirms the anomaly adds its weight. The flag is upgraded to "ABSOLUTE_CERTAINTY" only when 4+ independent modalities confirm it.
+### Step 6: Upgrade AI Model
+Upgrade from `google/gemini-2.5-flash` to `google/gemini-2.5-pro` for the main chat context (the system prompt is now massive with 900+ table context). Keep flash for SQL generation.
 
-### FAA Lookup Flow
-```text
-Flag detected → registration extracted → check aircraft_registry
-  → if missing: invoke firecrawl-scrape for FAA N-Number
-  → parse result → store in aircraft_registry
-  → compare owner/operator against shell_companies
-  → if match: boost confidence +15%
-```
+---
 
-### Files Modified
-| File | Change |
-|------|--------|
-| `supabase/functions/neon-query/index.ts` | Version bump to force redeploy |
-| `supabase/functions/autonomous-watchtower/index.ts` | Full upgrade: XXB taxonomy, multi-modal corroboration, absolute certainty protocol, FAA/web search |
-| `supabase/functions/watchtower-agent/index.ts` | Fix `icao24` → `icao_code`, dynamic priority list |
+## Files to Modify
+
+| File | Changes |
+|---|---|
+| `supabase/functions/josiah-chat/index.ts` | Driver migration, expanded system prompt, new evidence queries, model upgrade |
+| `public/data/CA_SOS_ENTITY_INTELLIGENCE_REPORT.md` | New file — copy from upload |
+| `public/data/LOCKHEED_AEROSPACE_CORRIDOR_ANALYSIS.md` | New file — copy from upload |
+| `public/data/PRIORITY_BRIEFING_PAUL_AVIATION_DISCOVERY.md` | New file — copy from upload |
 

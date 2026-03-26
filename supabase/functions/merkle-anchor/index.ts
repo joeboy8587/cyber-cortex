@@ -160,16 +160,15 @@ async function handleAnchor(supabase: any, neonUrl: string, table: string, batch
 
 // ─── DEEP ANCHOR ────────────────────────────────────────────────────
 async function handleAnchorDeep(supabase: any, neonUrl: string, body: any) {
-  const { batchSize = 200, tableFilter, maxTables = 10, hashOnly = false } = body;
+  const { batchSize = 200, tableFilter, maxTables = 5, hashOnly = false } = body;
   const t0 = Date.now();
 
-  const schema = await getTableSchema(neonUrl);
-  console.log(`schema: ${Date.now() - t0}ms`);
-
-  const allTables = await neonQuery(neonUrl,
-    `SELECT relname AS tablename, n_live_tup AS row_count FROM pg_stat_user_tables WHERE schemaname = 'public' ORDER BY n_live_tup DESC`
-  );
-  console.log(`tables: ${Date.now() - t0}ms, count=${(allTables as any[]).length}`);
+  // Parallel fetch schema + tables
+  const [schema, allTables] = await Promise.all([
+    getTableSchema(neonUrl),
+    neonQuery(neonUrl, `SELECT relname AS tablename, n_live_tup AS row_count FROM pg_stat_user_tables WHERE schemaname = 'public' ORDER BY n_live_tup DESC`),
+  ]);
+  console.log(`init: ${Date.now() - t0}ms, tables=${(allTables as any[]).length}`);
 
   const candidates = (allTables as any[]).filter(t => {
     const name = t.tablename;

@@ -220,17 +220,39 @@ export async function handleAction3(action: string, body: Record<string, any>, s
         await sql`ALTER TABLE unfilterd_detections ADD COLUMN IF NOT EXISTS matched_live_id TEXT`.catch(() => {});
         await sql`ALTER TABLE unfilterd_detections ADD COLUMN IF NOT EXISTS match_method TEXT`.catch(() => {});
 
+        // Phase 0: Direct registration lookup — tag any unmatched record whose registration
+        // exists in the enriched table with a known taxonomy_tag (no temporal join needed)
+        const directMatched = await sql`
+          WITH unmatched AS (
+            SELECT id, registration FROM unfilterd_detections
+            WHERE taxonomy_tag IS NULL AND registration IS NOT NULL AND registration != ''
+            LIMIT 5000
+          ),
+          known_tags AS (
+            SELECT DISTINCT ON (registration) registration, taxonomy_tag
+            FROM live_flight_detections_rows
+            WHERE taxonomy_tag IS NOT NULL AND registration IS NOT NULL AND registration != ''
+            ORDER BY registration, detection_timestamp DESC
+          )
+          UPDATE unfilterd_detections d
+          SET taxonomy_tag = kt.taxonomy_tag, match_method = 'direct_registration'
+          FROM unmatched u
+          JOIN known_tags kt ON kt.registration = u.registration
+          WHERE d.id = u.id RETURNING d.id
+        `;
+
+        // Phase 1: Registration + ±10min temporal window (widened from ±5min)
         const regMatched = await sql`
           WITH unmatched AS (
             SELECT id, registration, detection_timestamp FROM unfilterd_detections
             WHERE taxonomy_tag IS NULL AND registration IS NOT NULL AND registration != ''
-            LIMIT 2000
+            LIMIT 3000
           ),
           best_match AS (
             SELECT DISTINCT ON (u.id) u.id as raw_id, l.taxonomy_tag, l.id::text as live_id, 'registration_temporal' as method
             FROM unmatched u
             JOIN live_flight_detections_rows l ON l.registration = u.registration
-              AND l.detection_timestamp BETWEEN u.detection_timestamp - INTERVAL '5 minutes' AND u.detection_timestamp + INTERVAL '5 minutes'
+              AND l.detection_timestamp BETWEEN u.detection_timestamp - INTERVAL '10 minutes' AND u.detection_timestamp + INTERVAL '10 minutes'
             WHERE l.taxonomy_tag IS NOT NULL
             ORDER BY u.id, ABS(EXTRACT(EPOCH FROM (l.detection_timestamp - u.detection_timestamp)))
           )
@@ -238,17 +260,18 @@ export async function handleAction3(action: string, body: Record<string, any>, s
           FROM best_match bm WHERE d.id = bm.raw_id RETURNING d.id
         `;
 
+        // Phase 2: ICAO code + ±10min temporal window (widened from ±3min)
         const icaoMatched = await sql`
           WITH unmatched AS (
             SELECT id, icao_code, detection_timestamp FROM unfilterd_detections
-            WHERE taxonomy_tag IS NULL AND icao_code IS NOT NULL AND icao_code != '' AND (registration IS NULL OR registration = '')
-            LIMIT 2000
+            WHERE taxonomy_tag IS NULL AND icao_code IS NOT NULL AND icao_code != ''
+            LIMIT 3000
           ),
           best_match AS (
             SELECT DISTINCT ON (u.id) u.id as raw_id, l.taxonomy_tag, l.id::text as live_id, 'icao_temporal' as method
             FROM unmatched u
             JOIN live_flight_detections_rows l ON l.icao_code = u.icao_code
-              AND l.detection_timestamp BETWEEN u.detection_timestamp - INTERVAL '3 minutes' AND u.detection_timestamp + INTERVAL '3 minutes'
+              AND l.detection_timestamp BETWEEN u.detection_timestamp - INTERVAL '10 minutes' AND u.detection_timestamp + INTERVAL '10 minutes'
             WHERE l.taxonomy_tag IS NOT NULL
             ORDER BY u.id, ABS(EXTRACT(EPOCH FROM (l.detection_timestamp - u.detection_timestamp)))
           )
@@ -256,18 +279,19 @@ export async function handleAction3(action: string, body: Record<string, any>, s
           FROM best_match bm WHERE d.id = bm.raw_id RETURNING d.id
         `;
 
+        // Phase 3: Spatial (±0.01°) + ±30sec temporal window (widened from ±0.005°/±3s)
         const spatialMatched = await sql`
           WITH unmatched AS (
             SELECT id, detection_timestamp, latitude, longitude FROM unfilterd_detections
             WHERE taxonomy_tag IS NULL AND latitude IS NOT NULL AND longitude IS NOT NULL
-            LIMIT 1000
+            LIMIT 2000
           ),
           best_match AS (
             SELECT DISTINCT ON (u.id) u.id as raw_id, l.taxonomy_tag, l.id::text as live_id, 'spatial_temporal' as method
             FROM unmatched u
             JOIN live_flight_detections_rows l ON
-              ABS(l.latitude - u.latitude) < 0.005 AND ABS(l.longitude - u.longitude) < 0.005
-              AND l.detection_timestamp BETWEEN u.detection_timestamp - INTERVAL '3 seconds' AND u.detection_timestamp + INTERVAL '3 seconds'
+              ABS(l.latitude - u.latitude) < 0.01 AND ABS(l.longitude - u.longitude) < 0.01
+              AND l.detection_timestamp BETWEEN u.detection_timestamp - INTERVAL '30 seconds' AND u.detection_timestamp + INTERVAL '30 seconds'
             WHERE l.taxonomy_tag IS NOT NULL AND l.latitude IS NOT NULL AND l.longitude IS NOT NULL
             ORDER BY u.id, ABS(EXTRACT(EPOCH FROM (l.detection_timestamp - u.detection_timestamp)))
           )
@@ -279,6 +303,7 @@ export async function handleAction3(action: string, body: Record<string, any>, s
         const summary = await sql`
           SELECT COUNT(*)::int as total,
             COUNT(CASE WHEN taxonomy_tag IS NOT NULL THEN 1 END)::int as tagged,
+            COUNT(CASE WHEN match_method = 'direct_registration' THEN 1 END)::int as direct_matched,
             COUNT(CASE WHEN match_method = 'registration_temporal' THEN 1 END)::int as reg_matched,
             COUNT(CASE WHEN match_method = 'icao_temporal' THEN 1 END)::int as icao_matched,
             COUNT(CASE WHEN match_method = 'spatial_temporal' THEN 1 END)::int as spatial_matched
@@ -288,6 +313,7 @@ export async function handleAction3(action: string, body: Record<string, any>, s
         return {
           success: true,
           batch: {
+            directMatched: Array.isArray(directMatched) ? directMatched.length : 0,
             registrationMatched: Array.isArray(regMatched) ? regMatched.length : 0,
             icaoMatched: Array.isArray(icaoMatched) ? icaoMatched.length : 0,
             spatialMatched: Array.isArray(spatialMatched) ? spatialMatched.length : 0,

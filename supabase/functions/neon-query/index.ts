@@ -158,7 +158,7 @@ function getConnection(): Promise<ReturnType<typeof postgres>> {
   return _sqlReady;
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   try {
     console.log(`neon-query v${VERSION} handling request: ${req.method}`);
     if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });

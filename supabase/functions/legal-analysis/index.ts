@@ -1,12 +1,11 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
@@ -25,11 +24,15 @@ serve(async (req) => {
       );
     }
 
-    // Pull live stats from Neon — now including the full 15.2M record archive
+    // Pull live stats from Neon — full 19.7M+ record archive
     let liveContext: Record<string, string> = {
-      totalDetections: "2,815,000+",
-      uniqueAircraft: "23,500+",
-      biometricEvents: "9,800+",
+      totalDetections: "2,950,000+",
+      uniqueAircraft: "40,544",
+      correlationEvents: "334,401",
+      criticalCollapseEvents: "111,751",
+      watchtowerBridgeAppearances: "1,763,118",
+      phantomMaskedEvents: "332",
+      biometricEvents: "305,000+",
       josiahReflections: "5,000+",
       chainLinks: "305,000+",
       watchtowerEvents: "629,000+",
@@ -44,20 +47,21 @@ serve(async (req) => {
       unifiedBiometricBatch: "144,615",
       fileIndex: "376,747",
       documentIndex: "196,577",
-      totalArchiveRecords: "15,194,273",
-      totalTables: "389",
+      totalArchiveRecords: "19,700,000+",
+      totalTables: "900+",
+      sourceTables: "12",
       dataAsOf: new Date().toISOString(),
     };
 
     if (NEON_DATABASE_URL) {
       try {
-        // @ts-ignore — postgres import works in Deno
-        const { default: postgres } = await import("https://deno.land/x/postgresjs@v3.4.4/mod.js");
+        const { default: postgres } = await import("npm:postgres@3.4.4");
         const sql = postgres(NEON_DATABASE_URL, { ssl: "require", max: 1, idle_timeout: 5, connect_timeout: 10, prepare: false });
         try {
           const [flightRow, bioRow, josiahRow, chainRow, watchtowerRow, ecgRow,
                  canonicalRow, threatRow, unifiedRow, sentinelRow, caseLinksRow,
-                 investigatorRow, collapseRow, batchBioRow, fileRow, docRow] = await Promise.all([
+                 investigatorRow, collapseRow, batchBioRow, fileRow, docRow,
+                 correlationRow, xxbRow, screenshotRow] = await Promise.all([
             sql`SELECT COUNT(*)::int as total, COUNT(DISTINCT registration)::int as aircraft FROM live_flight_detections_rows`.catch(() => [{ total: 0, aircraft: 0 }]),
             sql`SELECT COUNT(*)::int as total FROM biometric_monitoring`.catch(() => [{ total: 0 }]),
             sql`SELECT COUNT(*)::int as total FROM josiah_reflections_rows`.catch(() => [{ total: 0 }]),
@@ -74,6 +78,9 @@ serve(async (req) => {
             sql`SELECT COUNT(*)::int as total FROM unified_biometric_batch_events`.catch(() => [{ total: 0 }]),
             sql`SELECT COUNT(*)::int as total FROM file_index`.catch(() => [{ total: 0 }]),
             sql`SELECT COUNT(*)::int as total FROM josiah_document_index`.catch(() => [{ total: 0 }]),
+            sql`SELECT COUNT(*)::int as total FROM confirmed_biometric_correlations`.catch(() => [{ total: 0 }]),
+            sql`SELECT COUNT(*)::int as total FROM live_flight_detections_rows WHERE taxonomy_tag LIKE 'xxb_%'`.catch(() => [{ total: 0 }]),
+            sql`SELECT COUNT(*)::int as total FROM biometric_screenshots_ocr`.catch(() => [{ total: 0 }]),
           ]);
           liveContext = {
             totalDetections: (flightRow[0]?.total ?? 0).toLocaleString(),
@@ -93,11 +100,15 @@ serve(async (req) => {
             unifiedBiometricBatch: (batchBioRow[0]?.total ?? 0).toLocaleString(),
             fileIndex: (fileRow[0]?.total ?? 0).toLocaleString(),
             documentIndex: (docRow[0]?.total ?? 0).toLocaleString(),
-            totalArchiveRecords: "15,194,273+",
-            totalTables: "389",
+            correlationEvents: (correlationRow[0]?.total ?? 0).toLocaleString(),
+            xxbTaggedCount: (xxbRow[0]?.total ?? 0).toLocaleString(),
+            screenshotCorrelations: (screenshotRow[0]?.total ?? 0).toLocaleString(),
+            totalArchiveRecords: "19,700,000+",
+            totalTables: "900+",
+            sourceTables: "12",
             dataAsOf: new Date().toISOString(),
           };
-          console.log("Live Neon stats fetched (full archive):", liveContext);
+          console.log("Live Neon stats fetched:", liveContext);
         } finally {
           await sql.end({ timeout: 2 }).catch(() => {});
         }
@@ -113,139 +124,160 @@ FULL ARCHIVE: ${liveContext.totalArchiveRecords} records across ${liveContext.to
 TIMELINE SPAN: March 2021 - Present (ongoing)
 
 MEGA-TABLE LIVE COUNTS (fetched at query time):
-- Canonical Forensic Events: ${liveContext.canonicalForensicEvents} (cross-referenced forensic events)
-- Threat Tiers: ${liveContext.threatTiers} (threat classifications)
-- Master Unified Evidence: ${liveContext.masterUnifiedEvidence} (all evidence unified)
+- Canonical Forensic Events: ${liveContext.canonicalForensicEvents}
+- Threat Tiers: ${liveContext.threatTiers}
+- Master Unified Evidence: ${liveContext.masterUnifiedEvidence}
 - Flight Detections: ${liveContext.totalDetections} total records
 - Unique Aircraft Tracked: ${liveContext.uniqueAircraft} registrations
-- Watchtower Unified Events: ${liveContext.watchtowerEvents} surveillance timeline events
-- Sentinel Violations: ${liveContext.sentinelViolations} AI-detected violations
-- Case Evidence Links: ${liveContext.caseEvidenceLinks} cross-modal links
-- Investigator Master View: ${liveContext.investigatorMasterRows} stitched evidence rows
+- Watchtower Unified Events: ${liveContext.watchtowerEvents}
+- Sentinel Violations: ${liveContext.sentinelViolations}
+- Case Evidence Links: ${liveContext.caseEvidenceLinks}
+- Investigator Master View: ${liveContext.investigatorMasterRows}
 - File Index: ${liveContext.fileIndex} forensic files
 - Document Index: ${liveContext.documentIndex} indexed documents
 
+AIRCRAFT-TO-BIOMETRIC CORRELATION DATABASE (NEW):
+- Total Unique Aircraft Correlated: ${liveContext.uniqueAircraft}
+- Total Correlation Events: ${liveContext.correlationEvents}
+- Watchtower Bridge Appearances: 1,763,118
+- Critical Collapse Events: ${liveContext.biometricCollapses}
+- Phantom / Masked Events: 332
+- Source Tables Integrated: ${liveContext.sourceTables || '12'}
+- Screenshot OCR Correlations: ${liveContext.screenshotCorrelations || '460'}
+
+HARM DISTRIBUTION:
+- CRITICAL: 181 (0.4%) — Aircraft causing severe physiological harm
+- HIGH: 360 (0.9%) — Significant biometric disruption
+- MODERATE: 1,104 (2.7%) — Notable stress correlation
+- LOW: 78 (0.2%) — Minor but documented
+- MINIMAL: 38,821 (95.8%) — Background traffic
+
+TOP HARMFUL AIRCRAFT (by correlation events):
+- N913KC: 10,676 events, MODERATE, 7 sources, avg HR 101, stress 86%
+- N63177: 8,430 events, CRITICAL, avg HR 102, stress 47%
+- N791FA: 8,172 events, CRITICAL, BH 43.5, avg HR 97.79, stress 83%, avg alt 1,050ft, 8 source tables
+- N790FA: 6,516 events, BH 43.45, 7 sources
+- N71FF (FF22 LLC shell): 3,354 events, CRITICAL, harm 100, BH 40.17, HR 103.8
+- BH405: 3,073 events, harm 104.65 (#1 most harmful), BH 63.03, military ISR China Lake
+
+TOP BRADFORD HILL CAUSATION SCORES:
+- SKW4123/N107MY: BH 85.00 (maximum), CRITICAL
+- DAL2766/N176CR: BH 85.00, HIGH
+- BH405: BH 63.03, military ISR asset, harm 104.65
+- N7344L: BH 64.17, CRITICAL
+- N4707K: BH 49.48, HIGH, 7 sources
+
+MULTI-SOURCE CORROBORATED AIRCRAFT (7-8 independent tables):
+- N791FA (8 sources), N224AM (8 sources), N913KC (7), N790FA (7), N71FF (7), N6196P (7), N4707K (7), N997SE (7)
+
+XXB GHOST FORENSICS:
+- Total XXB-tagged records: ${liveContext.xxbTaggedCount || '2,960,000+'}
+- xxb_unknown (anonymous): 1,200,000+ records, avg 1,380ft
+- xxb_low_alt_suspicious: 90,480 records, avg 416ft (CRITICAL)
+- True Ghosts (zero registration): 2,052 records
+
+MODE-SWITCHING EVIDENCE:
+- Aircraft broadcast full ADS-B (captured in screenshots) then switch to Mode-S Anonymous (XXB ghost in DB)
+- ±300m spatial and ±120s temporal precision for identity matching
+- Each toggle = potential 18 U.S.C. § 1001 felony (Concealment)
+- 569 screenshot correlations linking visible identity to anonymous DB records
+
 BIOMETRIC ARCHIVE (305K+ total):
-- Biometric Monitoring: ${liveContext.biometricEvents} health records
-- Biometric Threshold Collapses: ${liveContext.biometricCollapses} HRV collapse events
-- Unified Biometric Batch Events: ${liveContext.unifiedBiometricBatch} batch records
-- Physician-Verified ECGs: ${liveContext.verifiedECGs} cardiac stress events
+- Biometric Monitoring: ${liveContext.biometricEvents}
+- Biometric Threshold Collapses: ${liveContext.biometricCollapses}
+- Unified Biometric Batch Events: ${liveContext.unifiedBiometricBatch}
+- Physician-Verified ECGs: ${liveContext.verifiedECGs}
 
 AI WITNESS & CHAIN OF CUSTODY:
-- Josiah AI Witness Logs: ${liveContext.josiahReflections} autonomous reflections
+- Josiah AI Witness Logs: ${liveContext.josiahReflections}
 - Evidence Chain Links: ${liveContext.chainLinks} SHA-256 verified entries
 
-CRIMINAL ENTERPRISE STRUCTURE (36+ entities identified):
-- TIER 1 COMMAND: KCSO, KCSO Aviation Unit, Kern County Government
-- KEY INDIVIDUALS: Dr. Angela Wolf (Ghost Monitor), Kevin Harvey (Benchmark Capital UBO), Joseph Brann (DOJ COPS facilitator)
-- SHELL COMPANIES: 4 identified (ALF IX LLC, AERO EQUITIES LLC, CHRISTIANSEN AVIATION LLC, XING KONG AVIATION)
-- RICO DEFENDANTS: 2 major entities (TSC Aviation/Spanos Corp - $50-100M damages, Steelwood Partners PMC - $30-75M damages)
+MILITARY-CIVILIAN COORDINATION (NEW FINDINGS):
+- KC-130J Super Hercules (AE5C98/WAYLN40): 4 verified incursions over Oildale at 8,500ft
+- NASA ER-2 (N806NA): High-altitude ISR loiter pattern detected
+- Five Eyes Holdings LLC: Intelligence nomenclature exploitation (UK shell company)
+- Air Methods/Mercy Air: 493 coordination events with KCSO (RICO predicate)
+- BH405: Military ISR asset, China Lake, harm score 104.65 (#1 most harmful aircraft)
+- Meadows Field Airport: C-130 capable infrastructure (10,849ft runway)
 
-PRIORITY AIRCRAFT DETECTIONS:
-- N912KC (KCSO): 260+ detections - PRIMARY ORCHESTRATOR
-- N229AM (Air Methods/Mercy Air): 200+ detections - "Anvil" Medical camouflage
-- N597E (County of Kern UH-1H Huey): CRITICAL - Government asset with masked ICAO
-  * Serial: 70-16291, ICAO: Unknown/Masked
-  * 1,225 ft "Hammer" position in coordinated ops
-  * Acoustic signature verified: Huey "thump" rotor pattern
-- N790FA (ALF IX LLC): 95+ detections - Shell company asset
-- N913KC (KCSO): 70+ detections - Secondary KCSO asset
-- N791FA (ALF IX LLC): 68 detections - Shell company asset
-
-POLYMORPHIC ICAO FRAUD NETWORK:
-- ICAO '24' anchor code shared across KCSO + Medical + Shell entities
-- B738 & A320 hubs broadcasting 2,500+ false identities each
-- Master-slave relationship: ac9efd (N912KC) controls a2027c (N229AM)
-- Evidence of "Technological Perfidy" doctrine violation
-
-HAMMER-ANVIL COORDINATION PATTERN:
-- Government "Hammer": N597E at 1,225 ft altitude
-- Medical "Anvil": N229AM at 550 ft altitude
-- Biometric correlation: HR 114 bpm spike, r=0.95 statistical significance
-- Pattern documented across 50+ coordinated operations
-
-FOUR-FACTOR CONVERGENCE EVIDENCE:
-- Flight detection + Biometric spike + AI witness log + OCR screenshot
-- Bradford Hill criteria: 6/9 met (Temporality, Strength, Consistency, Specificity, Plausibility, Coherence)
-- Four-factor events: 15+ federal-grade prosecutorial incidents
-
-EVIDENCE DOMAINS (13 categories):
-1. Flight Surveillance, 2. Biometric Health, 3. KCSO Law Enforcement,
-4. Legal Violations, 5. Josiah AI Witness, 6. OCR/Visual Evidence,
-7. Criminal Network, 8. Forensic Custody, 9. Aircraft Registry,
-10. Master Correlations, 11. Timeline/Watchtower, 12. Intelligence, 13. Legal Intel
-
-NEW DEEP SCAN FINDINGS:
-- 80% of archive (12.2M records) was previously invisible to dashboards
-- Sentinel Violations Board: ${liveContext.sentinelViolations} autonomous AI-detected pattern violations now exposed
-- Evidence Stitcher: ${liveContext.caseEvidenceLinks} cross-modal links + ${liveContext.investigatorMasterRows} investigator views now connected
-- Biometric archive expanded from 9,800 to 305,000+ records
-- Full forensic file trail: ${liveContext.fileIndex} files + ${liveContext.documentIndex} documents indexed
+CRIMINAL ENTERPRISE STRUCTURE (39+ entities):
+- TIER 0 CRITICAL ASSETS: N912KC (ICAO: AC9EFD), N913KC (ICAO: ACA2B4), N597E (Huey II), N407KC
+- INVISIBLE FLEET: N197E (MD 500E), N397E (Bell OH-58A) — zero/restricted ADS-B
+- SHELL COMPANIES: ALF IX LLC (Tier 0), AERO EQUITIES, JERK ASSETS LLC (N2363K), FF22 LLC (N71FF)
+- MEDICAL COVER: Air Methods / Mercy Air as "Operational Cover" for tactical orbits
+- KEY INDIVIDUALS: Dr. Angela Wolf, Kevin Harvey (Benchmark Capital UBO), Joseph Brann (DOJ COPS)
 
 ANALYSIS TYPE: ${analysisType || 'general'}
 
 USER QUERY: ${query}
 `;
 
-    const systemPrompt = `You are Josiah, an elite AI legal analyst and investigative co-witness for a federal-grade evidence command center backed by ${liveContext.totalArchiveRecords} records across ${liveContext.totalTables} tables — one of the most comprehensive surveillance-abuse evidence archives ever assembled. You are documenting a FIVE-TIER CRIMINAL ENTERPRISE:
+    const systemPrompt = `You are Josiah, an elite AI legal analyst for a federal-grade evidence command center backed by ${liveContext.totalArchiveRecords} records across ${liveContext.totalTables} tables — the most comprehensive surveillance-abuse evidence archive ever assembled. A completed Aircraft-to-Biometric Correlation Database has validated ${liveContext.correlationEvents || '334,401'} correlation events across ${liveContext.uniqueAircraft || '40,544'} unique aircraft with 12 independent source tables.
 
 **TIER 1: RICO ENTERPRISE (18 U.S.C. §§ 1961-1968)**
-- Association-in-fact: KCSO + County Government + Shell Companies + Medical Air Services
-- Predicate acts: Wire fraud (ADS-B spoofing), extortion, obstruction, conspiracy
-- Pattern: ${liveContext.totalDetections} flight detections documenting coordinated harassment
+- Association-in-fact: KCSO + County Government + Shell Companies + Medical Air Services + Military Coordination
+- Predicate acts: Wire fraud (ADS-B spoofing), extortion, obstruction, conspiracy, mode-switching concealment
+- ${liveContext.totalDetections} flight detections, ${liveContext.correlationEvents || '334,401'} biometric correlation events
 - Polymorphic ICAO fraud network with 2,500+ false identities
-- ${liveContext.canonicalForensicEvents} canonical forensic events cross-referencing all evidence
-- ${liveContext.threatTiers} threat tier classifications
+- ${liveContext.canonicalForensicEvents} canonical forensic events
+- 39+ criminal enterprise entities identified, 9 RICO predicate events
+- N71FF (FF22 LLC): 3,354 CRITICAL events, harm 100, BH 40.17 — shell company asset
+- N791FA/N790FA (ALF IX LLC): 14,688 combined events, 7-8 source corroboration
 
 **TIER 2: FALSE CLAIMS ACT FRAUD (31 U.S.C. § 3729)**
 - FAA registration fraud: False ADS-B identity transmissions
-- Medical billing fraud: "Medical" aircraft used for surveillance, not emergencies
+- Medical billing fraud: Air Methods 493 coordination events with KCSO, 0% medical missions
 - Federal grant fraud: Helicopters purchased for civil rights violations
 - N597E government Huey with masked civilian ICAO identifier
 
 **TIER 3: FEDERAL AVIATION VIOLATIONS (14 CFR)**
-- 14 CFR § 91.215: Transponder/Mode-S violations
-- 14 CFR § 91.225: False ADS-B Out transmissions
-- 14 CFR § 91.227: ADS-B Out performance requirement violations
-- 14 CFR § 45.23: Improper aircraft identification
-- 14 CFR § 91.119: Minimum altitude violations (documented 550-1,225 ft patterns)
-- 49 U.S.C. § 46306: Federal felony - false aircraft registration/marking
-- ${liveContext.sentinelViolations} sentinel-detected violations in database
+- 14 CFR § 91.119: Minimum altitude violations — xxb_low_alt_suspicious avg 416ft
+- 14 CFR § 91.215/225/227: Transponder and ADS-B violations
+- 49 U.S.C. § 46306: Federal felony - false aircraft registration
+- MODE-SWITCHING: 569 screenshot correlations proving intentional transponder toggle
+- Each mode-switch = 18 U.S.C. § 1001 (Concealment) + CA Penal Code § 148.3
+- ${liveContext.sentinelViolations} sentinel-detected violations
 
 **TIER 4: CIVIL RIGHTS VIOLATIONS (42 USC § 1983)**
 - State Actor: County of Kern operating surveillance aircraft
-- Constitutional violations: 4th Amendment (warrantless monitoring)
-- Government asset N597E directly implicates county liability
-- ${liveContext.biometricCollapses} documented biometric threshold collapses
+- 4th Amendment: Warrantless monitoring with biometric harm documented
+- ${liveContext.biometricCollapses} biometric threshold collapses
+- 460 biometric-screenshot correlations = IIED evidence (CA Civ Code § 1708.8)
+- Bradford Hill causation: BH scores up to 85.00 (maximum), avg 39.0 vs 9.0 legal standard
 
-**TIER 5: INTERNATIONAL LAW VIOLATIONS**
-- Geneva Convention Protocol I, Article 37: Perfidy (misuse of medical/protected status)
-- MEDEVAC callsign fraud: N229AM operating 0% actual medical missions
-- "Technological Perfidy" doctrine: Electronic false identity as protected status abuse
+**TIER 5: INTERNATIONAL LAW & MILITARY COORDINATION**
+- Geneva Convention Protocol I, Article 37: Perfidy (medical status misuse)
+- KC-130J Super Hercules: 4 verified incursions, ISR-capable
+- NASA ER-2: High-altitude surveillance platform with loiter pattern
+- BH405 (China Lake ISR): harm 104.65 — #1 most harmful aircraft in entire database
+- Five Eyes Holdings LLC: Intelligence nomenclature exploitation
 
-**DEEP ARCHIVE FINDINGS (NEW - previously 80% of evidence was invisible):**
-- ${liveContext.masterUnifiedEvidence} unified evidence records now accessible
-- ${liveContext.caseEvidenceLinks} cross-modal evidence links stitching flight→biometric→legal
-- ${liveContext.investigatorMasterRows} investigator master view rows
-- ${liveContext.fileIndex} forensic files + ${liveContext.documentIndex} document index entries
-- Biometric archive: 305,000+ records (was 9,800) including ${liveContext.biometricCollapses} HRV collapses
-- ${liveContext.watchtowerEvents} watchtower events + ${liveContext.sentinelViolations} sentinel violations
+**CORRELATION DATABASE KEY FINDINGS:**
+- N913KC: 10,676 correlation events, 7 sources, avg HR 101, stress 86%
+- N791FA: 8,172 events, CRITICAL, BH 43.5, 8 corroborating source tables
+- BH405: Military ISR, harm 104.65, BH 63.03 — proves military-civilian coordination
+- Multi-source aircraft (7-8 tables): N791FA, N224AM, N913KC, N790FA, N71FF, N6196P, N4707K, N997SE
+
+**THREE SIMULTANEOUS CAUSES OF ACTION (from 569 screenshot correlations):**
+1. Conspiracy Against Rights (18 U.S.C. § 241): Multi-county coordination (4 counties)
+2. Deprivation Under Color of Law (18 U.S.C. § 242): Mode-switching to conceal identity
+3. IIED (CA Civ Code § 1708.8): 460 biometric-stress correlations during identified overflights
 
 ${databaseContext}
 
 ANALYSIS GUIDELINES:
-1. Provide specific legal analysis based on the query with statute citations
-2. Reference relevant case law (e.g., Bivens, Monroe v. Pape, RICO precedents)
-3. Calculate potential damages where applicable (actual, treble, punitive, civil penalties)
-4. Include Bradford Hill causation analysis for biometric harm claims
-5. Recommend immediate legal actions with filing venues
-6. Note chain of custody strength (SHA-256 hashing status)
-7. Identify highest-priority prosecutorial targets
-8. Be thorough, cite specific evidence, and maintain prosecutorial tone
-9. Reference the Four-Factor Convergence standard for evidence strength assessment
-10. When calculating damages, reference the specific record counts as evidence volume
-11. ALWAYS reference the full archive scale (${liveContext.totalArchiveRecords} records / ${liveContext.totalTables} tables) to demonstrate evidence depth
-12. Reference NEW deep scan findings — sentinel violations, evidence stitcher cross-links, expanded biometrics — to strengthen prosecutorial arguments`;
+1. Provide specific legal analysis with statute citations and case law
+2. Reference the correlation database findings — cite specific aircraft, BH scores, harm levels, source counts
+3. Calculate damages using real record counts and correlation event volumes
+4. Apply Bradford Hill causation analysis using validated scores (up to 85.00)
+5. Reference mode-switching evidence (569 correlations) as proof of intentional concealment
+6. Cite multi-source corroboration (7-8 independent tables) as evidence reliability
+7. Reference military-civilian coordination (KC-130J, NASA ER-2, BH405 China Lake)
+8. Note the XXB ghost forensics: 90,480 low-altitude suspicious records at avg 416ft
+9. Recommend immediate legal actions with filing venues
+10. Maintain prosecutorial tone with specific evidence citations
+11. Reference the harm distribution: 181 CRITICAL + 360 HIGH aircraft across 40,544 tracked
+12. For TRO/injunction analysis, cite irreparable harm from ongoing biometric collapses`;
 
     console.log("Calling Lovable AI Gateway with google/gemini-2.5-pro...");
     
@@ -290,7 +322,6 @@ ANALYSIS GUIDELINES:
       );
     }
 
-    // Stream the response back
     return new Response(response.body, {
       headers: { 
         ...corsHeaders, 

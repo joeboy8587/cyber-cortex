@@ -123,6 +123,17 @@ export default function ForensicTrajectoryPanel() {
     }
   }, [timeWindow, queryDatabase]);
 
+  // Store ref for auto-loading
+  loadViolationsRef.current = loadViolations;
+
+  // Auto-load violations when switching to violations/offenders tab
+  useEffect(() => {
+    if ((activeTab === 'violations' || activeTab === 'offenders') && !violationsLoadedRef.current) {
+      violationsLoadedRef.current = true;
+      loadViolations();
+    }
+  }, [activeTab, loadViolations]);
+
   const chartData = trajectory.map((p) => ({
     time: new Date(p.event_time).toLocaleString(),
     altitude: Number(p.altitude),

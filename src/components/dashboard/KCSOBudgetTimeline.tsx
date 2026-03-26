@@ -84,9 +84,7 @@ export const KCSOBudgetTimeline: React.FC = () => {
   const loadBudgetData = async () => {
     setIsLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke('neon-query', {
-        body: { action: 'getKCSOBudgetData' }
-      });
+      const { data, error } = await neonQuery({ action: 'getKCSOBudgetData' });
       if (!error && data?.data && Array.isArray(data.data) && data.data.length > 0) {
         // Map DB rows to our interface
         const mapped: AircraftBudgetData[] = data.data.map((row: any) => ({

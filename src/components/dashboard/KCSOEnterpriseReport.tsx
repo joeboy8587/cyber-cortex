@@ -51,22 +51,15 @@ export const KCSOEnterpriseReport = () => {
         registrationFilter = `registration = '${selectedAircraft}'`;
       }
 
-      const { data: flightData, error: flightError } = await supabase.functions.invoke('neon-query', {
-        body: {
-          action: 'customQuery',
-          query: `
-            SELECT 
-              registration,
-              detection_timestamp as timestamp,
-              COALESCE(altitude, 0) as altitude,
-              callsign as operator
-            FROM live_flight_detections_rows
-            WHERE ${registrationFilter}
-            AND registration IS NOT NULL
-            ORDER BY detection_timestamp DESC
-            LIMIT 100
-          `
-        }
+      const { data: flightData, error: flightError } = await neonQuery({
+        action: 'customQuery',
+        query: `
+          SELECT registration, detection_timestamp as timestamp,
+            COALESCE(altitude, 0) as altitude, callsign as operator
+          FROM live_flight_detections_rows
+          WHERE ${registrationFilter} AND registration IS NOT NULL
+          ORDER BY detection_timestamp DESC LIMIT 100
+        `
       });
 
       if (flightError) throw flightError;

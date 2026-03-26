@@ -36,11 +36,9 @@ export const KCSOFleetRegistry: React.FC = () => {
   const fetchFleet = async () => {
     setLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke('neon-query', {
-        body: {
-          action: 'customQuery',
-          query: `SELECT * FROM kcso_fleet ORDER BY tail_number`
-        }
+      const { data, error } = await neonQuery({
+        action: 'customQuery',
+        query: `SELECT * FROM kcso_fleet ORDER BY tail_number`
       });
 
       if (error) throw error;

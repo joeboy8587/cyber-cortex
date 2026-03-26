@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { supabase } from '@/integrations/supabase/client';
+import { neonQuery } from '@/lib/neonQueryRetry';
 import { 
   Shield, AlertTriangle, Clock, MapPin, Heart, FileText, RefreshCw, 
   TrendingDown, Target, Crosshair, BarChart3, Calendar

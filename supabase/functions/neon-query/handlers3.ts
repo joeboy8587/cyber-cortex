@@ -400,6 +400,7 @@ export async function handleAction3(action: string, body: Record<string, any>, s
               SELECT registration, icao_code, detection_timestamp, altitude, speed
               FROM live_flight_detections_rows
               WHERE altitude::numeric > 0 AND altitude::numeric < 1000
+                AND detection_timestamp > ${cutoff}::timestamptz
               ORDER BY detection_timestamp DESC
               LIMIT ${sampleSize}
             )

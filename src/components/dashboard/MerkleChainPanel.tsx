@@ -20,7 +20,7 @@ import {
 import { toast } from 'sonner';
 
 export function MerkleChainPanel() {
-  const { isLoading, error, anchorBatch, anchorDeep, verifyChain, getStats, getNeonCoverage } = useMerkleAnchor();
+  const { isLoading, error, anchorTable, anchorBatch, anchorDeep, verifyChain, getStats, getNeonCoverage } = useMerkleAnchor();
   const [stats, setStats] = useState<any>(null);
   const [verifyResult, setVerifyResult] = useState<any>(null);
   const [coverage, setCoverage] = useState<any>(null);

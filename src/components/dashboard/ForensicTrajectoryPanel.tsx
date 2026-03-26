@@ -81,6 +81,8 @@ export default function ForensicTrajectoryPanel() {
   const [violationAircraft, setViolationAircraft] = useState<ViolationAircraft[]>([]);
   const [violationStats, setViolationStats] = useState<ViolationStats | null>(null);
   const [activeTab, setActiveTab] = useState('trajectory');
+  const violationsLoadedRef = useRef(false);
+  const loadViolationsRef = useRef<(() => Promise<void>) | null>(null);
 
   const loadTrajectory = useCallback(async () => {
     if (!registration.trim()) {

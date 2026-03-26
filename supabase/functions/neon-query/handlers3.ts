@@ -345,6 +345,7 @@ export async function handleAction3(action: string, body: Record<string, any>, s
       try {
         const results: any = { timestamp: new Date().toISOString(), anomalies: [], stats: {} };
         const sampleSize = days <= 3 ? 50000 : days <= 7 ? 150000 : 300000;
+        const cutoff = new Date(Date.now() - days * 86400000).toISOString();
 
         if (scanType === 'full' || scanType === 'loitering') {
           const loitering = await sql`
@@ -352,7 +353,7 @@ export async function handleAction3(action: string, body: Record<string, any>, s
               SELECT registration, icao_code, detection_timestamp, latitude, longitude, altitude, speed
               FROM live_flight_detections_rows
               WHERE latitude IS NOT NULL AND longitude IS NOT NULL
-                AND detection_timestamp > NOW() AT TIME ZONE 'UTC' - INTERVAL '${days} days'
+                AND detection_timestamp > ${cutoff}::timestamptz
               ORDER BY detection_timestamp DESC
               LIMIT ${sampleSize}
             ),

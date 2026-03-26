@@ -56,31 +56,23 @@ export function KCSOEvidenceMatrix() {
   const loadKCSOData = useCallback(async () => {
     setLoading(true);
     try {
-      // Load all KCSO data sources in parallel - using correct table schemas
+      // Load all KCSO data sources in parallel with retry logic for BOOT_ERROR
       const [factResult, injuryResult, fleetResult, clusterResult, supabaseFleet] = await Promise.all([
-        supabase.functions.invoke('neon-query', {
-          body: { 
-            action: 'customQuery',
-            query: `SELECT serial_id, "Event__Claim", "Date__Year", "Category", "Source", "URL", "Amount__Outcome" FROM "KCSO_Fact_Matrix_v1" ORDER BY serial_id LIMIT 50`
-          }
+        neonQuery({
+          action: 'customQuery',
+          query: `SELECT serial_id, "Event__Claim", "Date__Year", "Category", "Source", "URL", "Amount__Outcome" FROM "KCSO_Fact_Matrix_v1" ORDER BY serial_id LIMIT 50`
         }),
-        supabase.functions.invoke('neon-query', {
-          body: { 
-            action: 'customQuery',
-            query: `SELECT serial_id, "Date", "Time", "AircraftTail", "Operator", "ActivityConduct", "BiometricMedical_Impact", "Location", "Primary_Source" FROM "KCSO_Personal_Injury_Timeline" ORDER BY serial_id LIMIT 50`
-          }
+        neonQuery({
+          action: 'customQuery',
+          query: `SELECT serial_id, "Date", "Time", "AircraftTail", "Operator", "ActivityConduct", "BiometricMedical_Impact", "Location", "Primary_Source" FROM "KCSO_Personal_Injury_Timeline" ORDER BY serial_id LIMIT 50`
         }),
-        supabase.functions.invoke('neon-query', {
-          body: { 
-            action: 'customQuery',
-            query: `SELECT * FROM kcso_fleet_modernization_ledger ORDER BY tail_number LIMIT 50`
-          }
+        neonQuery({
+          action: 'customQuery',
+          query: `SELECT * FROM kcso_fleet_modernization_ledger ORDER BY tail_number LIMIT 50`
         }),
-        supabase.functions.invoke('neon-query', {
-          body: { 
-            action: 'customQuery',
-            query: `SELECT serial_id, cluster, content, kcso_score, tails, places FROM "KCSO_clusters" ORDER BY kcso_score DESC LIMIT 50`
-          }
+        neonQuery({
+          action: 'customQuery',
+          query: `SELECT serial_id, cluster, content, kcso_score, tails, places FROM "KCSO_clusters" ORDER BY kcso_score DESC LIMIT 50`
         }),
         supabase.from('kcso_fleet').select('*')
       ]);

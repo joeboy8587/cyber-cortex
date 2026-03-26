@@ -81,10 +81,15 @@ export function useMerkleAnchor() {
   const anchorBatch = (batchSize = 500) =>
     invoke<BatchAnchorResult>('anchorBatch', { batchSize });
 
+  const anchorDeep = (batchSize = 200, tableFilter?: string) =>
+    invoke<DeepAnchorResult>('anchorDeep', { batchSize, tableFilter });
+
   const verifyChain = (limit = 1000) =>
     invoke<VerifyResult>('verify', { batchSize: limit });
 
   const getStats = () => invoke<MerkleStats>('stats');
 
-  return { isLoading, error, anchorTable, anchorBatch, verifyChain, getStats };
+  const getNeonCoverage = () => invoke<NeonCoverage>('neonCoverage');
+
+  return { isLoading, error, anchorTable, anchorBatch, anchorDeep, verifyChain, getStats, getNeonCoverage };
 }

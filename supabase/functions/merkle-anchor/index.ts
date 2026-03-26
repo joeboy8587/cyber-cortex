@@ -14,24 +14,41 @@ async function sha256(input: string): Promise<string> {
     .join("");
 }
 
-let _pool: any = null;
-async function getNeonPool(neonUrl: string) {
-  if (!_pool) {
-    const { Pool } = await import("https://deno.land/x/postgres@v0.19.3/mod.ts");
-    _pool = new Pool(neonUrl, 2, true);
-  }
-  return _pool;
-}
-
+// Use Neon serverless HTTP API instead of flaky deno postgres driver
 async function neonQuery(neonUrl: string, sql: string, params: unknown[] = []) {
-  const pool = await getNeonPool(neonUrl);
-  const conn = await pool.connect();
-  try {
-    const result = await conn.queryObject(sql, params);
-    return result.rows;
-  } finally {
-    conn.release();
+  // Parse the connection string to extract host, user, password, database
+  const url = new URL(neonUrl);
+  const host = url.hostname;
+  const user = url.username;
+  const password = url.password;
+  const database = url.pathname.slice(1);
+
+  const apiUrl = `https://${host}/sql`;
+
+  const response = await fetch(apiUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Neon-Connection-String": neonUrl,
+    },
+    body: JSON.stringify({
+      query: sql,
+      params: params,
+    }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Neon HTTP query failed (${response.status}): ${text}`);
   }
+
+  const result = await response.json();
+  
+  // Neon HTTP API returns { rows: [...], fields: [...] }
+  if (result.rows) return result.rows;
+  // Sometimes returns array of results
+  if (Array.isArray(result) && result.length > 0 && result[0].rows) return result[0].rows;
+  return result;
 }
 
 function json(data: unknown, status = 200) {
@@ -54,6 +71,8 @@ Deno.serve(async (req) => {
 
     const body = await req.json();
     const { action, table, batchSize = 500 } = body;
+
+    console.log(`merkle-anchor: action=${action}, table=${table || 'all'}, batchSize=${batchSize}`);
 
     switch (action) {
       case "anchor":
@@ -90,7 +109,6 @@ async function getLastChainHash(supabase: any): Promise<string> {
   return data.chain_hash;
 }
 
-// Get existing source_ids for a table (paginated past 1000 limit)
 async function getExistingIds(supabase: any, tableName: string): Promise<Set<string>> {
   const ids = new Set<string>();
   let from = 0;
@@ -109,7 +127,6 @@ async function getExistingIds(supabase: any, tableName: string): Promise<Set<str
   return ids;
 }
 
-// Get counts per table from ledger (paginated)
 async function getLedgerCountsByTable(supabase: any): Promise<Record<string, number>> {
   const counts: Record<string, number> = {};
   let from = 0;
@@ -155,13 +172,11 @@ async function handleAnchor(supabase: any, neonUrl: string, table: string, batch
   let rows: any[];
   if (hasHash) {
     rows = await neonQuery(neonUrl,
-      `SELECT id::text AS id, sha256_hash FROM ${table} WHERE sha256_hash IS NOT NULL LIMIT $1`,
-      [batchSize + existingIds.size]
+      `SELECT id::text AS id, sha256_hash FROM ${table} WHERE sha256_hash IS NOT NULL LIMIT ${batchSize + existingIds.size}`
     );
   } else {
     rows = await neonQuery(neonUrl,
-      `SELECT id::text AS id, row_to_json(t.*)::text AS row_json FROM ${table} t LIMIT $1`,
-      [batchSize + existingIds.size]
+      `SELECT id::text AS id, row_to_json(t.*)::text AS row_json FROM ${table} t LIMIT ${batchSize + existingIds.size}`
     );
     for (const row of rows) {
       row.sha256_hash = await sha256(row.row_json);
@@ -219,8 +234,7 @@ async function handleAnchorBatch(supabase: any, neonUrl: string, batchSize: numb
     try {
       const existingIds = await getExistingIds(supabase, tableName);
       const allRows = await neonQuery(neonUrl,
-        `SELECT id::text AS id, sha256_hash FROM ${tableName} WHERE sha256_hash IS NOT NULL LIMIT $1`,
-        [batchSize]
+        `SELECT id::text AS id, sha256_hash FROM ${tableName} WHERE sha256_hash IS NOT NULL LIMIT ${batchSize}`
       );
 
       const newRows = (allRows as any[]).filter((r) => !existingIds.has(r.id));
@@ -258,21 +272,21 @@ async function handleAnchorBatch(supabase: any, neonUrl: string, batchSize: numb
   return json({ totalAnchored, tables: results });
 }
 
-// ─── DEEP ANCHOR (all tables, background processing) ────────────────
+// ─── DEEP ANCHOR (all tables) ───────────────────────────────────────
 async function handleAnchorDeep(supabase: any, neonUrl: string, body: any) {
   const { batchSize = 500, tableFilter } = body;
 
-  // Get ALL public tables
   const allTables = await neonQuery(neonUrl,
     `SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename`
   );
+
+  console.log(`anchorDeep: found ${(allTables as any[]).length} public tables, filter=${tableFilter || 'none'}`);
 
   const results: any[] = [];
   let totalAnchored = 0;
   const startTime = Date.now();
 
   for (const t of allTables) {
-    // 45s safety for edge function wall-clock
     if (Date.now() - startTime > 45000) {
       results.push({ table: "TIMEOUT", anchored: 0, status: "time_limit_reached" });
       break;
@@ -299,17 +313,14 @@ async function handleAnchorDeep(supabase: any, neonUrl: string, body: any) {
       );
       const hasHash = (hashCol as any[]).length > 0;
 
-      // Fetch rows — NO cap at 100, use full batchSize
       let rows: any[];
       if (hasHash) {
         rows = await neonQuery(neonUrl,
-          `SELECT id::text AS id, sha256_hash FROM ${tableName} WHERE sha256_hash IS NOT NULL LIMIT $1`,
-          [batchSize + existingIds.size]
+          `SELECT id::text AS id, sha256_hash FROM ${tableName} WHERE sha256_hash IS NOT NULL LIMIT ${batchSize + existingIds.size}`
         );
       } else {
         rows = await neonQuery(neonUrl,
-          `SELECT id::text AS id, md5(row_to_json(t.*)::text) AS sha256_hash FROM ${tableName} t LIMIT $1`,
-          [batchSize + existingIds.size]
+          `SELECT id::text AS id, md5(row_to_json(t.*)::text) AS sha256_hash FROM ${tableName} t LIMIT ${batchSize + existingIds.size}`
         );
       }
 
@@ -342,7 +353,9 @@ async function handleAnchorDeep(supabase: any, neonUrl: string, body: any) {
       await insertLedgerBatch(supabase, entries);
       totalAnchored += entries.length;
       results.push({ table: tableName, anchored: entries.length, status: "anchored", remaining: newRows.length - toAnchor.length });
+      console.log(`anchorDeep: ${tableName} +${entries.length} anchored`);
     } catch (err) {
+      console.error(`anchorDeep: ${tableName} error:`, err.message);
       results.push({ table: tableName, anchored: 0, status: "error", error: err.message });
     }
   }
@@ -412,7 +425,6 @@ async function handleStats(supabase: any) {
     .from("evidence_merkle_ledger")
     .select("*", { count: "exact", head: true });
 
-  // Paginate to get all table counts
   const tableCounts = await getLedgerCountsByTable(supabase);
 
   const { data: lastEntry } = await supabase
@@ -441,7 +453,6 @@ async function handleStats(supabase: any) {
 
 // ─── NEON COVERAGE ───────────────────────────────────────────────────
 async function handleNeonCoverage(supabase: any, neonUrl: string) {
-  // Get all public tables with row counts
   const tables = await neonQuery(neonUrl,
     `SELECT relname AS table_name, n_live_tup AS row_count
      FROM pg_stat_user_tables
@@ -449,10 +460,8 @@ async function handleNeonCoverage(supabase: any, neonUrl: string) {
      ORDER BY n_live_tup DESC`
   );
 
-  // Paginate ALL ledger entries to get accurate counts
   const anchoredCounts = await getLedgerCountsByTable(supabase);
 
-  // Check which tables have sha256_hash and id columns
   const hashTables = await neonQuery(neonUrl,
     `SELECT table_name FROM information_schema.columns
      WHERE column_name = 'sha256_hash' AND table_schema = 'public'`

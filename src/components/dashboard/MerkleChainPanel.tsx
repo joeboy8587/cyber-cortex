@@ -20,7 +20,7 @@ import {
 import { toast } from 'sonner';
 
 export function MerkleChainPanel() {
-  const { isLoading, error, anchorBatch, anchorDeep, verifyChain, getStats, getNeonCoverage } = useMerkleAnchor();
+  const { isLoading, error, anchorTable, anchorBatch, anchorDeep, verifyChain, getStats, getNeonCoverage } = useMerkleAnchor();
   const [stats, setStats] = useState<any>(null);
   const [verifyResult, setVerifyResult] = useState<any>(null);
   const [coverage, setCoverage] = useState<any>(null);
@@ -70,38 +70,41 @@ export function MerkleChainPanel() {
   const handleDeepAnchor = async () => {
     try {
       setDeepAnchoring(true);
-      const result = await anchorDeep(500);
+      const result = await anchorDeep(200, undefined);
       toast.success(`Deep anchored ${result.totalAnchored} records across ${result.tablesProcessed} tables`);
       await loadStats();
       if (coverage) await loadCoverage();
-    } catch {
-      toast.error('Deep anchoring failed');
+    } catch (e) {
+      toast.error(`Deep anchoring failed: ${e instanceof Error ? e.message : 'unknown'}`);
     } finally {
       setDeepAnchoring(false);
     }
   };
 
+  const priorityTables = [
+    'live_flight_detections_rows', 'master_unified_evidence_vectors', 'sentinel_violations',
+    'unified_timeline_enhanced', 'biometrics_unified', 'was_threat_assessments',
+    'fr24_screenshot_analysis', 'xxb_unmasking_log', 'biometric_monitoring',
+    'watchtower_alerts', 'legal_ada_violations_proper', 'flagged_aircraft_rows_rows',
+  ];
+
   const handleContinuousAnchor = async () => {
     setContinuousRunning(true);
     setRoundsCompleted(0);
-    const maxRounds = 10;
+    let total = 0;
 
-    for (let i = 0; i < maxRounds; i++) {
-      if (!continuousRunning && i > 0) break; // allow stopping
+    for (let i = 0; i < priorityTables.length; i++) {
       try {
-        const result = await anchorDeep(500);
+        const result = await anchorTable(priorityTables[i], 500);
         setRoundsCompleted(i + 1);
-        if (result.totalAnchored === 0) {
-          toast.success('All reachable tables fully anchored!');
-          break;
-        }
-        toast.info(`Round ${i + 1}: +${result.totalAnchored} anchored`);
+        total += result.anchored;
+        if (result.anchored > 0) toast.info(`${priorityTables[i]}: +${result.anchored}`);
       } catch {
-        toast.error(`Round ${i + 1} failed`);
-        break;
+        // table may not exist, skip
       }
     }
 
+    toast.success(`Priority anchoring complete: +${total} records`);
     await loadStats();
     if (coverage) await loadCoverage();
     setContinuousRunning(false);
@@ -159,12 +162,12 @@ export function MerkleChainPanel() {
             {continuousRunning ? (
               <>
                 <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                Round {roundsCompleted}/10
+                {roundsCompleted}/{priorityTables.length}
               </>
             ) : (
               <>
                 <Play className="h-4 w-4 mr-1" />
-                Continuous (10 rounds)
+                Priority Anchor
               </>
             )}
           </Button>

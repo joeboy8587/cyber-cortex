@@ -9,6 +9,7 @@ import {
   FileText, MapPin, Clock, ChevronRight, Loader2
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { neonQuery } from "@/lib/neonQueryRetry";
 
 interface FactMatrixEntry {
   id: string;

@@ -162,12 +162,12 @@ export function MerkleChainPanel() {
             {continuousRunning ? (
               <>
                 <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                Round {roundsCompleted}/10
+                {roundsCompleted}/{priorityTables.length}
               </>
             ) : (
               <>
                 <Play className="h-4 w-4 mr-1" />
-                Continuous (10 rounds)
+                Priority Anchor
               </>
             )}
           </Button>

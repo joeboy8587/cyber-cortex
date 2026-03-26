@@ -9,9 +9,7 @@ const corsHeaders = {
 async function sha256(input: string): Promise<string> {
   const data = new TextEncoder().encode(input);
   const hash = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(hash))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+  return Array.from(new Uint8Array(hash)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 async function neonQuery(neonUrl: string, sql: string, params: unknown[] = []) {
@@ -21,11 +19,9 @@ async function neonQuery(neonUrl: string, sql: string, params: unknown[] = []) {
     headers: { "Content-Type": "application/json", "Neon-Connection-String": neonUrl },
     body: JSON.stringify({ query: sql, params }),
   });
-  if (!response.ok) throw new Error(`Neon query failed (${response.status}): ${await response.text()}`);
+  if (!response.ok) throw new Error(`Neon ${response.status}: ${await response.text()}`);
   const result = await response.json();
-  if (result.rows) return result.rows;
-  if (Array.isArray(result) && result[0]?.rows) return result[0].rows;
-  return result;
+  return result.rows ?? (Array.isArray(result) && result[0]?.rows ? result[0].rows : result);
 }
 
 function json(data: unknown, status = 200) {
@@ -44,8 +40,8 @@ Deno.serve(async (req) => {
     console.log(`merkle: ${action}`);
     switch (action) {
       case "anchor": return await handleAnchor(supabase, neonUrl, table, batchSize);
-      case "anchorBatch": return await handleAnchorBatch(supabase, neonUrl, batchSize);
       case "anchorDeep": return await handleAnchorDeep(supabase, neonUrl, body);
+      case "anchorBatch": return await handleAnchorDeep(supabase, neonUrl, { ...body, hashOnly: true });
       case "verify": return await handleVerify(supabase, batchSize);
       case "stats": return await handleStats(supabase);
       case "neonCoverage": return await handleNeonCoverage(supabase, neonUrl);
@@ -57,31 +53,27 @@ Deno.serve(async (req) => {
   }
 });
 
-// ─── HELPERS ─────────────────────────────────────────────────────────
-
 async function getLastChainHash(supabase: any): Promise<string> {
   const { data } = await supabase.from("evidence_merkle_ledger").select("chain_hash").order("sequence_number", { ascending: false }).limit(1).single();
   return data?.chain_hash || "GENESIS";
 }
 
-// Fetch ALL existing source_table+source_id pairs from ledger in one pass
-async function getAllExistingIds(supabase: any): Promise<Map<string, Set<string>>> {
-  const map = new Map<string, Set<string>>();
+// Fast: get count of anchored records per table using Supabase count
+async function getLedgerCounts(supabase: any): Promise<Record<string, number>> {
+  const counts: Record<string, number> = {};
   let from = 0;
   while (true) {
-    const { data } = await supabase.from("evidence_merkle_ledger").select("source_table, source_id").range(from, from + 999);
+    const { data } = await supabase.from("evidence_merkle_ledger").select("source_table").range(from, from + 999);
     if (!data || data.length === 0) break;
-    for (const r of data) {
-      if (!map.has(r.source_table)) map.set(r.source_table, new Set());
-      map.get(r.source_table)!.add(r.source_id);
-    }
+    for (const r of data) counts[r.source_table] = (counts[r.source_table] || 0) + 1;
     if (data.length < 1000) break;
     from += 1000;
   }
-  return map;
+  return counts;
 }
 
-async function getExistingIdsForTable(supabase: any, tableName: string): Promise<Set<string>> {
+// Get existing IDs for ONE table only (used during anchoring)
+async function getExistingIds(supabase: any, tableName: string): Promise<Set<string>> {
   const ids = new Set<string>();
   let from = 0;
   while (true) {
@@ -94,148 +86,113 @@ async function getExistingIdsForTable(supabase: any, tableName: string): Promise
   return ids;
 }
 
-async function getLedgerCounts(supabase: any): Promise<Record<string, number>> {
-  const counts: Record<string, number> = {};
-  let from = 0;
-  while (true) {
-    const { data } = await supabase.from("evidence_merkle_ledger").select("source_table").range(from, from + 999);
-    if (!data || data.length === 0) break;
-    data.forEach((r: any) => { counts[r.source_table] = (counts[r.source_table] || 0) + 1; });
-    if (data.length < 1000) break;
-    from += 1000;
-  }
-  return counts;
-}
-
 async function insertLedgerBatch(supabase: any, entries: any[]): Promise<number> {
-  let inserted = 0;
+  let n = 0;
   for (let i = 0; i < entries.length; i += 100) {
-    const { error } = await supabase.from("evidence_merkle_ledger").insert(entries.slice(i, i + 100));
-    if (error) throw new Error(`Insert failed: ${error.message}`);
-    inserted += entries.slice(i, i + 100).length;
+    const batch = entries.slice(i, i + 100);
+    const { error } = await supabase.from("evidence_merkle_ledger").insert(batch);
+    if (error) throw new Error(`Insert: ${error.message}`);
+    n += batch.length;
   }
-  return inserted;
+  return n;
 }
 
 async function getTableSchema(neonUrl: string): Promise<Map<string, { hasId: boolean; hasSha256: boolean }>> {
   const cols = await neonQuery(neonUrl,
     `SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = 'public' AND column_name IN ('id', 'sha256_hash')`
   );
-  const schema = new Map<string, { hasId: boolean; hasSha256: boolean }>();
+  const m = new Map<string, { hasId: boolean; hasSha256: boolean }>();
   for (const c of cols as any[]) {
-    if (!schema.has(c.table_name)) schema.set(c.table_name, { hasId: false, hasSha256: false });
-    const e = schema.get(c.table_name)!;
+    if (!m.has(c.table_name)) m.set(c.table_name, { hasId: false, hasSha256: false });
+    const e = m.get(c.table_name)!;
     if (c.column_name === 'id') e.hasId = true;
     if (c.column_name === 'sha256_hash') e.hasSha256 = true;
   }
-  return schema;
+  return m;
 }
 
 // ─── ANCHOR SINGLE TABLE ─────────────────────────────────────────────
 async function handleAnchor(supabase: any, neonUrl: string, table: string, batchSize: number) {
   if (!table) return json({ error: "table required" }, 400);
-  const existingIds = await getExistingIdsForTable(supabase, table);
-  const schema = await getTableSchema(neonUrl);
+  const [existingIds, schema] = await Promise.all([getExistingIds(supabase, table), getTableSchema(neonUrl)]);
   const hasHash = schema.get(table)?.hasSha256 ?? false;
 
   let rows: any[];
   if (hasHash) {
     rows = await neonQuery(neonUrl, `SELECT id::text AS id, sha256_hash FROM ${table} WHERE sha256_hash IS NOT NULL LIMIT ${batchSize + existingIds.size}`);
   } else {
-    rows = await neonQuery(neonUrl, `SELECT id::text AS id, row_to_json(t.*)::text AS row_json FROM ${table} t LIMIT ${batchSize + existingIds.size}`);
-    for (const row of rows) { row.sha256_hash = await sha256(row.row_json); delete row.row_json; }
+    rows = await neonQuery(neonUrl, `SELECT id::text AS id, md5(row_to_json(t.*)::text) AS sha256_hash FROM ${table} t LIMIT ${batchSize + existingIds.size}`);
   }
 
   const toAnchor = rows.filter((r: any) => !existingIds.has(r.id)).slice(0, batchSize);
-  if (toAnchor.length === 0) return json({ anchored: 0, table, message: "Already anchored" });
+  if (!toAnchor.length) return json({ anchored: 0, table, message: "Already anchored" });
 
   let prev = await getLastChainHash(supabase);
-  const batchId = crypto.randomUUID();
-  const entries = [];
-  for (const row of toAnchor) {
-    const ch = await sha256(row.sha256_hash + prev);
-    entries.push({ source_table: table, source_id: row.id, record_hash: row.sha256_hash, previous_chain_hash: prev, chain_hash: ch, batch_id: batchId });
+  const bid = crypto.randomUUID();
+  const entries = toAnchor.map(row => {
+    // For non-hash tables, md5 is already computed in SQL
+    const rh = hasHash ? row.sha256_hash : row.sha256_hash;
+    // We'll compute chain hashes sequentially
+    return { ...row, _rh: rh };
+  });
+  
+  const ledgerEntries = [];
+  for (const row of entries) {
+    const ch = await sha256(row._rh + prev);
+    ledgerEntries.push({ source_table: table, source_id: row.id, record_hash: row._rh, previous_chain_hash: prev, chain_hash: ch, batch_id: bid });
     prev = ch;
   }
-  return json({ anchored: await insertLedgerBatch(supabase, entries), table, batchId, lastChainHash: prev });
+  return json({ anchored: await insertLedgerBatch(supabase, ledgerEntries), table, batchId: bid });
 }
 
-// ─── ANCHOR BATCH (hashed tables only) ───────────────────────────────
-async function handleAnchorBatch(supabase: any, neonUrl: string, batchSize: number) {
-  const schema = await getTableSchema(neonUrl);
-  const existingMap = await getAllExistingIds(supabase);
-  const hashTables = [...schema.entries()].filter(([, v]) => v.hasSha256 && v.hasId).map(([k]) => k).sort();
-
-  const results = [];
-  let totalAnchored = 0;
+// ─── DEEP ANCHOR — processes N tables per call ──────────────────────
+async function handleAnchorDeep(supabase: any, neonUrl: string, body: any) {
+  const { batchSize = 200, tableFilter, maxTables = 15, hashOnly = false } = body;
   const t0 = Date.now();
 
-  for (const tableName of hashTables) {
-    if (Date.now() - t0 > 40000) { results.push({ table: "TIMEOUT", anchored: 0, status: "time_limit_reached" }); break; }
-    try {
-      const existing = existingMap.get(tableName) || new Set();
-      const allRows = await neonQuery(neonUrl, `SELECT id::text AS id, sha256_hash FROM ${tableName} WHERE sha256_hash IS NOT NULL LIMIT ${batchSize}`);
-      const toAnchor = (allRows as any[]).filter(r => !existing.has(r.id)).slice(0, batchSize);
-      if (toAnchor.length === 0) { results.push({ table: tableName, anchored: 0, status: "up-to-date" }); continue; }
+  // One query for schema info
+  const schema = await getTableSchema(neonUrl);
+  console.log(`schema fetched: ${Date.now() - t0}ms, ${schema.size} tables`);
 
-      let prev = await getLastChainHash(supabase);
-      const batchId = crypto.randomUUID();
-      const entries = [];
-      for (const row of toAnchor) {
-        const ch = await sha256(row.sha256_hash + prev);
-        entries.push({ source_table: tableName, source_id: row.id, record_hash: row.sha256_hash, previous_chain_hash: prev, chain_hash: ch, batch_id: batchId });
-        prev = ch;
-      }
-      await insertLedgerBatch(supabase, entries);
-      totalAnchored += entries.length;
-      results.push({ table: tableName, anchored: entries.length, status: "anchored" });
-    } catch (err) {
-      results.push({ table: tableName, anchored: 0, status: "error", error: err.message });
-    }
-  }
-  return json({ totalAnchored, tables: results });
-}
+  // Get table list with row counts
+  const allTables = await neonQuery(neonUrl,
+    `SELECT relname AS tablename, n_live_tup AS row_count FROM pg_stat_user_tables WHERE schemaname = 'public' ORDER BY n_live_tup DESC`
+  );
+  console.log(`tables fetched: ${Date.now() - t0}ms`);
 
-// ─── DEEP ANCHOR — single pass, pre-fetched schema + IDs ────────────
-async function handleAnchorDeep(supabase: any, neonUrl: string, body: any) {
-  const { batchSize = 200, tableFilter, maxTables = 20 } = body;
-
-  // Two parallel pre-fetches: schema + existing IDs
-  const [schema, existingMap, allTables] = await Promise.all([
-    getTableSchema(neonUrl),
-    getAllExistingIds(supabase),
-    neonQuery(neonUrl, `SELECT relname AS tablename, n_live_tup AS row_count FROM pg_stat_user_tables WHERE schemaname = 'public' ORDER BY n_live_tup DESC`),
-  ]);
-
-  console.log(`anchorDeep: ${(allTables as any[]).length} tables, filter=${tableFilter || 'none'}`);
+  // Filter to anchorable tables
+  let candidates = (allTables as any[]).filter(t => {
+    const name = t.tablename;
+    if (name.startsWith('pg_') || name.startsWith('_')) return false;
+    if (tableFilter && name !== tableFilter) return false;
+    const info = schema.get(name);
+    if (!info?.hasId) return false;
+    if (hashOnly && !info.hasSha256) return false;
+    return true;
+  });
 
   const results: any[] = [];
   let totalAnchored = 0;
-  const t0 = Date.now();
   let tablesAnchored = 0;
 
-  for (const t of allTables as any[]) {
+  for (const t of candidates) {
     if (Date.now() - t0 > 40000) { results.push({ table: "TIMEOUT", anchored: 0, status: "time_limit_reached" }); break; }
-    if (tablesAnchored >= maxTables) { results.push({ table: "MAX_TABLES", anchored: 0, status: "limit_reached" }); break; }
+    if (tablesAnchored >= maxTables) break;
 
     const tableName = t.tablename;
-    if (tableFilter && tableName !== tableFilter) continue;
-    if (tableName.startsWith('pg_') || tableName.startsWith('_')) continue;
-
-    const info = schema.get(tableName);
-    if (!info?.hasId) continue;
-
-    const existing = existingMap.get(tableName) || new Set();
-    const rowCount = Number(t.row_count || 0);
-    
-    // Skip if fully anchored (approximate via pg_stat)
-    if (existing.size >= rowCount && rowCount > 0) {
-      results.push({ table: tableName, anchored: 0, status: "up-to-date", total: existing.size });
-      continue;
-    }
+    const info = schema.get(tableName)!;
 
     try {
-      const fetchLimit = Math.min(batchSize + existing.size, 2000);
+      // Get existing IDs for THIS table only
+      const existingIds = await getExistingIds(supabase, tableName);
+      const rowCount = Number(t.row_count || 0);
+      
+      if (existingIds.size >= rowCount && rowCount > 0) {
+        results.push({ table: tableName, anchored: 0, status: "up-to-date", total: existingIds.size });
+        continue;
+      }
+
+      const fetchLimit = Math.min(batchSize + existingIds.size, 2000);
       let rows: any[];
       if (info.hasSha256) {
         rows = await neonQuery(neonUrl, `SELECT id::text AS id, sha256_hash FROM ${tableName} WHERE sha256_hash IS NOT NULL LIMIT ${fetchLimit}`);
@@ -243,24 +200,25 @@ async function handleAnchorDeep(supabase: any, neonUrl: string, body: any) {
         rows = await neonQuery(neonUrl, `SELECT id::text AS id, md5(row_to_json(t.*)::text) AS sha256_hash FROM ${tableName} t LIMIT ${fetchLimit}`);
       }
 
-      const toAnchor = rows.filter((r: any) => !existing.has(r.id)).slice(0, batchSize);
-      if (toAnchor.length === 0) { results.push({ table: tableName, anchored: 0, status: "up-to-date", total: existing.size }); continue; }
+      const newRows = rows.filter((r: any) => !existingIds.has(r.id));
+      const toAnchor = newRows.slice(0, batchSize);
+      if (!toAnchor.length) { results.push({ table: tableName, anchored: 0, status: "up-to-date", total: existingIds.size }); continue; }
 
       let prev = await getLastChainHash(supabase);
-      const batchId = crypto.randomUUID();
+      const bid = crypto.randomUUID();
       const entries = [];
       for (const row of toAnchor) {
-        const recordHash = info.hasSha256 ? row.sha256_hash : await sha256(row.sha256_hash);
-        const ch = await sha256(recordHash + prev);
-        entries.push({ source_table: tableName, source_id: row.id, record_hash: recordHash, previous_chain_hash: prev, chain_hash: ch, batch_id: batchId });
+        const rh = info.hasSha256 ? row.sha256_hash : await sha256(row.sha256_hash);
+        const ch = await sha256(rh + prev);
+        entries.push({ source_table: tableName, source_id: row.id, record_hash: rh, previous_chain_hash: prev, chain_hash: ch, batch_id: bid });
         prev = ch;
       }
 
       await insertLedgerBatch(supabase, entries);
       totalAnchored += entries.length;
       tablesAnchored++;
-      results.push({ table: tableName, anchored: entries.length, status: "anchored", remaining: rows.filter((r: any) => !existing.has(r.id)).length - toAnchor.length });
-      console.log(`+${entries.length} ${tableName}`);
+      results.push({ table: tableName, anchored: entries.length, status: "anchored", remaining: newRows.length - toAnchor.length });
+      console.log(`+${entries.length} ${tableName} (${Date.now() - t0}ms)`);
     } catch (err) {
       console.error(`err ${tableName}: ${err.message}`);
       results.push({ table: tableName, anchored: 0, status: "error", error: err.message });
@@ -275,17 +233,16 @@ async function handleVerify(supabase: any, limit: number) {
   const { data: entries, error } = await supabase.from("evidence_merkle_ledger")
     .select("sequence_number, record_hash, previous_chain_hash, chain_hash, source_table, source_id")
     .order("sequence_number", { ascending: true }).limit(limit || 1000);
-  if (error) throw new Error(`Read failed: ${error.message}`);
+  if (error) throw new Error(error.message);
   if (!entries?.length) return json({ verified: 0, failed: 0, total: 0, integrity: "EMPTY", failures: [], message: "No entries" });
 
   const failures: any[] = [];
   let verified = 0;
   for (let i = 0; i < entries.length; i++) {
     const e = entries[i];
-    const expected = await sha256(e.record_hash + e.previous_chain_hash);
-    if (expected !== e.chain_hash) failures.push({ sequence_number: e.sequence_number, source_table: e.source_table, source_id: e.source_id });
+    if (await sha256(e.record_hash + e.previous_chain_hash) !== e.chain_hash) failures.push({ seq: e.sequence_number, table: e.source_table });
     else verified++;
-    if (i > 0 && e.previous_chain_hash !== entries[i-1].chain_hash) failures.push({ sequence_number: e.sequence_number, issue: "broken link" });
+    if (i > 0 && e.previous_chain_hash !== entries[i-1].chain_hash) failures.push({ seq: e.sequence_number, issue: "broken" });
   }
   const integrity = failures.length === 0 ? "VERIFIED" : "COMPROMISED";
   return json({ verified, failed: failures.length, total: entries.length, integrity, failures: failures.slice(0, 10),
@@ -313,8 +270,7 @@ async function handleNeonCoverage(supabase: any, neonUrl: string) {
 
   const coverage = (tables as any[]).map(t => {
     const info = schema.get(t.table_name);
-    const rows = Number(t.row_count);
-    const anch = anchoredCounts[t.table_name] || 0;
+    const rows = Number(t.row_count), anch = anchoredCounts[t.table_name] || 0;
     return { table: t.table_name, totalRows: rows, anchored: anch, hasSha256: info?.hasSha256 ?? false, hasId: info?.hasId ?? false, coverage: rows > 0 ? Math.round((anch / rows) * 100) : 0 };
   });
 

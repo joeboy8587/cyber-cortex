@@ -349,7 +349,7 @@ export async function handleAction3(action: string, body: Record<string, any>, s
         if (scanType === 'full' || scanType === 'loitering') {
           const loitering = await sql`
             WITH recent AS (
-              SELECT registration, hex, detection_timestamp, latitude, longitude, altitude, speed
+              SELECT registration, icao_code, detection_timestamp, latitude, longitude, altitude, speed
               FROM live_flight_detections_rows
               WHERE latitude IS NOT NULL AND longitude IS NOT NULL
               ORDER BY detection_timestamp DESC
@@ -357,7 +357,7 @@ export async function handleAction3(action: string, body: Record<string, any>, s
             ),
             position_sessions AS (
               SELECT
-                md5(COALESCE(registration, hex, 'unknown')) as anon_id,
+                md5(COALESCE(registration, icao_code, 'unknown')) as anon_id,
                 DATE_TRUNC('hour', detection_timestamp) as session_hour,
                 ROUND(latitude::numeric, 2) as grid_lat,
                 ROUND(longitude::numeric, 2) as grid_lng,

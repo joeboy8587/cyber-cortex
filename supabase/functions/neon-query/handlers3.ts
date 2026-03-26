@@ -345,19 +345,21 @@ export async function handleAction3(action: string, body: Record<string, any>, s
       try {
         const results: any = { timestamp: new Date().toISOString(), anomalies: [], stats: {} };
         const sampleSize = days <= 3 ? 50000 : days <= 7 ? 150000 : 300000;
+        const cutoff = new Date(Date.now() - days * 86400000).toISOString();
 
         if (scanType === 'full' || scanType === 'loitering') {
           const loitering = await sql`
             WITH recent AS (
-              SELECT registration, hex, detection_timestamp, latitude, longitude, altitude, speed
+              SELECT registration, icao_code, detection_timestamp, latitude, longitude, altitude, speed
               FROM live_flight_detections_rows
               WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+                AND detection_timestamp > ${cutoff}::timestamptz
               ORDER BY detection_timestamp DESC
               LIMIT ${sampleSize}
             ),
             position_sessions AS (
               SELECT
-                md5(COALESCE(registration, hex, 'unknown')) as anon_id,
+                md5(COALESCE(registration, icao_code, 'unknown')) as anon_id,
                 DATE_TRUNC('hour', detection_timestamp) as session_hour,
                 ROUND(latitude::numeric, 2) as grid_lat,
                 ROUND(longitude::numeric, 2) as grid_lng,
@@ -395,14 +397,15 @@ export async function handleAction3(action: string, body: Record<string, any>, s
         if (scanType === 'full' || scanType === 'lowAltitude') {
           const lowAlt = await sql`
             WITH recent AS (
-              SELECT registration, hex, detection_timestamp, altitude, speed
+              SELECT registration, icao_code, detection_timestamp, altitude, speed
               FROM live_flight_detections_rows
               WHERE altitude::numeric > 0 AND altitude::numeric < 1000
+                AND detection_timestamp > ${cutoff}::timestamptz
               ORDER BY detection_timestamp DESC
               LIMIT ${sampleSize}
             )
             SELECT
-              md5(COALESCE(registration, hex, 'unknown')) as anon_id,
+              md5(COALESCE(registration, icao_code, 'unknown')) as anon_id,
               DATE(detection_timestamp) as flight_date,
               COUNT(*) as low_pings,
               ROUND(AVG(altitude::numeric), 0) as avg_alt,
@@ -437,20 +440,20 @@ export async function handleAction3(action: string, body: Record<string, any>, s
         if (scanType === 'full' || scanType === 'stealth') {
           const stealth = await sql`
             WITH recent AS (
-              SELECT taxonomy_tag, registration, hex, altitude, detection_timestamp, icao_code
+              SELECT taxonomy_tag, registration, icao_code, altitude, detection_timestamp
               FROM live_flight_detections_rows
               WHERE (
                 taxonomy_tag IN ('xxb_ghost', 'xxb_unknown', 'xxb_stealth', 'military_asset')
                 OR (icao_code IS NULL AND registration IS NULL)
-                OR (hex LIKE 'XXA%' OR hex LIKE 'xxa%')
               )
+                AND detection_timestamp > ${cutoff}::timestamptz
               ORDER BY detection_timestamp DESC
               LIMIT ${sampleSize}
             )
             SELECT
               COALESCE(taxonomy_tag, 'NO_TAG') as signal_class,
               COUNT(*) as detection_count,
-              COUNT(DISTINCT md5(COALESCE(registration, hex, 'unknown'))) as unique_sources,
+              COUNT(DISTINCT md5(COALESCE(registration, icao_code, 'unknown'))) as unique_sources,
               ROUND(AVG(NULLIF(altitude::numeric, 0)), 0) as avg_alt,
               COUNT(*) FILTER (WHERE altitude::numeric < 1000 AND altitude::numeric > 0) as low_alt_count,
               MIN(detection_timestamp) as first_seen,

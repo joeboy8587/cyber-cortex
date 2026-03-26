@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -81,6 +81,8 @@ export default function ForensicTrajectoryPanel() {
   const [violationAircraft, setViolationAircraft] = useState<ViolationAircraft[]>([]);
   const [violationStats, setViolationStats] = useState<ViolationStats | null>(null);
   const [activeTab, setActiveTab] = useState('trajectory');
+  const violationsLoadedRef = useRef(false);
+  const loadViolationsRef = useRef<(() => Promise<void>) | null>(null);
 
   const loadTrajectory = useCallback(async () => {
     if (!registration.trim()) {
@@ -120,6 +122,17 @@ export default function ForensicTrajectoryPanel() {
       setIsLoading(false);
     }
   }, [timeWindow, queryDatabase]);
+
+  // Store ref for auto-loading
+  loadViolationsRef.current = loadViolations;
+
+  // Auto-load violations when switching to violations/offenders tab
+  useEffect(() => {
+    if ((activeTab === 'violations' || activeTab === 'offenders') && !violationsLoadedRef.current) {
+      violationsLoadedRef.current = true;
+      loadViolations();
+    }
+  }, [activeTab, loadViolations]);
 
   const chartData = trajectory.map((p) => ({
     time: new Date(p.event_time).toLocaleString(),

@@ -1,4 +1,4 @@
-import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
+import postgres from "npm:postgres@3.4.4";
 
 type SQL = ReturnType<typeof postgres>;
 

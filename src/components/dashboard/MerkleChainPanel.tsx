@@ -70,12 +70,12 @@ export function MerkleChainPanel() {
   const handleDeepAnchor = async () => {
     try {
       setDeepAnchoring(true);
-      const result = await anchorDeep(500);
+      const result = await anchorDeep(200, undefined);
       toast.success(`Deep anchored ${result.totalAnchored} records across ${result.tablesProcessed} tables`);
       await loadStats();
       if (coverage) await loadCoverage();
-    } catch {
-      toast.error('Deep anchoring failed');
+    } catch (e) {
+      toast.error(`Deep anchoring failed: ${e instanceof Error ? e.message : 'unknown'}`);
     } finally {
       setDeepAnchoring(false);
     }

@@ -395,14 +395,14 @@ export async function handleAction3(action: string, body: Record<string, any>, s
         if (scanType === 'full' || scanType === 'lowAltitude') {
           const lowAlt = await sql`
             WITH recent AS (
-              SELECT registration, hex, detection_timestamp, altitude, speed
+              SELECT registration, icao_code, detection_timestamp, altitude, speed
               FROM live_flight_detections_rows
               WHERE altitude::numeric > 0 AND altitude::numeric < 1000
               ORDER BY detection_timestamp DESC
               LIMIT ${sampleSize}
             )
             SELECT
-              md5(COALESCE(registration, hex, 'unknown')) as anon_id,
+              md5(COALESCE(registration, icao_code, 'unknown')) as anon_id,
               DATE(detection_timestamp) as flight_date,
               COUNT(*) as low_pings,
               ROUND(AVG(altitude::numeric), 0) as avg_alt,

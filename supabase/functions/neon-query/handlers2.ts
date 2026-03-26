@@ -637,45 +637,67 @@ export async function handleAction2(action: string, body: Record<string, any>, s
 
     case 'getAltitudeViolations': {
       const { timeWindow: vioWindow = '90 days', minAltitude = 0, maxAltitude = 1000, limit: vioLimit = 200 } = body;
+      const minAlt = parseInt(String(minAltitude));
+      const maxAlt = parseInt(String(maxAltitude));
+      const lim = parseInt(String(vioLimit));
       try {
         const violations = await sql.unsafe(`
-          SELECT registration, COALESCE(detection_timestamp, created_at) as event_time,
-            COALESCE(altitude, 0) as altitude, COALESCE(speed, 0) as speed,
-            latitude, longitude, COALESCE(heading, 0) as heading,
-            COALESCE(threat_score, 0) as threat_score, COALESCE(flagged, false) as is_flagged,
-            flagged_reasons, taxonomy_tag,
-            CASE 
-              WHEN COALESCE(altitude, 0) < 500 THEN 'CRITICAL: 91.119 Violation (<500ft)'
-              WHEN COALESCE(altitude, 0) < 1000 THEN 'WARNING: Low Altitude (<1000ft)'
-              ELSE 'CAUTION'
-            END as violation_severity
-          FROM live_flight_detections_rows
-          WHERE COALESCE(altitude, 0) > ${parseInt(String(minAltitude))}
-            AND COALESCE(altitude, 0) < ${parseInt(String(maxAltitude))}
-            AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${vioWindow}'
-          ORDER BY COALESCE(detection_timestamp, created_at) DESC
-          LIMIT ${parseInt(String(vioLimit))}
+          WITH combined AS (
+            SELECT registration, COALESCE(detection_timestamp, created_at) as event_time,
+              COALESCE(altitude, 0) as altitude, COALESCE(speed, 0) as speed,
+              latitude, longitude, COALESCE(threat_score, 0) as threat_score,
+              flagged_reasons, taxonomy_tag
+            FROM live_flight_detections_rows
+            WHERE COALESCE(altitude, 0) > ${minAlt} AND COALESCE(altitude, 0) < ${maxAlt}
+              AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${vioWindow}'
+            UNION ALL
+            SELECT registration, COALESCE(detection_timestamp, created_at) as event_time,
+              COALESCE(altitude, 0) as altitude, COALESCE(speed, 0) as speed,
+              latitude, longitude, 0 as threat_score,
+              NULL as flagged_reasons, taxonomy_tag
+            FROM unfilterd_detections
+            WHERE COALESCE(altitude, 0) > ${minAlt} AND COALESCE(altitude, 0) < ${maxAlt}
+              AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${vioWindow}'
+            UNION ALL
+            SELECT registration, COALESCE(detection_timestamp, created_at) as event_time,
+              COALESCE(altitude, 0) as altitude, COALESCE(speed, 0) as speed,
+              latitude, longitude, COALESCE(threat_score, 0) as threat_score,
+              flagged_reasons, taxonomy_tag
+            FROM flagged_aircraft_rows_rows
+            WHERE COALESCE(altitude, 0) > ${minAlt} AND COALESCE(altitude, 0) < ${maxAlt}
+              AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${vioWindow}'
+          )
+          SELECT *, CASE 
+            WHEN altitude < 500 THEN 'CRITICAL: 91.119 Violation (<500ft)'
+            WHEN altitude < 1000 THEN 'WARNING: Low Altitude (<1000ft)'
+            ELSE 'CAUTION'
+          END as violation_severity
+          FROM combined ORDER BY event_time DESC LIMIT ${lim}
         `);
 
-        // Summary stats
         const stats = await sql.unsafe(`
-          SELECT 
-            COUNT(*) as total_violations,
-            COUNT(DISTINCT registration) as unique_aircraft,
-            COUNT(*) FILTER (WHERE COALESCE(altitude, 0) < 500) as critical_count,
-            COUNT(*) FILTER (WHERE COALESCE(altitude, 0) >= 500 AND COALESCE(altitude, 0) < 1000) as warning_count,
-            MIN(COALESCE(altitude, 0)) as min_altitude,
-            AVG(COALESCE(altitude, 0))::int as avg_altitude
-          FROM live_flight_detections_rows
-          WHERE COALESCE(altitude, 0) > 0 AND COALESCE(altitude, 0) < 1000
-            AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${vioWindow}'
+          WITH combined AS (
+            SELECT COALESCE(altitude, 0) as altitude, registration FROM live_flight_detections_rows
+            WHERE COALESCE(altitude, 0) > 0 AND COALESCE(altitude, 0) < 1000
+              AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${vioWindow}'
+            UNION ALL
+            SELECT COALESCE(altitude, 0) as altitude, registration FROM unfilterd_detections
+            WHERE COALESCE(altitude, 0) > 0 AND COALESCE(altitude, 0) < 1000
+              AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${vioWindow}'
+            UNION ALL
+            SELECT COALESCE(altitude, 0) as altitude, registration FROM flagged_aircraft_rows_rows
+            WHERE COALESCE(altitude, 0) > 0 AND COALESCE(altitude, 0) < 1000
+              AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${vioWindow}'
+          )
+          SELECT COUNT(*) as total_violations, COUNT(DISTINCT registration) as unique_aircraft,
+            COUNT(*) FILTER (WHERE altitude < 500) as critical_count,
+            COUNT(*) FILTER (WHERE altitude >= 500 AND altitude < 1000) as warning_count,
+            MIN(altitude) as min_altitude, AVG(altitude)::int as avg_altitude
+          FROM combined
         `);
 
-        return { 
-          data: violations, 
-          stats: stats[0] || {},
-          count: violations.length 
-        };
+        return { data: violations, stats: stats[0] || {}, count: violations.length,
+          sources: ['live_flight_detections_rows', 'unfilterd_detections', 'flagged_aircraft_rows_rows'] };
       } catch (e) {
         return { error: (e as Error).message };
       }
@@ -685,23 +707,37 @@ export async function handleAction2(action: string, body: Record<string, any>, s
       const { timeWindow: vaWindow = '90 days' } = body;
       try {
         const aircraft = await sql.unsafe(`
-          SELECT registration, 
-            COUNT(*) as violation_count,
-            COUNT(*) FILTER (WHERE COALESCE(altitude, 0) < 500) as critical_violations,
-            MIN(COALESCE(altitude, 0)) as min_altitude,
-            AVG(COALESCE(altitude, 0))::int as avg_violation_altitude,
-            MIN(COALESCE(detection_timestamp, created_at)) as first_violation,
-            MAX(COALESCE(detection_timestamp, created_at)) as last_violation,
-            taxonomy_tag
-          FROM live_flight_detections_rows
-          WHERE COALESCE(altitude, 0) > 0 AND COALESCE(altitude, 0) < 1000
-            AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${vaWindow}'
-            AND registration IS NOT NULL AND registration != ''
-          GROUP BY registration, taxonomy_tag
-          ORDER BY violation_count DESC
-          LIMIT 50
+          WITH combined AS (
+            SELECT registration, COALESCE(altitude, 0) as altitude,
+              COALESCE(detection_timestamp, created_at) as event_time, taxonomy_tag
+            FROM live_flight_detections_rows
+            WHERE COALESCE(altitude, 0) > 0 AND COALESCE(altitude, 0) < 1000
+              AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${vaWindow}'
+              AND registration IS NOT NULL AND registration != ''
+            UNION ALL
+            SELECT registration, COALESCE(altitude, 0) as altitude,
+              COALESCE(detection_timestamp, created_at) as event_time, taxonomy_tag
+            FROM unfilterd_detections
+            WHERE COALESCE(altitude, 0) > 0 AND COALESCE(altitude, 0) < 1000
+              AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${vaWindow}'
+              AND registration IS NOT NULL AND registration != ''
+            UNION ALL
+            SELECT registration, COALESCE(altitude, 0) as altitude,
+              COALESCE(detection_timestamp, created_at) as event_time, taxonomy_tag
+            FROM flagged_aircraft_rows_rows
+            WHERE COALESCE(altitude, 0) > 0 AND COALESCE(altitude, 0) < 1000
+              AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${vaWindow}'
+              AND registration IS NOT NULL AND registration != ''
+          )
+          SELECT registration, COUNT(*) as violation_count,
+            COUNT(*) FILTER (WHERE altitude < 500) as critical_violations,
+            MIN(altitude) as min_altitude, AVG(altitude)::int as avg_violation_altitude,
+            MIN(event_time) as first_violation, MAX(event_time) as last_violation,
+            (array_agg(taxonomy_tag ORDER BY event_time DESC))[1] as taxonomy_tag
+          FROM combined GROUP BY registration
+          ORDER BY violation_count DESC LIMIT 50
         `);
-        return { data: aircraft };
+        return { data: aircraft, sources: ['live_flight_detections_rows', 'unfilterd_detections', 'flagged_aircraft_rows_rows'] };
       } catch (e) {
         return { error: (e as Error).message };
       }

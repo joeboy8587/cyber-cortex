@@ -437,12 +437,11 @@ export async function handleAction3(action: string, body: Record<string, any>, s
         if (scanType === 'full' || scanType === 'stealth') {
           const stealth = await sql`
             WITH recent AS (
-              SELECT taxonomy_tag, registration, hex, altitude, detection_timestamp, icao_code
+              SELECT taxonomy_tag, registration, icao_code, altitude, detection_timestamp
               FROM live_flight_detections_rows
               WHERE (
                 taxonomy_tag IN ('xxb_ghost', 'xxb_unknown', 'xxb_stealth', 'military_asset')
                 OR (icao_code IS NULL AND registration IS NULL)
-                OR (hex LIKE 'XXA%' OR hex LIKE 'xxa%')
               )
               ORDER BY detection_timestamp DESC
               LIMIT ${sampleSize}
@@ -450,7 +449,7 @@ export async function handleAction3(action: string, body: Record<string, any>, s
             SELECT
               COALESCE(taxonomy_tag, 'NO_TAG') as signal_class,
               COUNT(*) as detection_count,
-              COUNT(DISTINCT md5(COALESCE(registration, hex, 'unknown'))) as unique_sources,
+              COUNT(DISTINCT md5(COALESCE(registration, icao_code, 'unknown'))) as unique_sources,
               ROUND(AVG(NULLIF(altitude::numeric, 0)), 0) as avg_alt,
               COUNT(*) FILTER (WHERE altitude::numeric < 1000 AND altitude::numeric > 0) as low_alt_count,
               MIN(detection_timestamp) as first_seen,

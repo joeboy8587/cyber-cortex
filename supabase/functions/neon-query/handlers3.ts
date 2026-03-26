@@ -352,6 +352,7 @@ export async function handleAction3(action: string, body: Record<string, any>, s
               SELECT registration, icao_code, detection_timestamp, latitude, longitude, altitude, speed
               FROM live_flight_detections_rows
               WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+                AND detection_timestamp > NOW() AT TIME ZONE 'UTC' - INTERVAL '${days} days'
               ORDER BY detection_timestamp DESC
               LIMIT ${sampleSize}
             ),

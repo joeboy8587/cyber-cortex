@@ -223,14 +223,16 @@ function StatBox({ icon, value, label, small }: { icon: React.ReactNode; value: 
 }
 
 function NeonCoverageView({ coverage }: { coverage: any }) {
-  const pct = coverage.overallCoverage;
+  const pct = Number(coverage.overallCoverage || 0);
+  const progressValue = pct > 0 && pct < 1 ? 1 : Math.min(pct, 100);
+
   return (
-    <div className="p-3 rounded-lg bg-purple-500/5 border border-purple-500/20 space-y-3">
+    <div className="p-3 rounded-lg bg-accent/10 border border-border space-y-3">
       <div className="flex items-center gap-2 mb-1">
-        <Database className="h-4 w-4 text-purple-400" />
+        <Database className="h-4 w-4 text-primary" />
         <span className="font-mono text-sm font-bold text-foreground">Neon DB Merkle Coverage</span>
-        <Badge className="bg-purple-500/20 text-purple-400 text-xs">
-          {coverage.totalAnchored?.toLocaleString()} / {coverage.totalRows?.toLocaleString()} ({pct}%)
+        <Badge variant="secondary" className="text-xs">
+          {coverage.totalAnchored?.toLocaleString()} / {coverage.totalRows?.toLocaleString()} ({pct.toFixed(pct < 1 && pct > 0 ? 4 : 2)}%)
         </Badge>
       </div>
       <div className="grid grid-cols-3 gap-3 text-xs font-mono">
@@ -238,20 +240,27 @@ function NeonCoverageView({ coverage }: { coverage: any }) {
         <div><span className="text-muted-foreground">Anchorable:</span> <span className="text-foreground">{coverage.anchorableTables}</span></div>
         <div><span className="text-muted-foreground">Anchored:</span> <span className="text-foreground font-bold">{coverage.totalAnchored?.toLocaleString()}</span></div>
       </div>
-      <Progress value={Math.max(pct, pct > 0 ? 1 : 0)} className="h-2" />
+      <Progress value={progressValue} className="h-2" />
       <div className="max-h-40 overflow-y-auto space-y-1">
-        {coverage.tables?.filter((t: any) => t.totalRows > 0).slice(0, 30).map((t: any) => (
-          <div key={t.table} className="flex items-center justify-between text-xs font-mono p-1.5 bg-background/30 rounded">
-            <span className="text-foreground truncate max-w-[40%]">{t.table}</span>
-            <div className="flex items-center gap-2">
-              {t.hasSha256 && <Badge variant="outline" className="text-[9px] text-green-400 border-green-400/30">SHA</Badge>}
-              <span className="text-muted-foreground">{t.anchored.toLocaleString()}/{t.totalRows.toLocaleString()}</span>
-              <Badge variant="outline" className={`text-[10px] ${t.anchored > 0 ? 'text-green-400 border-green-400/30' : 'text-red-400 border-red-400/30'}`}>
-                {t.anchored > 0 ? `${t.coverage}%` : '—'}
-              </Badge>
+        {coverage.tables?.filter((t: any) => t.totalRows > 0).slice(0, 30).map((t: any) => {
+          const rowCoverage = Number(t.coverage || 0);
+          const rowLabel = t.anchored > 0
+            ? `${rowCoverage < 1 ? rowCoverage.toFixed(4) : rowCoverage.toFixed(2)}%`
+            : '—';
+
+          return (
+            <div key={t.table} className="flex items-center justify-between text-xs font-mono p-1.5 bg-background/30 rounded">
+              <span className="text-foreground truncate max-w-[40%]">{t.table}</span>
+              <div className="flex items-center gap-2">
+                {t.hasSha256 && <Badge variant="outline" className="text-[9px]">SHA</Badge>}
+                <span className="text-muted-foreground">{t.anchored.toLocaleString()}/{t.totalRows.toLocaleString()}</span>
+                <Badge variant="outline" className="text-[10px]">
+                  {rowLabel}
+                </Badge>
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

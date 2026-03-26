@@ -480,12 +480,16 @@ async function handleNeonCoverage(supabase: any, neonUrl: string) {
   const totalAnchored = coverage.reduce((sum, t) => sum + t.anchored, 0);
   const anchorableTables = coverage.filter((t) => t.hasId).length;
 
+  const overallCoverage = totalRows > 0
+    ? Number(((totalAnchored / totalRows) * 100).toFixed(4))
+    : 0;
+
   return json({
     totalNeonTables: coverage.length,
     anchorableTables,
     totalRows,
     totalAnchored,
-    overallCoverage: totalRows > 0 ? Math.round((totalAnchored / totalRows) * 100) : 0,
+    overallCoverage,
     tables: coverage.slice(0, 50),
   });
 }

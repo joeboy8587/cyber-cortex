@@ -16,6 +16,7 @@ import {
   TrendingUp
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
+import { neonQuery } from '@/lib/neonQueryRetry';
 import { toast } from 'sonner';
 
 interface FleetAircraft {
@@ -77,32 +78,24 @@ export const KCSOFleetCrossRef: React.FC = () => {
       const tailNumbersStr = tailNumbers.map(t => `'${t}'`).join(',');
 
       // Fetch detections from Neon
-      const { data: neonResponse } = await supabase.functions.invoke('neon-query', {
-        body: {
-          action: 'customQuery',
-          query: `SELECT registration, COUNT(*) as detections, 
-                  MIN(event_timestamp) as first_seen, 
-                  MAX(event_timestamp) as last_seen, 
-                  AVG(altitude_ft) as avg_altitude,
-                  COUNT(DISTINCT DATE(event_timestamp)) as active_days 
-                  FROM watchtower_unified_master 
-                  WHERE registration IN (${tailNumbersStr}) 
-                  GROUP BY registration`
-        }
+      const { data: neonResponse } = await neonQuery({
+        action: 'customQuery',
+        query: `SELECT registration, COUNT(*) as detections, 
+                MIN(event_timestamp) as first_seen, MAX(event_timestamp) as last_seen, 
+                AVG(altitude_ft) as avg_altitude,
+                COUNT(DISTINCT DATE(event_timestamp)) as active_days 
+                FROM watchtower_unified_master 
+                WHERE registration IN (${tailNumbersStr}) GROUP BY registration`
       });
 
-      // Fetch biometric correlations from Neon
-      const { data: bioResponse } = await supabase.functions.invoke('neon-query', {
-        body: {
-          action: 'customQuery',
-          query: `SELECT registration, COUNT(*) as correlations, 
-                  SUM(CASE WHEN hr_spike_detected THEN 1 ELSE 0 END) as hr_spikes, 
-                  SUM(CASE WHEN stress_increase_detected THEN 1 ELSE 0 END) as stress_events, 
-                  AVG(correlation_strength) as avg_strength 
-                  FROM master_biometric_aircraft_correlations 
-                  WHERE registration IN (${tailNumbersStr}) 
-                  GROUP BY registration`
-        }
+      const { data: bioResponse } = await neonQuery({
+        action: 'customQuery',
+        query: `SELECT registration, COUNT(*) as correlations, 
+                SUM(CASE WHEN hr_spike_detected THEN 1 ELSE 0 END) as hr_spikes, 
+                SUM(CASE WHEN stress_increase_detected THEN 1 ELSE 0 END) as stress_events, 
+                AVG(correlation_strength) as avg_strength 
+                FROM master_biometric_aircraft_correlations 
+                WHERE registration IN (${tailNumbersStr}) GROUP BY registration`
       });
 
       const neonData: NeonDetection[] = neonResponse?.data || [];

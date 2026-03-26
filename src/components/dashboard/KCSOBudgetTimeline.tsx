@@ -6,6 +6,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
+import { neonQuery } from '@/lib/neonQueryRetry';
 import { 
   DollarSign, 
   Calendar, 
@@ -83,9 +84,7 @@ export const KCSOBudgetTimeline: React.FC = () => {
   const loadBudgetData = async () => {
     setIsLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke('neon-query', {
-        body: { action: 'getKCSOBudgetData' }
-      });
+      const { data, error } = await neonQuery({ action: 'getKCSOBudgetData' });
       if (!error && data?.data && Array.isArray(data.data) && data.data.length > 0) {
         // Map DB rows to our interface
         const mapped: AircraftBudgetData[] = data.data.map((row: any) => ({

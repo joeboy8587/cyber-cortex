@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { supabase } from '@/integrations/supabase/client';
+import { neonQuery } from '@/lib/neonQueryRetry';
 import { 
   Shield, AlertTriangle, Clock, MapPin, Heart, FileText, RefreshCw, 
   TrendingDown, Target, Crosshair, BarChart3, Calendar
@@ -52,99 +53,50 @@ export const KCSODeepDiveReport = () => {
     try {
       // Fetch comprehensive KCSO aircraft statistics
       const [statsRes, altRes, dailyRes, bioRes] = await Promise.all([
-        // Per-aircraft stats - broadened to match actual KCSO patterns
-        supabase.functions.invoke('neon-query', {
-          body: {
-            action: 'customQuery',
-            query: `
-              SELECT 
-                registration,
-                COUNT(*) as total_detections,
-                COUNT(DISTINCT DATE(detection_timestamp)) as unique_days,
-                ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as avg_altitude,
-                MIN(CASE WHEN altitude > 0 THEN altitude ELSE NULL END) as min_altitude,
-                MAX(COALESCE(altitude, 0)) as max_altitude,
-                MIN(detection_timestamp) as first_detection,
-                MAX(detection_timestamp) as last_detection,
-                COUNT(*) FILTER (WHERE altitude < 1500 AND altitude > 0) as low_altitude_count
-              FROM live_flight_detections_rows
-              WHERE (
-                registration IN ('N912KC', 'N913KC')
-                OR registration LIKE 'N91%KC'
-                OR registration LIKE 'N%KC'
-                OR taxonomy_tag IN ('xxb_kcso', 'xxb_tier1_priority')
-                OR callsign ILIKE '%KCSO%'
-                OR callsign ILIKE '%KERN%'
-              )
+        neonQuery({
+          action: 'customQuery',
+          query: `
+            SELECT registration, COUNT(*) as total_detections,
+              COUNT(DISTINCT DATE(detection_timestamp)) as unique_days,
+              ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as avg_altitude,
+              MIN(CASE WHEN altitude > 0 THEN altitude ELSE NULL END) as min_altitude,
+              MAX(COALESCE(altitude, 0)) as max_altitude,
+              MIN(detection_timestamp) as first_detection, MAX(detection_timestamp) as last_detection,
+              COUNT(*) FILTER (WHERE altitude < 1500 AND altitude > 0) as low_altitude_count
+            FROM live_flight_detections_rows
+            WHERE (registration IN ('N912KC', 'N913KC') OR registration LIKE 'N91%KC' OR registration LIKE 'N%KC'
+              OR taxonomy_tag IN ('xxb_kcso', 'xxb_tier1_priority') OR callsign ILIKE '%KCSO%' OR callsign ILIKE '%KERN%')
               AND registration IS NOT NULL
-              GROUP BY registration
-              ORDER BY total_detections DESC
-            `
-          }
+            GROUP BY registration ORDER BY total_detections DESC
+          `
         }),
-        // Altitude distribution - broadened filter
-        supabase.functions.invoke('neon-query', {
-          body: {
-            action: 'customQuery',
-            query: `
-              SELECT 
-                CASE 
-                  WHEN altitude < 500 THEN '< 500ft'
-                  WHEN altitude < 1000 THEN '500-1000ft'
-                  WHEN altitude < 1500 THEN '1000-1500ft'
-                  WHEN altitude < 2000 THEN '1500-2000ft'
-                  WHEN altitude < 3000 THEN '2000-3000ft'
-                  ELSE '3000ft+'
-                END as altitude_range,
-                COUNT(*) as count
-              FROM live_flight_detections_rows
-              WHERE (
-                registration IN ('N912KC', 'N913KC')
-                OR registration LIKE 'N91%KC'
-                OR registration LIKE 'N%KC'
-                OR taxonomy_tag IN ('xxb_kcso', 'xxb_tier1_priority')
-                OR callsign ILIKE '%KCSO%'
-                OR callsign ILIKE '%KERN%'
-              )
+        neonQuery({
+          action: 'customQuery',
+          query: `
+            SELECT CASE WHEN altitude < 500 THEN '< 500ft' WHEN altitude < 1000 THEN '500-1000ft'
+              WHEN altitude < 1500 THEN '1000-1500ft' WHEN altitude < 2000 THEN '1500-2000ft'
+              WHEN altitude < 3000 THEN '2000-3000ft' ELSE '3000ft+' END as altitude_range, COUNT(*) as count
+            FROM live_flight_detections_rows
+            WHERE (registration IN ('N912KC', 'N913KC') OR registration LIKE 'N91%KC' OR registration LIKE 'N%KC'
+              OR taxonomy_tag IN ('xxb_kcso', 'xxb_tier1_priority') OR callsign ILIKE '%KCSO%' OR callsign ILIKE '%KERN%')
               AND altitude IS NOT NULL AND altitude > 0
-              GROUP BY altitude_range
-              ORDER BY MIN(altitude)
-            `
-          }
+            GROUP BY altitude_range ORDER BY MIN(altitude)
+          `
         }),
-        // Daily pattern - broadened filter
-        supabase.functions.invoke('neon-query', {
-          body: {
-            action: 'customQuery',
-            query: `
-              SELECT 
-                DATE(detection_timestamp) as date,
-                COUNT(*) as detections,
-                ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as avg_altitude
-              FROM live_flight_detections_rows
-              WHERE (
-                registration IN ('N912KC', 'N913KC')
-                OR registration LIKE 'N91%KC'
-                OR registration LIKE 'N%KC'
-                OR taxonomy_tag IN ('xxb_kcso', 'xxb_tier1_priority')
-                OR callsign ILIKE '%KCSO%'
-                OR callsign ILIKE '%KERN%'
-              )
-              GROUP BY DATE(detection_timestamp)
-              ORDER BY date DESC
-              LIMIT 60
-            `
-          }
+        neonQuery({
+          action: 'customQuery',
+          query: `
+            SELECT DATE(detection_timestamp) as date, COUNT(*) as detections,
+              ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as avg_altitude
+            FROM live_flight_detections_rows
+            WHERE (registration IN ('N912KC', 'N913KC') OR registration LIKE 'N91%KC' OR registration LIKE 'N%KC'
+              OR taxonomy_tag IN ('xxb_kcso', 'xxb_tier1_priority') OR callsign ILIKE '%KCSO%' OR callsign ILIKE '%KERN%')
+            GROUP BY DATE(detection_timestamp) ORDER BY date DESC LIMIT 60
+          `
         }),
-        // Biometric correlations
-        supabase.functions.invoke('neon-query', {
-          body: {
-            action: 'customQuery',
-            query: `
-              SELECT COUNT(*) as bio_count FROM biometric_monitoring
-              WHERE measurement_timestamp IS NOT NULL
-            `
-          }
+        neonQuery({
+          action: 'customQuery',
+          query: `SELECT COUNT(*) as bio_count FROM biometric_monitoring WHERE measurement_timestamp IS NOT NULL`
         })
       ]);
 

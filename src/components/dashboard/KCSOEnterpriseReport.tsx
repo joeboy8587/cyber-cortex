@@ -3,6 +3,7 @@ import { CyberPanel } from '@/components/ui/cyber-panel';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
+import { neonQuery } from '@/lib/neonQueryRetry';
 import { Shield, AlertTriangle, Clock, MapPin, Heart, FileText, RefreshCw } from 'lucide-react';
 
 interface KCSOEvent {
@@ -50,43 +51,30 @@ export const KCSOEnterpriseReport = () => {
         registrationFilter = `registration = '${selectedAircraft}'`;
       }
 
-      const { data: flightData, error: flightError } = await supabase.functions.invoke('neon-query', {
-        body: {
-          action: 'customQuery',
-          query: `
-            SELECT 
-              registration,
-              detection_timestamp as timestamp,
-              COALESCE(altitude, 0) as altitude,
-              callsign as operator
-            FROM live_flight_detections_rows
-            WHERE ${registrationFilter}
-            AND registration IS NOT NULL
-            ORDER BY detection_timestamp DESC
-            LIMIT 100
-          `
-        }
+      const { data: flightData, error: flightError } = await neonQuery({
+        action: 'customQuery',
+        query: `
+          SELECT registration, detection_timestamp as timestamp,
+            COALESCE(altitude, 0) as altitude, callsign as operator
+          FROM live_flight_detections_rows
+          WHERE ${registrationFilter} AND registration IS NOT NULL
+          ORDER BY detection_timestamp DESC LIMIT 100
+        `
       });
 
       if (flightError) throw flightError;
 
       // Get stats
-      const { data: statsData } = await supabase.functions.invoke('neon-query', {
-        body: {
-          action: 'customQuery',
-          query: `
-            SELECT 
-              COUNT(*) as total_detections,
-              COUNT(DISTINCT DATE(detection_timestamp)) as unique_dates,
-              ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as avg_altitude,
-              MIN(CASE WHEN altitude > 0 THEN altitude ELSE NULL END) as min_altitude,
-              MIN(detection_timestamp) as first_detection,
-              MAX(detection_timestamp) as last_detection
-            FROM live_flight_detections_rows
-            WHERE ${registrationFilter}
-            AND registration IS NOT NULL
-          `
-        }
+      const { data: statsData } = await neonQuery({
+        action: 'customQuery',
+        query: `
+          SELECT COUNT(*) as total_detections, COUNT(DISTINCT DATE(detection_timestamp)) as unique_dates,
+            ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as avg_altitude,
+            MIN(CASE WHEN altitude > 0 THEN altitude ELSE NULL END) as min_altitude,
+            MIN(detection_timestamp) as first_detection, MAX(detection_timestamp) as last_detection
+          FROM live_flight_detections_rows
+          WHERE ${registrationFilter} AND registration IS NOT NULL
+        `
       });
 
       // Correlation map - biometric correlations not directly available in josiah_reflections_rows

@@ -595,29 +595,29 @@ export async function handleAction2(action: string, body: Record<string, any>, s
 
             UNION ALL
 
-            SELECT registration, COALESCE(detection_timestamp, created_at) as event_time,
+            SELECT registration, detection_timestamp as event_time,
               COALESCE(altitude, 0) as altitude, COALESCE(speed, 0) as speed,
-              latitude, longitude, 0 as heading,
-              COALESCE(icao_code, '') as hex, '' as callsign,
+              latitude, longitude, COALESCE(heading, 0) as heading,
+              COALESCE(icao_code, '') as hex, COALESCE(callsign, '') as callsign,
               0 as threat_score, false as is_flagged,
               NULL as flagged_reasons, taxonomy_tag, 'unfilterd_detections' as source_table
             FROM unfilterd_detections
             WHERE registration = '${safeReg}'
-              AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${timeWindow}'
+              AND detection_timestamp > NOW() - INTERVAL '${timeWindow}'
               AND COALESCE(altitude, 0) > 0
 
             UNION ALL
 
-            SELECT registration, COALESCE(detection_timestamp, created_at) as event_time,
-              COALESCE(altitude, 0) as altitude, COALESCE(speed, 0) as speed,
-              latitude, longitude, COALESCE(heading, 0) as heading,
-              COALESCE(icao_code, '') as hex, COALESCE(callsign, '') as callsign,
-              COALESCE(threat_score, 0) as threat_score, COALESCE(flagged, false) as is_flagged,
-              flagged_reasons, taxonomy_tag, 'flagged_aircraft_rows_rows' as source_table
+            SELECT COALESCE(flight, hex) as registration, COALESCE(flagged_at, created_at) as event_time,
+              COALESCE(alt, 0) as altitude, 0 as speed,
+              lat as latitude, lon as longitude, 0 as heading,
+              COALESCE(hex, '') as hex, COALESCE(flight, '') as callsign,
+              0 as threat_score, true as is_flagged,
+              reason as flagged_reasons, NULL as taxonomy_tag, 'flagged_aircraft_rows_rows' as source_table
             FROM flagged_aircraft_rows_rows
-            WHERE registration = '${safeReg}'
-              AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${timeWindow}'
-              AND COALESCE(altitude, 0) > 0
+            WHERE (flight = '${safeReg}' OR hex = '${safeReg}')
+              AND COALESCE(flagged_at, created_at) > NOW() - INTERVAL '${timeWindow}'
+              AND COALESCE(alt, 0) > 0
           )
           SELECT *, CASE 
             WHEN altitude > 0 AND altitude < 500 THEN 'CRITICAL'
@@ -651,21 +651,21 @@ export async function handleAction2(action: string, body: Record<string, any>, s
             WHERE COALESCE(altitude, 0) > ${minAlt} AND COALESCE(altitude, 0) < ${maxAlt}
               AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${vioWindow}'
             UNION ALL
-            SELECT registration, COALESCE(detection_timestamp, created_at) as event_time,
+            SELECT registration, detection_timestamp as event_time,
               COALESCE(altitude, 0) as altitude, COALESCE(speed, 0) as speed,
               latitude, longitude, 0 as threat_score,
               NULL as flagged_reasons, taxonomy_tag
             FROM unfilterd_detections
             WHERE COALESCE(altitude, 0) > ${minAlt} AND COALESCE(altitude, 0) < ${maxAlt}
-              AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${vioWindow}'
+              AND detection_timestamp > NOW() - INTERVAL '${vioWindow}'
             UNION ALL
-            SELECT registration, COALESCE(detection_timestamp, created_at) as event_time,
-              COALESCE(altitude, 0) as altitude, COALESCE(speed, 0) as speed,
-              latitude, longitude, COALESCE(threat_score, 0) as threat_score,
-              flagged_reasons, taxonomy_tag
+            SELECT COALESCE(flight, hex) as registration, COALESCE(flagged_at, created_at) as event_time,
+              COALESCE(alt, 0) as altitude, 0 as speed,
+              lat as latitude, lon as longitude, 0 as threat_score,
+              reason as flagged_reasons, NULL as taxonomy_tag
             FROM flagged_aircraft_rows_rows
-            WHERE COALESCE(altitude, 0) > ${minAlt} AND COALESCE(altitude, 0) < ${maxAlt}
-              AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${vioWindow}'
+            WHERE COALESCE(alt, 0) > ${minAlt} AND COALESCE(alt, 0) < ${maxAlt}
+              AND COALESCE(flagged_at, created_at) > NOW() - INTERVAL '${vioWindow}'
           )
           SELECT *, CASE 
             WHEN altitude < 500 THEN 'CRITICAL: 91.119 Violation (<500ft)'
@@ -683,11 +683,11 @@ export async function handleAction2(action: string, body: Record<string, any>, s
             UNION ALL
             SELECT COALESCE(altitude, 0) as altitude, registration FROM unfilterd_detections
             WHERE COALESCE(altitude, 0) > 0 AND COALESCE(altitude, 0) < 1000
-              AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${vioWindow}'
+              AND detection_timestamp > NOW() - INTERVAL '${vioWindow}'
             UNION ALL
-            SELECT COALESCE(altitude, 0) as altitude, registration FROM flagged_aircraft_rows_rows
-            WHERE COALESCE(altitude, 0) > 0 AND COALESCE(altitude, 0) < 1000
-              AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${vioWindow}'
+            SELECT COALESCE(alt, 0) as altitude, COALESCE(flight, hex) as registration FROM flagged_aircraft_rows_rows
+            WHERE COALESCE(alt, 0) > 0 AND COALESCE(alt, 0) < 1000
+              AND COALESCE(flagged_at, created_at) > NOW() - INTERVAL '${vioWindow}'
           )
           SELECT COUNT(*) as total_violations, COUNT(DISTINCT registration) as unique_aircraft,
             COUNT(*) FILTER (WHERE altitude < 500) as critical_count,
@@ -716,18 +716,18 @@ export async function handleAction2(action: string, body: Record<string, any>, s
               AND registration IS NOT NULL AND registration != ''
             UNION ALL
             SELECT registration, COALESCE(altitude, 0) as altitude,
-              COALESCE(detection_timestamp, created_at) as event_time, taxonomy_tag
+              detection_timestamp as event_time, taxonomy_tag
             FROM unfilterd_detections
             WHERE COALESCE(altitude, 0) > 0 AND COALESCE(altitude, 0) < 1000
-              AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${vaWindow}'
+              AND detection_timestamp > NOW() - INTERVAL '${vaWindow}'
               AND registration IS NOT NULL AND registration != ''
             UNION ALL
-            SELECT registration, COALESCE(altitude, 0) as altitude,
-              COALESCE(detection_timestamp, created_at) as event_time, taxonomy_tag
+            SELECT COALESCE(flight, hex) as registration, COALESCE(alt, 0) as altitude,
+              COALESCE(flagged_at, created_at) as event_time, NULL as taxonomy_tag
             FROM flagged_aircraft_rows_rows
-            WHERE COALESCE(altitude, 0) > 0 AND COALESCE(altitude, 0) < 1000
-              AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${vaWindow}'
-              AND registration IS NOT NULL AND registration != ''
+            WHERE COALESCE(alt, 0) > 0 AND COALESCE(alt, 0) < 1000
+              AND COALESCE(flagged_at, created_at) > NOW() - INTERVAL '${vaWindow}'
+              AND (flight IS NOT NULL AND flight != '' OR hex IS NOT NULL AND hex != '')
           )
           SELECT registration, COUNT(*) as violation_count,
             COUNT(*) FILTER (WHERE altitude < 500) as critical_violations,

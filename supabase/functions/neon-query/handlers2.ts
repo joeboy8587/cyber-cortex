@@ -578,28 +578,58 @@ export async function handleAction2(action: string, body: Record<string, any>, s
       const { registration, timeWindow = '90 days', limit: trajLimit = 500 } = body;
       if (!registration) return { error: 'Registration is required' };
       const safeReg = registration.replace(/[^a-zA-Z0-9]/g, '');
+      const lim = parseInt(String(trajLimit));
       try {
         const trajectory = await sql.unsafe(`
-          SELECT registration, COALESCE(detection_timestamp, created_at) as event_time,
-            COALESCE(altitude, 0) as altitude, COALESCE(speed, 0) as speed,
-            latitude, longitude, COALESCE(heading, 0) as heading,
-            COALESCE(icao_code, '') as hex, COALESCE(callsign, '') as callsign,
-            COALESCE(threat_score, 0) as threat_score, COALESCE(flagged, false) as is_flagged,
-            flagged_reasons, taxonomy_tag,
-            CASE 
-              WHEN COALESCE(altitude, 0) > 0 AND COALESCE(altitude, 0) < 500 THEN 'CRITICAL'
-              WHEN COALESCE(altitude, 0) >= 500 AND COALESCE(altitude, 0) < 1000 THEN 'WARNING'
-              WHEN COALESCE(altitude, 0) >= 1000 AND COALESCE(altitude, 0) < 1500 THEN 'CAUTION'
-              ELSE 'NORMAL'
-            END as violation_severity
-          FROM live_flight_detections_rows
-          WHERE registration = '${safeReg}'
-            AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${timeWindow}'
-            AND COALESCE(altitude, 0) > 0
-          ORDER BY COALESCE(detection_timestamp, created_at) ASC
-          LIMIT ${parseInt(String(trajLimit))}
+          WITH combined AS (
+            SELECT registration, COALESCE(detection_timestamp, created_at) as event_time,
+              COALESCE(altitude, 0) as altitude, COALESCE(speed, 0) as speed,
+              latitude, longitude, COALESCE(heading, 0) as heading,
+              COALESCE(icao_code, '') as hex, COALESCE(callsign, '') as callsign,
+              COALESCE(threat_score, 0) as threat_score, COALESCE(flagged, false) as is_flagged,
+              flagged_reasons, taxonomy_tag, 'live_flight_detections_rows' as source_table
+            FROM live_flight_detections_rows
+            WHERE registration = '${safeReg}'
+              AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${timeWindow}'
+              AND COALESCE(altitude, 0) > 0
+
+            UNION ALL
+
+            SELECT registration, COALESCE(detection_timestamp, created_at) as event_time,
+              COALESCE(altitude, 0) as altitude, COALESCE(speed, 0) as speed,
+              latitude, longitude, 0 as heading,
+              COALESCE(icao_code, '') as hex, '' as callsign,
+              0 as threat_score, false as is_flagged,
+              NULL as flagged_reasons, taxonomy_tag, 'unfilterd_detections' as source_table
+            FROM unfilterd_detections
+            WHERE registration = '${safeReg}'
+              AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${timeWindow}'
+              AND COALESCE(altitude, 0) > 0
+
+            UNION ALL
+
+            SELECT registration, COALESCE(detection_timestamp, created_at) as event_time,
+              COALESCE(altitude, 0) as altitude, COALESCE(speed, 0) as speed,
+              latitude, longitude, COALESCE(heading, 0) as heading,
+              COALESCE(icao_code, '') as hex, COALESCE(callsign, '') as callsign,
+              COALESCE(threat_score, 0) as threat_score, COALESCE(flagged, false) as is_flagged,
+              flagged_reasons, taxonomy_tag, 'flagged_aircraft_rows_rows' as source_table
+            FROM flagged_aircraft_rows_rows
+            WHERE registration = '${safeReg}'
+              AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${timeWindow}'
+              AND COALESCE(altitude, 0) > 0
+          )
+          SELECT *, CASE 
+            WHEN altitude > 0 AND altitude < 500 THEN 'CRITICAL'
+            WHEN altitude >= 500 AND altitude < 1000 THEN 'WARNING'
+            WHEN altitude >= 1000 AND altitude < 1500 THEN 'CAUTION'
+            ELSE 'NORMAL'
+          END as violation_severity
+          FROM combined
+          ORDER BY event_time ASC
+          LIMIT ${lim}
         `);
-        return { data: trajectory, registration: safeReg, count: trajectory.length };
+        return { data: trajectory, registration: safeReg, count: trajectory.length, sources: ['live_flight_detections_rows', 'unfilterd_detections', 'flagged_aircraft_rows_rows'] };
       } catch (e) {
         return { error: (e as Error).message };
       }

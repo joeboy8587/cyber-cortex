@@ -104,8 +104,8 @@ export function KCSOEvidenceMatrix() {
       }
 
       // Process fleet records - merge Neon and Supabase data
-      const neonFleet = fleetResult.data || [];
-      const supaFleet = supabaseFleet.data || [];
+      const neonFleet = Array.isArray(fleetResult.data) ? fleetResult.data : [];
+      const supaFleet = Array.isArray(supabaseFleet.data) ? supabaseFleet.data : [];
       
       const allFleet = [...neonFleet, ...supaFleet].reduce((acc: FleetRecord[], f: any) => {
         const existing = acc.find(r => r.tail_number === f.tail_number);

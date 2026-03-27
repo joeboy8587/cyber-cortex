@@ -3,10 +3,9 @@ import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
 
-// Compute SHA-256 hash of a string
 async function computeSHA256(data: string): Promise<string> {
   const encoder = new TextEncoder();
   const dataBuffer = encoder.encode(data);
@@ -15,7 +14,6 @@ async function computeSHA256(data: string): Promise<string> {
   return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-// Sanitize table name to prevent SQL injection
 function sanitizeTableName(name: string): string {
   return name.replace(/[^a-zA-Z0-9_]/g, '');
 }
@@ -26,9 +24,7 @@ serve(async (req) => {
   }
 
   const databaseUrl = Deno.env.get('NEON_DATABASE_URL');
-  
   if (!databaseUrl) {
-    console.error('[evidence-fingerprint] NEON_DATABASE_URL not configured');
     return new Response(
       JSON.stringify({ error: 'Database connection not configured' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -36,19 +32,17 @@ serve(async (req) => {
   }
 
   let sql: ReturnType<typeof postgres> | null = null;
-  
+
   try {
     const body = await req.json();
-    const { action, table, batchSize = 500 } = body;
-    
+    const { action, table, batchSize = 500, offset = 0 } = body;
     console.log(`[evidence-fingerprint] Action: ${action}, Table: ${table || 'N/A'}`);
-    
-    // Optimized connection settings for stability
+
     sql = postgres(databaseUrl, {
       ssl: 'require',
       max: 1,
       idle_timeout: 20,
-      connect_timeout: 10,
+      connect_timeout: 15,
       max_lifetime: 60,
     });
 
@@ -56,6 +50,7 @@ serve(async (req) => {
 
     switch (action) {
       case 'getTablesStatus': {
+        // Use a single efficient query to get all tables + hash column status
         result = await sql`
           SELECT 
             t.table_schema as schemaname,
@@ -72,7 +67,7 @@ serve(async (req) => {
           WHERE t.table_schema = 'public'
             AND t.table_type = 'BASE TABLE'
           ORDER BY COALESCE(pg_class.reltuples, 0) DESC
-          LIMIT 200
+          LIMIT 500
         `;
         console.log(`[evidence-fingerprint] Found ${result.length} tables`);
         break;
@@ -81,25 +76,15 @@ serve(async (req) => {
       case 'addHashColumn': {
         if (!table) throw new Error('Table name required');
         const safeTable = sanitizeTableName(table);
-        
-        const exists = await sql`
-          SELECT COUNT(*)::int as count FROM information_schema.columns 
-          WHERE table_schema = 'public' AND table_name = ${safeTable} AND column_name = 'sha256_hash'
-        `;
-        
-        if (exists[0].count > 0) {
-          result = { message: `Column sha256_hash already exists in ${safeTable}`, existed: true };
-        } else {
-          await sql.unsafe(`ALTER TABLE public."${safeTable}" ADD COLUMN IF NOT EXISTS sha256_hash TEXT`);
-          await sql.unsafe(`CREATE INDEX IF NOT EXISTS idx_${safeTable}_sha256 ON public."${safeTable}"(sha256_hash)`);
-          await sql.unsafe(`CREATE INDEX IF NOT EXISTS idx_${safeTable}_sha256_null ON public."${safeTable}"(sha256_hash) WHERE sha256_hash IS NULL`);
-          result = { message: `Added sha256_hash column to ${safeTable}`, created: true };
-        }
-        console.log(`[evidence-fingerprint] ${result.message}`);
+        await sql.unsafe(`ALTER TABLE public."${safeTable}" ADD COLUMN IF NOT EXISTS sha256_hash TEXT`);
+        await sql.unsafe(`CREATE INDEX IF NOT EXISTS idx_${safeTable}_sha256 ON public."${safeTable}"(sha256_hash)`);
+        result = { message: `Added sha256_hash column to ${safeTable}`, created: true };
         break;
       }
 
       case 'addHashColumnToAll': {
+        // Process in batches with offset for pagination
+        const batchLimit = Math.min(batchSize || 50, 50); // Max 50 per call to avoid timeout
         const tablesWithoutHash = await sql`
           SELECT DISTINCT t.table_name
           FROM information_schema.tables t
@@ -109,30 +94,43 @@ serve(async (req) => {
             AND t.table_type = 'BASE TABLE'
             AND c.column_name IS NULL
           ORDER BY t.table_name
-          LIMIT 100
+          LIMIT ${batchLimit} OFFSET ${offset}
         `;
-        
+
+        // Also get total remaining count
+        const totalRemaining = await sql`
+          SELECT COUNT(DISTINCT t.table_name)::int as count
+          FROM information_schema.tables t
+          LEFT JOIN information_schema.columns c 
+            ON c.table_name = t.table_name AND c.table_schema = 'public' AND c.column_name = 'sha256_hash'
+          WHERE t.table_schema = 'public'
+            AND t.table_type = 'BASE TABLE'
+            AND c.column_name IS NULL
+        `;
+
         const added: string[] = [];
         const failed: { table: string; error: string }[] = [];
-        
+
         for (const row of tablesWithoutHash) {
           try {
             const safeTable = sanitizeTableName(row.table_name);
             await sql.unsafe(`ALTER TABLE public."${safeTable}" ADD COLUMN IF NOT EXISTS sha256_hash TEXT`);
-            await sql.unsafe(`CREATE INDEX IF NOT EXISTS idx_${safeTable}_sha256 ON public."${safeTable}"(sha256_hash)`);
-            await sql.unsafe(`CREATE INDEX IF NOT EXISTS idx_${safeTable}_sha256_null ON public."${safeTable}"(sha256_hash) WHERE sha256_hash IS NULL`);
+            // Skip index creation for speed - can be done later
             added.push(row.table_name);
           } catch (e) {
             failed.push({ table: row.table_name, error: (e as Error).message });
           }
         }
-        
-        result = { 
-          added, 
-          failed, 
+
+        const remaining = (totalRemaining[0]?.count || 0) - added.length;
+        result = {
+          added,
+          failed,
           totalAdded: added.length,
           totalFailed: failed.length,
-          message: `Added sha256_hash column to ${added.length} tables`
+          remaining: Math.max(0, remaining),
+          hasMore: remaining > 0,
+          message: `Added sha256_hash column to ${added.length} tables (${Math.max(0, remaining)} remaining)`
         };
         console.log(`[evidence-fingerprint] ${result.message}`);
         break;
@@ -141,21 +139,18 @@ serve(async (req) => {
       case 'computeHashes': {
         if (!table) throw new Error('Table name required');
         const safeTable = sanitizeTableName(table);
-        const limit = Math.min(batchSize, 500); // Cap batch size for stability
-        
-        // Get columns for this table (excluding sha256_hash itself)
+        const limit = Math.min(batchSize, 500);
+
+        // Get columns
         const columns = await sql`
           SELECT column_name FROM information_schema.columns 
           WHERE table_schema = 'public' AND table_name = ${safeTable} 
           AND column_name != 'sha256_hash'
           ORDER BY ordinal_position
         `;
-        
-        if (columns.length === 0) {
-          throw new Error(`Table ${safeTable} not found or has no columns`);
-        }
+        if (columns.length === 0) throw new Error(`Table ${safeTable} not found`);
 
-        // Find primary key column
+        // Find primary key
         const pkResult = await sql`
           SELECT a.attname as pk_column
           FROM pg_index i
@@ -163,33 +158,18 @@ serve(async (req) => {
           WHERE i.indrelid = ${`public.${safeTable}`}::regclass AND i.indisprimary
           LIMIT 1
         `;
-        
+
         const pkColumn = pkResult.length > 0 ? pkResult[0].pk_column : null;
         if (!pkColumn) {
-          // Skip tables without primary keys gracefully
-          console.log(`[evidence-fingerprint] Skipping ${safeTable} - no primary key`);
-          result = {
-            table: safeTable,
-            updated: 0,
-            remaining: 0,
-            message: `Skipped ${safeTable} - no primary key (backup/staging table)`,
-            hasMore: false,
-            skipped: true,
-            reason: 'no_primary_key'
-          };
+          result = { table: safeTable, updated: 0, remaining: 0, message: `Skipped ${safeTable} - no primary key`, hasMore: false, skipped: true, reason: 'no_primary_key' };
           break;
         }
-        
-        // Get rows without hash (limited batch)
-        const rows = await sql.unsafe(`
-          SELECT * FROM public."${safeTable}" 
-          WHERE sha256_hash IS NULL 
-          LIMIT ${limit}
-        `);
-        
+
+        // Get unhashed rows
+        const rows = await sql.unsafe(`SELECT * FROM public."${safeTable}" WHERE sha256_hash IS NULL LIMIT ${limit}`);
+
         let updated = 0;
         for (const row of rows) {
-          // Create deterministic string from row data
           const dataString = columns.map(c => {
             const val = row[c.column_name];
             if (val === null || val === undefined) return 'NULL';
@@ -197,102 +177,137 @@ serve(async (req) => {
             if (typeof val === 'object') return JSON.stringify(val);
             return String(val);
           }).join('|');
-          
+
           const hash = await computeSHA256(dataString);
-          
-          await sql.unsafe(
-            `UPDATE public."${safeTable}" SET sha256_hash = $1 WHERE "${pkColumn}" = $2`,
-            [hash, row[pkColumn]]
-          );
+          await sql.unsafe(`UPDATE public."${safeTable}" SET sha256_hash = $1 WHERE "${pkColumn}" = $2`, [hash, row[pkColumn]]);
           updated++;
         }
-        
-        // Get remaining count
+
         const remaining = await sql.unsafe(`SELECT COUNT(*)::int as count FROM public."${safeTable}" WHERE sha256_hash IS NULL`);
-        
-        result = { 
-          table: safeTable,
-          updated, 
-          remaining: remaining[0].count,
-          message: `Computed ${updated} hashes for ${safeTable}`,
-          hasMore: remaining[0].count > 0
-        };
-        console.log(`[evidence-fingerprint] ${result.message}, ${result.remaining} remaining`);
+        result = { table: safeTable, updated, remaining: remaining[0].count, message: `Computed ${updated} hashes for ${safeTable}`, hasMore: remaining[0].count > 0 };
         break;
       }
 
       case 'getHashStats': {
-        const tables = await sql`
-          SELECT table_name FROM information_schema.columns 
-          WHERE column_name = 'sha256_hash' AND table_schema = 'public'
-          ORDER BY table_name
-        `;
-        
-        const stats = [];
-        for (const t of tables) {
+        // Use a single batch query instead of per-table queries to avoid timeout
+        const stats = await sql.unsafe(`
+          WITH hash_tables AS (
+            SELECT DISTINCT table_name 
+            FROM information_schema.columns 
+            WHERE column_name = 'sha256_hash' AND table_schema = 'public'
+          ),
+          table_stats AS (
+            SELECT 
+              ht.table_name,
+              COALESCE(pc.reltuples::bigint, 0) as estimated_total
+            FROM hash_tables ht
+            LEFT JOIN pg_class pc ON pc.relname = ht.table_name
+            LEFT JOIN pg_namespace pn ON pn.oid = pc.relnamespace AND pn.nspname = 'public'
+          )
+          SELECT 
+            table_name as table,
+            estimated_total as total,
+            0 as hashed,
+            estimated_total as unhashed,
+            0 as coverage
+          FROM table_stats
+          ORDER BY estimated_total DESC
+        `);
+
+        // For top 20 tables by size, get actual counts (avoid timeout on 900+ tables)
+        const topTables = stats.slice(0, 20);
+        for (const t of topTables) {
           try {
-            const safeTable = sanitizeTableName(t.table_name);
+            const safeTable = sanitizeTableName(t.table);
             const countResult = await sql.unsafe(`
-              SELECT 
-                COUNT(*)::int as total,
-                COUNT(sha256_hash)::int as hashed,
-                (COUNT(*) - COUNT(sha256_hash))::int as unhashed
+              SELECT COUNT(*)::int as total, COUNT(sha256_hash)::int as hashed
               FROM public."${safeTable}"
             `);
-            const row = countResult[0];
-            stats.push({
-              table: t.table_name,
-              total: row.total,
-              hashed: row.hashed,
-              unhashed: row.unhashed,
-              coverage: row.total > 0 ? Math.round((row.hashed / row.total) * 100) : 100
-            });
-          } catch (e) {
-            console.error(`[evidence-fingerprint] Error getting stats for ${t.table_name}:`, e);
-          }
+            t.total = countResult[0].total;
+            t.hashed = countResult[0].hashed;
+            t.unhashed = t.total - t.hashed;
+            t.coverage = t.total > 0 ? Math.round((t.hashed / t.total) * 100) : 100;
+          } catch { /* skip problematic tables */ }
         }
-        
-        const totalRecords = stats.reduce((sum, s) => sum + s.total, 0);
-        const totalHashed = stats.reduce((sum, s) => sum + s.hashed, 0);
-        
+
+        const totalTables = stats.length;
+        const totalRecords = stats.reduce((sum: number, s: any) => sum + Number(s.total || 0), 0);
+        const totalHashed = stats.reduce((sum: number, s: any) => sum + Number(s.hashed || 0), 0);
+
         result = {
-          tables: stats.sort((a, b) => b.unhashed - a.unhashed),
-          totalTables: stats.length,
+          tables: stats.sort((a: any, b: any) => (b.unhashed || 0) - (a.unhashed || 0)),
+          totalTables,
           totalRecords,
           totalHashed,
-          overallCoverage: totalRecords > 0 ? Math.round((totalHashed / totalRecords) * 100) : 100
+          overallCoverage: totalRecords > 0 ? Math.round((totalHashed / totalRecords) * 100) : 0
         };
-        console.log(`[evidence-fingerprint] Stats: ${result.totalTables} tables, ${result.overallCoverage}% coverage`);
+        console.log(`[evidence-fingerprint] Stats: ${totalTables} tables, ${result.overallCoverage}% coverage`);
+        break;
+      }
+
+      case 'computeHashesBulk': {
+        // Batch hash multiple tables in one call
+        const tablesToHash = body.tables || [];
+        const perTableLimit = Math.min(body.perTableLimit || 200, 500);
+        const results: any[] = [];
+
+        for (const tableName of tablesToHash.slice(0, 5)) { // Max 5 tables per call
+          const safeTable = sanitizeTableName(tableName);
+          try {
+            const pkResult = await sql`
+              SELECT a.attname as pk_column
+              FROM pg_index i
+              JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+              WHERE i.indrelid = ${`public.${safeTable}`}::regclass AND i.indisprimary
+              LIMIT 1
+            `;
+            if (pkResult.length === 0) { results.push({ table: safeTable, skipped: true, reason: 'no_pk' }); continue; }
+            const pkColumn = pkResult[0].pk_column;
+
+            const columns = await sql`
+              SELECT column_name FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name = ${safeTable} AND column_name != 'sha256_hash'
+              ORDER BY ordinal_position
+            `;
+
+            const rows = await sql.unsafe(`SELECT * FROM public."${safeTable}" WHERE sha256_hash IS NULL LIMIT ${perTableLimit}`);
+            let updated = 0;
+            for (const row of rows) {
+              const dataString = columns.map(c => {
+                const val = row[c.column_name];
+                if (val === null || val === undefined) return 'NULL';
+                if (val instanceof Date) return val.toISOString();
+                if (typeof val === 'object') return JSON.stringify(val);
+                return String(val);
+              }).join('|');
+              const hash = await computeSHA256(dataString);
+              await sql.unsafe(`UPDATE public."${safeTable}" SET sha256_hash = $1 WHERE "${pkColumn}" = $2`, [hash, row[pkColumn]]);
+              updated++;
+            }
+            results.push({ table: safeTable, updated, total: rows.length });
+          } catch (e) {
+            results.push({ table: safeTable, error: (e as Error).message });
+          }
+        }
+
+        result = { results, message: `Processed ${results.length} tables` };
         break;
       }
 
       case 'verifyHash': {
         if (!table) throw new Error('Table name required');
         const safeTable = sanitizeTableName(table);
-        
         const columns = await sql`
           SELECT column_name FROM information_schema.columns 
-          WHERE table_schema = 'public' AND table_name = ${safeTable} 
-          AND column_name != 'sha256_hash'
+          WHERE table_schema = 'public' AND table_name = ${safeTable} AND column_name != 'sha256_hash'
           ORDER BY ordinal_position
         `;
-        
-        if (columns.length === 0) {
-          throw new Error(`Table ${safeTable} not found`);
-        }
-        
-        // Get sample of hashed rows to verify
-        const rows = await sql.unsafe(`
-          SELECT * FROM public."${safeTable}" 
-          WHERE sha256_hash IS NOT NULL 
-          ORDER BY RANDOM()
-          LIMIT 100
-        `);
-        
-        let verified = 0;
-        let failed = 0;
-        const failures: { id: unknown; stored: string; computed: string }[] = [];
-        
+        if (columns.length === 0) throw new Error(`Table ${safeTable} not found`);
+
+        const rows = await sql.unsafe(`SELECT * FROM public."${safeTable}" WHERE sha256_hash IS NOT NULL ORDER BY RANDOM() LIMIT 100`);
+        let verified = 0, failed = 0;
+        const failures: any[] = [];
+
         for (const row of rows) {
           const dataString = columns.map(c => {
             const val = row[c.column_name];
@@ -301,87 +316,14 @@ serve(async (req) => {
             if (typeof val === 'object') return JSON.stringify(val);
             return String(val);
           }).join('|');
-          
           const computedHash = await computeSHA256(dataString);
-          
-          if (computedHash === row.sha256_hash) {
-            verified++;
-          } else {
+          if (computedHash === row.sha256_hash) { verified++; } else {
             failed++;
-            if (failures.length < 5) {
-              failures.push({ 
-                id: row.id || row[columns[0].column_name],
-                stored: row.sha256_hash,
-                computed: computedHash
-              });
-            }
+            if (failures.length < 5) failures.push({ id: row.id || row[columns[0].column_name], stored: row.sha256_hash, computed: computedHash });
           }
         }
-        
-        result = {
-          table: safeTable,
-          verified,
-          failed,
-          failures,
-          sampleSize: rows.length,
-          integrity: failed === 0 ? 'VERIFIED' : 'COMPROMISED',
-          message: failed === 0 
-            ? `All ${verified} sampled records verified - chain of custody intact`
-            : `WARNING: ${failed} records failed verification - possible tampering detected`
-        };
-        console.log(`[evidence-fingerprint] Verify ${safeTable}: ${result.integrity}`);
-        break;
-      }
 
-      case 'createAutoHashTrigger': {
-        // Create a function and trigger to auto-hash new records
-        if (!table) throw new Error('Table name required');
-        const safeTable = sanitizeTableName(table);
-        
-        // Get columns for building the hash
-        const columns = await sql`
-          SELECT column_name FROM information_schema.columns 
-          WHERE table_schema = 'public' AND table_name = ${safeTable} 
-          AND column_name != 'sha256_hash'
-          ORDER BY ordinal_position
-        `;
-        
-        if (columns.length === 0) {
-          throw new Error(`Table ${safeTable} not found`);
-        }
-        
-        const colList = columns.map(c => `COALESCE(NEW."${c.column_name}"::text, 'NULL')`).join(` || '|' || `);
-        
-        // Create trigger function
-        await sql.unsafe(`
-          CREATE OR REPLACE FUNCTION public.auto_hash_${safeTable}()
-          RETURNS TRIGGER AS $$
-          BEGIN
-            NEW.sha256_hash := encode(sha256((${colList})::bytea), 'hex');
-            RETURN NEW;
-          END;
-          $$ LANGUAGE plpgsql;
-        `);
-        
-        // Drop existing trigger if any
-        await sql.unsafe(`DROP TRIGGER IF EXISTS trg_auto_hash_${safeTable} ON public."${safeTable}"`);
-        
-        // Create trigger
-        await sql.unsafe(`
-          CREATE TRIGGER trg_auto_hash_${safeTable}
-          BEFORE INSERT OR UPDATE ON public."${safeTable}"
-          FOR EACH ROW
-          WHEN (NEW.sha256_hash IS NULL)
-          EXECUTE FUNCTION public.auto_hash_${safeTable}();
-        `);
-        
-        result = {
-          table: safeTable,
-          message: `Auto-hash trigger created for ${safeTable}`,
-          triggerName: `trg_auto_hash_${safeTable}`,
-          functionName: `auto_hash_${safeTable}`
-        };
-        console.log(`[evidence-fingerprint] ${result.message}`);
+        result = { table: safeTable, verified, failed, failures, sampleSize: rows.length, integrity: failed === 0 ? 'VERIFIED' : 'COMPROMISED' };
         break;
       }
 
@@ -390,21 +332,12 @@ serve(async (req) => {
     }
 
     await sql.end();
-
-    return new Response(
-      JSON.stringify({ data: result }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return new Response(JSON.stringify({ data: result }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
   } catch (err) {
     const error = err as Error;
     console.error('[evidence-fingerprint] Error:', error.message);
-    if (sql) {
-      try { await sql.end(); } catch (e) { /* ignore */ }
-    }
-    return new Response(
-      JSON.stringify({ error: error.message }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    if (sql) { try { await sql.end(); } catch { /* */ } }
+    return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
 });

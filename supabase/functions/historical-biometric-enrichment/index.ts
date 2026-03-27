@@ -3,7 +3,7 @@ import { Pool } from "https://deno.land/x/postgres@v0.17.0/mod.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
 
 // Bradford-Hill scoring criteria
@@ -70,7 +70,6 @@ serve(async (req) => {
 
     try {
       if (action === 'analyze') {
-        // Get coverage statistics for historical data
         const biometricStats = await client.queryObject`
           SELECT 
             DATE(measurement_timestamp) as date,
@@ -96,25 +95,25 @@ serve(async (req) => {
           ORDER BY date
         `;
 
-      let existingCorrelationsCount = 0;
-      try {
-        const existingCorrelations = await client.queryObject<{ count: string }>`
-          SELECT COUNT(*)::int as count
-          FROM master_biometric_aircraft_correlations
-          WHERE biometric_timestamp >= ${startDate || '2021-01-01'}
-            AND biometric_timestamp < ${endDate || '2025-01-01'}
-        `;
-        existingCorrelationsCount = Number(existingCorrelations.rows[0]?.count || 0);
-      } catch {
-        // Table may not exist yet
-      }
+        let existingCorrelationsCount = 0;
+        try {
+          const existingCorrelations = await client.queryObject<{ count: string }>`
+            SELECT COUNT(*)::int as count
+            FROM master_biometric_aircraft_correlations
+            WHERE biometric_timestamp >= ${startDate || '2021-01-01'}
+              AND biometric_timestamp < ${endDate || '2025-01-01'}
+          `;
+          existingCorrelationsCount = Number(existingCorrelations.rows[0]?.count || 0);
+        } catch {
+          // Table may not exist yet
+        }
 
-      return new Response(JSON.stringify({
-        success: true,
-        analysis: {
-          biometricDays: biometricStats.rows.length,
-          flightDays: flightStats.rows.length,
-          existingCorrelations: existingCorrelationsCount,
+        return new Response(JSON.stringify({
+          success: true,
+          analysis: {
+            biometricDays: biometricStats.rows.length,
+            flightDays: flightStats.rows.length,
+            existingCorrelations: existingCorrelationsCount,
             biometricData: biometricStats.rows,
             flightData: flightStats.rows
           }
@@ -124,12 +123,11 @@ serve(async (req) => {
       }
 
       if (action === 'enrich') {
-        // Create correlations table if not exists
+        // Ensure table exists with correct schema - add missing columns if needed
         await client.queryObject`
           CREATE TABLE IF NOT EXISTS master_biometric_aircraft_correlations (
             id SERIAL PRIMARY KEY,
             biometric_id TEXT,
-            flight_id TEXT,
             registration TEXT,
             correlation_timestamp TIMESTAMP,
             biometric_timestamp TIMESTAMP,
@@ -143,7 +141,24 @@ serve(async (req) => {
           )
         `;
 
-        // Find biometric records without correlations
+        // Add columns that may be missing on existing tables
+        const alterStatements = [
+          `ALTER TABLE master_biometric_aircraft_correlations ADD COLUMN IF NOT EXISTS biometric_id TEXT`,
+          `ALTER TABLE master_biometric_aircraft_correlations ADD COLUMN IF NOT EXISTS registration TEXT`,
+          `ALTER TABLE master_biometric_aircraft_correlations ADD COLUMN IF NOT EXISTS correlation_timestamp TIMESTAMP`,
+          `ALTER TABLE master_biometric_aircraft_correlations ADD COLUMN IF NOT EXISTS biometric_timestamp TIMESTAMP`,
+          `ALTER TABLE master_biometric_aircraft_correlations ADD COLUMN IF NOT EXISTS flight_timestamp TIMESTAMP`,
+          `ALTER TABLE master_biometric_aircraft_correlations ADD COLUMN IF NOT EXISTS time_gap_minutes NUMERIC`,
+          `ALTER TABLE master_biometric_aircraft_correlations ADD COLUMN IF NOT EXISTS heart_rate INTEGER`,
+          `ALTER TABLE master_biometric_aircraft_correlations ADD COLUMN IF NOT EXISTS stress_level NUMERIC`,
+          `ALTER TABLE master_biometric_aircraft_correlations ADD COLUMN IF NOT EXISTS altitude_feet NUMERIC`,
+          `ALTER TABLE master_biometric_aircraft_correlations ADD COLUMN IF NOT EXISTS bradford_hill_score INTEGER`,
+        ];
+        for (const stmt of alterStatements) {
+          try { await client.queryObject(stmt); } catch { /* column may already exist */ }
+        }
+
+        // Find biometric records to correlate
         const biometricRecords = await client.queryObject`
           SELECT 
             bm.id,
@@ -200,15 +215,15 @@ serve(async (req) => {
               repeatOccurrences: parseInt((repeatCount.rows[0] as any)?.count || '1')
             });
 
-            // Insert correlation
+            // Insert correlation WITHOUT flight_id column (doesn't exist in table)
             await client.queryObject`
               INSERT INTO master_biometric_aircraft_correlations (
-                biometric_id, flight_id, registration,
+                biometric_id, registration,
                 correlation_timestamp, biometric_timestamp, flight_timestamp,
                 time_gap_minutes, heart_rate, stress_level, altitude_feet,
                 bradford_hill_score
               ) VALUES (
-                ${bio.id}::text, ${flight.id}::text, ${flight.registration},
+                ${bio.id}::text, ${flight.registration},
                 ${bio.measurement_timestamp}, ${bio.measurement_timestamp}, ${flight.detection_timestamp},
                 ${timeGapMinutes}, ${bio.heart_rate}, ${bio.stress_level}, ${flight.altitude},
                 ${bhScore}
@@ -219,7 +234,6 @@ serve(async (req) => {
             correlationsCreated++;
             correlations.push({
               biometricId: bio.id,
-              flightId: flight.id,
               registration: flight.registration,
               timeGapMinutes: Math.round(timeGapMinutes * 10) / 10,
               bradfordHillScore: bhScore

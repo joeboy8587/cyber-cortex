@@ -52,6 +52,11 @@ export default function DataTools() {
           <FlaggedAircraftImporter />
         </section>
 
+        {/* Notion Watchtower Sync */}
+        <section>
+          <NotionFullSyncPanel />
+        </section>
+
         {/* Comprehensive Data Audit */}
         <section>
           <ComprehensiveDataAudit />

@@ -204,13 +204,22 @@ export function MultiAgentHub() {
       if (handoffMatch) {
         const targetAgent = handoffMatch[1];
         const taskDescription = handoffMatch[2].trim();
-        toast.info(`Handing off to ${AGENTS.find(a => a.id === targetAgent)?.name || targetAgent}`);
+        const validAgent = AGENTS.find(a => a.id === targetAgent);
         
-        // Auto-switch to target agent and send the handoff
-        setActiveAgent(targetAgent);
-        setTimeout(() => {
-          setInput(taskDescription);
-        }, 500);
+        if (validAgent) {
+          toast.info(`Handing off to ${validAgent.name}`);
+          setActiveAgent(targetAgent);
+          setTimeout(() => {
+            setInput(taskDescription);
+          }, 500);
+        } else {
+          // AI returned a capability name instead of an agent type — map to legal_drafter as fallback
+          toast.info(`Routing "${targetAgent}" task to Legal Drafter`);
+          setActiveAgent("legal_drafter");
+          setTimeout(() => {
+            setInput(taskDescription);
+          }, 500);
+        }
       }
 
       if (requestMatch) {

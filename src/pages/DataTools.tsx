@@ -21,6 +21,7 @@ import { ChainOfCustodyPanel } from "@/components/dashboard/ChainOfCustodyPanel"
 import { MerkleChainPanel } from "@/components/dashboard/MerkleChainPanel";
 import { DBHealthMonitor } from "@/components/dashboard/DBHealthMonitor";
 import FlaggedAircraftImporter from "@/components/dashboard/FlaggedAircraftImporter";
+import { NotionFullSyncPanel } from "@/components/dashboard/NotionFullSyncPanel";
 
 export default function DataTools() {
   return (
@@ -49,6 +50,11 @@ export default function DataTools() {
         {/* Flagged Aircraft Import */}
         <section>
           <FlaggedAircraftImporter />
+        </section>
+
+        {/* Notion Watchtower Sync */}
+        <section>
+          <NotionFullSyncPanel />
         </section>
 
         {/* Comprehensive Data Audit */}

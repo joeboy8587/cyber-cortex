@@ -15,7 +15,8 @@ import {
   MessageSquare,
   ArrowRight,
   Zap,
-  Users
+  Users,
+  Flame
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -64,6 +65,13 @@ const AGENTS: AgentConfig[] = [
     icon: <Brain className="h-4 w-4" />,
     color: "bg-purple-500",
     description: "Pattern detection & hypotheses"
+  },
+  {
+    id: "amy",
+    name: "Amy",
+    icon: <Flame className="h-4 w-4" />,
+    color: "bg-rose-500",
+    description: "Unfiltered legal interpreter"
   }
 ];
 

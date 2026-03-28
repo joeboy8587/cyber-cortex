@@ -749,6 +749,156 @@ export async function handleAction3(action: string, body: Record<string, any>, s
       }
     }
 
+    case 'droneInvestigationScan': {
+      try {
+        const timeWindow = body.timeWindow || '90 days';
+
+        // 1. Hover candidates: speed < 5 kts, altitude < 1000 ft
+        const hoverCandidates = await sql.unsafe(`
+          SELECT registration, icao_code, altitude, speed, detection_timestamp,
+            CASE
+              WHEN speed = 0 AND altitude > 50 THEN 'STATIONARY_HOVER'
+              WHEN speed < 5 AND altitude < 500 THEN 'NEAR_HOVER'
+              WHEN speed < 10 AND altitude < 1000 THEN 'SLOW_LOITER'
+              ELSE 'DRONE_CANDIDATE'
+            END as hover_type
+          FROM live_flight_detections_rows
+          WHERE speed < 10
+            AND altitude > 0 AND altitude < 1000
+            AND registration IS NOT NULL AND registration != ''
+            AND detection_timestamp > NOW() AT TIME ZONE 'UTC' - INTERVAL '${timeWindow}'
+          ORDER BY speed ASC, altitude ASC
+          LIMIT 100
+        `);
+
+        // 2. NULL DATA events (speed=0 in flight)
+        const nullDataEvents = await sql.unsafe(`
+          SELECT registration, icao_code, altitude, speed, detection_timestamp
+          FROM live_flight_detections_rows
+          WHERE speed = 0
+            AND altitude > 100
+            AND registration IS NOT NULL AND registration != ''
+            AND detection_timestamp > NOW() AT TIME ZONE 'UTC' - INTERVAL '${timeWindow}'
+          ORDER BY altitude DESC
+          LIMIT 100
+        `);
+
+        // 3. FA Fleet analysis (sequential serial numbers)
+        const faFleet = await sql.unsafe(`
+          SELECT
+            d.registration,
+            COUNT(*) as detection_count,
+            MIN(d.altitude) as min_altitude,
+            ROUND(AVG(d.speed)::numeric, 1) as avg_speed,
+            COUNT(DISTINCT d.icao_code) as icao_count,
+            ARRAY_AGG(DISTINCT d.icao_code) as icao_codes,
+            COUNT(CASE WHEN d.speed < 5 THEN 1 END) as hover_events,
+            COUNT(CASE WHEN d.speed = 0 AND d.altitude > 100 THEN 1 END) as null_data_events,
+            MIN(d.detection_timestamp) as first_seen,
+            MAX(d.detection_timestamp) as last_seen
+          FROM live_flight_detections_rows d
+          WHERE d.registration ~ '^N7(8[6-9]|9[0-4])FA$'
+            AND d.detection_timestamp > NOW() AT TIME ZONE 'UTC' - INTERVAL '${timeWindow}'
+          GROUP BY d.registration
+          ORDER BY d.registration
+        `);
+
+        // 4. Drone score per aircraft (aggregate all indicators)
+        const droneScoring = await sql.unsafe(`
+          WITH aircraft_stats AS (
+            SELECT
+              registration,
+              COUNT(*) as total_detections,
+              COUNT(DISTINCT icao_code) as icao_count,
+              MIN(altitude) as min_altitude,
+              ROUND(AVG(speed)::numeric, 1) as avg_speed,
+              COUNT(CASE WHEN speed < 5 AND altitude < 1000 THEN 1 END) as hover_events,
+              COUNT(CASE WHEN speed = 0 AND altitude > 100 THEN 1 END) as null_data,
+              COUNT(CASE WHEN altitude < 500 AND altitude > 0 THEN 1 END) as low_alt_events,
+              COUNT(CASE WHEN speed < 10 THEN 1 END) as slow_events
+            FROM live_flight_detections_rows
+            WHERE registration IS NOT NULL AND registration != ''
+              AND detection_timestamp > NOW() AT TIME ZONE 'UTC' - INTERVAL '${timeWindow}'
+            GROUP BY registration
+            HAVING
+              COUNT(CASE WHEN speed < 5 AND altitude < 1000 THEN 1 END) > 0
+              OR COUNT(CASE WHEN speed = 0 AND altitude > 100 THEN 1 END) > 0
+              OR COUNT(DISTINCT icao_code) > 2
+          )
+          SELECT *,
+            (CASE WHEN hover_events > 5 THEN 30 WHEN hover_events > 0 THEN 15 ELSE 0 END) +
+            (CASE WHEN null_data > 3 THEN 25 WHEN null_data > 0 THEN 10 ELSE 0 END) +
+            (CASE WHEN icao_count > 3 THEN 25 WHEN icao_count > 1 THEN 15 ELSE 0 END) +
+            (CASE WHEN min_altitude < 400 AND min_altitude > 0 THEN 10 ELSE 0 END) +
+            (CASE WHEN avg_speed < 10 THEN 10 ELSE 0 END)
+            as drone_score
+          FROM aircraft_stats
+          ORDER BY drone_score DESC
+          LIMIT 50
+        `);
+
+        // 5. Swarm detection: 3+ drone candidates within 5 min window
+        const swarmEvents = await sql.unsafe(`
+          WITH drone_candidates AS (
+            SELECT registration, detection_timestamp, altitude, speed, icao_code
+            FROM live_flight_detections_rows
+            WHERE speed < 15 AND altitude < 2000 AND altitude > 0
+              AND registration IS NOT NULL AND registration != ''
+              AND detection_timestamp > NOW() AT TIME ZONE 'UTC' - INTERVAL '${timeWindow}'
+          ),
+          time_windows AS (
+            SELECT
+              DATE_TRUNC('hour', detection_timestamp) + 
+                (FLOOR(EXTRACT(MINUTE FROM detection_timestamp) / 5) * INTERVAL '5 minutes') as window_start,
+              COUNT(DISTINCT registration) as aircraft_count,
+              ARRAY_AGG(DISTINCT registration) as aircraft_list,
+              ROUND(AVG(altitude)::numeric, 0) as avg_altitude,
+              ROUND(AVG(speed)::numeric, 1) as avg_speed
+            FROM drone_candidates
+            GROUP BY 1
+            HAVING COUNT(DISTINCT registration) >= 3
+          )
+          SELECT * FROM time_windows
+          ORDER BY aircraft_count DESC, window_start DESC
+          LIMIT 50
+        `);
+
+        // 6. Summary
+        const summary = await sql.unsafe(`
+          SELECT
+            COUNT(CASE WHEN speed = 0 AND altitude > 100 THEN 1 END) as null_data_total,
+            COUNT(CASE WHEN speed < 5 AND altitude < 1000 AND altitude > 0 THEN 1 END) as hover_total,
+            COUNT(CASE WHEN altitude < 500 AND altitude > 0 THEN 1 END) as low_alt_total,
+            COUNT(DISTINCT CASE WHEN speed < 10 AND altitude < 1000 AND altitude > 0 THEN registration END) as drone_candidate_aircraft,
+            COUNT(*) as total_scanned
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() AT TIME ZONE 'UTC' - INTERVAL '${timeWindow}'
+            AND registration IS NOT NULL AND registration != ''
+        `);
+
+        const s = summary[0] || {};
+
+        return {
+          hoverCandidates: Array.isArray(hoverCandidates) ? hoverCandidates : [],
+          nullDataEvents: Array.isArray(nullDataEvents) ? nullDataEvents : [],
+          faFleet: Array.isArray(faFleet) ? faFleet : [],
+          droneScoring: Array.isArray(droneScoring) ? droneScoring : [],
+          swarmEvents: Array.isArray(swarmEvents) ? swarmEvents : [],
+          stats: {
+            nullDataTotal: parseInt(String(s.null_data_total || '0')),
+            hoverTotal: parseInt(String(s.hover_total || '0')),
+            lowAltTotal: parseInt(String(s.low_alt_total || '0')),
+            droneCandidateAircraft: parseInt(String(s.drone_candidate_aircraft || '0')),
+            totalScanned: parseInt(String(s.total_scanned || '0')),
+          },
+          scanTimestamp: new Date().toISOString()
+        };
+      } catch (e) {
+        console.error('droneInvestigationScan error:', e);
+        return { error: String((e as Error).message), hoverCandidates: [], nullDataEvents: [], faFleet: [], droneScoring: [], swarmEvents: [], stats: {} };
+      }
+    }
+
     default:
       return null;
   }

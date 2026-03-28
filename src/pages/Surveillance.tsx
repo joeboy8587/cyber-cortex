@@ -11,6 +11,7 @@ import { CanadianMilitaryTracker } from "@/components/dashboard/CanadianMilitary
 import { ADSBSpoofingAudit } from "@/components/dashboard/ADSBSpoofingAudit";
 import { ADSBSpoofingDetector } from "@/components/dashboard/ADSBSpoofingDetector";
 import { SpoofDetectionPanel } from "@/components/dashboard/SpoofDetectionPanel";
+import { DroneInvestigationPanel } from "@/components/dashboard/DroneInvestigationPanel";
 import { BiometricBattleMap } from "@/components/dashboard/BiometricBattleMap";
 import { HammerAnvilPatternPanel } from "@/components/dashboard/HammerAnvilPatternPanel";
 import { HighLowOperationsPanel } from "@/components/dashboard/HighLowOperationsPanel";
@@ -128,6 +129,9 @@ export default function Surveillance() {
           <TabsContent value="monitoring" className="space-y-6">
             <section>
               <SpoofDetectionPanel />
+            </section>
+            <section>
+              <DroneInvestigationPanel />
             </section>
             <section>
               <ADSBSpoofingDetector />

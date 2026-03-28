@@ -217,11 +217,11 @@ export function SpoofDetectionPanel() {
               <IncidentList
                 items={result.icaoRotation}
                 renderItem={(item) => (
-                  <IncidentRow
+              <IncidentRow
                     severity="high"
                     icon={<RotateCw className="h-4 w-4 text-yellow-400" />}
                     title={`${item.registration} — ${item.icao_count} ICAO codes`}
-                    detail={`Codes: ${(item.icao_codes || []).slice(0, 5).join(", ")}${item.icao_codes?.length > 5 ? "..." : ""} — ${item.total_detections} detections`}
+                    detail={`Codes: ${(Array.isArray(item.icao_codes) ? item.icao_codes : String(item.icao_codes || "").replace(/[{}]/g, "").split(",").filter(Boolean)).slice(0, 5).join(", ")}${item.icao_count > 5 ? "..." : ""} — ${item.total_detections} detections`}
                     citation="49 U.S.C. § 46306 — Registration Violations"
                     timestamp={item.last_seen}
                   />

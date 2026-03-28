@@ -315,14 +315,14 @@ export async function handleAction2(action: string, body: Record<string, any>, s
         `;
 
         // 4. Hammer-Anvil Coordination: Same 1nm grid, same minute, different aircraft
-        const hammerAnvil = await sql`
+        const hammerAnvil = await sql.unsafe(`
           WITH gridded AS (
             SELECT registration, icao_code as hex, owner_operator, altitude::numeric as alt, speed::numeric as spd,
               ROUND(latitude::numeric, 2) as grid_lat, ROUND(longitude::numeric, 2) as grid_lng,
               DATE_TRUNC('minute', detection_timestamp) as time_slot,
               detection_timestamp
             FROM live_flight_detections_rows
-            WHERE registration = ANY(${targetRegs})
+            WHERE registration = ANY($1::text[])
               AND detection_timestamp > NOW() - INTERVAL '30 days'
           )
           SELECT a.time_slot, a.grid_lat, a.grid_lng,
@@ -341,7 +341,7 @@ export async function handleAction2(action: string, body: Record<string, any>, s
             AND a.registration < b.registration
           ORDER BY a.time_slot DESC
           LIMIT 50
-        `;
+        `, [pgArray]);
 
         // 5. Shell Company Node Analysis: Delaware mail-drop addresses
         const shellNodes = await sql`

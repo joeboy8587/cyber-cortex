@@ -362,28 +362,28 @@ export async function handleAction2(action: string, body: Record<string, any>, s
         `;
 
         // 6. Biometric Correlation for target fleet
-        const biometricCorrelation = await sql`
+        const biometricCorrelation = await sql.unsafe(`
           SELECT b.registration as aircraft_registration,
             COUNT(*)::int as correlation_count,
             ROUND(AVG(b.correlation_score::numeric),2) as avg_score,
             MAX(b.biometric_timestamp) as latest_correlation
           FROM master_biometric_aircraft_correlations b
-          WHERE b.registration = ANY(${targetRegs})
+          WHERE b.registration = ANY($1::text[])
           GROUP BY b.registration
           ORDER BY correlation_count DESC
-        `.catch(() => []);
+        `, [pgArray]).catch(() => []);
 
         // 7. FAA Registry cross-ref for 2014 procurement dates
-        const faaRegistry = await sql`
+        const faaRegistry = await sql.unsafe(`
           SELECT n_number, registrant_name, aircraft_manufacturer, aircraft_model,
             certificate_issue_date, airworthiness_date, mode_s_hex,
             registrant_street, registrant_city, registrant_state,
             year_manufactured, status
           FROM aircraft_registry
-          WHERE n_number = ANY(${targetRegs.map((r: string) => r.replace('N',''))})
-            OR ('N' || n_number) = ANY(${targetRegs})
+          WHERE n_number = ANY($1::text[])
+            OR ('N' || n_number) = ANY($2::text[])
           ORDER BY certificate_issue_date
-        `.catch(() => []);
+        `, [pgArrayNNumbers, pgArray]).catch(() => []);
 
         return {
           cohort: procurementCohort,

@@ -63,6 +63,7 @@ const HANDLER3_ACTIONS = new Set([
   'getInvestigationConfig',
   'getTableCategories',
   'spoofDetectionScan',
+  'droneInvestigationScan',
 ]);
 
 async function getHandler1() {

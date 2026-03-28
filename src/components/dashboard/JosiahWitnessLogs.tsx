@@ -64,7 +64,7 @@ export function JosiahWitnessLogs() {
         }
       });
 
-      const statsRow = statsQuery.data?.data?.[0];
+      const statsRow = Array.isArray(statsQuery.data) ? statsQuery.data[0] : statsQuery.data?.data?.[0];
       if (statsRow) {
         setStats({
           totalLogs: parseInt((statsRow.total as string) || '0'),

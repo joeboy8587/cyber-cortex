@@ -62,6 +62,7 @@ const HANDLER3_ACTIONS = new Set([
   'anonymousAnomalyScan',
   'getInvestigationConfig',
   'getTableCategories',
+  'spoofDetectionScan',
 ]);
 
 async function getHandler1() {

@@ -258,11 +258,14 @@ export async function handleAction2(action: string, body: Record<string, any>, s
     // ============== C2014 COHORT SCAN ==============
     case 'c2014CohortScan': {
       try {
-        const targetRegs = body.registrations || ['N528AM','N786FA','N6196P','N256AA','N789FA','N912KC','N913KC','N597E','N789FA','N791FA','N790FA'];
+        const targetRegs: string[] = body.registrations || ['N528AM','N786FA','N6196P','N256AA','N789FA','N912KC','N913KC','N597E','N789FA','N791FA','N790FA'];
         const targetHexCodes = body.hexCodes || [];
+        // Format as PostgreSQL array literal for sql.unsafe usage
+        const pgArray = `{${targetRegs.join(',')}}`;
+        const pgArrayNNumbers = `{${targetRegs.map((r: string) => r.replace('N','')).join(',')}}`;
 
         // 1. Procurement Cohort: Aircraft with 2014-era registration/first-seen dates
-        const procurementCohort = await sql`
+        const procurementCohort = await sql.unsafe(`
           SELECT registration, icao_code as hex, owner_operator, aircraft_type, aircraft_type_desc,
             MIN(detection_timestamp) as first_seen,
             MAX(detection_timestamp) as last_seen,
@@ -273,11 +276,11 @@ export async function handleAction2(action: string, body: Record<string, any>, s
             is_military,
             taxonomy_tag
           FROM live_flight_detections_rows
-          WHERE registration = ANY(${targetRegs})
+          WHERE registration = ANY($1::text[])
           GROUP BY registration, icao_code, owner_operator, aircraft_type, aircraft_type_desc,
             shell_auto_detected, is_military, taxonomy_tag
           ORDER BY total_detections DESC
-        `;
+        `, [pgArray]);
 
         // 2. Behavioral Signatures: "Sensor Loitering" (speed <5kts, alt 0-400ft, extended dwell)
         const sensorLoitering = await sql`

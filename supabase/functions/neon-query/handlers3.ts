@@ -618,6 +618,137 @@ export async function handleAction3(action: string, body: Record<string, any>, s
       }
     }
 
+    case 'spoofDetectionScan': {
+      try {
+        const timeWindow = body.timeWindow || '30 days';
+
+        // 1. ICAO-Registration mismatch: foreign airline ICAOs appearing locally
+        const foreignIcaoSpoofs = await sql.unsafe(`
+          SELECT registration, icao_code, callsign, altitude, speed,
+            detection_timestamp, latitude, longitude, aircraft_type,
+            owner_operator, taxonomy_tag
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() AT TIME ZONE 'UTC' - INTERVAL '${timeWindow}'
+            AND icao_code IS NOT NULL AND icao_code != ''
+            AND (
+              icao_code ~ '^[A-Z]{2}-[A-Z0-9]+$'
+              OR icao_code LIKE 'VT-%' OR icao_code LIKE 'VH-%'
+              OR icao_code LIKE 'C-%' OR icao_code LIKE 'G-%'
+              OR icao_code LIKE 'F-%' OR icao_code LIKE 'D-%'
+            )
+            AND latitude BETWEEN 35.0 AND 36.0
+            AND longitude BETWEEN -119.5 AND -118.5
+          ORDER BY detection_timestamp DESC LIMIT 200
+        `);
+
+        // 2. Physics violations: commercial jets at impossible alt/speed
+        const physicsViolations = await sql.unsafe(`
+          SELECT registration, icao_code, callsign, altitude, speed,
+            detection_timestamp, latitude, longitude, aircraft_type,
+            owner_operator, taxonomy_tag
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() AT TIME ZONE 'UTC' - INTERVAL '${timeWindow}'
+            AND aircraft_type IN ('A320','A321','B737','B738','B739','A330','B787','B744','A319','B763')
+            AND (
+              (altitude IS NOT NULL AND altitude < 1000 AND altitude > 0)
+              OR (speed IS NOT NULL AND speed < 100 AND speed > 0 AND altitude > 0)
+            )
+          ORDER BY detection_timestamp DESC LIMIT 100
+        `);
+
+        // 3. ICAO rotation: aircraft using multiple ICAO codes
+        const icaoRotation = await sql.unsafe(`
+          SELECT registration,
+            COUNT(DISTINCT icao_code) as icao_count,
+            ARRAY_AGG(DISTINCT icao_code) as icao_codes,
+            MIN(detection_timestamp) as first_seen,
+            MAX(detection_timestamp) as last_seen,
+            COUNT(*) as total_detections
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() AT TIME ZONE 'UTC' - INTERVAL '${timeWindow}'
+            AND registration IS NOT NULL AND registration != ''
+            AND icao_code IS NOT NULL AND icao_code != ''
+          GROUP BY registration
+          HAVING COUNT(DISTINCT icao_code) > 2
+          ORDER BY COUNT(DISTINCT icao_code) DESC LIMIT 50
+        `);
+
+        // 4. Null/masked transponder events in target zone
+        const transponderOff = await sql.unsafe(`
+          SELECT registration, callsign, altitude, speed,
+            detection_timestamp, latitude, longitude, taxonomy_tag
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() AT TIME ZONE 'UTC' - INTERVAL '${timeWindow}'
+            AND latitude BETWEEN 35.20 AND 35.60
+            AND longitude BETWEEN -119.25 AND -118.75
+            AND (
+              (icao_code IS NULL OR icao_code = '')
+              AND (registration IS NULL OR registration = '' OR registration = 'MASKED')
+            )
+          ORDER BY detection_timestamp DESC LIMIT 100
+        `);
+
+        // 5. Impossible altitude jumps (<60s)
+        const altitudeJumps = await sql.unsafe(`
+          WITH ordered AS (
+            SELECT registration, icao_code, altitude, speed, detection_timestamp,
+              LAG(altitude) OVER (PARTITION BY registration ORDER BY detection_timestamp) as prev_alt,
+              LAG(detection_timestamp) OVER (PARTITION BY registration ORDER BY detection_timestamp) as prev_ts
+            FROM live_flight_detections_rows
+            WHERE detection_timestamp > NOW() AT TIME ZONE 'UTC' - INTERVAL '7 days'
+              AND altitude IS NOT NULL AND altitude > 0
+              AND registration IS NOT NULL AND registration != ''
+          )
+          SELECT registration, icao_code, altitude, prev_alt, speed, detection_timestamp,
+            ABS(altitude - prev_alt) as alt_change,
+            EXTRACT(EPOCH FROM (detection_timestamp - prev_ts)) as seconds_elapsed
+          FROM ordered
+          WHERE ABS(altitude - prev_alt) > 5000
+            AND EXTRACT(EPOCH FROM (detection_timestamp - prev_ts)) < 60
+            AND prev_alt IS NOT NULL
+          ORDER BY ABS(altitude - prev_alt) DESC LIMIT 50
+        `);
+
+        // 6. Summary stats
+        const summaryStats = await sql.unsafe(`
+          SELECT
+            COUNT(*) as total_detections_period,
+            COUNT(CASE WHEN icao_code ~ '^[A-Z]{2}-' OR icao_code LIKE 'VT-%' OR icao_code LIKE 'VH-%' THEN 1 END) as foreign_icao_count,
+            COUNT(CASE WHEN (icao_code IS NULL OR icao_code = '') AND (registration IS NULL OR registration = '') THEN 1 END) as masked_count,
+            COUNT(DISTINCT registration) as unique_aircraft
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() AT TIME ZONE 'UTC' - INTERVAL '${timeWindow}'
+        `);
+
+        const stats = summaryStats[0] || {};
+
+        return {
+          foreignIcaoSpoofs: Array.isArray(foreignIcaoSpoofs) ? foreignIcaoSpoofs : [],
+          physicsViolations: Array.isArray(physicsViolations) ? physicsViolations : [],
+          icaoRotation: Array.isArray(icaoRotation) ? icaoRotation : [],
+          transponderOff: Array.isArray(transponderOff) ? transponderOff : [],
+          altitudeJumps: Array.isArray(altitudeJumps) ? altitudeJumps : [],
+          stats: {
+            totalDetections: parseInt(String(stats.total_detections_period || '0')),
+            foreignIcaoCount: parseInt(String(stats.foreign_icao_count || '0')),
+            maskedCount: parseInt(String(stats.masked_count || '0')),
+            uniqueAircraft: parseInt(String(stats.unique_aircraft || '0')),
+            spoofCategories: {
+              foreignIcao: Array.isArray(foreignIcaoSpoofs) ? foreignIcaoSpoofs.length : 0,
+              physicsViolation: Array.isArray(physicsViolations) ? physicsViolations.length : 0,
+              icaoRotation: Array.isArray(icaoRotation) ? icaoRotation.length : 0,
+              transponderMasked: Array.isArray(transponderOff) ? transponderOff.length : 0,
+              altitudeAnomaly: Array.isArray(altitudeJumps) ? altitudeJumps.length : 0,
+            }
+          },
+          scanTimestamp: new Date().toISOString()
+        };
+      } catch (e) {
+        console.error('spoofDetectionScan error:', e);
+        return { error: String((e as Error).message), foreignIcaoSpoofs: [], physicsViolations: [], icaoRotation: [], transponderOff: [], altitudeJumps: [], stats: {} };
+      }
+    }
+
     default:
       return null;
   }

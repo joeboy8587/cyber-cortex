@@ -258,11 +258,14 @@ export async function handleAction2(action: string, body: Record<string, any>, s
     // ============== C2014 COHORT SCAN ==============
     case 'c2014CohortScan': {
       try {
-        const targetRegs = body.registrations || ['N528AM','N786FA','N6196P','N256AA','N789FA','N912KC','N913KC','N597E','N789FA','N791FA','N790FA'];
+        const targetRegs: string[] = body.registrations || ['N528AM','N786FA','N6196P','N256AA','N789FA','N912KC','N913KC','N597E','N789FA','N791FA','N790FA'];
         const targetHexCodes = body.hexCodes || [];
+        // Format as PostgreSQL array literal for sql.unsafe usage
+        const pgArray = `{${targetRegs.join(',')}}`;
+        const pgArrayNNumbers = `{${targetRegs.map((r: string) => r.replace('N','')).join(',')}}`;
 
         // 1. Procurement Cohort: Aircraft with 2014-era registration/first-seen dates
-        const procurementCohort = await sql`
+        const procurementCohort = await sql.unsafe(`
           SELECT registration, icao_code as hex, owner_operator, aircraft_type, aircraft_type_desc,
             MIN(detection_timestamp) as first_seen,
             MAX(detection_timestamp) as last_seen,
@@ -273,11 +276,11 @@ export async function handleAction2(action: string, body: Record<string, any>, s
             is_military,
             taxonomy_tag
           FROM live_flight_detections_rows
-          WHERE registration = ANY(${targetRegs})
+          WHERE registration = ANY($1::text[])
           GROUP BY registration, icao_code, owner_operator, aircraft_type, aircraft_type_desc,
             shell_auto_detected, is_military, taxonomy_tag
           ORDER BY total_detections DESC
-        `;
+        `, [pgArray]);
 
         // 2. Behavioral Signatures: "Sensor Loitering" (speed <5kts, alt 0-400ft, extended dwell)
         const sensorLoitering = await sql`
@@ -312,14 +315,14 @@ export async function handleAction2(action: string, body: Record<string, any>, s
         `;
 
         // 4. Hammer-Anvil Coordination: Same 1nm grid, same minute, different aircraft
-        const hammerAnvil = await sql`
+        const hammerAnvil = await sql.unsafe(`
           WITH gridded AS (
             SELECT registration, icao_code as hex, owner_operator, altitude::numeric as alt, speed::numeric as spd,
               ROUND(latitude::numeric, 2) as grid_lat, ROUND(longitude::numeric, 2) as grid_lng,
               DATE_TRUNC('minute', detection_timestamp) as time_slot,
               detection_timestamp
             FROM live_flight_detections_rows
-            WHERE registration = ANY(${targetRegs})
+            WHERE registration = ANY($1::text[])
               AND detection_timestamp > NOW() - INTERVAL '30 days'
           )
           SELECT a.time_slot, a.grid_lat, a.grid_lng,
@@ -338,7 +341,7 @@ export async function handleAction2(action: string, body: Record<string, any>, s
             AND a.registration < b.registration
           ORDER BY a.time_slot DESC
           LIMIT 50
-        `;
+        `, [pgArray]);
 
         // 5. Shell Company Node Analysis: Delaware mail-drop addresses
         const shellNodes = await sql`
@@ -359,28 +362,28 @@ export async function handleAction2(action: string, body: Record<string, any>, s
         `;
 
         // 6. Biometric Correlation for target fleet
-        const biometricCorrelation = await sql`
+        const biometricCorrelation = await sql.unsafe(`
           SELECT b.registration as aircraft_registration,
             COUNT(*)::int as correlation_count,
             ROUND(AVG(b.correlation_score::numeric),2) as avg_score,
             MAX(b.biometric_timestamp) as latest_correlation
           FROM master_biometric_aircraft_correlations b
-          WHERE b.registration = ANY(${targetRegs})
+          WHERE b.registration = ANY($1::text[])
           GROUP BY b.registration
           ORDER BY correlation_count DESC
-        `.catch(() => []);
+        `, [pgArray]).catch(() => []);
 
         // 7. FAA Registry cross-ref for 2014 procurement dates
-        const faaRegistry = await sql`
+        const faaRegistry = await sql.unsafe(`
           SELECT n_number, registrant_name, aircraft_manufacturer, aircraft_model,
             certificate_issue_date, airworthiness_date, mode_s_hex,
             registrant_street, registrant_city, registrant_state,
             year_manufactured, status
           FROM aircraft_registry
-          WHERE n_number = ANY(${targetRegs.map((r: string) => r.replace('N',''))})
-            OR ('N' || n_number) = ANY(${targetRegs})
+          WHERE n_number = ANY($1::text[])
+            OR ('N' || n_number) = ANY($2::text[])
           ORDER BY certificate_issue_date
-        `.catch(() => []);
+        `, [pgArrayNNumbers, pgArray]).catch(() => []);
 
         return {
           cohort: procurementCohort,

@@ -64,7 +64,7 @@ export function JosiahWitnessLogs() {
         }
       });
 
-      const statsRow = statsQuery.data?.data?.[0];
+      const statsRow = Array.isArray(statsQuery.data) ? statsQuery.data[0] : statsQuery.data?.data?.[0];
       if (statsRow) {
         setStats({
           totalLogs: parseInt((statsRow.total as string) || '0'),
@@ -95,7 +95,7 @@ export function JosiahWitnessLogs() {
         }
       });
 
-      const rows = (logsQuery.data?.data as Record<string, unknown>[] | undefined) ?? [];
+      const rows: Record<string, unknown>[] = Array.isArray(logsQuery.data) ? logsQuery.data : (logsQuery.data?.data ?? []);
       setLogs(rows.map((r: Record<string, unknown>) => ({
         id: String(r.id ?? ''),
         timestamp: String(r.timestamp ?? ''),

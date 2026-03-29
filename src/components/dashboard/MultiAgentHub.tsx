@@ -293,10 +293,10 @@ export function MultiAgentHub() {
         conversationHistory: [...prev.conversationHistory, { ...agentMessage, content: fullContent }]
       }));
 
-      // Parse ALL inter-agent communications
-      const handoffs = [...fullContent.matchAll(/\[HANDOFF:(\w+)\]([\s\S]*?)\[\/HANDOFF\]/g)];
-      const requests = [...fullContent.matchAll(/\[REQUEST_AGENT:(\w+)\]([\s\S]*?)\[\/REQUEST_AGENT\]/g)];
-      const broadcasts = [...fullContent.matchAll(/\[BROADCAST\]([\s\S]*?)\[\/BROADCAST\]/g)];
+      // Parse ALL inter-agent communications — tolerant of spaces, markdown bold (**), and formatting
+      const handoffs = [...fullContent.matchAll(/\*?\*?\[HANDOFF:\s*(\w+)\]\*?\*?\s*([\s\S]*?)\*?\*?\[\/HANDOFF\]\*?\*?/gi)];
+      const requests = [...fullContent.matchAll(/\*?\*?\[REQUEST_AGENT:\s*(\w+)\]\*?\*?\s*([\s\S]*?)\*?\*?\[\/REQUEST_AGENT\]\*?\*?/gi)];
+      const broadcasts = [...fullContent.matchAll(/\*?\*?\[BROADCAST\]\*?\*?\s*([\s\S]*?)\*?\*?\[\/BROADCAST\]\*?\*?/gi)];
 
       // Process broadcasts
       for (const broadcast of broadcasts) {

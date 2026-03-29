@@ -5,12 +5,23 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { 
   Scale, Building2, FileText, Brain, Send, Loader2, MessageSquare,
-  ArrowRight, Zap, Users, Flame, History, Plus, FolderOpen, Save
+  ArrowRight, Zap, Users, Flame, History, Plus, FolderOpen, Save,
+  BookOpen, ChevronDown, CheckCircle2, FileSearch
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+
+interface IntelDocument {
+  id: string;
+  title: string;
+  document_type: string | null;
+  tags: string[] | null;
+  file_size: number | null;
+  uploaded_at: string;
+}
 
 interface AgentMessage {
   id: string;

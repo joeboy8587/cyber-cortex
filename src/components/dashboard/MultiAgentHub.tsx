@@ -373,24 +373,28 @@ export function MultiAgentHub() {
       }
 
       // Auto-execute REQUEST_AGENTs first (they return info to calling context)
-      for (const req of requests) {
-        const targetId = req[0];
-        const question = req[1].trim();
+      for (let i = 0; i < requests.length; i++) {
+        const targetId = requests[i][0];
+        const question = requests[i][1].trim();
         const validAgent = AGENTS.find(a => a.id === targetId);
         if (validAgent) {
+          // Stagger chained calls to avoid rate limits
+          if (i > 0) await new Promise(r => setTimeout(r, 2000));
           toast.info(`🔄 ${AGENTS.find(a => a.id === agentId)?.name} → ${validAgent.name}`);
           await executeAgentCall(targetId, question, sessionId, depth + 1, true);
         }
       }
 
-      // Auto-execute HANDOFFs (transfers control)
-      for (const handoff of handoffs) {
-        const targetId = handoff[0];
-        const task = handoff[1].trim();
+      // Auto-execute HANDOFFs (transfers control) — with delay between calls
+      for (let i = 0; i < handoffs.length; i++) {
+        const targetId = handoffs[i][0];
+        const task = handoffs[i][1].trim();
         const validAgent = AGENTS.find(a => a.id === targetId);
         const resolvedId = validAgent ? targetId : "legal_drafter";
         const resolvedName = validAgent ? validAgent.name : "Legal Drafter";
         
+        // Stagger after requests or between handoffs
+        if (requests.length > 0 || i > 0) await new Promise(r => setTimeout(r, 2000));
         toast.info(`📋 Handoff → ${resolvedName}`);
         setActiveAgent(resolvedId);
         await executeAgentCall(resolvedId, task, sessionId, depth + 1, true);

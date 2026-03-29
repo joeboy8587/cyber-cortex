@@ -161,6 +161,7 @@ export function MultiAgentHub() {
     setChainDepth(0);
     setSharedContext({ violations: [], shellCompanies: [], financialTrails: [], draftedDocuments: [], conversationHistory: [] });
     setShowHistory(false);
+    setChainTrail([]);
   };
 
   const extractAndSaveCaseFiles = async (sessionId: string, agentId: string, content: string) => {
@@ -220,6 +221,9 @@ export function MultiAgentHub() {
     depth: number,
     isInterAgent: boolean
   ) => {
+    // Track agent in chain trail
+    setChainTrail(prev => depth === 0 && !isInterAgent ? [agentId] : [...prev, agentId]);
+
     // Add inter-agent marker message
     if (isInterAgent) {
       const fromAgent = messagesRef.current[messagesRef.current.length - 1]?.agent || "system";
@@ -366,6 +370,7 @@ export function MultiAgentHub() {
     setInput("");
     setIsLoading(true);
     setChainDepth(0);
+    setChainTrail([]);
 
     await saveMessage(sessionId, userMessage);
 

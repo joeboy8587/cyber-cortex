@@ -5,12 +5,23 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { 
   Scale, Building2, FileText, Brain, Send, Loader2, MessageSquare,
-  ArrowRight, Zap, Users, Flame, History, Plus, FolderOpen, Save
+  ArrowRight, Zap, Users, Flame, History, Plus, FolderOpen, Save,
+  BookOpen, ChevronDown, CheckCircle2, FileSearch
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+
+interface IntelDocument {
+  id: string;
+  title: string;
+  document_type: string | null;
+  tags: string[] | null;
+  file_size: number | null;
+  uploaded_at: string;
+}
 
 interface AgentMessage {
   id: string;
@@ -59,9 +70,13 @@ export function MultiAgentHub() {
   const [loadingSessions, setLoadingSessions] = useState(false);
   const [chainDepth, setChainDepth] = useState(0);
   const [chainTrail, setChainTrail] = useState<string[]>([]);
+  const [intelDocs, setIntelDocs] = useState<IntelDocument[]>([]);
+  const [selectedDocs, setSelectedDocs] = useState<Set<string>>(new Set());
+  const [intelOpen, setIntelOpen] = useState(false);
   const [sharedContext, setSharedContext] = useState<{
     violations: unknown[]; shellCompanies: unknown[]; financialTrails: unknown[];
     draftedDocuments: unknown[]; conversationHistory: AgentMessage[];
+    selectedDocuments?: string[];
   }>({ violations: [], shellCompanies: [], financialTrails: [], draftedDocuments: [], conversationHistory: [] });
   
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -79,7 +94,28 @@ export function MultiAgentHub() {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages]);
 
-  useEffect(() => { loadSessions(); }, []);
+  useEffect(() => { loadSessions(); loadIntelDocs(); }, []);
+
+  const loadIntelDocs = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("evidence_documents")
+        .select("id, title, document_type, tags, file_size, uploaded_at")
+        .order("uploaded_at", { ascending: false })
+        .limit(20);
+      if (error) throw error;
+      setIntelDocs((data || []) as IntelDocument[]);
+    } catch (e) { console.error("Failed to load intel docs:", e); }
+  };
+
+  const toggleDoc = (docId: string) => {
+    setSelectedDocs(prev => {
+      const next = new Set(prev);
+      if (next.has(docId)) next.delete(docId);
+      else next.add(docId);
+      return next;
+    });
+  };
 
   const loadSessions = async () => {
     setLoadingSessions(true);
@@ -265,7 +301,8 @@ export function MultiAgentHub() {
                   message: prompt,
                   context: {
                     ...sharedContextRef.current,
-                    conversationHistory: messagesRef.current.slice(-10)
+                    conversationHistory: messagesRef.current.slice(-10),
+                    selectedDocuments: Array.from(selectedDocs)
                   }
                 }),
                 signal: abortControllerRef.current!.signal
@@ -561,6 +598,60 @@ export function MultiAgentHub() {
           ))}
         </Tabs>
 
+        {/* Intelligence Feed */}
+        {intelDocs.length > 0 && (
+          <Collapsible open={intelOpen} onOpenChange={setIntelOpen}>
+            <CollapsibleTrigger asChild>
+              <Button variant="outline" size="sm" className="w-full flex items-center justify-between text-xs">
+                <span className="flex items-center gap-2">
+                  <BookOpen className="h-3 w-3" />
+                  Intelligence Feed ({intelDocs.length} documents)
+                  {selectedDocs.size > 0 && (
+                    <Badge variant="default" className="text-[9px]">{selectedDocs.size} selected</Badge>
+                  )}
+                </span>
+                <ChevronDown className={`h-3 w-3 transition-transform ${intelOpen ? "rotate-180" : ""}`} />
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="mt-2">
+              <div className="border rounded-lg p-3 bg-muted/20 space-y-1.5 max-h-[200px] overflow-y-auto">
+                <p className="text-[10px] text-muted-foreground mb-2">
+                  Select documents to inject as context for the active agent
+                </p>
+                {intelDocs.map(doc => (
+                  <div
+                    key={doc.id}
+                    onClick={() => toggleDoc(doc.id)}
+                    className={`flex items-center gap-2 p-2 rounded cursor-pointer transition-colors ${
+                      selectedDocs.has(doc.id) 
+                        ? "bg-primary/10 border border-primary/30" 
+                        : "hover:bg-muted/50 border border-transparent"
+                    }`}
+                  >
+                    {selectedDocs.has(doc.id) 
+                      ? <CheckCircle2 className="h-3 w-3 text-primary flex-shrink-0" />
+                      : <FileSearch className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+                    }
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-medium truncate">{doc.title}</p>
+                      <div className="flex items-center gap-1 mt-0.5">
+                        {(doc.tags || []).slice(0, 3).map(tag => (
+                          <Badge key={tag} variant="outline" className="text-[8px] px-1 py-0">{tag}</Badge>
+                        ))}
+                        {doc.file_size && (
+                          <span className="text-[9px] text-muted-foreground ml-1">
+                            {(doc.file_size / 1024).toFixed(0)}KB
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
+        )}
+
         {/* Quick Prompts */}
         <div className="flex flex-wrap gap-2">
           {quickPrompts.filter(q => q.agent === activeAgent).map((prompt, idx) => (
@@ -634,11 +725,19 @@ export function MultiAgentHub() {
         </div>
 
         {/* Status Bar */}
-        <div className="flex items-center gap-4 text-xs text-muted-foreground border-t pt-3">
+        <div className="flex items-center gap-4 text-xs text-muted-foreground border-t pt-3 flex-wrap">
           <span>Session:</span>
           <Badge variant="secondary">{currentSessionId ? "Active" : "New"}</Badge>
           <Badge variant="secondary">{messages.length} messages</Badge>
           <Badge variant="secondary">{sessions.length} saved sessions</Badge>
+          {selectedDocs.size > 0 && (
+            <Badge variant="secondary" className="bg-primary/10 text-primary">
+              <BookOpen className="w-3 h-3 mr-1" /> {selectedDocs.size} intel docs loaded
+            </Badge>
+          )}
+          {intelDocs.length > 0 && (
+            <Badge variant="secondary">{intelDocs.length} intel available</Badge>
+          )}
         </div>
       </CardContent>
     </Card>

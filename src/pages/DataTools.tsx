@@ -22,6 +22,7 @@ import { MerkleChainPanel } from "@/components/dashboard/MerkleChainPanel";
 import { DBHealthMonitor } from "@/components/dashboard/DBHealthMonitor";
 import FlaggedAircraftImporter from "@/components/dashboard/FlaggedAircraftImporter";
 import { NotionFullSyncPanel } from "@/components/dashboard/NotionFullSyncPanel";
+import { ArchiveConsolidationPanel } from "@/components/dashboard/ArchiveConsolidationPanel";
 
 export default function DataTools() {
   return (
@@ -114,6 +115,11 @@ export default function DataTools() {
         <section className="space-y-6">
           <DataCoverageGuardrails />
           <DataGapFiller />
+        </section>
+
+        {/* Archive Consolidation Engine */}
+        <section>
+          <ArchiveConsolidationPanel />
         </section>
 
         {/* Materialized Views */}

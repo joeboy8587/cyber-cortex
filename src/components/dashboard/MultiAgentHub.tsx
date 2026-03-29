@@ -298,10 +298,42 @@ export function MultiAgentHub() {
         conversationHistory: [...prev.conversationHistory, { ...agentMessage, content: fullContent }]
       }));
 
-      // Parse ALL inter-agent communications — tolerant of spaces, markdown bold (**), and formatting
-      const handoffs = [...fullContent.matchAll(/\*?\*?\[HANDOFF:\s*(\w+)\]\*?\*?\s*([\s\S]*?)\*?\*?\[\/HANDOFF\]\*?\*?/gi)];
-      const requests = [...fullContent.matchAll(/\*?\*?\[REQUEST_AGENT:\s*(\w+)\]\*?\*?\s*([\s\S]*?)\*?\*?\[\/REQUEST_AGENT\]\*?\*?/gi)];
-      const broadcasts = [...fullContent.matchAll(/\*?\*?\[BROADCAST\]\*?\*?\s*([\s\S]*?)\*?\*?\[\/BROADCAST\]\*?\*?/gi)];
+      // Parse ALL inter-agent communications — tolerant of missing closing tags,
+      // markdown bold (**), spaces, and formatting variations.
+      // Strategy: try closed-tag first, then fall back to open-ended (capture until
+      // next tag or end-of-string).
+      const parseAgentTags = (text: string, tagName: string): [string, string][] => {
+        const results: [string, string][] = [];
+        // Pattern 1: with closing tag  [TAG:agent] content [/TAG]
+        const closedRe = new RegExp(
+          `\\*{0,2}\\[${tagName}:\\s*(\\w+)\\]\\*{0,2}\\s*([\\s\\S]*?)\\*{0,2}\\[\\/${tagName}\\]\\*{0,2}`,
+          'gi'
+        );
+        const closedMatches = new Set<number>();
+        for (const m of text.matchAll(closedRe)) {
+          results.push([m[1], m[2]]);
+          closedMatches.add(m.index!);
+        }
+        // Pattern 2: open-ended (no closing tag) — capture until next [ tag or end
+        const openRe = new RegExp(
+          `\\*{0,2}\\[${tagName}:\\s*(\\w+)\\]\\*{0,2}\\s*([\\s\\S]*?)(?=\\*{0,2}\\[(?:HANDOFF|REQUEST_AGENT|BROADCAST)|$)`,
+          'gi'
+        );
+        for (const m of text.matchAll(openRe)) {
+          if (!closedMatches.has(m.index!)) {
+            const content = m[2].replace(/\*{0,2}\[\/\w+\]\*{0,2}\s*$/g, '').trim();
+            if (content) results.push([m[1], content]);
+          }
+        }
+        return results;
+      };
+
+      const handoffs = parseAgentTags(fullContent, 'HANDOFF');
+      const requests = parseAgentTags(fullContent, 'REQUEST_AGENT');
+      // Broadcasts — same dual approach
+      const broadcastsClosed = [...fullContent.matchAll(/\*{0,2}\[BROADCAST\]\*{0,2}\s*([\s\S]*?)\*{0,2}\[\/BROADCAST\]\*{0,2}/gi)];
+      const broadcastsOpen = [...fullContent.matchAll(/\*{0,2}\[BROADCAST\]\*{0,2}\s*([\s\S]*?)(?=\*{0,2}\[(?:HANDOFF|REQUEST_AGENT|BROADCAST)|$)/gi)];
+      const broadcasts = broadcastsClosed.length > 0 ? broadcastsClosed : broadcastsOpen;
 
       // Process broadcasts
       for (const broadcast of broadcasts) {
@@ -315,10 +347,10 @@ export function MultiAgentHub() {
           // Pre-fill the next handoff for manual trigger
           const next = handoffs[0] || requests[0];
           if (next) {
-            const targetId = next[1];
+            const targetId = next[0];
             const validAgent = AGENTS.find(a => a.id === targetId);
             setActiveAgent(validAgent ? targetId : "legal_drafter");
-            setInput(next[2].trim());
+            setInput(next[1].trim());
           }
         }
         return;
@@ -326,8 +358,8 @@ export function MultiAgentHub() {
 
       // Auto-execute REQUEST_AGENTs first (they return info to calling context)
       for (const req of requests) {
-        const targetId = req[1];
-        const question = req[2].trim();
+        const targetId = req[0];
+        const question = req[1].trim();
         const validAgent = AGENTS.find(a => a.id === targetId);
         if (validAgent) {
           toast.info(`🔄 ${AGENTS.find(a => a.id === agentId)?.name} → ${validAgent.name}`);
@@ -337,8 +369,8 @@ export function MultiAgentHub() {
 
       // Auto-execute HANDOFFs (transfers control)
       for (const handoff of handoffs) {
-        const targetId = handoff[1];
-        const task = handoff[2].trim();
+        const targetId = handoff[0];
+        const task = handoff[1].trim();
         const validAgent = AGENTS.find(a => a.id === targetId);
         const resolvedId = validAgent ? targetId : "legal_drafter";
         const resolvedName = validAgent ? validAgent.name : "Legal Drafter";

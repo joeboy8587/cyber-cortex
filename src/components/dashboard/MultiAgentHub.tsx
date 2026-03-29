@@ -347,10 +347,10 @@ export function MultiAgentHub() {
           // Pre-fill the next handoff for manual trigger
           const next = handoffs[0] || requests[0];
           if (next) {
-            const targetId = next[1];
+            const targetId = next[0];
             const validAgent = AGENTS.find(a => a.id === targetId);
             setActiveAgent(validAgent ? targetId : "legal_drafter");
-            setInput(next[2].trim());
+            setInput(next[1].trim());
           }
         }
         return;
@@ -358,8 +358,8 @@ export function MultiAgentHub() {
 
       // Auto-execute REQUEST_AGENTs first (they return info to calling context)
       for (const req of requests) {
-        const targetId = req[1];
-        const question = req[2].trim();
+        const targetId = req[0];
+        const question = req[1].trim();
         const validAgent = AGENTS.find(a => a.id === targetId);
         if (validAgent) {
           toast.info(`🔄 ${AGENTS.find(a => a.id === agentId)?.name} → ${validAgent.name}`);
@@ -369,8 +369,8 @@ export function MultiAgentHub() {
 
       // Auto-execute HANDOFFs (transfers control)
       for (const handoff of handoffs) {
-        const targetId = handoff[1];
-        const task = handoff[2].trim();
+        const targetId = handoff[0];
+        const task = handoff[1].trim();
         const validAgent = AGENTS.find(a => a.id === targetId);
         const resolvedId = validAgent ? targetId : "legal_drafter";
         const resolvedName = validAgent ? validAgent.name : "Legal Drafter";

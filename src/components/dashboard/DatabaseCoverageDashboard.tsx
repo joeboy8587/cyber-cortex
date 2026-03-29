@@ -122,7 +122,7 @@ export function DatabaseCoverageDashboard() {
         return {
           table_name: t.table_name,
           estimated_rows: rows,
-          integrated: INTEGRATED_TABLES.has(t.table_name),
+          integrated: isIntegrated(t.table_name),
           category,
           priority: getPriority(rows, category)
         };

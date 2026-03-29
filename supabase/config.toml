@@ -96,6 +96,9 @@ verify_jwt = false
 [functions.merkle-anchor]
 verify_jwt = false
 
+[functions.zero-trust-encryption]
+verify_jwt = false
+
 [api]
 enabled = true
 port = 54321

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { CyberPanel } from "@/components/ui/cyber-panel";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -84,6 +84,21 @@ interface AutomationConfig {
   predictive_modeling: boolean;
 }
 
+type ValidationTemplate = {
+  query: string;
+  fallbackQuery?: string;
+  threshold: number;
+  legal_code: string;
+  minResults: number;
+};
+
+type NonFatalQueryResult = {
+  data?: unknown;
+  nonFatal?: boolean;
+  code?: string;
+  error?: string;
+};
+
 export function JosiahAutonomousHypothesis() {
   const [hypotheses, setHypotheses] = useState<Hypothesis[]>([]);
   const [leads, setLeads] = useState<InvestigativeLead[]>([]);
@@ -112,7 +127,7 @@ export function JosiahAutonomousHypothesis() {
   });
 
   // Hypothesis templates for automated validation
-  const hypothesisTemplates: Record<string, { query: string; fallbackQuery?: string; threshold: number; legal_code: string; minResults: number }> = {
+  const hypothesisTemplates = useMemo<Record<string, ValidationTemplate>>(() => ({
     'aircraft_biometric_correlation': {
       query: `
         WITH high_stress_events AS (
@@ -215,7 +230,7 @@ export function JosiahAutonomousHypothesis() {
       minResults: 10,
       legal_code: 'Evidence of Operational Schedule'
     }
-  };
+  }), []);
 
   const runWatchtowerAgent = useCallback(async () => {
     try {
@@ -306,8 +321,8 @@ export function JosiahAutonomousHypothesis() {
 
       const template = hypothesisTemplates[templateKey];
       
-       let data: any = null;
-       let queryError: any = null;
+       let data: unknown = null;
+       let queryError: unknown = null;
        let lastError: unknown = null;
        let usedFallbackQuery = false;
        const queriesToTry = [template.query, template.fallbackQuery].filter(
@@ -351,9 +366,10 @@ export function JosiahAutonomousHypothesis() {
        // neon-query returns either:
        // 1) an array of rows (normal SELECT)
        // 2) an object like { data: [], nonFatal: true, ... } (handled error)
-       const results: Record<string, unknown>[] = Array.isArray(data)
+        const queryPayload = data as NonFatalQueryResult | null;
+        const results: Record<string, unknown>[] = Array.isArray(data)
          ? data
-         : (Array.isArray((data as any)?.data) ? (data as any).data : []);
+          : (Array.isArray(queryPayload?.data) ? queryPayload.data as Record<string, unknown>[] : []);
       const evidenceCount = results.length;
       
       // Improved scoring: use minResults as denominator for proper scaling
@@ -416,7 +432,8 @@ export function JosiahAutonomousHypothesis() {
 
     } catch (err) {
       console.error('Lead validation error:', err);
-      toast.error((err as Error)?.message?.includes('Failed to fetch') ? 'Validation timed out — please retry' : 'Validation failed - check console');
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      toast.error(errorMessage.includes('Failed to fetch') ? 'Validation timed out — please retry' : 'Validation failed - check console');
     } finally {
       setValidatingLead(null);
     }

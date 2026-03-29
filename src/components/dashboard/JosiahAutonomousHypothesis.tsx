@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { CyberPanel } from "@/components/ui/cyber-panel";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -84,6 +84,21 @@ interface AutomationConfig {
   predictive_modeling: boolean;
 }
 
+type ValidationTemplate = {
+  query: string;
+  fallbackQuery?: string;
+  threshold: number;
+  legal_code: string;
+  minResults: number;
+};
+
+type NonFatalQueryResult = {
+  data?: unknown;
+  nonFatal?: boolean;
+  code?: string;
+  error?: string;
+};
+
 export function JosiahAutonomousHypothesis() {
   const [hypotheses, setHypotheses] = useState<Hypothesis[]>([]);
   const [leads, setLeads] = useState<InvestigativeLead[]>([]);
@@ -112,19 +127,50 @@ export function JosiahAutonomousHypothesis() {
   });
 
   // Hypothesis templates for automated validation
-  const hypothesisTemplates: Record<string, { query: string; threshold: number; legal_code: string; minResults: number }> = {
+  const hypothesisTemplates = useMemo<Record<string, ValidationTemplate>>(() => ({
     'aircraft_biometric_correlation': {
       query: `
+        WITH high_stress_events AS (
+          SELECT measurement_timestamp, heart_rate, stress_level
+          FROM biometric_monitoring
+          WHERE measurement_timestamp IS NOT NULL
+            AND (heart_rate > 90 OR stress_level > 60)
+        ), correlated_flights AS (
+          SELECT 
+            lfdr.registration,
+            COUNT(*) as correlation_count,
+            AVG(hse.heart_rate) as avg_heart_rate,
+            AVG(hse.stress_level) as avg_stress
+          FROM high_stress_events hse
+          JOIN live_flight_detections_rows lfdr 
+            ON lfdr.detection_timestamp BETWEEN hse.measurement_timestamp - INTERVAL '5 minutes'
+               AND hse.measurement_timestamp + INTERVAL '5 minutes'
+          WHERE lfdr.registration IS NOT NULL
+            AND lfdr.registration != ''
+          GROUP BY lfdr.registration
+          HAVING COUNT(*) > 1
+        )
+        SELECT registration, correlation_count, avg_heart_rate, avg_stress
+        FROM correlated_flights
+        ORDER BY correlation_count DESC
+        LIMIT 30
+      `,
+      fallbackQuery: `
+        WITH high_stress_days AS (
+          SELECT DISTINCT DATE(measurement_timestamp) as event_day
+          FROM biometric_monitoring
+          WHERE measurement_timestamp IS NOT NULL
+            AND (heart_rate > 90 OR stress_level > 60)
+        )
         SELECT 
           lfdr.registration,
           COUNT(*) as correlation_count,
-          AVG(bm.heart_rate) as avg_heart_rate,
-          AVG(bm.stress_level) as avg_stress
+          AVG(lfdr.altitude) as avg_altitude,
+          AVG(lfdr.speed) as avg_speed
         FROM live_flight_detections_rows lfdr
-        JOIN biometric_monitoring bm 
-          ON bm.measurement_timestamp BETWEEN lfdr.detection_timestamp - INTERVAL '5 minutes'
-             AND lfdr.detection_timestamp + INTERVAL '5 minutes'
-        WHERE bm.heart_rate > 90 OR bm.stress_level > 60
+        JOIN high_stress_days hsd ON DATE(lfdr.detection_timestamp) = hsd.event_day
+        WHERE lfdr.registration IS NOT NULL
+          AND lfdr.registration != ''
         GROUP BY lfdr.registration
         HAVING COUNT(*) > 1
         ORDER BY correlation_count DESC
@@ -184,7 +230,7 @@ export function JosiahAutonomousHypothesis() {
       minResults: 10,
       legal_code: 'Evidence of Operational Schedule'
     }
-  };
+  }), []);
 
   const runWatchtowerAgent = useCallback(async () => {
     try {
@@ -250,60 +296,80 @@ export function JosiahAutonomousHypothesis() {
     try {
       // Determine which template to use based on lead question - improved matching
       const questionLower = lead.question.toLowerCase();
+      const normalizedQuestion = questionLower.replace(/[^a-z0-9]+/g, ' ').trim();
       let templateKey = 'aircraft_biometric_correlation';
       
       // More specific matching for better template selection
-      if (questionLower.includes('time pattern') || questionLower.includes('when') || 
-          questionLower.includes('schedule') || questionLower.includes('intensif')) {
+      if (normalizedQuestion.includes('time pattern') || normalizedQuestion.includes('when') || 
+          normalizedQuestion.includes('schedule') || normalizedQuestion.includes('intensif')) {
         templateKey = 'timing_pattern_analysis';
-      } else if (questionLower.includes('aircraft type') || questionLower.includes('biometric stress') ||
-                 questionLower.includes('correlate') || questionLower.includes('heart rate')) {
-        templateKey = 'aircraft_biometric_correlation';
-      } else if (questionLower.includes('converge') || questionLower.includes('fleet') ||
-                 questionLower.includes('coordination')) {
-        templateKey = 'fleet_convergence_pattern';
-      } else if (questionLower.includes('invisible') || questionLower.includes('adsb') ||
-                 questionLower.includes('masked') || questionLower.includes('hidden')) {
+      } else if (normalizedQuestion.includes('invisible') || normalizedQuestion.includes('ads b') ||
+                 normalizedQuestion.includes('adsb') || normalizedQuestion.includes('masked') ||
+                 normalizedQuestion.includes('hidden') || normalizedQuestion.includes('never appeared') ||
+                 normalizedQuestion.includes('zero detections')) {
         templateKey = 'invisible_fleet_detection';
+      } else if (normalizedQuestion.includes('converge') || normalizedQuestion.includes('fleet') ||
+                 normalizedQuestion.includes('coordination')) {
+        templateKey = 'fleet_convergence_pattern';
+      } else if (normalizedQuestion.includes('aircraft type') || normalizedQuestion.includes('biometric stress') ||
+                 normalizedQuestion.includes('correlate') || normalizedQuestion.includes('heart rate') ||
+                 normalizedQuestion.includes('stress event') || normalizedQuestion.includes('aircraft correlation')) {
+        templateKey = 'aircraft_biometric_correlation';
       }
 
       console.log(`Validating lead with template: ${templateKey} for question: ${lead.question}`);
 
       const template = hypothesisTemplates[templateKey];
       
-       let data: any = null;
-       let queryError: any = null;
+       let data: unknown = null;
+       let queryError: unknown = null;
+       let lastError: unknown = null;
+       let usedFallbackQuery = false;
+       const queriesToTry = [template.query, template.fallbackQuery].filter(
+         (candidate, index, all): candidate is string => Boolean(candidate) && all.indexOf(candidate) === index
+       );
        
-       // Retry with timeout to handle transient network failures
-       for (let attempt = 0; attempt < 2; attempt++) {
-         try {
-           const controller = new AbortController();
-           const timeout = setTimeout(() => controller.abort(), 30000);
-           const result = await supabase.functions.invoke('neon-query', {
-             body: { action: 'customQuery', query: template.query }
-           });
-           clearTimeout(timeout);
-           data = result.data;
-           queryError = result.error;
-           if (!queryError) break;
-         } catch (fetchErr) {
-           console.warn(`Lead validation attempt ${attempt + 1} failed:`, fetchErr);
-           if (attempt === 1) throw fetchErr;
-           await new Promise(r => setTimeout(r, 2000));
+       // Retry with a lighter fallback query when the primary validation path times out
+       for (let queryIndex = 0; queryIndex < queriesToTry.length; queryIndex++) {
+         const candidateQuery = queriesToTry[queryIndex];
+         queryError = null;
+         data = null;
+
+         for (let attempt = 0; attempt < 2; attempt++) {
+           try {
+             const result = await supabase.functions.invoke('neon-query', {
+               body: { action: 'customQuery', query: candidateQuery }
+             });
+             data = result.data;
+             queryError = result.error;
+             lastError = result.error;
+             if (!queryError) {
+               usedFallbackQuery = queryIndex > 0;
+               break;
+             }
+           } catch (fetchErr) {
+             lastError = fetchErr;
+             console.warn(`Lead validation attempt ${attempt + 1} failed (${queryIndex === 0 ? 'primary' : 'fallback'} query):`, fetchErr);
+             if (attempt === 1) queryError = fetchErr;
+             else await new Promise(r => setTimeout(r, 1500));
+           }
          }
+
+         if (!queryError) break;
        }
 
       if (queryError) {
-        console.error('Query error:', queryError);
-        throw queryError;
+         console.error('Query error:', { queryError, lastError, templateKey, question: lead.question });
+         throw (lastError || queryError);
       }
 
        // neon-query returns either:
        // 1) an array of rows (normal SELECT)
        // 2) an object like { data: [], nonFatal: true, ... } (handled error)
-       const results: Record<string, unknown>[] = Array.isArray(data)
+        const queryPayload = data as NonFatalQueryResult | null;
+        const results: Record<string, unknown>[] = Array.isArray(data)
          ? data
-         : (Array.isArray((data as any)?.data) ? (data as any).data : []);
+          : (Array.isArray(queryPayload?.data) ? queryPayload.data as Record<string, unknown>[] : []);
       const evidenceCount = results.length;
       
       // Improved scoring: use minResults as denominator for proper scaling
@@ -359,14 +425,15 @@ export function JosiahAutonomousHypothesis() {
           });
         }
 
-        toast.success(`Lead validated with ${(correlationScore * 100).toFixed(0)}% confidence - ${evidenceCount} evidence points found`);
+        toast.success(`Lead validated with ${(correlationScore * 100).toFixed(0)}% confidence - ${evidenceCount} evidence points found${usedFallbackQuery ? ' (fallback query used)' : ''}`);
       } else {
-        toast.info(`Lead analysis: ${evidenceCount} evidence points found (${(correlationScore * 100).toFixed(0)}% confidence)`);
+        toast.info(`Lead analysis: ${evidenceCount} evidence points found (${(correlationScore * 100).toFixed(0)}% confidence)${usedFallbackQuery ? ' via fallback query' : ''}`);
       }
 
     } catch (err) {
       console.error('Lead validation error:', err);
-      toast.error('Validation failed - check console');
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      toast.error(errorMessage.includes('Failed to fetch') ? 'Validation timed out — please retry' : 'Validation failed - check console');
     } finally {
       setValidatingLead(null);
     }

@@ -17,6 +17,7 @@ import { ShellNetworkGraph } from "@/components/dashboard/ShellNetworkGraph";
 import { EvidencePowerhouse } from "@/components/dashboard/EvidencePowerhouse";
 import { SentinelViolationsBoard } from "@/components/dashboard/SentinelViolationsBoard";
 import { EvidenceStitcher } from "@/components/dashboard/EvidenceStitcher";
+import { ArchiveDataMap } from "@/components/dashboard/ArchiveDataMap";
 
 const Index = () => {
   return (
@@ -46,6 +47,11 @@ const Index = () => {
           />
         </section>
         
+        {/* ARCHIVE DATA MAP - Visual domain overview */}
+        <section>
+          <ArchiveDataMap />
+        </section>
+
         {/* DATABASE INTELLIGENCE - Multi-Modal Scanner */}
         <section className="grid grid-cols-1 xl:grid-cols-2 gap-4 sm:gap-6">
           <DatabaseIntelligenceScanner />

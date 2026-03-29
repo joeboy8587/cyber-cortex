@@ -248,37 +248,48 @@ export function MultiAgentHub() {
     try {
       abortControllerRef.current = new AbortController();
       
-      // Retry wrapper for rate limits (429)
-      const fetchWithRetry = async (retries = 3): Promise<Response> => {
+      // Retry wrapper for rate limits (429) with longer backoff
+      const fetchWithRetry = async (retries = 4): Promise<Response> => {
         for (let attempt = 0; attempt <= retries; attempt++) {
-          const resp = await fetch(
-            `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/agent-orchestrator`,
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`
-              },
-              body: JSON.stringify({
-                agentType: agentId,
-                message: prompt,
-                context: {
-                  ...sharedContextRef.current,
-                  conversationHistory: messagesRef.current.slice(-15)
-                }
-              }),
-              signal: abortControllerRef.current!.signal
+          try {
+            const resp = await fetch(
+              `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/agent-orchestrator`,
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "Authorization": `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`
+                },
+                body: JSON.stringify({
+                  agentType: agentId,
+                  message: prompt,
+                  context: {
+                    ...sharedContextRef.current,
+                    conversationHistory: messagesRef.current.slice(-10)
+                  }
+                }),
+                signal: abortControllerRef.current!.signal
+              }
+            );
+            if (resp.status === 429 && attempt < retries) {
+              const delay = (4000 * Math.pow(2, attempt)) + Math.random() * 2000;
+              toast.info(`Rate limited — retrying in ${Math.round(delay / 1000)}s...`);
+              await new Promise(r => setTimeout(r, delay));
+              continue;
             }
-          );
-          if (resp.status === 429 && attempt < retries) {
-            const delay = (2000 * Math.pow(2, attempt)) + Math.random() * 1000;
-            toast.info(`Rate limited — retrying in ${Math.round(delay / 1000)}s...`);
-            await new Promise(r => setTimeout(r, delay));
-            continue;
+            return resp;
+          } catch (fetchErr) {
+            if ((fetchErr as Error).name === "AbortError") throw fetchErr;
+            if (attempt < retries) {
+              const delay = 3000 * (attempt + 1);
+              toast.info(`Network error — retrying in ${Math.round(delay / 1000)}s...`);
+              await new Promise(r => setTimeout(r, delay));
+              continue;
+            }
+            throw new Error("Failed to reach agent service. Please try again.");
           }
-          return resp;
         }
-        throw new Error("Max retries exceeded");
+        throw new Error("Max retries exceeded — please wait a moment and try again.");
       };
 
       const response = await fetchWithRetry();
@@ -379,7 +390,7 @@ export function MultiAgentHub() {
         const validAgent = AGENTS.find(a => a.id === targetId);
         if (validAgent) {
           // Stagger chained calls to avoid rate limits
-          if (i > 0) await new Promise(r => setTimeout(r, 2000));
+          await new Promise(r => setTimeout(r, i === 0 ? 3000 : 5000));
           toast.info(`🔄 ${AGENTS.find(a => a.id === agentId)?.name} → ${validAgent.name}`);
           await executeAgentCall(targetId, question, sessionId, depth + 1, true);
         }
@@ -394,7 +405,7 @@ export function MultiAgentHub() {
         const resolvedName = validAgent ? validAgent.name : "Legal Drafter";
         
         // Stagger after requests or between handoffs
-        if (requests.length > 0 || i > 0) await new Promise(r => setTimeout(r, 2000));
+        await new Promise(r => setTimeout(r, 5000));
         toast.info(`📋 Handoff → ${resolvedName}`);
         setActiveAgent(resolvedId);
         await executeAgentCall(resolvedId, task, sessionId, depth + 1, true);

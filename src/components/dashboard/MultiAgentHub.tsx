@@ -58,6 +58,7 @@ export function MultiAgentHub() {
   const [showHistory, setShowHistory] = useState(false);
   const [loadingSessions, setLoadingSessions] = useState(false);
   const [chainDepth, setChainDepth] = useState(0);
+  const [chainTrail, setChainTrail] = useState<string[]>([]);
   const [sharedContext, setSharedContext] = useState<{
     violations: unknown[]; shellCompanies: unknown[]; financialTrails: unknown[];
     draftedDocuments: unknown[]; conversationHistory: AgentMessage[];
@@ -160,6 +161,7 @@ export function MultiAgentHub() {
     setChainDepth(0);
     setSharedContext({ violations: [], shellCompanies: [], financialTrails: [], draftedDocuments: [], conversationHistory: [] });
     setShowHistory(false);
+    setChainTrail([]);
   };
 
   const extractAndSaveCaseFiles = async (sessionId: string, agentId: string, content: string) => {
@@ -219,6 +221,9 @@ export function MultiAgentHub() {
     depth: number,
     isInterAgent: boolean
   ) => {
+    // Track agent in chain trail
+    setChainTrail(prev => depth === 0 && !isInterAgent ? [agentId] : [...prev, agentId]);
+
     // Add inter-agent marker message
     if (isInterAgent) {
       const fromAgent = messagesRef.current[messagesRef.current.length - 1]?.agent || "system";
@@ -365,6 +370,7 @@ export function MultiAgentHub() {
     setInput("");
     setIsLoading(true);
     setChainDepth(0);
+    setChainTrail([]);
 
     await saveMessage(sessionId, userMessage);
 
@@ -411,6 +417,22 @@ export function MultiAgentHub() {
               <Badge variant="default" className="text-[10px] bg-amber-500/20 text-amber-400 border-amber-500/30">
                 <Zap className="w-3 h-3 mr-1" /> Chain {chainDepth}/{MAX_CHAIN_DEPTH}
               </Badge>
+            )}
+            {chainTrail.length > 1 && (
+              <div className="flex items-center gap-1 px-2 py-1 rounded-md bg-muted/50 border border-border">
+                {chainTrail.map((agentId, idx) => {
+                  const agent = AGENTS.find(a => a.id === agentId);
+                  return (
+                    <div key={idx} className="flex items-center gap-1">
+                      {idx > 0 && <ArrowRight className="h-3 w-3 text-muted-foreground" />}
+                      <div className={`p-1 rounded-full ${agent?.color || 'bg-muted'}`}>
+                        {agent?.icon || <Brain className="h-3 w-3" />}
+                      </div>
+                      <span className="text-[10px] font-medium">{agent?.name?.split(' ')[0] || agentId}</span>
+                    </div>
+                  );
+                })}
+              </div>
             )}
             <Button size="sm" variant="outline" onClick={() => setShowHistory(!showHistory)}>
               <History className="w-3 h-3 mr-1" />

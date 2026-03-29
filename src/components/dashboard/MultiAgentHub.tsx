@@ -28,7 +28,6 @@ interface SessionSummary {
   active_agent: string;
   created_at: string;
   updated_at: string;
-  message_count?: number;
 }
 
 interface AgentConfig {
@@ -47,6 +46,8 @@ const AGENTS: AgentConfig[] = [
   { id: "amy", name: "Amy", icon: <Flame className="h-4 w-4" />, color: "bg-rose-500", description: "Unfiltered legal interpreter" }
 ];
 
+const MAX_CHAIN_DEPTH = 4; // Max auto-handoffs before requiring user input
+
 export function MultiAgentHub() {
   const [activeAgent, setActiveAgent] = useState("legal_analyst");
   const [input, setInput] = useState("");
@@ -56,6 +57,7 @@ export function MultiAgentHub() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [loadingSessions, setLoadingSessions] = useState(false);
+  const [chainDepth, setChainDepth] = useState(0);
   const [sharedContext, setSharedContext] = useState<{
     violations: unknown[]; shellCompanies: unknown[]; financialTrails: unknown[];
     draftedDocuments: unknown[]; conversationHistory: AgentMessage[];
@@ -63,12 +65,19 @@ export function MultiAgentHub() {
   
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const messagesRef = useRef<AgentMessage[]>([]);
+  const sharedContextRef = useRef(sharedContext);
+  const sessionIdRef = useRef<string | null>(null);
+
+  // Keep refs in sync
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
+  useEffect(() => { sharedContextRef.current = sharedContext; }, [sharedContext]);
+  useEffect(() => { sessionIdRef.current = currentSessionId; }, [currentSessionId]);
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages]);
 
-  // Load session history on mount
   useEffect(() => { loadSessions(); }, []);
 
   const loadSessions = async () => {
@@ -81,29 +90,26 @@ export function MultiAgentHub() {
         .limit(50);
       if (error) throw error;
       setSessions((data || []) as SessionSummary[]);
-    } catch (e) {
-      console.error("Failed to load sessions:", e);
-    } finally {
-      setLoadingSessions(false);
-    }
+    } catch (e) { console.error("Failed to load sessions:", e); }
+    finally { setLoadingSessions(false); }
   };
 
-  const createSession = async (): Promise<string | null> => {
+  const ensureSession = async (firstMessage?: string): Promise<string | null> => {
+    if (sessionIdRef.current) return sessionIdRef.current;
     try {
       const { data: userData } = await supabase.auth.getUser();
       if (!userData.user) { toast.error("Not authenticated"); return null; }
-      
-      const firstLine = input.trim().substring(0, 80) || "New Investigation";
+      const title = (firstMessage || "New Investigation").substring(0, 80);
       const { data, error } = await supabase
         .from("agent_sessions")
-        .insert({ user_id: userData.user.id, title: firstLine, active_agent: activeAgent })
+        .insert({ user_id: userData.user.id, title, active_agent: activeAgent })
         .select("id")
         .single();
       if (error) throw error;
-      const sessionId = data.id;
-      setCurrentSessionId(sessionId);
+      setCurrentSessionId(data.id);
+      sessionIdRef.current = data.id;
       await loadSessions();
-      return sessionId;
+      return data.id;
     } catch (e: any) {
       console.error("Failed to create session:", e);
       toast.error("Failed to create session");
@@ -120,9 +126,7 @@ export function MultiAgentHub() {
         message_type: msg.type,
         target_agent: msg.targetAgent || null
       });
-    } catch (e) {
-      console.error("Failed to save message:", e);
-    }
+    } catch (e) { console.error("Failed to save message:", e); }
   };
 
   const loadSession = async (sessionId: string) => {
@@ -133,39 +137,32 @@ export function MultiAgentHub() {
         .eq("session_id", sessionId)
         .order("created_at", { ascending: true });
       if (error) throw error;
-
       const loaded: AgentMessage[] = (msgs || []).map((m: any) => ({
-        id: m.id,
-        agent: m.agent,
-        content: m.content,
+        id: m.id, agent: m.agent, content: m.content,
         timestamp: new Date(m.created_at),
         type: m.message_type as "user" | "agent" | "inter-agent",
         targetAgent: m.target_agent
       }));
-
       setMessages(loaded);
       setCurrentSessionId(sessionId);
+      sessionIdRef.current = sessionId;
       setShowHistory(false);
-
-      // Restore active agent from session
       const session = sessions.find(s => s.id === sessionId);
       if (session) setActiveAgent(session.active_agent);
-
       toast.success(`Loaded session with ${loaded.length} messages`);
-    } catch (e: any) {
-      toast.error("Failed to load session");
-    }
+    } catch { toast.error("Failed to load session"); }
   };
 
   const startNewSession = () => {
     setMessages([]);
     setCurrentSessionId(null);
+    sessionIdRef.current = null;
+    setChainDepth(0);
     setSharedContext({ violations: [], shellCompanies: [], financialTrails: [], draftedDocuments: [], conversationHistory: [] });
     setShowHistory(false);
   };
 
   const extractAndSaveCaseFiles = async (sessionId: string, agentId: string, content: string) => {
-    // Auto-detect legal documents in agent output
     const docPatterns = [
       { regex: /###\s*\*?\*?(?:FAA|FORMAL|EMERGENCY)[^*\n]*\*?\*?/i, type: "faa_demand", tag: "faa" },
       { regex: /###\s*\*?\*?(?:LEGAL FILING|SUPPLEMENTAL|DECLARATION|AFFIDAVIT)[^*\n]*\*?\*?/i, type: "legal_filing", tag: "filing" },
@@ -173,25 +170,17 @@ export function MultiAgentHub() {
       { regex: /###\s*\*?\*?(?:EXHIBIT)[^*\n]*\*?\*?/i, type: "exhibit", tag: "exhibit" },
       { regex: /###\s*\*?\*?(?:LEGAL ANALYST REPORT)[^*\n]*\*?\*?/i, type: "legal_analysis", tag: "analysis" },
     ];
-
     for (const pattern of docPatterns) {
       if (pattern.regex.test(content)) {
         try {
           const titleMatch = content.match(/###\s*\*?\*?([^*\n]+)\*?\*?/);
           const title = titleMatch?.[1]?.trim() || `${pattern.type} document`;
-          
           await supabase.from("agent_case_files").insert({
-            session_id: sessionId,
-            title,
-            document_type: pattern.type,
-            content,
-            agent: agentId,
-            tags: [pattern.tag, agentId]
+            session_id: sessionId, title, document_type: pattern.type,
+            content, agent: agentId, tags: [pattern.tag, agentId]
           });
-        } catch (e) {
-          console.error("Failed to save case file:", e);
-        }
-        break; // Save once per message
+        } catch (e) { console.error("Failed to save case file:", e); }
+        break;
       }
     }
   };
@@ -222,29 +211,31 @@ export function MultiAgentHub() {
     }
   };
 
-  const sendMessage = useCallback(async () => {
-    if (!input.trim() || isLoading) return;
-
-    // Ensure we have a session
-    let sessionId = currentSessionId;
-    if (!sessionId) {
-      sessionId = await createSession();
-      if (!sessionId) return;
+  // Core agent execution — can be called recursively for handoffs
+  const executeAgentCall = async (
+    agentId: string,
+    prompt: string,
+    sessionId: string,
+    depth: number,
+    isInterAgent: boolean
+  ) => {
+    // Add inter-agent marker message
+    if (isInterAgent) {
+      const fromAgent = messagesRef.current[messagesRef.current.length - 1]?.agent || "system";
+      const interMsg: AgentMessage = {
+        id: crypto.randomUUID(),
+        agent: fromAgent,
+        content: `➜ Handing off to ${AGENTS.find(a => a.id === agentId)?.name || agentId}`,
+        timestamp: new Date(),
+        type: "inter-agent",
+        targetAgent: agentId
+      };
+      setMessages(prev => [...prev, interMsg]);
+      await saveMessage(sessionId, interMsg);
     }
 
-    const userMessage: AgentMessage = {
-      id: crypto.randomUUID(), agent: "user", content: input,
-      timestamp: new Date(), type: "user", targetAgent: activeAgent
-    };
-    setMessages(prev => [...prev, userMessage]);
-    setInput("");
-    setIsLoading(true);
-
-    // Save user message
-    await saveMessage(sessionId, userMessage);
-
     const agentMessage: AgentMessage = {
-      id: crypto.randomUUID(), agent: activeAgent, content: "",
+      id: crypto.randomUUID(), agent: agentId, content: "",
       timestamp: new Date(), type: "agent"
     };
     setMessages(prev => [...prev, agentMessage]);
@@ -260,9 +251,12 @@ export function MultiAgentHub() {
             "Authorization": `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`
           },
           body: JSON.stringify({
-            agentType: activeAgent,
-            message: input,
-            context: { ...sharedContext, conversationHistory: messages.slice(-10) }
+            agentType: agentId,
+            message: prompt,
+            context: {
+              ...sharedContextRef.current,
+              conversationHistory: messagesRef.current.slice(-15)
+            }
           }),
           signal: abortControllerRef.current.signal
         }
@@ -285,55 +279,106 @@ export function MultiAgentHub() {
       // Save agent response
       const finalAgentMsg = { ...agentMessage, content: fullContent };
       await saveMessage(sessionId, finalAgentMsg);
+      await extractAndSaveCaseFiles(sessionId, agentId, fullContent);
 
-      // Auto-detect and save case file documents
-      await extractAndSaveCaseFiles(sessionId, activeAgent, fullContent);
-
-      // Update session title & timestamp
+      // Update session
       await supabase.from("agent_sessions").update({ 
         updated_at: new Date().toISOString(),
-        active_agent: activeAgent
+        active_agent: agentId
       }).eq("id", sessionId);
 
-      // Parse inter-agent communication
-      const handoffMatch = fullContent.match(/\[HANDOFF:(\w+)\]([\s\S]*?)\[\/HANDOFF\]/);
-      const requestMatch = fullContent.match(/\[REQUEST_AGENT:(\w+)\]([\s\S]*?)\[\/REQUEST_AGENT\]/);
-      const broadcastMatch = fullContent.match(/\[BROADCAST\]([\s\S]*?)\[\/BROADCAST\]/);
-
-      if (handoffMatch) {
-        const targetAgent = handoffMatch[1];
-        const taskDescription = handoffMatch[2].trim();
-        const validAgent = AGENTS.find(a => a.id === targetAgent);
-        if (validAgent) {
-          toast.info(`Handing off to ${validAgent.name}`);
-          setActiveAgent(targetAgent);
-          setTimeout(() => setInput(taskDescription), 500);
-        } else {
-          toast.info(`Routing "${targetAgent}" task to Legal Drafter`);
-          setActiveAgent("legal_drafter");
-          setTimeout(() => setInput(taskDescription), 500);
-        }
-      }
-      if (requestMatch) {
-        const tgt = requestMatch[1];
-        toast.info(`Requesting info from ${AGENTS.find(a => a.id === tgt)?.name || tgt}`);
-      }
-      if (broadcastMatch) toast.success("Finding broadcast to all agents");
-
+      // Update shared context
       setSharedContext(prev => ({
         ...prev,
-        conversationHistory: [...prev.conversationHistory, userMessage, { ...agentMessage, content: fullContent }]
+        conversationHistory: [...prev.conversationHistory, { ...agentMessage, content: fullContent }]
       }));
+
+      // Parse ALL inter-agent communications
+      const handoffs = [...fullContent.matchAll(/\[HANDOFF:(\w+)\]([\s\S]*?)\[\/HANDOFF\]/g)];
+      const requests = [...fullContent.matchAll(/\[REQUEST_AGENT:(\w+)\]([\s\S]*?)\[\/REQUEST_AGENT\]/g)];
+      const broadcasts = [...fullContent.matchAll(/\[BROADCAST\]([\s\S]*?)\[\/BROADCAST\]/g)];
+
+      // Process broadcasts
+      for (const broadcast of broadcasts) {
+        toast.success(`📢 ${AGENTS.find(a => a.id === agentId)?.name}: Broadcast sent`);
+      }
+
+      // Check depth before auto-executing
+      if (depth >= MAX_CHAIN_DEPTH) {
+        if (handoffs.length > 0 || requests.length > 0) {
+          toast.info(`Chain depth limit reached (${MAX_CHAIN_DEPTH}). Pending handoffs paused — send a message to continue.`);
+          // Pre-fill the next handoff for manual trigger
+          const next = handoffs[0] || requests[0];
+          if (next) {
+            const targetId = next[1];
+            const validAgent = AGENTS.find(a => a.id === targetId);
+            setActiveAgent(validAgent ? targetId : "legal_drafter");
+            setInput(next[2].trim());
+          }
+        }
+        return;
+      }
+
+      // Auto-execute REQUEST_AGENTs first (they return info to calling context)
+      for (const req of requests) {
+        const targetId = req[1];
+        const question = req[2].trim();
+        const validAgent = AGENTS.find(a => a.id === targetId);
+        if (validAgent) {
+          toast.info(`🔄 ${AGENTS.find(a => a.id === agentId)?.name} → ${validAgent.name}`);
+          await executeAgentCall(targetId, question, sessionId, depth + 1, true);
+        }
+      }
+
+      // Auto-execute HANDOFFs (transfers control)
+      for (const handoff of handoffs) {
+        const targetId = handoff[1];
+        const task = handoff[2].trim();
+        const validAgent = AGENTS.find(a => a.id === targetId);
+        const resolvedId = validAgent ? targetId : "legal_drafter";
+        const resolvedName = validAgent ? validAgent.name : "Legal Drafter";
+        
+        toast.info(`📋 Handoff → ${resolvedName}`);
+        setActiveAgent(resolvedId);
+        await executeAgentCall(resolvedId, task, sessionId, depth + 1, true);
+      }
 
     } catch (err) {
       if ((err as Error).name === "AbortError") return;
       console.error("Agent error:", err);
       toast.error((err as Error).message || "Agent communication failed");
       setMessages(prev => prev.map(m => m.id === agentMessage.id ? { ...m, content: `Error: ${(err as Error).message}` } : m));
+    }
+  };
+
+  const sendMessage = useCallback(async () => {
+    if (!input.trim() || isLoading) return;
+
+    const sessionId = await ensureSession(input);
+    if (!sessionId) return;
+
+    const userMessage: AgentMessage = {
+      id: crypto.randomUUID(), agent: "user", content: input,
+      timestamp: new Date(), type: "user", targetAgent: activeAgent
+    };
+    setMessages(prev => [...prev, userMessage]);
+    setInput("");
+    setIsLoading(true);
+    setChainDepth(0);
+
+    await saveMessage(sessionId, userMessage);
+
+    setSharedContext(prev => ({
+      ...prev,
+      conversationHistory: [...prev.conversationHistory, userMessage]
+    }));
+
+    try {
+      await executeAgentCall(activeAgent, userMessage.content, sessionId, 0, false);
     } finally {
       setIsLoading(false);
     }
-  }, [input, activeAgent, isLoading, messages, sharedContext, currentSessionId]);
+  }, [input, activeAgent, isLoading]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
@@ -345,7 +390,8 @@ export function MultiAgentHub() {
     { agent: "legal_analyst", prompt: "Analyze current violations and calculate total damages exposure" },
     { agent: "shell_investigator", prompt: "Trace ownership of N790FA through shell company layers" },
     { agent: "legal_drafter", prompt: "Draft a RICO complaint based on current evidence" },
-    { agent: "josiah", prompt: "Identify missed surveillance patterns from the last 30 days" }
+    { agent: "josiah", prompt: "Identify missed surveillance patterns from the last 30 days" },
+    { agent: "amy", prompt: "Give me the unfiltered truth about the ALF IX fleet and what the evidence actually proves" }
   ];
 
   return (
@@ -359,6 +405,11 @@ export function MultiAgentHub() {
             {currentSessionId && (
               <Badge variant="secondary" className="text-[10px]">
                 <Save className="w-3 h-3 mr-1" /> Auto-Saving
+              </Badge>
+            )}
+            {isLoading && chainDepth > 0 && (
+              <Badge variant="default" className="text-[10px] bg-amber-500/20 text-amber-400 border-amber-500/30">
+                <Zap className="w-3 h-3 mr-1" /> Chain {chainDepth}/{MAX_CHAIN_DEPTH}
               </Badge>
             )}
             <Button size="sm" variant="outline" onClick={() => setShowHistory(!showHistory)}>
@@ -383,25 +434,22 @@ export function MultiAgentHub() {
             </div>
             {sessions.length === 0 ? (
               <p className="text-xs text-muted-foreground py-4 text-center">No saved sessions yet</p>
-            ) : (
-              sessions.map(s => (
-                <div
-                  key={s.id}
-                  className={`flex items-center gap-2 p-2 rounded cursor-pointer hover:bg-muted/50 transition-colors ${
-                    currentSessionId === s.id ? "bg-primary/10 border border-primary/30" : "border border-transparent"
-                  }`}
-                  onClick={() => loadSession(s.id)}
-                >
-                  <FolderOpen className="w-3 h-3 text-muted-foreground flex-shrink-0" />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs font-medium truncate">{s.title}</p>
-                    <p className="text-[10px] text-muted-foreground">
-                      {new Date(s.updated_at).toLocaleDateString()} · {AGENTS.find(a => a.id === s.active_agent)?.name || s.active_agent}
-                    </p>
-                  </div>
+            ) : sessions.map(s => (
+              <div key={s.id}
+                className={`flex items-center gap-2 p-2 rounded cursor-pointer hover:bg-muted/50 transition-colors ${
+                  currentSessionId === s.id ? "bg-primary/10 border border-primary/30" : "border border-transparent"
+                }`}
+                onClick={() => loadSession(s.id)}
+              >
+                <FolderOpen className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-medium truncate">{s.title}</p>
+                  <p className="text-[10px] text-muted-foreground">
+                    {new Date(s.updated_at).toLocaleDateString()} · {AGENTS.find(a => a.id === s.active_agent)?.name || s.active_agent}
+                  </p>
                 </div>
-              ))
-            )}
+              </div>
+            ))}
           </div>
         )}
 
@@ -439,12 +487,12 @@ export function MultiAgentHub() {
         </div>
 
         {/* Messages */}
-        <ScrollArea className="h-[400px] border rounded-lg p-3" ref={scrollRef}>
+        <ScrollArea className="h-[500px] border rounded-lg p-3" ref={scrollRef}>
           {messages.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
               <MessageSquare className="h-8 w-8 mb-2 opacity-50" />
               <p className="text-sm">Start a conversation with an agent</p>
-              <p className="text-xs mt-1">All messages auto-save to your case file</p>
+              <p className="text-xs mt-1">Agents auto-chain handoffs & requests to each other</p>
             </div>
           ) : (
             <div className="space-y-4">
@@ -455,11 +503,25 @@ export function MultiAgentHub() {
                       {AGENTS.find(a => a.id === msg.agent)?.icon || <Brain className="h-4 w-4" />}
                     </div>
                   )}
-                  <div className={`max-w-[80%] rounded-lg p-3 ${msg.type === "user" ? "bg-primary text-primary-foreground" : "bg-muted"}`}>
+                  <div className={`max-w-[80%] rounded-lg p-3 ${
+                    msg.type === "user" ? "bg-primary text-primary-foreground"
+                    : msg.type === "inter-agent" ? "bg-amber-500/10 border border-amber-500/30"
+                    : "bg-muted"
+                  }`}>
                     {msg.type !== "user" && (
                       <div className="flex items-center gap-2 mb-1">
-                        <span className="text-xs font-medium">{AGENTS.find(a => a.id === msg.agent)?.name || msg.agent}</span>
-                        {msg.targetAgent && (<><ArrowRight className="h-3 w-3" /><span className="text-xs">{AGENTS.find(a => a.id === msg.targetAgent)?.name}</span></>)}
+                        <span className="text-xs font-medium">
+                          {AGENTS.find(a => a.id === msg.agent)?.name || msg.agent}
+                        </span>
+                        {msg.targetAgent && (
+                          <>
+                            <ArrowRight className="h-3 w-3" />
+                            <span className="text-xs">{AGENTS.find(a => a.id === msg.targetAgent)?.name}</span>
+                          </>
+                        )}
+                        {msg.type === "inter-agent" && (
+                          <Badge variant="outline" className="text-[9px] ml-1">handoff</Badge>
+                        )}
                       </div>
                     )}
                     <p className="text-sm whitespace-pre-wrap">{msg.content || "..."}</p>
@@ -486,7 +548,7 @@ export function MultiAgentHub() {
           </Button>
         </div>
 
-        {/* Shared Context Indicator */}
+        {/* Status Bar */}
         <div className="flex items-center gap-4 text-xs text-muted-foreground border-t pt-3">
           <span>Session:</span>
           <Badge variant="secondary">{currentSessionId ? "Active" : "New"}</Badge>

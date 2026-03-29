@@ -134,8 +134,10 @@ export function WatchtowerAlertsHub() {
       }
 
       return result;
-    } catch (err) {
-      console.error('Watchtower agent error:', err);
+    } catch (err: any) {
+      if (err?.name !== 'AbortError') {
+        console.warn('Watchtower agent unavailable:', err?.message || 'Network error');
+      }
       return null;
     }
   }, []);

@@ -247,25 +247,41 @@ export function MultiAgentHub() {
 
     try {
       abortControllerRef.current = new AbortController();
-      const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/agent-orchestrator`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`
-          },
-          body: JSON.stringify({
-            agentType: agentId,
-            message: prompt,
-            context: {
-              ...sharedContextRef.current,
-              conversationHistory: messagesRef.current.slice(-15)
+      
+      // Retry wrapper for rate limits (429)
+      const fetchWithRetry = async (retries = 3): Promise<Response> => {
+        for (let attempt = 0; attempt <= retries; attempt++) {
+          const resp = await fetch(
+            `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/agent-orchestrator`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`
+              },
+              body: JSON.stringify({
+                agentType: agentId,
+                message: prompt,
+                context: {
+                  ...sharedContextRef.current,
+                  conversationHistory: messagesRef.current.slice(-15)
+                }
+              }),
+              signal: abortControllerRef.current!.signal
             }
-          }),
-          signal: abortControllerRef.current.signal
+          );
+          if (resp.status === 429 && attempt < retries) {
+            const delay = (2000 * Math.pow(2, attempt)) + Math.random() * 1000;
+            toast.info(`Rate limited — retrying in ${Math.round(delay / 1000)}s...`);
+            await new Promise(r => setTimeout(r, delay));
+            continue;
+          }
+          return resp;
         }
-      );
+        throw new Error("Max retries exceeded");
+      };
+
+      const response = await fetchWithRetry();
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
@@ -357,24 +373,28 @@ export function MultiAgentHub() {
       }
 
       // Auto-execute REQUEST_AGENTs first (they return info to calling context)
-      for (const req of requests) {
-        const targetId = req[0];
-        const question = req[1].trim();
+      for (let i = 0; i < requests.length; i++) {
+        const targetId = requests[i][0];
+        const question = requests[i][1].trim();
         const validAgent = AGENTS.find(a => a.id === targetId);
         if (validAgent) {
+          // Stagger chained calls to avoid rate limits
+          if (i > 0) await new Promise(r => setTimeout(r, 2000));
           toast.info(`🔄 ${AGENTS.find(a => a.id === agentId)?.name} → ${validAgent.name}`);
           await executeAgentCall(targetId, question, sessionId, depth + 1, true);
         }
       }
 
-      // Auto-execute HANDOFFs (transfers control)
-      for (const handoff of handoffs) {
-        const targetId = handoff[0];
-        const task = handoff[1].trim();
+      // Auto-execute HANDOFFs (transfers control) — with delay between calls
+      for (let i = 0; i < handoffs.length; i++) {
+        const targetId = handoffs[i][0];
+        const task = handoffs[i][1].trim();
         const validAgent = AGENTS.find(a => a.id === targetId);
         const resolvedId = validAgent ? targetId : "legal_drafter";
         const resolvedName = validAgent ? validAgent.name : "Legal Drafter";
         
+        // Stagger after requests or between handoffs
+        if (requests.length > 0 || i > 0) await new Promise(r => setTimeout(r, 2000));
         toast.info(`📋 Handoff → ${resolvedName}`);
         setActiveAgent(resolvedId);
         await executeAgentCall(resolvedId, task, sessionId, depth + 1, true);

@@ -418,6 +418,22 @@ export function MultiAgentHub() {
                 <Zap className="w-3 h-3 mr-1" /> Chain {chainDepth}/{MAX_CHAIN_DEPTH}
               </Badge>
             )}
+            {chainTrail.length > 1 && (
+              <div className="flex items-center gap-1 px-2 py-1 rounded-md bg-muted/50 border border-border">
+                {chainTrail.map((agentId, idx) => {
+                  const agent = AGENTS.find(a => a.id === agentId);
+                  return (
+                    <div key={idx} className="flex items-center gap-1">
+                      {idx > 0 && <ArrowRight className="h-3 w-3 text-muted-foreground" />}
+                      <div className={`p-1 rounded-full ${agent?.color || 'bg-muted'}`}>
+                        {agent?.icon || <Brain className="h-3 w-3" />}
+                      </div>
+                      <span className="text-[10px] font-medium">{agent?.name?.split(' ')[0] || agentId}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
             <Button size="sm" variant="outline" onClick={() => setShowHistory(!showHistory)}>
               <History className="w-3 h-3 mr-1" />
               {showHistory ? "Hide" : "History"}

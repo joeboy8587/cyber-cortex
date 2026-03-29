@@ -301,7 +301,8 @@ export function MultiAgentHub() {
                   message: prompt,
                   context: {
                     ...sharedContextRef.current,
-                    conversationHistory: messagesRef.current.slice(-10)
+                    conversationHistory: messagesRef.current.slice(-10),
+                    selectedDocuments: Array.from(selectedDocs)
                   }
                 }),
                 signal: abortControllerRef.current!.signal
@@ -596,6 +597,60 @@ export function MultiAgentHub() {
             </TabsContent>
           ))}
         </Tabs>
+
+        {/* Intelligence Feed */}
+        {intelDocs.length > 0 && (
+          <Collapsible open={intelOpen} onOpenChange={setIntelOpen}>
+            <CollapsibleTrigger asChild>
+              <Button variant="outline" size="sm" className="w-full flex items-center justify-between text-xs">
+                <span className="flex items-center gap-2">
+                  <BookOpen className="h-3 w-3" />
+                  Intelligence Feed ({intelDocs.length} documents)
+                  {selectedDocs.size > 0 && (
+                    <Badge variant="default" className="text-[9px]">{selectedDocs.size} selected</Badge>
+                  )}
+                </span>
+                <ChevronDown className={`h-3 w-3 transition-transform ${intelOpen ? "rotate-180" : ""}`} />
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="mt-2">
+              <div className="border rounded-lg p-3 bg-muted/20 space-y-1.5 max-h-[200px] overflow-y-auto">
+                <p className="text-[10px] text-muted-foreground mb-2">
+                  Select documents to inject as context for the active agent
+                </p>
+                {intelDocs.map(doc => (
+                  <div
+                    key={doc.id}
+                    onClick={() => toggleDoc(doc.id)}
+                    className={`flex items-center gap-2 p-2 rounded cursor-pointer transition-colors ${
+                      selectedDocs.has(doc.id) 
+                        ? "bg-primary/10 border border-primary/30" 
+                        : "hover:bg-muted/50 border border-transparent"
+                    }`}
+                  >
+                    {selectedDocs.has(doc.id) 
+                      ? <CheckCircle2 className="h-3 w-3 text-primary flex-shrink-0" />
+                      : <FileSearch className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+                    }
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-medium truncate">{doc.title}</p>
+                      <div className="flex items-center gap-1 mt-0.5">
+                        {(doc.tags || []).slice(0, 3).map(tag => (
+                          <Badge key={tag} variant="outline" className="text-[8px] px-1 py-0">{tag}</Badge>
+                        ))}
+                        {doc.file_size && (
+                          <span className="text-[9px] text-muted-foreground ml-1">
+                            {(doc.file_size / 1024).toFixed(0)}KB
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
+        )}
 
         {/* Quick Prompts */}
         <div className="flex flex-wrap gap-2">

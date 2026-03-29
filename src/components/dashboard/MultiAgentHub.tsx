@@ -58,6 +58,7 @@ export function MultiAgentHub() {
   const [showHistory, setShowHistory] = useState(false);
   const [loadingSessions, setLoadingSessions] = useState(false);
   const [chainDepth, setChainDepth] = useState(0);
+  const [chainTrail, setChainTrail] = useState<string[]>([]);
   const [sharedContext, setSharedContext] = useState<{
     violations: unknown[]; shellCompanies: unknown[]; financialTrails: unknown[];
     draftedDocuments: unknown[]; conversationHistory: AgentMessage[];

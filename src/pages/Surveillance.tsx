@@ -23,6 +23,7 @@ import { InfrastructureCorrelation } from "@/components/dashboard/Infrastructure
 import { PatternCoordinationAnalysis } from "@/components/dashboard/PatternCoordinationAnalysis";
 import DeepPatternAnalyzer from "@/components/dashboard/DeepPatternAnalyzer";
 import { NullIcaoForensicPanel } from "@/components/dashboard/NullIcaoForensicPanel";
+import CrossCallsignTracker from "@/components/dashboard/CrossCallsignTracker";
 import F24RadarUploader from "@/components/dashboard/F24RadarUploader";
 import { AutonomousWatchtower } from "@/components/dashboard/AutonomousWatchtower";
 import UnmaskHQSystem from "@/components/dashboard/UnmaskHQSystem";
@@ -77,6 +78,9 @@ export default function Surveillance() {
           </TabsContent>
 
           <TabsContent value="investigation" className="space-y-6">
+            <section>
+              <CrossCallsignTracker />
+            </section>
             <section>
               <TaxonomyBridgePanel />
             </section>

@@ -1,104 +1,83 @@
 
 
-# Archive Consolidation & Visual Data Map
+# System Enrichment & Upgrade Plan
 
-## The Problem
+## What This Covers
+Import 6 uploaded intelligence files into the agent system AND implement targeted upgrades identified from analyzing the reports against the current architecture.
 
-Your 900+ table Neon archive has grown organically, creating fragmentation:
-- **Multiple ADSB tables**: `live_flight_detections_rows`, `unfilterd_detections`, `flagged_aircraft_rows_rows`, plus dozens of derivative/vector tables
-- **Multiple biometric tables**: `biometric_monitoring`, `confirmed_biometric_correlations`, `biometric_screenshots_ocr`, batch events, collapses, etc.
-- **Multiple correlation tables**: `evidence_chain_links`, `flight_ocr_correlations`, various correlation views
-- **Registry/operator sprawl**: `aircraft_registry`, operator profiles, shell company tables
-- **Legal/KCSO fragmentation**: separate tables for violations, fleet, evidence, filings
+---
 
-This makes it hard to find evidence, run cross-modal correlations, and trust that nothing is missed.
+## Part 1: Import Files as Agent Intelligence
 
-## The Solution: Two New Features
+**Files to import:**
+- `ghost_aircraft_unmasking_results.json` — 65 military callsign detections, KOME6670 drone ops
+- `COMPREHENSIVE_ANALYSIS_FINAL_REPORT.md` — 4-phase ghost aircraft & biometric correlation
+- `GHOST_AIRCRAFT_UNMASKING_REPORT.md` — Masked aircraft identification
+- `FLIGHT_INCIDENT_BIOMETRIC_CORRELATION_REPORT.md` — 12 biometric-flight events
+- `EXHIBIT_RCH_MILITARY_COORDINATION.md` — RCH C17/K35R coordination evidence
+- `SHELL_COMPANY_ENTERPRISE_ANALYSIS_1.md` — ALF IX 32-aircraft fleet, shell network
 
-### 1. Auto-Consolidation Engine (new edge function + dashboard panel)
+**Action:** Copy all 6 files to `public/data/` and insert into `evidence_documents` table with SHA-256 hashes and tags. Then update the agent-orchestrator to load these as contextual intelligence.
 
-A backend function that creates **5 unified master views** — virtual tables that combine all the fragments into single queryable sources, organized by domain:
+---
 
-```text
-DOMAIN VIEWS (created as materialized views in Neon):
+## Part 2: Agent Orchestrator Upgrades
 
-┌─────────────────────────────────────────────┐
-│  mv_unified_flights                         │
-│  Combines: live_flight_detections_rows,     │
-│  unfilterd_detections, flagged_aircraft_*,   │
-│  flight_ocr_correlations                    │
-│  → One place for ALL aircraft detections    │
-└─────────────────────────────────────────────┘
+### Upgrade 1: Enriched Database Context
+The current `getDbContext()` only queries 4 tables (violations, shell companies, enterprise, flights). Expand to include:
+- `biometric_monitoring` — recent stress events
+- `watchtower_autonomous_flags` — active threat flags
+- `sentinel_learned_threats` — escalated threats
+- `evidence_documents` — the newly imported reports (summary snippets)
 
-┌─────────────────────────────────────────────┐
-│  mv_unified_biometrics                      │
-│  Combines: biometric_monitoring,            │
-│  confirmed_biometric_correlations,          │
-│  biometric_screenshots_ocr, batch events    │
-│  → One place for ALL health readings        │
-└─────────────────────────────────────────────┘
+This gives agents real-time awareness of biometric harm, active threats, and uploaded intelligence.
 
-┌─────────────────────────────────────────────┐
-│  mv_unified_correlations                    │
-│  Combines: evidence_chain_links,            │
-│  flight_ocr_correlations,                   │
-│  confirmed_biometric_correlations           │
-│  → One place for ALL cross-modal links      │
-└─────────────────────────────────────────────┘
+### Upgrade 2: Document-Aware Agent Prompts
+Add a new section to `buildAgentSystemPrompt()` that injects summaries from `evidence_documents` tagged with relevant categories. Each agent gets documents matching their specialty:
+- Amy/Legal Analyst: shell company analysis, biometric correlation reports
+- Shell Investigator: shell company enterprise analysis
+- Josiah: ghost aircraft unmasking, RCH military coordination
+- Legal Drafter: exhibit documents, comprehensive analysis
 
-┌─────────────────────────────────────────────┐
-│  mv_unified_legal                           │
-│  Combines: legal_ada_violations_proper,     │
-│  master_forensic_events, evidence_documents │
-│  → One place for ALL legal evidence         │
-└─────────────────────────────────────────────┘
+### Upgrade 3: Cross-Callsign Persistence in Agent Context
+Add a `ghost_fleet_registry` section to agent context with the ALF IX fleet (32 Cessnas), RCH military callsigns, and KOME6670 drone data extracted from the uploaded reports. This allows agents to reference specific aircraft without re-discovering them each session.
 
-┌─────────────────────────────────────────────┐
-│  mv_unified_entities                        │
-│  Combines: entity_registry, aircraft_reg,   │
-│  kcso_fleet, shell company tables           │
-│  → One place for ALL actors & assets        │
-└─────────────────────────────────────────────┘
-```
+---
 
-**How it works for you**: One button creates these views. Another button refreshes them. The source tables stay untouched — nothing is deleted. The views just give you a single window into each evidence domain.
+## Part 3: Frontend Upgrades
 
-### 2. Visual Data Map (new dashboard component)
+### Upgrade 4: Agent Intelligence Feed Panel
+Add a collapsible "Intelligence Feed" section to `MultiAgentHub.tsx` showing the 6 imported documents as clickable references. When clicked, the document content is injected into the agent prompt as context, enabling document-specific analysis.
 
-An interactive visual diagram on Mission Control showing:
-- **5 domain clusters** (Flights, Biometrics, Legal, Entities, Correlations)
-- Each cluster shows its source tables and record counts
-- Lines between clusters show how they connect (e.g., flights ↔ biometrics via timestamp correlation)
-- Color-coded by health: green = consolidated, amber = fragmented, red = orphaned data
+### Upgrade 5: Handoff Chain Visualization Enhancement
+Currently shows breadcrumb trail. Upgrade to show:
+- Time elapsed per agent in the chain
+- Token count per response (from SSE stream)
+- Which documents were referenced
 
-## Implementation Plan
+---
 
-### Step 1: Create `data-consolidation` edge function
-- New edge function with actions: `createUnifiedViews`, `refreshUnifiedViews`, `getConsolidationStatus`
-- Each action builds/refreshes the 5 materialized views above using UNION ALL across source tables with schema normalization (COALESCE for mismatched columns)
-- Time-budgeted to stay within 60s gateway limit
+## Technical Details
 
-### Step 2: Build `ArchiveConsolidationPanel` component
-- Button: "Create Unified Views" / "Refresh Views"
-- Shows status of each unified view (record count, last refresh, source table count)
-- Placed on Data Tools page
+### Files Modified
+| File | Change |
+|------|--------|
+| `supabase/functions/agent-orchestrator/index.ts` | Expand `getDbContext()` with 4 new tables, add document intelligence injection, add ghost fleet registry to prompts |
+| `src/components/dashboard/MultiAgentHub.tsx` | Add Intelligence Feed panel, document injection on click, enhanced chain stats |
+| `public/data/` | Copy 6 uploaded files |
 
-### Step 3: Build `ArchiveDataMap` component
-- Interactive Mermaid-style diagram rendered with the existing category data from `DatabaseIntelligenceScanner`
-- 5 domain nodes with expandable source tables
-- Connection lines showing cross-modal relationships
-- Record counts and coverage percentages per domain
-- Placed on Mission Control page
+### Database Changes
+- Insert 6 rows into `evidence_documents` table with document content, SHA-256 hashes, and tags (`ghost_aircraft`, `shell_company`, `military_coordination`, `biometric_correlation`)
 
-### Step 4: Update Mission Control & Data Tools pages
-- Add the Data Map to Mission Control for at-a-glance orientation
-- Add the Consolidation Panel to Data Tools for maintenance
+### Edge Function Changes
+- `agent-orchestrator`: Add 4 new DB queries in `getDbContext()`, truncate results to prevent token overflow (200-char summaries for documents, last 10 records for biometrics/threats)
 
-## What This Means For You
+---
 
-- **Before**: "Which of the 12 flight tables do I query?" → **After**: Query `mv_unified_flights` and get everything
-- **Before**: Biometric data scattered across 5+ tables → **After**: One unified biometric view
-- **Before**: No idea how tables connect → **After**: Visual map showing the complete architecture
-- **Zero cherry-picking maintained**: Unified views include ALL records from ALL source tables
-- **Nothing deleted**: Original tables remain intact; views are additive
+## Priority Order
+1. Import files to `public/data/` and `evidence_documents` table
+2. Expand agent-orchestrator DB context (biggest impact)
+3. Add document-aware prompts per agent specialty
+4. Add ghost fleet registry to agent context
+5. Build Intelligence Feed UI panel
 

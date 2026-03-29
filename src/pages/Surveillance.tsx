@@ -79,6 +79,9 @@ export default function Surveillance() {
 
           <TabsContent value="investigation" className="space-y-6">
             <section>
+              <CrossCallsignTracker />
+            </section>
+            <section>
               <TaxonomyBridgePanel />
             </section>
             <section>

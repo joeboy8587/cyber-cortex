@@ -247,25 +247,41 @@ export function MultiAgentHub() {
 
     try {
       abortControllerRef.current = new AbortController();
-      const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/agent-orchestrator`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`
-          },
-          body: JSON.stringify({
-            agentType: agentId,
-            message: prompt,
-            context: {
-              ...sharedContextRef.current,
-              conversationHistory: messagesRef.current.slice(-15)
+      
+      // Retry wrapper for rate limits (429)
+      const fetchWithRetry = async (retries = 3): Promise<Response> => {
+        for (let attempt = 0; attempt <= retries; attempt++) {
+          const resp = await fetch(
+            `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/agent-orchestrator`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`
+              },
+              body: JSON.stringify({
+                agentType: agentId,
+                message: prompt,
+                context: {
+                  ...sharedContextRef.current,
+                  conversationHistory: messagesRef.current.slice(-15)
+                }
+              }),
+              signal: abortControllerRef.current!.signal
             }
-          }),
-          signal: abortControllerRef.current.signal
+          );
+          if (resp.status === 429 && attempt < retries) {
+            const delay = (2000 * Math.pow(2, attempt)) + Math.random() * 1000;
+            toast.info(`Rate limited — retrying in ${Math.round(delay / 1000)}s...`);
+            await new Promise(r => setTimeout(r, delay));
+            continue;
+          }
+          return resp;
         }
-      );
+        throw new Error("Max retries exceeded");
+      };
+
+      const response = await fetchWithRetry();
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));

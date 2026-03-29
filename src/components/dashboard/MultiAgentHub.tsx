@@ -94,9 +94,28 @@ export function MultiAgentHub() {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages]);
 
-  useEffect(() => { loadSessions(); }, []);
+  useEffect(() => { loadSessions(); loadIntelDocs(); }, []);
 
-  const loadSessions = async () => {
+  const loadIntelDocs = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("evidence_documents")
+        .select("id, title, document_type, tags, file_size, uploaded_at")
+        .order("uploaded_at", { ascending: false })
+        .limit(20);
+      if (error) throw error;
+      setIntelDocs((data || []) as IntelDocument[]);
+    } catch (e) { console.error("Failed to load intel docs:", e); }
+  };
+
+  const toggleDoc = (docId: string) => {
+    setSelectedDocs(prev => {
+      const next = new Set(prev);
+      if (next.has(docId)) next.delete(docId);
+      else next.add(docId);
+      return next;
+    });
+  };
     setLoadingSessions(true);
     try {
       const { data, error } = await supabase

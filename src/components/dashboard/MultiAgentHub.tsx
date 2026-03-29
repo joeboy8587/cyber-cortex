@@ -116,6 +116,8 @@ export function MultiAgentHub() {
       return next;
     });
   };
+
+  const loadSessions = async () => {
     setLoadingSessions(true);
     try {
       const { data, error } = await supabase

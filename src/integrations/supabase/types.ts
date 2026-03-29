@@ -14,6 +14,121 @@ export type Database = {
   }
   public: {
     Tables: {
+      agent_case_files: {
+        Row: {
+          agent: string
+          content: string
+          created_at: string
+          document_type: string
+          id: string
+          session_id: string | null
+          sha256_hash: string | null
+          tags: string[] | null
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          agent: string
+          content: string
+          created_at?: string
+          document_type?: string
+          id?: string
+          session_id?: string | null
+          sha256_hash?: string | null
+          tags?: string[] | null
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          agent?: string
+          content?: string
+          created_at?: string
+          document_type?: string
+          id?: string
+          session_id?: string | null
+          sha256_hash?: string | null
+          tags?: string[] | null
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_case_files_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "agent_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      agent_messages: {
+        Row: {
+          agent: string
+          content: string
+          created_at: string
+          id: string
+          message_type: string
+          session_id: string
+          target_agent: string | null
+        }
+        Insert: {
+          agent: string
+          content?: string
+          created_at?: string
+          id?: string
+          message_type?: string
+          session_id: string
+          target_agent?: string | null
+        }
+        Update: {
+          agent?: string
+          content?: string
+          created_at?: string
+          id?: string
+          message_type?: string
+          session_id?: string
+          target_agent?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_messages_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "agent_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      agent_sessions: {
+        Row: {
+          active_agent: string
+          created_at: string
+          id: string
+          summary: string | null
+          title: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          active_agent?: string
+          created_at?: string
+          id?: string
+          summary?: string | null
+          title?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          active_agent?: string
+          created_at?: string
+          id?: string
+          summary?: string | null
+          title?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       aircraft_registry: {
         Row: {
           aircraft_manufacturer: string | null

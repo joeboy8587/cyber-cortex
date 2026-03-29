@@ -19,6 +19,7 @@ import { HistoricalEnrichmentPanel } from "@/components/dashboard/HistoricalEnri
 import { ComprehensiveDataAudit } from "@/components/dashboard/ComprehensiveDataAudit";
 import { ChainOfCustodyPanel } from "@/components/dashboard/ChainOfCustodyPanel";
 import { MerkleChainPanel } from "@/components/dashboard/MerkleChainPanel";
+import { ZeroTrustDashboard } from "@/components/dashboard/ZeroTrustDashboard";
 import { DBHealthMonitor } from "@/components/dashboard/DBHealthMonitor";
 import FlaggedAircraftImporter from "@/components/dashboard/FlaggedAircraftImporter";
 import { NotionFullSyncPanel } from "@/components/dashboard/NotionFullSyncPanel";
@@ -93,6 +94,11 @@ export default function DataTools() {
         <section className="space-y-6">
           <DataQualityAudit />
           <DatabaseQualityControl />
+        </section>
+
+        {/* Zero-Trust Security */}
+        <section>
+          <ZeroTrustDashboard />
         </section>
 
         {/* Data Hardening & Chain of Custody */}

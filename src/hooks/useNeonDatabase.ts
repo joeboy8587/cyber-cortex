@@ -82,9 +82,9 @@ export function useNeonDatabase() {
   const inFlightRef = useRef(new Map<string, Promise<unknown>>());
 
   // Tiny in-memory cache to avoid excessive polling hammering the backend.
-  // This keeps functionality the same (data still refreshes), but prevents rapid reboots/cold-start stampedes.
+  // Increased TTL to 10s to further reduce cold-start stampedes.
   const cacheRef = useRef(new Map<string, { at: number; value: unknown }>());
-  const CACHE_TTL_MS = 5000;
+  const CACHE_TTL_MS = 10000;
 
   const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 

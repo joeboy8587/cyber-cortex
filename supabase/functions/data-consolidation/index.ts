@@ -308,6 +308,27 @@ serve(async (req) => {
         break;
       }
 
+      case "discoverColumns": {
+        const tables = [
+          'unfilterd_detections','confirmed_biometric_correlations',
+          'legal_ada_violations_proper','biometric_monitoring',
+          'biometric_screenshots_ocr','live_flight_detections_rows',
+          'flagged_aircraft_rows_rows','aircraft_first_appearances',
+          'criminal_enterprise_command_structure','flight_ocr_correlations',
+          'evidence_documents','aircraft_registry','entity_registry',
+          'kcso_fleet','evidence_chain_links','master_forensic_events'
+        ];
+        const schemas: Record<string, string[]> = {};
+        for (const t of tables) {
+          try {
+            const cols = await sql`SELECT column_name FROM information_schema.columns WHERE table_name = ${t} AND table_schema = 'public' ORDER BY ordinal_position`;
+            schemas[t] = cols.map((c: any) => c.column_name);
+          } catch { schemas[t] = []; }
+        }
+        result = schemas;
+        break;
+      }
+
       default:
         throw new Error(`Unknown action: ${action}`);
     }

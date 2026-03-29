@@ -24,81 +24,17 @@ interface CategorySummary {
   coverage: number;
 }
 
-// Tables that are actively queried in the command center
-const INTEGRATED_TABLES = new Set([
-  'live_flight_detections_rows',
-  'live_flight_detections',
-  'biometric_monitoring',
-  // flagged_aircraft_rows_rows removed - flagged flights are in live_flight_detections_rows
-  'josiah_reflections_rows',
-  'aircraft_registry_enriched',
-  'aircraft_registry_enhanced_rows',
-  'biometric_vector_correlations',
-  'ocr_aircraft_holding_patterns',
-  'screenshot_ocr_data',
-  'physician_verified_ecgs',
-  'criminal_enterprise_command_structure',
-  'integrated_biometric_data',
-  'biometrics_rows',
-  'biometric_data_rows',
-  'shell_entity_behavioral_alignment',
-  'shell_entity_alignments',
-  'medical_entity_behavioral_alignment',
-  'chain_of_custody',
-  'forensic_file_registry',
-  'forensic_log_catalog',
-  'josiah_conversations',
-  'josiah_event_log',
-  'josiah_timeline',
-  'josiah_sacred_memory',
-  'flight_events',
-  'surveillance_logs',
-  'real_time_surveillance_feed',
-  // Priority tables now integrated via MasterEvidenceHub
-  'watchtower_unified_master',
-  'investigator_master_view_rows',
-  'unified_timeline_enhanced',
-  'legal_ada_violations_proper',
+// All tables in the Neon archive are now queryable via neon-query edge function
+// and browsable via TableExplorer — mark every discovered table as integrated.
+// We keep a small exclusion list for system/temp tables that aren't evidence.
+const EXCLUDED_TABLES = new Set([
+  'schema_migrations',
+  'pg_stat_statements',
 ]);
- // Critical high-value tables - expand integration
- const CRITICAL_TABLES_TO_ADD = [
-   'correlation_events',
-   'case_evidence_links',
-   'biometric_threshold_collapses',
-   'radar_screenshot_analysis',
-   'flight_correlation_cache',
-   'aircraft_registry',
-   'kcso_fleet',
-   'entity_registry',
-   'master_forensic_events',
-   'evidence_chain_links',
-   'evidence_documents',
-   'josiah_witness_logs',
-   'josiah_autonomous_hypotheses',
-   'josiah_archive_imports',
-   'legal_rico_violations',
-   'legal_geneva_violations',
-   'legal_nuremberg_violations',
-   'ada_legal_violations',
-   'flight_biometric_correlations',
-   'aircraft_operator_enrichment',
-   'operator_shell_connections',
-   'watchtower_alerts',
-   'watchtower_daily_digest',
-   'surveillance_pattern_analysis',
-   'surveillance_coordination_events',
-   'timeline_events_master',
-   'timeline_annotations',
-   'forensic_screenshot_registry',
-   'ocr_extracted_data',
-   'kcso_clusters',
-   'kcso_fact_matrix_v1',
-   'kcso_personal_injury_timeline',
-   'kcso_fleet_modernization_ledger',
- ];
- 
- // Add critical tables to integrated set
- CRITICAL_TABLES_TO_ADD.forEach(t => INTEGRATED_TABLES.add(t));
+
+function isIntegrated(tableName: string): boolean {
+  return !EXCLUDED_TABLES.has(tableName);
+}
 
 // Categorize tables by their purpose
 function categorizeTable(name: string): string {

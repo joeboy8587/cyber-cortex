@@ -725,11 +725,19 @@ export function MultiAgentHub() {
         </div>
 
         {/* Status Bar */}
-        <div className="flex items-center gap-4 text-xs text-muted-foreground border-t pt-3">
+        <div className="flex items-center gap-4 text-xs text-muted-foreground border-t pt-3 flex-wrap">
           <span>Session:</span>
           <Badge variant="secondary">{currentSessionId ? "Active" : "New"}</Badge>
           <Badge variant="secondary">{messages.length} messages</Badge>
           <Badge variant="secondary">{sessions.length} saved sessions</Badge>
+          {selectedDocs.size > 0 && (
+            <Badge variant="secondary" className="bg-primary/10 text-primary">
+              <BookOpen className="w-3 h-3 mr-1" /> {selectedDocs.size} intel docs loaded
+            </Badge>
+          )}
+          {intelDocs.length > 0 && (
+            <Badge variant="secondary">{intelDocs.length} intel available</Badge>
+          )}
         </div>
       </CardContent>
     </Card>

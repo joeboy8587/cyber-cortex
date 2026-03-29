@@ -70,9 +70,13 @@ export function MultiAgentHub() {
   const [loadingSessions, setLoadingSessions] = useState(false);
   const [chainDepth, setChainDepth] = useState(0);
   const [chainTrail, setChainTrail] = useState<string[]>([]);
+  const [intelDocs, setIntelDocs] = useState<IntelDocument[]>([]);
+  const [selectedDocs, setSelectedDocs] = useState<Set<string>>(new Set());
+  const [intelOpen, setIntelOpen] = useState(false);
   const [sharedContext, setSharedContext] = useState<{
     violations: unknown[]; shellCompanies: unknown[]; financialTrails: unknown[];
     draftedDocuments: unknown[]; conversationHistory: AgentMessage[];
+    selectedDocuments?: string[];
   }>({ violations: [], shellCompanies: [], financialTrails: [], draftedDocuments: [], conversationHistory: [] });
   
   const scrollRef = useRef<HTMLDivElement>(null);

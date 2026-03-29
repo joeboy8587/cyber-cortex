@@ -6,7 +6,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// Domain definitions: each unified view and its source tables
+// Domain definitions with CORRECT column names from Neon schema discovery
 const UNIFIED_VIEWS = {
   mv_unified_flights: {
     label: "Unified Flights",
@@ -18,15 +18,11 @@ const UNIFIED_VIEWS = {
       },
       {
         table: "unfilterd_detections",
-        sql: `SELECT id::text, detection_timestamp as event_time, registration, COALESCE(icao_code, hex) as icao_code, callsign, COALESCE(altitude, alt) as altitude, speed, latitude, longitude, COALESCE(taxonomy_tag, 'unfiltered') as category, 'unfiltered' as source_type FROM unfilterd_detections`
+        sql: `SELECT id::text, detection_timestamp as event_time, registration, icao_code, callsign, altitude, speed, latitude, longitude, COALESCE(taxonomy_tag, 'unfiltered') as category, 'unfiltered' as source_type FROM unfilterd_detections`
       },
       {
         table: "flagged_aircraft_rows_rows",
-        sql: `SELECT id::text, detection_timestamp as event_time, registration, icao_code, callsign, altitude, speed, latitude, longitude, COALESCE(taxonomy_tag, 'flagged') as category, 'flagged' as source_type FROM flagged_aircraft_rows_rows`
-      },
-      {
-        table: "aircraft_first_appearances",
-        sql: `SELECT id::text, first_seen as event_time, registration, icao_code, callsign, altitude, speed, latitude, longitude, 'first_appearance' as category, 'first_appearance' as source_type FROM aircraft_first_appearances`
+        sql: `SELECT id::text, flagged_at as event_time, NULL as registration, hex as icao_code, flight as callsign, alt as altitude, NULL::numeric as speed, lat as latitude, lon as longitude, COALESCE(reason, 'flagged') as category, 'flagged' as source_type FROM flagged_aircraft_rows_rows`
       }
     ]
   },
@@ -40,19 +36,11 @@ const UNIFIED_VIEWS = {
       },
       {
         table: "confirmed_biometric_correlations",
-        sql: `SELECT id::text, biometric_timestamp as event_time, heart_rate_at_event as heart_rate, stress_level_at_event as stress_level, correlation_strength::text as alert_flag, 'correlation' as source_type FROM confirmed_biometric_correlations`
+        sql: `SELECT id::text, biometric_timestamp as event_time, heart_rate, stress_score as stress_level, confidence_level as alert_flag, 'correlation' as source_type FROM confirmed_biometric_correlations`
       },
       {
         table: "biometric_screenshots_ocr",
-        sql: `SELECT id::text, created_at as event_time, heart_rate, stress_level, 'ocr' as alert_flag, 'screenshot_ocr' as source_type FROM biometric_screenshots_ocr`
-      },
-      {
-        table: "biometric_batch_events",
-        sql: `SELECT id::text, event_timestamp as event_time, avg_heart_rate as heart_rate, avg_stress as stress_level, severity as alert_flag, 'batch' as source_type FROM biometric_batch_events`
-      },
-      {
-        table: "biometric_collapse_events",
-        sql: `SELECT id::text, collapse_timestamp as event_time, peak_heart_rate as heart_rate, peak_stress as stress_level, severity as alert_flag, 'collapse' as source_type FROM biometric_collapse_events`
+        sql: `SELECT id::text, COALESCE(best_timestamp, created_at) as event_time, heart_rate, stress_level, 'ocr' as alert_flag, 'screenshot_ocr' as source_type FROM biometric_screenshots_ocr`
       }
     ]
   },
@@ -62,11 +50,7 @@ const UNIFIED_VIEWS = {
     sources: [
       {
         table: "confirmed_biometric_correlations",
-        sql: `SELECT id::text, biometric_timestamp as event_time, registration, correlation_strength as confidence, 'bio_flight' as link_type, 'confirmed_correlation' as source_type FROM confirmed_biometric_correlations`
-      },
-      {
-        table: "flight_ocr_correlations",
-        sql: `SELECT id::text, created_at as event_time, registration, confidence_score as confidence, 'flight_ocr' as link_type, 'ocr_correlation' as source_type FROM flight_ocr_correlations`
+        sql: `SELECT id::text, biometric_timestamp as event_time, aircraft_registration as registration, correlation_score as confidence, 'bio_flight' as link_type, 'confirmed_correlation' as source_type FROM confirmed_biometric_correlations`
       },
       {
         table: "evidence_chain_links",
@@ -80,15 +64,11 @@ const UNIFIED_VIEWS = {
     sources: [
       {
         table: "legal_ada_violations_proper",
-        sql: `SELECT id::text, violation_date as event_time, violation_type as category, severity, description as summary, 'ada_violation' as source_type FROM legal_ada_violations_proper`
+        sql: `SELECT id::text, biometric_timestamp as event_time, violation_type as category, harm_severity as severity, CONCAT('Aircraft: ', aircraft_registration, ' | Score: ', correlation_score) as summary, 'ada_violation' as source_type FROM legal_ada_violations_proper`
       },
       {
         table: "master_forensic_events",
         sql: `SELECT forensic_event_id::text as id, event_timestamp as event_time, event_type::text as category, confidence_score::text as severity, summary, 'forensic_event' as source_type FROM master_forensic_events`
-      },
-      {
-        table: "evidence_documents",
-        sql: `SELECT id::text, uploaded_at as event_time, document_type as category, 'document' as severity, title as summary, 'document' as source_type FROM evidence_documents`
       }
     ]
   },
@@ -97,12 +77,8 @@ const UNIFIED_VIEWS = {
     description: "All actors, assets, operators, and fleet records",
     sources: [
       {
-        table: "entity_registry",
-        sql: `SELECT entity_id::text as id, created_at as event_time, canonical_identifier as name, entity_type::text as entity_category, threat_classification, 'entity_registry' as source_type FROM entity_registry`
-      },
-      {
         table: "aircraft_registry",
-        sql: `SELECT id::text, created_at as event_time, COALESCE(registrant_name, n_number) as name, 'aircraft' as entity_category, status as threat_classification, 'faa_registry' as source_type FROM aircraft_registry`
+        sql: `SELECT id::text, created_at as event_time, COALESCE(registered_owner, tail_number) as name, COALESCE(aircraft_type, 'aircraft') as entity_category, threat_level as threat_classification, 'faa_registry' as source_type FROM aircraft_registry`
       },
       {
         table: "kcso_fleet",
@@ -110,7 +86,7 @@ const UNIFIED_VIEWS = {
       },
       {
         table: "criminal_enterprise_command_structure",
-        sql: `SELECT id::text, created_at as event_time, entity_name as name, COALESCE(role, 'unknown') as entity_category, threat_level as threat_classification, 'criminal_enterprise' as source_type FROM criminal_enterprise_command_structure`
+        sql: `SELECT id::text, created_at as event_time, entity_name as name, COALESCE(entity_type, 'unknown') as entity_category, COALESCE(legal_exposure, 'unknown') as threat_classification, 'criminal_enterprise' as source_type FROM criminal_enterprise_command_structure`
       }
     ]
   }
@@ -144,14 +120,12 @@ serve(async (req) => {
         const results: { view: string; success: boolean; error?: string; sources: number }[] = [];
 
         for (const [viewName, config] of Object.entries(UNIFIED_VIEWS)) {
-          // Check budget: bail if >45s elapsed
           if (Date.now() - startTime > 45000) {
             results.push({ view: viewName, success: false, error: "Time budget exceeded", sources: 0 });
             continue;
           }
 
           try {
-            // Check which source tables actually exist
             const validSources: string[] = [];
             for (const src of config.sources) {
               const exists = await sql`
@@ -169,7 +143,6 @@ serve(async (req) => {
               continue;
             }
 
-            // Drop existing view and recreate
             await sql.unsafe(`DROP MATERIALIZED VIEW IF EXISTS ${viewName}`);
             const unionSql = validSources.join("\nUNION ALL\n");
             await sql.unsafe(`CREATE MATERIALIZED VIEW ${viewName} AS ${unionSql}`);
@@ -245,7 +218,6 @@ serve(async (req) => {
             } catch { /* view may be unpopulated */ }
           }
 
-          // Check which sources actually exist
           const existingSources: string[] = [];
           for (const src of config.sources) {
             const exists = await sql`
@@ -305,27 +277,6 @@ serve(async (req) => {
         }
 
         result = { domains };
-        break;
-      }
-
-      case "discoverColumns": {
-        const tables = [
-          'unfilterd_detections','confirmed_biometric_correlations',
-          'legal_ada_violations_proper','biometric_monitoring',
-          'biometric_screenshots_ocr','live_flight_detections_rows',
-          'flagged_aircraft_rows_rows','aircraft_first_appearances',
-          'criminal_enterprise_command_structure','flight_ocr_correlations',
-          'evidence_documents','aircraft_registry','entity_registry',
-          'kcso_fleet','evidence_chain_links','master_forensic_events'
-        ];
-        const schemas: Record<string, string[]> = {};
-        for (const t of tables) {
-          try {
-            const cols = await sql`SELECT column_name FROM information_schema.columns WHERE table_name = ${t} AND table_schema = 'public' ORDER BY ordinal_position`;
-            schemas[t] = cols.map((c: any) => c.column_name);
-          } catch { schemas[t] = []; }
-        }
-        result = schemas;
         break;
       }
 

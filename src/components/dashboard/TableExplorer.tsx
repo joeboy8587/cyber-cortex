@@ -81,8 +81,8 @@ export function TableExplorer() {
               {searchTerm ? "No tables match your search" : "No tables found"}
             </div>
           ) : (
-            filteredTables.map((table) => (
-              <div key={table.tablename}>
+            filteredTables.map((table, idx) => (
+              <div key={`${table.tablename}-${idx}`}>
                 <button
                   onClick={() => handleTableClick(table.tablename)}
                   className={cn(

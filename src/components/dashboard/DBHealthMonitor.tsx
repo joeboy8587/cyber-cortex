@@ -282,8 +282,8 @@ export function DBHealthMonitor() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
-                {(summary?.top_unused_indexes ?? []).map((idx) => (
-                  <div key={idx.indexname} className="flex justify-between items-center py-1 border-b border-border/30">
+                {(summary?.top_unused_indexes ?? []).map((idx, i) => (
+                  <div key={`${idx.indexname}-${i}`} className="flex justify-between items-center py-1 border-b border-border/30">
                     <div>
                       <p className="font-mono text-xs text-foreground truncate max-w-[200px]">{idx.indexname}</p>
                       <p className="font-mono text-xs text-muted-foreground">on {idx.tablename}</p>
@@ -410,8 +410,8 @@ export function DBHealthMonitor() {
                     </tr>
                   </thead>
                   <tbody>
-                    {indexRows.map((idx) => (
-                      <tr key={idx.indexname} className="border-b border-border/20 hover:bg-muted/30">
+                    {indexRows.map((idx, i) => (
+                      <tr key={`${idx.indexname}-${i}`} className="border-b border-border/20 hover:bg-muted/30">
                         <td className="py-1.5 truncate max-w-[220px]">{idx.indexname}</td>
                         <td className="py-1.5 text-muted-foreground">{idx.tablename}</td>
                         <td className="py-1.5 text-right">

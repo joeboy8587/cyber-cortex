@@ -138,6 +138,8 @@ async function ensureConstraints(sql: any) {
     { name: 'provenance', def: 'TEXT' },
     { name: 'jurisdiction_relevance', def: 'TEXT[]' },
     { name: 'caption', def: 'TEXT' },
+    { name: 'created_at', def: 'TIMESTAMPTZ DEFAULT NOW()' },
+    { name: 'updated_at', def: 'TIMESTAMPTZ DEFAULT NOW()' },
   ]) {
     await sql.unsafe(`
       DO $$ BEGIN

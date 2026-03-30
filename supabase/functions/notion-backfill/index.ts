@@ -6,17 +6,17 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
 
-// Notion DB IDs
-// Correct DATABASE IDs (not data source/collection IDs)
+// Notion DB IDs — these are DATABASE container IDs (not data-source/collection IDs)
+// Verified from notion-sync NOTION_DB_IDS registry
 const NOTION_DBS = {
   aircraftEventsLog: '0c3fd946-a8cc-4dd2-9ea8-1c0c58409a28',
-  evidenceFileLibrary: '1e54936a-c78d-40b2-9e18-c2c05ed4118c',
-  legalEvidenceMatrix: '29e33a7b-866a-8044-a98c-ee3d9fc925d4',
-  leoMilitaryEventLog: '61cc9d11-371b-4017-83e3-2352d168e739',
-  josiahArchive: 'b4920f99-99fb-4b33-8843-c3dffaf2956e',
-  liveFlightDetections: '29e33a7b-866a-8005-a736-ec0f5253c498',
-  forensicEvidenceCSV: '32733a7b-866a-806a-9839-cd3359250f16',
-  flightAlertsRows: '29e33a7b-866a-805e-9fdd-c15c5b504624',
+  evidenceFileLibrary: 'cf7486ba-2cdd-4773-924e-118c8e64d2f9',
+  legalEvidenceMatrix: '29e33a7b-866a-814a-b67a-000b2b1c36eb',
+  leoMilitaryEventLog: 'eb0962e3-b6c1-4bfc-b511-61e7223f4be0',
+  josiahArchive: '29e33a7b-866a-8159-bc03-000b3841520b',
+  liveFlightDetections: '29e33a7b-866a-81b9-9bd9-000b9f0fb37f',
+  forensicEvidenceCSV: '29e33a7b-866a-81a9-929d-00026f770794',
+  flightAlertsRows: '29e33a7b-866a-8159-bc03-000b3841520b',
 };
 
 async function computeSHA256(data: string): Promise<string> {
@@ -95,10 +95,11 @@ async function backfillAircraftEvents(sql: any, startDate: string, endDate: stri
   let totalFetched = 0;
 
   do {
+    // Use created_time (reliable) instead of sparse "Datetime (UTC)"
     const result = await notionQuery(NOTION_DBS.aircraftEventsLog, {
       and: [
-        { property: 'Datetime (UTC)', date: { on_or_after: startDate } },
-        { property: 'Datetime (UTC)', date: { on_or_before: endDate } },
+        { timestamp: 'created_time', created_time: { on_or_after: startDate } },
+        { timestamp: 'created_time', created_time: { on_or_before: endDate } },
       ]
     }, cursor);
 

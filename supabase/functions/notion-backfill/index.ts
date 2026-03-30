@@ -127,15 +127,27 @@ async function ensureConstraints(sql: any) {
     END $$;
   `).catch(() => {});
 
-  // evidence_files: add notion_page_id if missing, add unique constraint
-  await sql.unsafe(`
-    DO $$ BEGIN
-      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='evidence_files' AND column_name='notion_page_id') THEN
-        ALTER TABLE evidence_files ADD COLUMN notion_page_id TEXT UNIQUE;
-      END IF;
-    EXCEPTION WHEN others THEN NULL;
-    END $$;
-  `).catch(() => {});
+  // evidence_files: add missing columns if table already exists
+  for (const col of [
+    { name: 'notion_page_id', def: 'TEXT UNIQUE' },
+    { name: 'source', def: "TEXT DEFAULT 'notion'" },
+    { name: 'file_type', def: 'TEXT' },
+    { name: 'data_date', def: 'TIMESTAMPTZ' },
+    { name: 'sealed', def: 'BOOLEAN DEFAULT false' },
+    { name: 'parsing_status', def: "TEXT DEFAULT '1-To Parse'" },
+    { name: 'provenance', def: 'TEXT' },
+    { name: 'jurisdiction_relevance', def: 'TEXT[]' },
+    { name: 'caption', def: 'TEXT' },
+  ]) {
+    await sql.unsafe(`
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='evidence_files' AND column_name='${col.name}') THEN
+          ALTER TABLE evidence_files ADD COLUMN ${col.name} ${col.def};
+        END IF;
+      EXCEPTION WHEN others THEN NULL;
+      END $$;
+    `).catch(() => {});
+  }
 
   // evidence_files: already has UNIQUE on notion_page_id from CREATE TABLE
   await sql.unsafe(`

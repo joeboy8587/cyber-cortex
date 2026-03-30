@@ -449,7 +449,7 @@ serve(async (req) => {
   }
 
   try {
-    const { action, startDate, endDate, databases } = await req.json();
+    const { action, startDate, endDate, databases, maxPages, cursor: startCursor } = await req.json();
     
     const start = startDate || '2026-01-01';
     const end = endDate || '2026-03-31';
@@ -499,7 +499,7 @@ serve(async (req) => {
         try {
           switch (db) {
             case 'aircraftEventsLog':
-              results.push(await backfillAircraftEvents(sql, start, end));
+              results.push(await backfillAircraftEvents(sql, start, end, maxPages || 2, startCursor));
               break;
             case 'evidenceFileLibrary':
               results.push(await backfillEvidenceFiles(sql, start, end));

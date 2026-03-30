@@ -24,11 +24,11 @@ async function computeSHA256(data: string): Promise<string> {
   return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-async function notionQuery(dbId: string, filter: any, startCursor?: string): Promise<any> {
+async function notionQuery(dbId: string, filter: any, startCursor?: string, pageSize = 50): Promise<any> {
   const NOTION_API_KEY = Deno.env.get('NOTION_API_KEY');
   if (!NOTION_API_KEY) throw new Error('NOTION_API_KEY not configured');
 
-  const body: any = { filter, page_size: 100 };
+  const body: any = { filter, page_size: pageSize };
   if (startCursor) body.start_cursor = startCursor;
 
   const res = await fetch(`https://api.notion.com/v1/databases/${dbId}/query`, {

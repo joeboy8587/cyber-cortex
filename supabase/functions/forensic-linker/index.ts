@@ -36,12 +36,13 @@ function fail(message: string, status = 400, details?: Json) {
   });
 }
 
-async function getNeonClient() {
+async function getNeonClient(timeoutMs = 15000) {
   const neonUrl = Deno.env.get("NEON_DATABASE_URL");
   if (!neonUrl) throw new Error("NEON_DATABASE_URL not configured");
   
   const client = new Client(neonUrl);
   await client.connect();
+  await client.queryObject(`SET statement_timeout = '${timeoutMs}ms'`);
   return client;
 }
 

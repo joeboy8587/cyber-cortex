@@ -127,6 +127,16 @@ async function ensureConstraints(sql: any) {
     END $$;
   `).catch(() => {});
 
+  // evidence_files: add notion_page_id if missing, add unique constraint
+  await sql.unsafe(`
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='evidence_files' AND column_name='notion_page_id') THEN
+        ALTER TABLE evidence_files ADD COLUMN notion_page_id TEXT UNIQUE;
+      END IF;
+    EXCEPTION WHEN others THEN NULL;
+    END $$;
+  `).catch(() => {});
+
   // evidence_files: already has UNIQUE on notion_page_id from CREATE TABLE
   await sql.unsafe(`
     CREATE TABLE IF NOT EXISTS evidence_files (

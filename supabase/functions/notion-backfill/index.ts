@@ -203,7 +203,7 @@ async function backfillEvidenceFiles(sql: any, startDate: string, endDate: strin
         const chainStr = [notionId, filename||'', sha256||'', dataDate||'', JSON.stringify(jurisdictions)].join('|');
         const chainHash = await computeSHA256(chainStr);
 
-        const existing = await sql`SELECT id FROM evidence_files WHERE notion_page_id = ${notionId} LIMIT 1`;
+        const existing = await sql`SELECT 1 FROM evidence_files WHERE notion_page_id = ${notionId} LIMIT 1`;
         if (existing.length > 0) {
           await sql`UPDATE evidence_files SET filename=${filename}, sha256_hash=${sha256||chainHash}, sealed=${sealed}, parsing_status=${parsingStatus||'1-To Parse'}, provenance=${provenance}, jurisdiction_relevance=${jurisdictions.length > 0 ? jurisdictions : null}, caption=${caption}, data_date=${dataDate}, updated_at=NOW() WHERE notion_page_id = ${notionId}`;
           updated.push(notionId);
@@ -272,7 +272,7 @@ async function backfillLegalMatrix(sql: any, startDate: string, endDate: string)
         const dataStr = [notionId, alertType||'', description||'', severity||''].join('|');
         const sha256 = await computeSHA256(dataStr);
 
-        const existing = await sql`SELECT id FROM legal_evidence_matrix WHERE notion_page_id = ${notionId} LIMIT 1`;
+        const existing = await sql`SELECT 1 FROM legal_evidence_matrix WHERE notion_page_id = ${notionId} LIMIT 1`;
         if (existing.length > 0) continue;
 
         await sql`INSERT INTO legal_evidence_matrix (notion_page_id, exhibit_id, evidence_type, description, severity, source, sha256_hash) VALUES (${notionId}, ${title||flightId}, ${alertType}, ${description}, ${severity}, 'notion-backfill', ${sha256})`;
@@ -332,7 +332,7 @@ async function backfillLEOEvents(sql: any, startDate: string, endDate: string) {
         const dataStr = [notionId, name||'', getCreatedTime(page)].join('|');
         const sha256 = await computeSHA256(dataStr);
 
-        const existing = await sql`SELECT id FROM leo_military_events WHERE notion_page_id = ${notionId} LIMIT 1`;
+        const existing = await sql`SELECT 1 FROM leo_military_events WHERE notion_page_id = ${notionId} LIMIT 1`;
         if (existing.length > 0) continue;
 
         await sql`INSERT INTO leo_military_events (notion_page_id, description, event_timestamp, source, sha256_hash) VALUES (${notionId}, ${name}, ${getCreatedTime(page)}, 'notion-backfill', ${sha256})`;
@@ -381,7 +381,7 @@ async function backfillForensicEvidence(sql: any, startDate: string, endDate: st
         const content = JSON.stringify(props);
 
         // Check if already exists
-        const existing = await sql`SELECT id FROM evidence_files WHERE notion_page_id = ${notionId} LIMIT 1`;
+        const existing = await sql`SELECT 1 FROM evidence_files WHERE notion_page_id = ${notionId} LIMIT 1`;
         if (existing.length > 0) continue;
 
         await sql`INSERT INTO evidence_files (notion_page_id, filename, sha256_hash, source, created_at) VALUES (${notionId}, ${title}, ${sha256}, 'notion-backfill-forensic', NOW())`;
@@ -426,7 +426,7 @@ async function backfillLiveFlightDetections(sql: any, startDate: string, endDate
         if (!registration) continue;
 
         // Check if exists in flight_events
-        const existing = await sql`SELECT id FROM flight_events WHERE event_id = ${notionId} LIMIT 1`;
+        const existing = await sql`SELECT 1 FROM flight_events WHERE event_id = ${notionId} LIMIT 1`;
         if (existing.length > 0) { skipped.push(registration); continue; }
 
         const dataStr = [notionId, registration, getCreatedTime(page)].join('|');

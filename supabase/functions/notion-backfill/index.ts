@@ -559,6 +559,7 @@ serve(async (req) => {
       pageSize = 20,
       cursor: startCursor,
       timeField = 'created_time',
+      skipSchema = false,
     } = body;
 
     const NEON_DATABASE_URL = Deno.env.get('NEON_DATABASE_URL');
@@ -566,8 +567,8 @@ serve(async (req) => {
 
     const sql = postgres(NEON_DATABASE_URL, { ssl: 'require', max: 2, idle_timeout: 30, prepare: false });
 
-    // Ensure schema is ready — returns detailed constraint report
-    const constraintReport = await ensureConstraints(sql);
+    // Skip schema checks on continuation runs for speed
+    const constraintReport = skipSchema ? { applied: [], alreadyExist: ['skipped'], failed: [] } : await ensureConstraints(sql);
 
     if (action === 'scan') {
       const NOTION_API_KEY = Deno.env.get('NOTION_API_KEY');

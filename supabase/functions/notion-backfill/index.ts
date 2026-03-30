@@ -6,17 +6,16 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
 
-// Notion DB IDs
-// Correct DATABASE IDs (not data source/collection IDs)
+// Notion DB IDs — verified via workspace search (database container IDs)
 const NOTION_DBS = {
-  aircraftEventsLog: '0c3fd946-a8cc-4dd2-9ea8-1c0c58409a28',
-  evidenceFileLibrary: '1e54936a-c78d-40b2-9e18-c2c05ed4118c',
-  legalEvidenceMatrix: '29e33a7b-866a-8044-a98c-ee3d9fc925d4',
-  leoMilitaryEventLog: '61cc9d11-371b-4017-83e3-2352d168e739',
-  josiahArchive: 'b4920f99-99fb-4b33-8843-c3dffaf2956e',
-  liveFlightDetections: '29e33a7b-866a-8005-a736-ec0f5253c498',
-  forensicEvidenceCSV: '32733a7b-866a-806a-9839-cd3359250f16',
-  flightAlertsRows: '29e33a7b-866a-805e-9fdd-c15c5b504624',
+  aircraftEventsLog: '0c3fd946-a8cc-4dd2-9ea8-1c0c58409a28',       // ✅ WORKS
+  evidenceFileLibrary: '1e54936a-c78d-40b2-9e18-c2c05ed4118c',     // "File Library"
+  legalEvidenceMatrix: '29e33a7b-866a-8044-a98c-ee3d9fc925d4',     // "legal_evidence_matrix_import"
+  leoMilitaryEventLog: '61cc9d11-371b-4017-83e3-2352d168e739',     // "LEO / Military Event Log"
+  josiahArchive: 'b4920f99-99fb-4b33-8843-c3dffaf2956e',           // "Josiah: Reflections & Memory Archive"
+  liveFlightDetections: '29e33a7b-866a-8005-a736-ec0f5253c498',    // "live_flight_detections_row"
+  forensicEvidenceCSV: '32733a7b-866a-806a-9839-cd3359250f16',     // "forensic_evidence_2026-03-18"
+  flightAlertsRows: '29e33a7b-866a-805e-9fdd-c15c5b504624',       // "flight_alerts_rows"
 };
 
 async function computeSHA256(data: string): Promise<string> {
@@ -25,11 +24,11 @@ async function computeSHA256(data: string): Promise<string> {
   return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-async function notionQuery(dbId: string, filter: any, startCursor?: string): Promise<any> {
+async function notionQuery(dbId: string, filter: any, startCursor?: string, pageSize = 50): Promise<any> {
   const NOTION_API_KEY = Deno.env.get('NOTION_API_KEY');
   if (!NOTION_API_KEY) throw new Error('NOTION_API_KEY not configured');
 
-  const body: any = { filter, page_size: 100 };
+  const body: any = { filter, page_size: pageSize };
   if (startCursor) body.start_cursor = startCursor;
 
   const res = await fetch(`https://api.notion.com/v1/databases/${dbId}/query`, {
@@ -87,59 +86,64 @@ function getCreatedTime(page: any): string {
 
 // ── Backfill handlers ──────────────────────────────────────────────────
 
-async function backfillAircraftEvents(sql: any, startDate: string, endDate: string) {
-  const inserted: string[] = [];
-  const skipped: string[] = [];
-  const errors: any[] = [];
-  let cursor: string | undefined;
+async function backfillAircraftEvents(sql: any, startDate: string, endDate: string, maxPages = 1, startFrom?: string) {
+  const records: any[] = [];
+  let cursor: string | undefined = startFrom;
   let totalFetched = 0;
+  let pagesProcessed = 0;
 
+  console.log(`[aircraft] Starting backfill ${startDate} to ${endDate}, maxPages=${maxPages}`);
+
+  // Phase 1: Fetch from Notion
   do {
+    console.log(`[aircraft] Fetching page ${pagesProcessed + 1}...`);
     const result = await notionQuery(NOTION_DBS.aircraftEventsLog, {
       and: [
-        { property: 'Datetime (UTC)', date: { on_or_after: startDate } },
-        { property: 'Datetime (UTC)', date: { on_or_before: endDate } },
+        { timestamp: 'created_time', created_time: { on_or_after: startDate } },
+        { timestamp: 'created_time', created_time: { on_or_before: endDate } },
       ]
-    }, cursor);
+    }, cursor, 20);
 
     totalFetched += result.results.length;
+    pagesProcessed++;
+    console.log(`[aircraft] Got ${result.results.length} results, has_more=${result.has_more}`);
 
     for (const page of result.results) {
-      try {
-        const registration = getProp(page, 'Aircraft ID / Registration');
-        const datetime = getProp(page, 'Datetime (UTC)');
-        const altitude = getProp(page, 'Altitude (ft)');
-        const description = getProp(page, 'Description');
-        const behaviors = getProp(page, 'Behavior') || [];
-        const eventCode = getProp(page, 'Event Code');
-        const source = getProp(page, 'Source') || 'notion';
-        const notionId = page.id;
-
-        // Check if exists
-        const existing = await sql`
-          SELECT 1 FROM flight_events 
-          WHERE event_id = ${notionId} 
-          LIMIT 1
-        `;
-        if (existing.length > 0) { skipped.push(registration || notionId); continue; }
-
-        const dataStr = [notionId, registration||'', datetime||'', altitude||'', behaviors.join(','), description||''].join('|');
-        const sha256 = await computeSHA256(dataStr);
-
-        await sql`
-          INSERT INTO flight_events (event_id, registration, detection_timestamp, altitude_feet, zone, event_type, notes, detection_method, sha256_hash, created_at)
-          VALUES (${notionId}, ${registration}, ${datetime}, ${altitude}, ${behaviors[0]||null}, ${eventCode||'aircraft_event'}, ${description}, ${'notion-backfill'}, ${sha256}, NOW())
-        `;
-        inserted.push(registration || notionId);
-      } catch (e) {
-        errors.push({ id: page.id, error: (e as Error).message });
-      }
+      const registration = getProp(page, 'Aircraft ID / Registration') || getProp(page, 'Name');
+      const datetime = getProp(page, 'Datetime (UTC)') || getProp(page, 'When') || getCreatedTime(page);
+      const altitude = getProp(page, 'Altitude (ft)');
+      const description = getProp(page, 'Description');
+      const behaviors = getProp(page, 'Behavior') || [];
+      const eventCode = getProp(page, 'Event Code');
+      records.push({ notionId: page.id, registration, datetime, altitude, behaviors, eventCode, description });
     }
 
     cursor = result.has_more ? result.next_cursor : undefined;
-  } while (cursor);
+  } while (cursor && pagesProcessed < maxPages);
 
-  return { source: 'aircraftEventsLog', fetched: totalFetched, inserted: inserted.length, skipped: skipped.length, errors: errors.length, errorDetails: errors.slice(0, 5) };
+  console.log(`[aircraft] Fetched ${records.length} records, now inserting...`);
+
+  // Phase 2: Insert records
+  let inserted = 0;
+  const errors: any[] = [];
+  for (const r of records) {
+    try {
+      const dataStr = [r.notionId, r.registration||'', r.datetime||'', r.altitude||'', (r.behaviors||[]).join(','), r.description||''].join('|');
+      const sha256 = await computeSHA256(dataStr);
+      await sql.unsafe(
+        `INSERT INTO flight_events (event_id, registration, detection_timestamp, altitude_feet, zone, event_type, notes, detection_method, sha256_hash, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'notion-backfill', $8, NOW())
+         ON CONFLICT (event_id) DO NOTHING`,
+        [r.notionId, r.registration, r.datetime, r.altitude, (r.behaviors||[])[0]||null, r.eventCode||'aircraft_event', r.description, sha256]
+      );
+      inserted++;
+    } catch (e) {
+      errors.push({ id: r.notionId, error: (e as Error).message });
+    }
+  }
+
+  console.log(`[aircraft] Inserted ${inserted}, errors ${errors.length}`);
+  return { source: 'aircraftEventsLog', fetched: totalFetched, inserted, errors: errors.length, errorDetails: errors.slice(0, 5), nextCursor: cursor || null, complete: !cursor };
 }
 
 async function backfillEvidenceFiles(sql: any, startDate: string, endDate: string) {
@@ -454,7 +458,7 @@ serve(async (req) => {
   }
 
   try {
-    const { action, startDate, endDate, databases } = await req.json();
+    const { action, startDate, endDate, databases, maxPages, cursor: startCursor } = await req.json();
     
     const start = startDate || '2026-01-01';
     const end = endDate || '2026-03-31';
@@ -504,7 +508,7 @@ serve(async (req) => {
         try {
           switch (db) {
             case 'aircraftEventsLog':
-              results.push(await backfillAircraftEvents(sql, start, end));
+              results.push(await backfillAircraftEvents(sql, start, end, maxPages || 2, startCursor));
               break;
             case 'evidenceFileLibrary':
               results.push(await backfillEvidenceFiles(sql, start, end));

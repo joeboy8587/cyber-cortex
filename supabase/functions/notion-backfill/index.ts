@@ -87,13 +87,12 @@ function getCreatedTime(page: any): string {
 // ── Backfill handlers ──────────────────────────────────────────────────
 
 async function backfillAircraftEvents(sql: any, startDate: string, endDate: string, maxPages = 2, startFrom?: string) {
-  const inserted: string[] = [];
-  const skipped: string[] = [];
-  const errors: any[] = [];
+  const records: any[] = [];
   let cursor: string | undefined = startFrom;
   let totalFetched = 0;
   let pagesProcessed = 0;
 
+  // Phase 1: Fetch from Notion (fast)
   do {
     const result = await notionQuery(NOTION_DBS.aircraftEventsLog, {
       and: [
@@ -106,35 +105,37 @@ async function backfillAircraftEvents(sql: any, startDate: string, endDate: stri
     pagesProcessed++;
 
     for (const page of result.results) {
-      try {
-        const registration = getProp(page, 'Aircraft ID / Registration') || getProp(page, 'Name');
-        const datetime = getProp(page, 'Datetime (UTC)') || getProp(page, 'When') || getCreatedTime(page);
-        const altitude = getProp(page, 'Altitude (ft)');
-        const description = getProp(page, 'Description');
-        const behaviors = getProp(page, 'Behavior') || [];
-        const eventCode = getProp(page, 'Event Code');
-        const notionId = page.id;
-
-        const existing = await sql`SELECT 1 FROM flight_events WHERE event_id = ${notionId} LIMIT 1`;
-        if (existing.length > 0) { skipped.push(registration || notionId); continue; }
-
-        const dataStr = [notionId, registration||'', datetime||'', altitude||'', behaviors.join(','), description||''].join('|');
-        const sha256 = await computeSHA256(dataStr);
-
-        await sql`
-          INSERT INTO flight_events (event_id, registration, detection_timestamp, altitude_feet, zone, event_type, notes, detection_method, sha256_hash, created_at)
-          VALUES (${notionId}, ${registration}, ${datetime}, ${altitude}, ${behaviors[0]||null}, ${eventCode||'aircraft_event'}, ${description}, ${'notion-backfill'}, ${sha256}, NOW())
-        `;
-        inserted.push(registration || notionId);
-      } catch (e) {
-        errors.push({ id: page.id, error: (e as Error).message });
-      }
+      const registration = getProp(page, 'Aircraft ID / Registration') || getProp(page, 'Name');
+      const datetime = getProp(page, 'Datetime (UTC)') || getProp(page, 'When') || getCreatedTime(page);
+      const altitude = getProp(page, 'Altitude (ft)');
+      const description = getProp(page, 'Description');
+      const behaviors = getProp(page, 'Behavior') || [];
+      const eventCode = getProp(page, 'Event Code');
+      records.push({ notionId: page.id, registration, datetime, altitude, behaviors, eventCode, description });
     }
 
     cursor = result.has_more ? result.next_cursor : undefined;
   } while (cursor && pagesProcessed < maxPages);
 
-  return { source: 'aircraftEventsLog', fetched: totalFetched, inserted: inserted.length, skipped: skipped.length, errors: errors.length, errorDetails: errors.slice(0, 5), nextCursor: cursor || null, complete: !cursor };
+  // Phase 2: Bulk insert (skip duplicates via ON CONFLICT)
+  let inserted = 0;
+  const errors: any[] = [];
+  for (const r of records) {
+    try {
+      const dataStr = [r.notionId, r.registration||'', r.datetime||'', r.altitude||'', (r.behaviors||[]).join(','), r.description||''].join('|');
+      const sha256 = await computeSHA256(dataStr);
+      const res = await sql`
+        INSERT INTO flight_events (event_id, registration, detection_timestamp, altitude_feet, zone, event_type, notes, detection_method, sha256_hash, created_at)
+        VALUES (${r.notionId}, ${r.registration}, ${r.datetime}, ${r.altitude}, ${(r.behaviors||[])[0]||null}, ${r.eventCode||'aircraft_event'}, ${r.description}, ${'notion-backfill'}, ${sha256}, NOW())
+        ON CONFLICT (event_id) DO NOTHING
+      `;
+      inserted++;
+    } catch (e) {
+      errors.push({ id: r.notionId, error: (e as Error).message });
+    }
+  }
+
+  return { source: 'aircraftEventsLog', fetched: totalFetched, inserted, errors: errors.length, errorDetails: errors.slice(0, 5), nextCursor: cursor || null, complete: !cursor };
 }
 
 async function backfillEvidenceFiles(sql: any, startDate: string, endDate: string) {

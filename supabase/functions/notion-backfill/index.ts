@@ -491,7 +491,7 @@ serve(async (req) => {
       }
 
       await sql.end();
-      return new Response(JSON.stringify({ success: true, action: 'scan', dateRange: { start, end }, counts }), {
+      return new Response(JSON.stringify({ success: true, action: 'scan', dateRange: { start, end }, counts, scanErrors }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
     }

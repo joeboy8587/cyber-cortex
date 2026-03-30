@@ -86,23 +86,27 @@ function getCreatedTime(page: any): string {
 
 // ── Backfill handlers ──────────────────────────────────────────────────
 
-async function backfillAircraftEvents(sql: any, startDate: string, endDate: string, maxPages = 2, startFrom?: string) {
+async function backfillAircraftEvents(sql: any, startDate: string, endDate: string, maxPages = 1, startFrom?: string) {
   const records: any[] = [];
   let cursor: string | undefined = startFrom;
   let totalFetched = 0;
   let pagesProcessed = 0;
 
-  // Phase 1: Fetch from Notion (fast)
+  console.log(`[aircraft] Starting backfill ${startDate} to ${endDate}, maxPages=${maxPages}`);
+
+  // Phase 1: Fetch from Notion
   do {
+    console.log(`[aircraft] Fetching page ${pagesProcessed + 1}...`);
     const result = await notionQuery(NOTION_DBS.aircraftEventsLog, {
       and: [
         { timestamp: 'created_time', created_time: { on_or_after: startDate } },
         { timestamp: 'created_time', created_time: { on_or_before: endDate } },
       ]
-    }, cursor, 50);
+    }, cursor, 20);
 
     totalFetched += result.results.length;
     pagesProcessed++;
+    console.log(`[aircraft] Got ${result.results.length} results, has_more=${result.has_more}`);
 
     for (const page of result.results) {
       const registration = getProp(page, 'Aircraft ID / Registration') || getProp(page, 'Name');
@@ -117,24 +121,28 @@ async function backfillAircraftEvents(sql: any, startDate: string, endDate: stri
     cursor = result.has_more ? result.next_cursor : undefined;
   } while (cursor && pagesProcessed < maxPages);
 
-  // Phase 2: Bulk insert (skip duplicates via ON CONFLICT)
+  console.log(`[aircraft] Fetched ${records.length} records, now inserting...`);
+
+  // Phase 2: Insert records
   let inserted = 0;
   const errors: any[] = [];
   for (const r of records) {
     try {
       const dataStr = [r.notionId, r.registration||'', r.datetime||'', r.altitude||'', (r.behaviors||[]).join(','), r.description||''].join('|');
       const sha256 = await computeSHA256(dataStr);
-      const res = await sql`
-        INSERT INTO flight_events (event_id, registration, detection_timestamp, altitude_feet, zone, event_type, notes, detection_method, sha256_hash, created_at)
-        VALUES (${r.notionId}, ${r.registration}, ${r.datetime}, ${r.altitude}, ${(r.behaviors||[])[0]||null}, ${r.eventCode||'aircraft_event'}, ${r.description}, ${'notion-backfill'}, ${sha256}, NOW())
-        ON CONFLICT (event_id) DO NOTHING
-      `;
+      await sql.unsafe(
+        `INSERT INTO flight_events (event_id, registration, detection_timestamp, altitude_feet, zone, event_type, notes, detection_method, sha256_hash, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'notion-backfill', $8, NOW())
+         ON CONFLICT (event_id) DO NOTHING`,
+        [r.notionId, r.registration, r.datetime, r.altitude, (r.behaviors||[])[0]||null, r.eventCode||'aircraft_event', r.description, sha256]
+      );
       inserted++;
     } catch (e) {
       errors.push({ id: r.notionId, error: (e as Error).message });
     }
   }
 
+  console.log(`[aircraft] Inserted ${inserted}, errors ${errors.length}`);
   return { source: 'aircraftEventsLog', fetched: totalFetched, inserted, errors: errors.length, errorDetails: errors.slice(0, 5), nextCursor: cursor || null, complete: !cursor };
 }
 

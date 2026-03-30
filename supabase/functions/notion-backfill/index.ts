@@ -117,9 +117,8 @@ async function backfillAircraftEvents(sql: any, startDate: string, endDate: stri
 
         // Check if exists
         const existing = await sql`
-          SELECT id FROM flight_events 
+          SELECT 1 FROM flight_events 
           WHERE event_id = ${notionId} 
-          OR (registration = ${registration} AND detection_timestamp = ${datetime})
           LIMIT 1
         `;
         if (existing.length > 0) { skipped.push(registration || notionId); continue; }

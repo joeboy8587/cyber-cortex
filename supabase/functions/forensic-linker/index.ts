@@ -36,12 +36,13 @@ function fail(message: string, status = 400, details?: Json) {
   });
 }
 
-async function getNeonClient() {
+async function getNeonClient(timeoutMs = 15000) {
   const neonUrl = Deno.env.get("NEON_DATABASE_URL");
   if (!neonUrl) throw new Error("NEON_DATABASE_URL not configured");
   
   const client = new Client(neonUrl);
   await client.connect();
+  await client.queryObject(`SET statement_timeout = '${timeoutMs}ms'`);
   return client;
 }
 
@@ -85,15 +86,16 @@ serve(async (req) => {
       let totalBiometrics = 0;
       
       try {
-        const neon = await getNeonClient();
+        const neon = await getNeonClient(10000);
         
+        // Use reltuples estimate for large tables to avoid timeout
         const flightCount = await neon.queryObject<{ count: string }>(
-          `SELECT COUNT(*)::text as count FROM live_flight_detections_rows`
+          `SELECT COALESCE(reltuples, 0)::bigint::text as count FROM pg_class WHERE relname = 'live_flight_detections_rows'`
         );
         totalFlights = parseInt(flightCount.rows[0]?.count || "0", 10);
         
         const bioCount = await neon.queryObject<{ count: string }>(
-          `SELECT COUNT(*)::text as count FROM biometric_monitoring`
+          `SELECT COALESCE(reltuples, 0)::bigint::text as count FROM pg_class WHERE relname = 'biometric_monitoring'`
         );
         totalBiometrics = parseInt(bioCount.rows[0]?.count || "0", 10);
         

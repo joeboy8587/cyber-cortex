@@ -86,41 +86,36 @@ function getCreatedTime(page: any): string {
 
 // ── Backfill handlers ──────────────────────────────────────────────────
 
-async function backfillAircraftEvents(sql: any, startDate: string, endDate: string) {
+async function backfillAircraftEvents(sql: any, startDate: string, endDate: string, maxPages = 2, startFrom?: string) {
   const inserted: string[] = [];
   const skipped: string[] = [];
   const errors: any[] = [];
-  let cursor: string | undefined;
+  let cursor: string | undefined = startFrom;
   let totalFetched = 0;
+  let pagesProcessed = 0;
 
   do {
-    // Use created_time (reliable) instead of sparse "Datetime (UTC)"
     const result = await notionQuery(NOTION_DBS.aircraftEventsLog, {
       and: [
         { timestamp: 'created_time', created_time: { on_or_after: startDate } },
         { timestamp: 'created_time', created_time: { on_or_before: endDate } },
       ]
-    }, cursor);
+    }, cursor, 50);
 
     totalFetched += result.results.length;
+    pagesProcessed++;
 
     for (const page of result.results) {
       try {
-        const registration = getProp(page, 'Aircraft ID / Registration');
-        const datetime = getProp(page, 'Datetime (UTC)');
+        const registration = getProp(page, 'Aircraft ID / Registration') || getProp(page, 'Name');
+        const datetime = getProp(page, 'Datetime (UTC)') || getProp(page, 'When') || getCreatedTime(page);
         const altitude = getProp(page, 'Altitude (ft)');
         const description = getProp(page, 'Description');
         const behaviors = getProp(page, 'Behavior') || [];
         const eventCode = getProp(page, 'Event Code');
-        const source = getProp(page, 'Source') || 'notion';
         const notionId = page.id;
 
-        // Check if exists
-        const existing = await sql`
-          SELECT 1 FROM flight_events 
-          WHERE event_id = ${notionId} 
-          LIMIT 1
-        `;
+        const existing = await sql`SELECT 1 FROM flight_events WHERE event_id = ${notionId} LIMIT 1`;
         if (existing.length > 0) { skipped.push(registration || notionId); continue; }
 
         const dataStr = [notionId, registration||'', datetime||'', altitude||'', behaviors.join(','), description||''].join('|');
@@ -137,9 +132,9 @@ async function backfillAircraftEvents(sql: any, startDate: string, endDate: stri
     }
 
     cursor = result.has_more ? result.next_cursor : undefined;
-  } while (cursor);
+  } while (cursor && pagesProcessed < maxPages);
 
-  return { source: 'aircraftEventsLog', fetched: totalFetched, inserted: inserted.length, skipped: skipped.length, errors: errors.length, errorDetails: errors.slice(0, 5) };
+  return { source: 'aircraftEventsLog', fetched: totalFetched, inserted: inserted.length, skipped: skipped.length, errors: errors.length, errorDetails: errors.slice(0, 5), nextCursor: cursor || null, complete: !cursor };
 }
 
 async function backfillEvidenceFiles(sql: any, startDate: string, endDate: string) {

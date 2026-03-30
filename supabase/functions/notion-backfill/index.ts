@@ -402,8 +402,8 @@ async function backfillForensicEvidence(p: BackfillParams): Promise<BackfillResu
         const sha256 = await computeSHA256(dataStr);
 
         const res = await sql.unsafe(
-          `INSERT INTO evidence_files (notion_page_id, filename, sha256_hash, source, created_at)
-           VALUES ($1, $2, $3, 'notion-backfill-forensic', NOW())
+          `INSERT INTO evidence_files (notion_page_id, filename, sha256_hash, source)
+           VALUES ($1, $2, $3, 'notion-backfill-forensic')
            ON CONFLICT (notion_page_id) DO NOTHING`,
           [notionId, title, sha256]
         );

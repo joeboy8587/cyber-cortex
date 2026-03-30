@@ -473,6 +473,7 @@ serve(async (req) => {
       const dbChecks = Object.entries(NOTION_DBS);
       const counts: Record<string, number> = {};
       
+      const scanErrors: Record<string, string> = {};
       for (const [name, dbId] of dbChecks) {
         try {
           const res = await notionQuery(dbId, {
@@ -481,9 +482,11 @@ serve(async (req) => {
               { timestamp: 'created_time', created_time: { on_or_before: end } },
             ]
           });
-          counts[name] = res.results.length + (res.has_more ? '+' : 0);
+          counts[name] = res.results.length + (res.has_more ? 100 : 0);
         } catch (e) {
-          counts[name] = -1; // error
+          counts[name] = -1;
+          scanErrors[name] = (e as Error).message;
+          console.error(`Scan error for ${name} (${dbId}):`, (e as Error).message);
         }
       }
 

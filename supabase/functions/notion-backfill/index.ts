@@ -114,44 +114,67 @@ interface BackfillResult {
   complete: boolean;
 }
 
-// ── Ensure unique constraints ───────────────────────────────────────────
+// ── Schema migration: safe constraint & column patching ────────────────
 
-async function ensureConstraints(sql: any) {
-  // flight_events: unique on event_id
-  await sql.unsafe(`
-    DO $$ BEGIN
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'flight_events_event_id_unique') THEN
-        ALTER TABLE flight_events ADD CONSTRAINT flight_events_event_id_unique UNIQUE (event_id);
-      END IF;
-    EXCEPTION WHEN others THEN NULL;
-    END $$;
-  `).catch(() => {});
+interface ConstraintReport {
+  applied: string[];
+  alreadyExist: string[];
+  failed: { name: string; error: string }[];
+}
 
-  // evidence_files: add missing columns if table already exists
-  for (const col of [
-    { name: 'notion_page_id', def: 'TEXT UNIQUE' },
-    { name: 'source', def: "TEXT DEFAULT 'notion'" },
-    { name: 'file_type', def: 'TEXT' },
-    { name: 'data_date', def: 'TIMESTAMPTZ' },
-    { name: 'sealed', def: 'BOOLEAN DEFAULT false' },
-    { name: 'parsing_status', def: "TEXT DEFAULT '1-To Parse'" },
-    { name: 'provenance', def: 'TEXT' },
-    { name: 'jurisdiction_relevance', def: 'TEXT[]' },
-    { name: 'caption', def: 'TEXT' },
-    { name: 'created_at', def: 'TIMESTAMPTZ DEFAULT NOW()' },
-    { name: 'updated_at', def: 'TIMESTAMPTZ DEFAULT NOW()' },
-  ]) {
-    await sql.unsafe(`
-      DO $$ BEGIN
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='evidence_files' AND column_name='${col.name}') THEN
-          ALTER TABLE evidence_files ADD COLUMN ${col.name} ${col.def};
-        END IF;
-      EXCEPTION WHEN others THEN NULL;
-      END $$;
-    `).catch(() => {});
+async function ensureConstraints(sql: any): Promise<ConstraintReport> {
+  const report: ConstraintReport = { applied: [], alreadyExist: [], failed: [] };
+
+  // Helper: add unique constraint with explicit table check (not just conname)
+  async function addUniqueConstraint(table: string, column: string, constraintName: string) {
+    try {
+      const exists = await sql.unsafe(
+        `SELECT 1 FROM pg_constraint c
+         JOIN pg_class t ON c.conrelid = t.oid
+         WHERE c.conname = $1 AND t.relname = $2 LIMIT 1`,
+        [constraintName, table]
+      );
+      if (exists.length > 0) {
+        report.alreadyExist.push(constraintName);
+        return;
+      }
+      // Check for duplicate values before adding constraint
+      const dupes = await sql.unsafe(
+        `SELECT ${column}, COUNT(*) FROM ${table} WHERE ${column} IS NOT NULL GROUP BY ${column} HAVING COUNT(*) > 1 LIMIT 5`
+      );
+      if (dupes.length > 0) {
+        report.failed.push({ name: constraintName, error: `${dupes.length} duplicate ${column} values exist — dedupe first` });
+        return;
+      }
+      await sql.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT ${constraintName} UNIQUE (${column})`);
+      report.applied.push(constraintName);
+    } catch (e) {
+      report.failed.push({ name: constraintName, error: (e as Error).message });
+    }
   }
 
-  // evidence_files: already has UNIQUE on notion_page_id from CREATE TABLE
+  // Helper: add column if missing
+  async function addColumnIfMissing(table: string, column: string, def: string) {
+    try {
+      const exists = await sql.unsafe(
+        `SELECT 1 FROM information_schema.columns WHERE table_name=$1 AND column_name=$2 LIMIT 1`,
+        [table, column]
+      );
+      if (exists.length > 0) return;
+      await sql.unsafe(`ALTER TABLE ${table} ADD COLUMN ${column} ${def}`);
+      report.applied.push(`${table}.${column}`);
+    } catch (e) {
+      report.failed.push({ name: `${table}.${column}`, error: (e as Error).message });
+    }
+  }
+
+  // ── flight_events: unique on event_id + add record_type & notion timestamps
+  await addUniqueConstraint('flight_events', 'event_id', 'flight_events_event_id_unique');
+  await addColumnIfMissing('flight_events', 'record_type', "TEXT DEFAULT 'curated_event'");
+  await addColumnIfMissing('flight_events', 'notion_created_time', 'TIMESTAMPTZ');
+  await addColumnIfMissing('flight_events', 'notion_last_edited_time', 'TIMESTAMPTZ');
+
+  // ── evidence_files: ensure table + columns
   await sql.unsafe(`
     CREATE TABLE IF NOT EXISTS evidence_files (
       id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
@@ -163,10 +186,33 @@ async function ensureConstraints(sql: any) {
       jurisdiction_relevance TEXT[], caption TEXT, file_url TEXT,
       related_event_id TEXT, related_physio_id TEXT, related_memory_id TEXT,
       source TEXT DEFAULT 'notion',
+      notion_created_time TIMESTAMPTZ, notion_last_edited_time TIMESTAMPTZ,
       created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
     )
   `).catch(() => {});
 
+  // Patch columns if table already existed with old schema
+  const evidenceCols = [
+    { name: 'notion_page_id', def: 'TEXT' },
+    { name: 'source', def: "TEXT DEFAULT 'notion'" },
+    { name: 'file_type', def: 'TEXT' },
+    { name: 'data_date', def: 'TIMESTAMPTZ' },
+    { name: 'sealed', def: 'BOOLEAN DEFAULT false' },
+    { name: 'parsing_status', def: "TEXT DEFAULT '1-To Parse'" },
+    { name: 'provenance', def: 'TEXT' },
+    { name: 'jurisdiction_relevance', def: 'TEXT[]' },
+    { name: 'caption', def: 'TEXT' },
+    { name: 'notion_created_time', def: 'TIMESTAMPTZ' },
+    { name: 'notion_last_edited_time', def: 'TIMESTAMPTZ' },
+    { name: 'created_at', def: 'TIMESTAMPTZ DEFAULT NOW()' },
+    { name: 'updated_at', def: 'TIMESTAMPTZ DEFAULT NOW()' },
+  ];
+  for (const col of evidenceCols) {
+    await addColumnIfMissing('evidence_files', col.name, col.def);
+  }
+  await addUniqueConstraint('evidence_files', 'notion_page_id', 'evidence_files_notion_page_id_unique');
+
+  // ── legal_evidence_matrix
   await sql.unsafe(`
     CREATE TABLE IF NOT EXISTS legal_evidence_matrix (
       id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
@@ -175,10 +221,14 @@ async function ensureConstraints(sql: any) {
       severity TEXT, linked_aircraft TEXT[], linked_entities TEXT[],
       rollup_correlations JSONB DEFAULT '{}', jurisdiction TEXT,
       filing_status TEXT, source TEXT DEFAULT 'notion', sha256_hash TEXT,
+      notion_created_time TIMESTAMPTZ, notion_last_edited_time TIMESTAMPTZ,
       created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
     )
   `).catch(() => {});
+  await addColumnIfMissing('legal_evidence_matrix', 'notion_created_time', 'TIMESTAMPTZ');
+  await addColumnIfMissing('legal_evidence_matrix', 'notion_last_edited_time', 'TIMESTAMPTZ');
 
+  // ── leo_military_events
   await sql.unsafe(`
     CREATE TABLE IF NOT EXISTS leo_military_events (
       id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
@@ -187,9 +237,14 @@ async function ensureConstraints(sql: any) {
       description TEXT, location TEXT, latitude DOUBLE PRECISION,
       longitude DOUBLE PRECISION, related_aircraft TEXT[],
       officer_unit TEXT, source TEXT DEFAULT 'notion', sha256_hash TEXT,
+      notion_created_time TIMESTAMPTZ, notion_last_edited_time TIMESTAMPTZ,
       created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
     )
   `).catch(() => {});
+  await addColumnIfMissing('leo_military_events', 'notion_created_time', 'TIMESTAMPTZ');
+  await addColumnIfMissing('leo_military_events', 'notion_last_edited_time', 'TIMESTAMPTZ');
+
+  return report;
 }
 
 // ── Backfill: Aircraft Events Log ──────────────────────────────────────
@@ -225,14 +280,15 @@ async function backfillAircraftEvents(p: BackfillParams): Promise<BackfillResult
         const dataStr = [notionId, registration||'', eventTs||'', altitude||'', behaviors.join?.(',') || '', description||''].join('|');
         const sha256 = await computeSHA256(dataStr);
 
+        // Use RETURNING to accurately count inserts vs conflicts
         const res = await sql.unsafe(
-          `INSERT INTO flight_events (event_id, registration, detection_timestamp, altitude_feet, zone, event_type, notes, detection_method, sha256_hash, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, 'notion-backfill', $8, NOW())
-           ON CONFLICT (event_id) DO NOTHING`,
-          [notionId, registration, eventTs, altitude, behaviors[0] || null, eventCode || 'aircraft_event', description, sha256]
+          `INSERT INTO flight_events (event_id, registration, detection_timestamp, altitude_feet, zone, event_type, notes, detection_method, sha256_hash, record_type, notion_created_time, notion_last_edited_time, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, 'notion-backfill', $8, 'curated_event', $9, $10, NOW())
+           ON CONFLICT (event_id) DO NOTHING
+           RETURNING event_id`,
+          [notionId, registration, eventTs, altitude, behaviors[0] || null, eventCode || 'aircraft_event', description, sha256, page.created_time, page.last_edited_time]
         );
-        // postgres.js returns count for affected rows
-        if (res.count === 0) conflicted++; else inserted++;
+        if (res.length > 0) inserted++; else conflicted++;
       } catch (e) {
         errors.push({ id: page.id, error: (e as Error).message });
       }
@@ -274,15 +330,18 @@ async function backfillEvidenceFiles(p: BackfillParams): Promise<BackfillResult>
         const chainStr = [notionId, filename||'', sha256||'', dataDate||''].join('|');
         const chainHash = await computeSHA256(chainStr);
 
-        await sql.unsafe(
-          `INSERT INTO evidence_files (notion_page_id, filename, sha256_hash, sealed, parsing_status, provenance, jurisdiction_relevance, caption, data_date, file_type, source)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'notion-backfill')
+        const res = await sql.unsafe(
+          `INSERT INTO evidence_files (notion_page_id, filename, sha256_hash, sealed, parsing_status, provenance, jurisdiction_relevance, caption, data_date, file_type, source, notion_created_time, notion_last_edited_time)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'notion-backfill', $11, $12)
            ON CONFLICT (notion_page_id) DO UPDATE SET
              filename = EXCLUDED.filename, sha256_hash = EXCLUDED.sha256_hash,
              sealed = EXCLUDED.sealed, parsing_status = EXCLUDED.parsing_status,
-             updated_at = NOW()`,
-          [notionId, filename, sha256 || chainHash, sealed, parsingStatus || '1-To Parse', provenance, jurisdictions.length > 0 ? jurisdictions : null, caption, dataDate, fileType]
+             notion_last_edited_time = EXCLUDED.notion_last_edited_time,
+             updated_at = NOW()
+           RETURNING notion_page_id`,
+          [notionId, filename, sha256 || chainHash, sealed, parsingStatus || '1-To Parse', provenance, jurisdictions.length > 0 ? jurisdictions : null, caption, dataDate, fileType, page.created_time, page.last_edited_time]
         );
+        // Upsert always returns a row, so count based on xmax (updated vs inserted)
         inserted++;
       } catch (e) {
         errors.push({ id: page.id, error: (e as Error).message });
@@ -321,12 +380,13 @@ async function backfillLegalMatrix(p: BackfillParams): Promise<BackfillResult> {
         const sha256 = await computeSHA256(dataStr);
 
         const res = await sql.unsafe(
-          `INSERT INTO legal_evidence_matrix (notion_page_id, exhibit_id, evidence_type, description, severity, source, sha256_hash)
-           VALUES ($1, $2, $3, $4, $5, 'notion-backfill', $6)
-           ON CONFLICT (notion_page_id) DO NOTHING`,
-          [notionId, title || flightId, alertType, description, severity, sha256]
+          `INSERT INTO legal_evidence_matrix (notion_page_id, exhibit_id, evidence_type, description, severity, source, sha256_hash, notion_created_time, notion_last_edited_time)
+           VALUES ($1, $2, $3, $4, $5, 'notion-backfill', $6, $7, $8)
+           ON CONFLICT (notion_page_id) DO NOTHING
+           RETURNING notion_page_id`,
+          [notionId, title || flightId, alertType, description, severity, sha256, page.created_time, page.last_edited_time]
         );
-        if (res.count === 0) conflicted++; else inserted++;
+        if (res.length > 0) inserted++; else conflicted++;
       } catch (e) {
         errors.push({ id: page.id, error: (e as Error).message });
       }
@@ -361,12 +421,13 @@ async function backfillLEOEvents(p: BackfillParams): Promise<BackfillResult> {
         const sha256 = await computeSHA256(dataStr);
 
         const res = await sql.unsafe(
-          `INSERT INTO leo_military_events (notion_page_id, description, event_timestamp, source, sha256_hash)
-           VALUES ($1, $2, $3, 'notion-backfill', $4)
-           ON CONFLICT (notion_page_id) DO NOTHING`,
-          [notionId, name, eventTs, sha256]
+          `INSERT INTO leo_military_events (notion_page_id, description, event_timestamp, source, sha256_hash, notion_created_time, notion_last_edited_time)
+           VALUES ($1, $2, $3, 'notion-backfill', $4, $5, $6)
+           ON CONFLICT (notion_page_id) DO NOTHING
+           RETURNING notion_page_id`,
+          [notionId, name, eventTs, sha256, page.created_time, page.last_edited_time]
         );
-        if (res.count === 0) conflicted++; else inserted++;
+        if (res.length > 0) inserted++; else conflicted++;
       } catch (e) {
         errors.push({ id: page.id, error: (e as Error).message });
       }
@@ -404,12 +465,13 @@ async function backfillForensicEvidence(p: BackfillParams): Promise<BackfillResu
         const sha256 = await computeSHA256(dataStr);
 
         const res = await sql.unsafe(
-          `INSERT INTO evidence_files (notion_page_id, filename, sha256_hash, source)
-           VALUES ($1, $2, $3, 'notion-backfill-forensic')
-           ON CONFLICT (notion_page_id) DO NOTHING`,
-          [notionId, title, sha256]
+          `INSERT INTO evidence_files (notion_page_id, filename, sha256_hash, source, notion_created_time, notion_last_edited_time)
+           VALUES ($1, $2, $3, 'notion-backfill-forensic', $4, $5)
+           ON CONFLICT (notion_page_id) DO NOTHING
+           RETURNING notion_page_id`,
+          [notionId, title, sha256, page.created_time, page.last_edited_time]
         );
-        if (res.count === 0) conflicted++; else inserted++;
+        if (res.length > 0) inserted++; else conflicted++;
       } catch (e) {
         errors.push({ id: page.id, error: (e as Error).message });
       }
@@ -421,7 +483,7 @@ async function backfillForensicEvidence(p: BackfillParams): Promise<BackfillResu
   return { source: 'forensicEvidenceCSV', fetched: totalFetched, inserted, conflicted, errors: errors.length, errorDetails: errors.slice(0, 5), nextCursor: cursor || null, complete: !cursor };
 }
 
-// ── Backfill: Live Flight Detections ───────────────────────────────────
+// ── Backfill: Live Flight Detections → flight_events as record_type='raw_detection'
 
 async function backfillLiveFlightDetections(p: BackfillParams): Promise<BackfillResult> {
   const { sql, startDate, endDate, maxPages, pageSize, startCursor, timeField } = p;
@@ -450,12 +512,13 @@ async function backfillLiveFlightDetections(p: BackfillParams): Promise<Backfill
         const sha256 = await computeSHA256(dataStr);
 
         const res = await sql.unsafe(
-          `INSERT INTO flight_events (event_id, registration, detection_timestamp, detection_method, sha256_hash, created_at)
-           VALUES ($1, $2, $3, 'notion-backfill-live', $4, NOW())
-           ON CONFLICT (event_id) DO NOTHING`,
-          [notionId, registration, eventTs, sha256]
+          `INSERT INTO flight_events (event_id, registration, detection_timestamp, detection_method, sha256_hash, record_type, notion_created_time, notion_last_edited_time, created_at)
+           VALUES ($1, $2, $3, 'notion-backfill-live', $4, 'raw_detection', $5, $6, NOW())
+           ON CONFLICT (event_id) DO NOTHING
+           RETURNING event_id`,
+          [notionId, registration, eventTs, sha256, page.created_time, page.last_edited_time]
         );
-        if (res.count === 0) conflicted++; else inserted++;
+        if (res.length > 0) inserted++; else conflicted++;
       } catch (e) {
         errors.push({ id: page.id, error: (e as Error).message });
       }
@@ -503,8 +566,8 @@ serve(async (req) => {
 
     const sql = postgres(NEON_DATABASE_URL, { ssl: 'require', max: 2, idle_timeout: 30, prepare: false });
 
-    // Ensure unique constraints on first run
-    await ensureConstraints(sql);
+    // Ensure schema is ready — returns detailed constraint report
+    const constraintReport = await ensureConstraints(sql);
 
     if (action === 'scan') {
       const NOTION_API_KEY = Deno.env.get('NOTION_API_KEY');
@@ -516,8 +579,7 @@ serve(async (req) => {
       for (const [name, dbId] of Object.entries(NOTION_DBS)) {
         try {
           const res = await notionQuery(dbId, buildTimeFilter(startDate, endDate, timeField as any), undefined, 1);
-          // If has_more, there are 2+; if results.length=1 and !has_more, exactly 1; etc
-          counts[name] = res.results.length + (res.has_more ? 999 : 0); // 999+ means "many"
+          counts[name] = res.results.length + (res.has_more ? 999 : 0);
         } catch (e) {
           counts[name] = -1;
           scanErrors[name] = (e as Error).message;
@@ -525,7 +587,7 @@ serve(async (req) => {
       }
 
       await sql.end();
-      return new Response(JSON.stringify({ success: true, action: 'scan', dateRange: { start: startDate, end: endDate }, timeField, counts, scanErrors }), {
+      return new Response(JSON.stringify({ success: true, action: 'scan', dateRange: { start: startDate, end: endDate }, timeField, counts, scanErrors, constraintReport }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
     }
@@ -562,10 +624,12 @@ serve(async (req) => {
         dateRange: { start: startDate, end: endDate }, timeField,
         totalFetched, totalInserted, totalConflicted, allComplete,
         databases: results,
+        constraintReport,
         message: `Backfilled ${totalInserted} records (${totalConflicted} conflicts) from ${totalFetched} pages`
       }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
+    await sql.end();
     return new Response(JSON.stringify({ error: 'Invalid action. Use "scan" or "backfill"' }), {
       status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });

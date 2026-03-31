@@ -74,6 +74,12 @@ const navigationItems = [
     icon: Database,
     description: "Database & Quality"
   },
+  { 
+    title: "Oildale Ops", 
+    url: "/oildale", 
+    icon: MapPin,
+    description: "Oildale/BFL Grid"
+  },
 ];
 
 export function AppSidebar() {

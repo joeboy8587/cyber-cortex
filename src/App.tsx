@@ -99,6 +99,11 @@ const App = () => (
                 <Academy />
               </ProtectedRoute>
             } />
+            <Route path="/oildale" element={
+              <ProtectedRoute>
+                <Oildale />
+              </ProtectedRoute>
+            } />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>

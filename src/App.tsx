@@ -17,6 +17,7 @@ import Josiah from "./pages/Josiah";
 import DataTools from "./pages/DataTools";
 import Simulation from "./pages/Simulation";
 import Academy from "./pages/Academy";
+import Oildale from "./pages/Oildale";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 2, staleTime: 5000 } },
@@ -96,6 +97,11 @@ const App = () => (
             <Route path="/academy" element={
               <ProtectedRoute>
                 <Academy />
+              </ProtectedRoute>
+            } />
+            <Route path="/oildale" element={
+              <ProtectedRoute>
+                <Oildale />
               </ProtectedRoute>
             } />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}

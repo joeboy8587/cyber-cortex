@@ -12,7 +12,8 @@ import {
   AlertTriangle,
   Radio,
   PlayCircle,
-  GraduationCap
+  GraduationCap,
+  MapPin
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useAuth } from "@/hooks/useAuth";
@@ -73,6 +74,12 @@ const navigationItems = [
     url: "/data", 
     icon: Database,
     description: "Database & Quality"
+  },
+  { 
+    title: "Oildale Ops", 
+    url: "/oildale", 
+    icon: MapPin,
+    description: "Oildale/BFL Grid"
   },
 ];
 

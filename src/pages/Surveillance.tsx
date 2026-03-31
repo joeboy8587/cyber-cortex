@@ -73,6 +73,12 @@ export default function Surveillance() {
             </TabsList>
           </div>
 
+          <TabsContent value="transponder" className="space-y-6">
+            <section>
+              <TransponderAnalysisDashboard />
+            </section>
+          </TabsContent>
+
           <TabsContent value="auditor" className="space-y-6">
             <section>
               <AnonymousAnomalyAuditor />

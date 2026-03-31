@@ -4,6 +4,7 @@ import postgres from "npm:postgres@3.4.4";
 let _handleAction: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
 let _handleAction2: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
 let _handleAction3: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
+let _handleAction4: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
 
 const HANDLER1_ACTIONS = new Set([
   'getBehavioralAlignment',
@@ -66,6 +67,12 @@ const HANDLER3_ACTIONS = new Set([
   'droneInvestigationScan',
 ]);
 
+const HANDLER4_ACTIONS = new Set([
+  'transponderModeAnalysis',
+  'ghostFleetScore',
+  'transponderModeSwitching',
+]);
+
 async function getHandler1() {
   if (!_handleAction) {
     const mod = await import("./handlers.ts");
@@ -88,6 +95,14 @@ async function getHandler3() {
     _handleAction3 = mod.handleAction3;
   }
   return _handleAction3;
+}
+
+async function getHandler4() {
+  if (!_handleAction4) {
+    const mod = await import("./handlers4.ts");
+    _handleAction4 = mod.handleAction4;
+  }
+  return _handleAction4;
 }
 
 const VERSION = "2.10.1";
@@ -421,6 +436,12 @@ Deno.serve(async (req) => {
           if (HANDLER3_ACTIONS.has(action)) {
             const h3 = await getHandler3();
             result = await h3(action, body, sql);
+            break;
+          }
+
+          if (HANDLER4_ACTIONS.has(action)) {
+            const h4 = await getHandler4();
+            result = await h4(action, body, sql);
             break;
           }
 

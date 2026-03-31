@@ -28,6 +28,7 @@ import F24RadarUploader from "@/components/dashboard/F24RadarUploader";
 import { AutonomousWatchtower } from "@/components/dashboard/AutonomousWatchtower";
 import UnmaskHQSystem from "@/components/dashboard/UnmaskHQSystem";
 import ForensicTrajectoryPanel from "@/components/dashboard/ForensicTrajectoryPanel";
+import TransponderAnalysisDashboard from "@/components/dashboard/TransponderAnalysisDashboard";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export default function Surveillance() {
@@ -60,7 +61,8 @@ export default function Surveillance() {
               </p>
             </div>
 
-            <TabsList className="grid h-auto grid-cols-2 gap-2 bg-transparent p-0 lg:grid-cols-7">
+            <TabsList className="grid h-auto grid-cols-2 gap-2 bg-transparent p-0 lg:grid-cols-8">
+              <TabsTrigger value="transponder">Transponder</TabsTrigger>
               <TabsTrigger value="auditor">Blind Audit</TabsTrigger>
               <TabsTrigger value="investigation">Investigation</TabsTrigger>
               <TabsTrigger value="live">Live Ops</TabsTrigger>
@@ -70,6 +72,12 @@ export default function Surveillance() {
               <TabsTrigger value="intake">Intake</TabsTrigger>
             </TabsList>
           </div>
+
+          <TabsContent value="transponder" className="space-y-6">
+            <section>
+              <TransponderAnalysisDashboard />
+            </section>
+          </TabsContent>
 
           <TabsContent value="auditor" className="space-y-6">
             <section>

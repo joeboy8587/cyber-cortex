@@ -17,6 +17,7 @@ import Josiah from "./pages/Josiah";
 import DataTools from "./pages/DataTools";
 import Simulation from "./pages/Simulation";
 import Academy from "./pages/Academy";
+import Oildale from "./pages/Oildale";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 2, staleTime: 5000 } },

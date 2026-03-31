@@ -246,7 +246,7 @@ export default function CrossCallsignTracker() {
       // Scan Neon for military callsigns not yet tracked
       const { data: milData } = await supabase.functions.invoke('neon-query', {
         body: {
-          action: 'custom_query',
+          action: 'customQuery',
           query: `
             SELECT callsign, COUNT(*) as cnt
             FROM live_flight_detections_rows

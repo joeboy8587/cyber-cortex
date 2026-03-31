@@ -127,7 +127,7 @@ export default function CrossCallsignTracker() {
       // Search Neon archive for cross-table callsign matches
       const { data: neonData } = await supabase.functions.invoke('neon-query', {
         body: {
-          action: 'custom_query',
+          action: 'customQuery',
           query: `
             SELECT registration, hex, callsign, COUNT(*) as detections,
                    MIN(alt::numeric) as min_alt, MAX(alt::numeric) as max_alt,

@@ -97,6 +97,14 @@ async function getHandler3() {
   return _handleAction3;
 }
 
+async function getHandler4() {
+  if (!_handleAction4) {
+    const mod = await import("./handlers4.ts");
+    _handleAction4 = mod.handleAction4;
+  }
+  return _handleAction4;
+}
+
 const VERSION = "2.10.1";
 console.log(`neon-query v${VERSION} booting...`);
 

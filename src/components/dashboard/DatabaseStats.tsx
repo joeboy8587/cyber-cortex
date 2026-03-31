@@ -29,18 +29,13 @@ export function DatabaseStats() {
   useEffect(() => {
     const fetchLiveCounts = async () => {
       try {
-        const { data, error } = await supabase.functions.invoke('neon-query', {
-          body: {
-            action: 'customQuery',
-            query: `
-              SELECT
-                (SELECT COUNT(*)::int FROM evidence_chain_links) as correlation_events,
-                (SELECT COUNT(*)::int FROM live_flight_detections_rows) as flight_detections,
-                (SELECT COUNT(*)::int FROM evidence_documents) as evidence_files
-            `
-          }
-        });
-        const row = Array.isArray(data) ? data[0] : (data?.data?.[0] || {});
+        const data = await customQuery(`
+          SELECT
+            (SELECT COUNT(*)::int FROM evidence_chain_links) as correlation_events,
+            (SELECT COUNT(*)::int FROM live_flight_detections_rows) as flight_detections,
+            (SELECT COUNT(*)::int FROM evidence_documents) as evidence_files
+        `);
+        const row = Array.isArray(data) ? data[0] : {};
         setLiveCounts({
           correlations: Number(row.correlation_events) || 0,
           flights: Number(row.flight_detections) || 0,
@@ -51,7 +46,7 @@ export function DatabaseStats() {
       }
     };
     fetchLiveCounts();
-  }, []);
+  }, [customQuery]);
 
   const displayStats = [
     {

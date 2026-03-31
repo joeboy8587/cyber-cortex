@@ -61,7 +61,8 @@ export default function Surveillance() {
               </p>
             </div>
 
-            <TabsList className="grid h-auto grid-cols-2 gap-2 bg-transparent p-0 lg:grid-cols-7">
+            <TabsList className="grid h-auto grid-cols-2 gap-2 bg-transparent p-0 lg:grid-cols-8">
+              <TabsTrigger value="transponder">Transponder</TabsTrigger>
               <TabsTrigger value="auditor">Blind Audit</TabsTrigger>
               <TabsTrigger value="investigation">Investigation</TabsTrigger>
               <TabsTrigger value="live">Live Ops</TabsTrigger>

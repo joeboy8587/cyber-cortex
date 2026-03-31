@@ -98,7 +98,7 @@ export default function TransponderAnalysisDashboard() {
   const runAnalysis = useCallback(async () => {
     setLoading(true);
     try {
-      const { data: neonQuery } = await import('@/lib/neonQueryRetry');
+      const { neonQuery } = await import('@/lib/neonQueryRetry');
       const [modeRes, scoreRes, switchRes] = await Promise.all([
         neonQuery({ action: 'transponderModeAnalysis', timeWindow, kernCountyOnly: true }),
         neonQuery({ action: 'ghostFleetScore', timeWindow, kernCountyOnly: true }),

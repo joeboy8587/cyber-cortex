@@ -67,6 +67,12 @@ const HANDLER3_ACTIONS = new Set([
   'droneInvestigationScan',
 ]);
 
+const HANDLER4_ACTIONS = new Set([
+  'transponderModeAnalysis',
+  'ghostFleetScore',
+  'transponderModeSwitching',
+]);
+
 async function getHandler1() {
   if (!_handleAction) {
     const mod = await import("./handlers.ts");

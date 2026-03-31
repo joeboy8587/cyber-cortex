@@ -459,7 +459,7 @@ export default function TransponderAnalysisDashboard() {
                         </td>
                         <td className="px-2 py-1 text-right font-bold">{row.identity_count}</td>
                         <td className="px-2 py-1 text-muted-foreground truncate max-w-[200px]">
-                          {(row.known_registrations || []).filter(Boolean).join(', ')}
+                          {(Array.isArray(row.known_registrations) ? row.known_registrations : typeof row.known_registrations === 'string' ? row.known_registrations.replace(/[{}]/g, '').split(',') : []).filter(Boolean).join(', ')}
                         </td>
                         <td className="px-2 py-1 text-right">{row.total_detections}</td>
                         <td className="px-2 py-1 text-center">{row.has_blocked ? '🔴' : '—'}</td>

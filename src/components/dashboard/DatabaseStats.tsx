@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { Database, Table2, GitBranch, Activity, Shield, Loader2 } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
 import { StatCard } from "@/components/ui/stat-card";
 import { useNeonDatabase } from "@/hooks/useNeonDatabase";
 

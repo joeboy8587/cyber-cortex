@@ -9,7 +9,7 @@ interface Stats {
 }
 
 export function DatabaseStats() {
-  const { getStats, isLoading } = useNeonDatabase();
+  const { getStats, customQuery, isLoading } = useNeonDatabase();
   const [stats, setStats] = useState<Stats | null>(null);
 
   useEffect(() => {

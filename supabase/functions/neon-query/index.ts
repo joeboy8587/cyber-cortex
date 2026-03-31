@@ -439,6 +439,12 @@ Deno.serve(async (req) => {
             break;
           }
 
+          if (HANDLER4_ACTIONS.has(action)) {
+            const h4 = await getHandler4();
+            result = await h4(action, body, sql);
+            break;
+          }
+
           throw new Error(`Unknown action: ${action}`);
         }
       }

@@ -399,7 +399,7 @@ export default function TransponderAnalysisDashboard() {
                         <td className="px-2 py-1 font-bold text-destructive">{row.icao_code}</td>
                         <td className="px-2 py-1 text-right font-bold">{row.tail_number_count}</td>
                         <td className="px-2 py-1 text-muted-foreground truncate max-w-[200px]">
-                          {(Array.isArray(row.registrations) ? row.registrations : typeof row.registrations === 'string' ? row.registrations.replace(/[{}]/g, '').split(',') : []).filter(Boolean).join(', ')}
+                          {(Array.isArray(row.registrations) ? row.registrations : typeof row.registrations === 'string' ? String(row.registrations).replace(/[{}]/g, '').split(',') : []).filter(Boolean).join(', ')}
                         </td>
                         <td className="px-2 py-1 text-right">{row.total_detections}</td>
                         <td className="px-2 py-1 text-right">{row.avg_altitude ? `${row.avg_altitude}ft` : '-'}</td>

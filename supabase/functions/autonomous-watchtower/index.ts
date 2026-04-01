@@ -897,7 +897,8 @@ Analyze: 1) Top 3 statistically significant patterns 2) Population-scale vs indi
         success: true,
         scan_id: scanId,
         version: VERSION,
-        protocol: 'ABSOLUTE_CERTAINTY_V4',
+          protocol: 'POPULATION_SCALE_V4.1',
+        classification: baselineStats.length > 500 ? 'POPULATION_SCALE' : baselineStats.length > 100 ? 'REGIONAL_OPERATION' : 'INDIVIDUAL_TARGETING',
         timestamp: new Date().toISOString(),
         execution_time_ms: Date.now() - startTime,
         summary: {

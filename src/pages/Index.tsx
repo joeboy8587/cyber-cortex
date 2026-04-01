@@ -47,6 +47,11 @@ const Index = () => {
             soundEnabled={true}
           />
         </section>
+
+        {/* POPULATION-SCALE RECLASSIFICATION — Top priority */}
+        <section>
+          <PopulationScaleAnalysis />
+        </section>
         
         {/* ARCHIVE DATA MAP - Visual domain overview */}
         <section>

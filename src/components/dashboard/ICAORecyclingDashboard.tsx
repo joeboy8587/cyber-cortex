@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { useNeonDatabase } from "@/hooks/useNeonDatabase";
+import { supabase } from "@/integrations/supabase/client";
 import { AlertTriangle, Shield, Radar, RefreshCw, Search, Skull } from "lucide-react";
 
 interface HexSharing {

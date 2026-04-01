@@ -365,30 +365,31 @@ serve(async (req) => {
         const multiModalQueries = await Promise.all([
           sql`SELECT registration, threat_type, total_violations, escalation_level, avg_altitude,
                 first_seen, last_seen
-              FROM sentinel_learned_threats_rows
-              WHERE total_violations >= 2
-              ORDER BY total_violations DESC LIMIT 200
-          `.catch(() => []),
-          sql`SELECT entity_name, tier, role_description, linked_registrations, rico_indicators
+              FROM sentinel_violations
+              WHERE total_violations >= 2 OR violation_count >= 2
+              ORDER BY COALESCE(total_violations, violation_count, 0) DESC LIMIT 200
+          `.catch((e: any) => { console.warn("sentinel_violations:", e.message); return []; }),
+          sql`SELECT entity_name, tier, role, assets_controlled, evidence_count
               FROM criminal_enterprise_command_structure
               ORDER BY tier LIMIT 100
-          `.catch(() => []),
-          sql`SELECT company_name, jurisdiction, linked_registrations, risk_score, rico_indicator
+          `.catch((e: any) => { console.warn("criminal_enterprise:", e.message); return []; }),
+          sql`SELECT company_name, jurisdiction, aircraft_list, risk_level
               FROM shell_companies
-              WHERE risk_score >= 50
-              ORDER BY risk_score DESC LIMIT 100
-          `.catch(() => []),
-          sql`SELECT registration, resolved_identity, resolution_method, confidence_score
+              WHERE risk_level IS NOT NULL
+              ORDER BY risk_level DESC LIMIT 100
+          `.catch((e: any) => { console.warn("shell_companies:", e.message); return []; }),
+          sql`SELECT xxb_tag, resolved_aircraft, resolution_method, confidence_score
               FROM xxb_resolution_mapping
               WHERE confidence_score >= 60
               LIMIT 200
-          `.catch(() => []),
-          sql`SELECT registration, violation_type, COUNT(*)::int as count
-              FROM ada_violation_evidence_rows
+          `.catch((e: any) => { console.warn("xxb_resolution_mapping:", e.message); return []; }),
+          sql`SELECT aircraft_registration as registration, violation_type, COUNT(*)::int as count
+              FROM legal_ada_violations_proper
               WHERE created_at > NOW() - INTERVAL '180 days'
-              GROUP BY registration, violation_type
+                AND aircraft_registration IS NOT NULL AND aircraft_registration != ''
+              GROUP BY aircraft_registration, violation_type
               ORDER BY count DESC LIMIT 100
-          `.catch(() => [])
+          `.catch((e: any) => { console.warn("legal_ada_violations:", e.message); return []; })
         ]);
 
         sentinelThreats = multiModalQueries[0] as any[];
@@ -403,14 +404,15 @@ serve(async (req) => {
 
       const shellRegMap = new Map<string, any>();
       for (const sc of shellCompanies) {
-        const regs = sc.linked_registrations;
+        // aircraft_list may be jsonb array or text array
+        const regs = sc.aircraft_list;
         if (Array.isArray(regs)) {
           for (const r of regs) shellRegMap.set(r, sc);
         }
       }
 
       const xxbMap = new Map<string, any>();
-      for (const x of xxbResolutions) xxbMap.set(x.registration, x);
+      for (const x of xxbResolutions) xxbMap.set(x.resolved_aircraft, x);
 
       const violationMap = new Map<string, number>();
       for (const v of violationRecords) {

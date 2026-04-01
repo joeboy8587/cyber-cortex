@@ -18,6 +18,7 @@ import { EvidencePowerhouse } from "@/components/dashboard/EvidencePowerhouse";
 import { SentinelViolationsBoard } from "@/components/dashboard/SentinelViolationsBoard";
 import { EvidenceStitcher } from "@/components/dashboard/EvidenceStitcher";
 import { ArchiveDataMap } from "@/components/dashboard/ArchiveDataMap";
+import { PopulationScaleAnalysis } from "@/components/dashboard/PopulationScaleAnalysis";
 
 const Index = () => {
   return (

@@ -75,6 +75,12 @@ export default function Surveillance() {
             </TabsList>
           </div>
 
+          <TabsContent value="icao" className="space-y-6">
+            <section>
+              <ICAORecyclingDashboard />
+            </section>
+          </TabsContent>
+
           <TabsContent value="transponder" className="space-y-6">
             <section>
               <TransponderAnalysisDashboard />

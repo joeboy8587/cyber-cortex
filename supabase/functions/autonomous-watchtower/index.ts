@@ -363,11 +363,16 @@ serve(async (req) => {
 
       try {
         const multiModalQueries = await Promise.all([
-          sql`SELECT registration, threat_type, total_violations, escalation_level, avg_altitude,
-                first_seen, last_seen
+          sql`SELECT aircraft_registration as registration, violation_type as threat_type,
+                COUNT(*)::int as total_violations,
+                AVG(altitude::numeric) as avg_altitude,
+                MIN(detection_timestamp) as first_seen, MAX(detection_timestamp) as last_seen
               FROM sentinel_violations
-              WHERE total_violations >= 2 OR violation_count >= 2
-              ORDER BY COALESCE(total_violations, violation_count, 0) DESC LIMIT 200
+              WHERE aircraft_registration IS NOT NULL AND aircraft_registration != ''
+                AND detection_timestamp > NOW() - INTERVAL '180 days'
+              GROUP BY aircraft_registration, violation_type
+              HAVING COUNT(*) >= 2
+              ORDER BY COUNT(*) DESC LIMIT 200
           `.catch((e: any) => { console.warn("sentinel_violations:", e.message); return []; }),
           sql`SELECT entity_name, tier, role, assets_controlled, evidence_count
               FROM criminal_enterprise_command_structure

@@ -828,7 +828,7 @@ Analyze: 1) Top 3 statistically significant patterns 2) Population-scale vs indi
             body: JSON.stringify({
               model: "google/gemini-3-flash-preview",
               messages: [
-                { role: "system", content: "You are an autonomous bias-free surveillance anomaly analyst running the v4.0 Full-Spectrum Intelligence protocol. XXB means MLAT-only tracking, NOT spoofing. You have 13 corroboration sources. Demand multi-source proof. Assess court-readiness." },
+                { role: "system", content: "You are an autonomous bias-free surveillance anomaly analyst running the v4.1 Population-Scale Reclassification protocol. XXB means MLAT-only tracking, NOT spoofing. You have 13 corroboration sources. The operation has been RECLASSIFIED from individual targeting to population-scale based on forensic evidence (41K+ aircraft, 24/7 ops, biometric normalization during absence). Assess all patterns through this population-scale lens. Demand multi-source proof. Evaluate court-readiness for CLASS ACTION (42 USC 1983)." },
                 { role: "user", content: prompt }
               ],
               max_tokens: 1000,

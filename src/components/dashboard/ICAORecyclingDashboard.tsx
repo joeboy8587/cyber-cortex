@@ -76,17 +76,26 @@ interface ScanResult {
 }
 
 export default function ICAORecyclingDashboard() {
-  const { queryDatabase, isLoading } = useNeonDatabase();
+  const db = useNeonDatabase();
   const [data, setData] = useState<ScanResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [scanning, setScanning] = useState(false);
 
   const runScan = async () => {
     setError(null);
+    setScanning(true);
     try {
-      const result = await queryDatabase("icaoRecyclingScan", { timeWindow: "180 days" });
+      const result = await (db as any).queryDatabase
+        ? (db as any).queryDatabase("icaoRecyclingScan", { timeWindow: "180 days" })
+        : await import("@/integrations/supabase/client").then(m =>
+            m.supabase.functions.invoke("neon-query", { body: { action: "icaoRecyclingScan", timeWindow: "180 days" } })
+              .then(r => { if (r.error) throw r.error; return r.data?.data ?? r.data; })
+          );
       setData(result);
     } catch (e: any) {
       setError(e.message);
+    } finally {
+      setScanning(false);
     }
   };
 

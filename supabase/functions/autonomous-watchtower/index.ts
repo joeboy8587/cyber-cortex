@@ -383,7 +383,7 @@ serve(async (req) => {
           `.catch((e: any) => { console.warn("shell_companies:", e.message); return []; }),
           sql`SELECT xxb_tag, resolved_aircraft, resolution_method, confidence_score
               FROM xxb_resolution_mapping
-              WHERE confidence_score >= 60
+              WHERE confidence_score::numeric >= 0.5
               LIMIT 200
           `.catch((e: any) => { console.warn("xxb_resolution_mapping:", e.message); return []; }),
           sql`SELECT aircraft_registration as registration, violation_type, COUNT(*)::int as count

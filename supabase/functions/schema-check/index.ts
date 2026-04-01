@@ -18,26 +18,19 @@ serve(async (req) => {
   try {
     const results: Record<string, any> = {};
     
-    // Check canonical_forensic_events date range
-    results.cfe_date_range = await sql`
-      SELECT MIN(event_timestamp) as earliest, MAX(event_timestamp) as latest,
-        COUNT(CASE WHEN registration IS NOT NULL AND registration != '' THEN 1 END)::int as with_reg
+    // Sample canonical_forensic_events to see what data actually looks like
+    results.cfe_sample = await sql`
+      SELECT * FROM canonical_forensic_events LIMIT 2
+    `.catch((e: any) => [{ error: e.message }]);
+
+    // Count with non-null registration
+    results.cfe_counts = await sql`
+      SELECT 
+        COUNT(CASE WHEN registration IS NOT NULL AND registration != '' THEN 1 END)::int as with_reg,
+        COUNT(CASE WHEN callsign IS NOT NULL AND callsign != '' THEN 1 END)::int as with_callsign,
+        COUNT(CASE WHEN icao_code IS NOT NULL AND icao_code != '' THEN 1 END)::int as with_icao
       FROM canonical_forensic_events
-    `.catch((e: any) => [{ error: e.message }]);
-
-    // Check confirmed_biometric_correlations sample  
-    results.cbc_sample = await sql`
-      SELECT aircraft_registration, confidence_level, created_at
-      FROM confirmed_biometric_correlations
-      WHERE aircraft_registration IS NOT NULL AND aircraft_registration != ''
-      LIMIT 3
-    `.catch((e: any) => [{ error: e.message }]);
-
-    // Check xxb_resolution_mapping
-    results.xxb_sample = await sql`
-      SELECT xxb_tag, resolved_aircraft, confidence_score
-      FROM xxb_resolution_mapping
-      LIMIT 3
+      WHERE canonical_id IN (SELECT canonical_id FROM canonical_forensic_events LIMIT 1000)
     `.catch((e: any) => [{ error: e.message }]);
 
     await sql.end();

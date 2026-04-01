@@ -13,24 +13,35 @@ serve(async (req) => {
   if (!NEON_DATABASE_URL) return new Response(JSON.stringify({ error: "no db" }), { status: 500, headers: corsHeaders });
 
   const sql = postgres(NEON_DATABASE_URL, { ssl: "require", max: 1, idle_timeout: 10 });
+  await sql`SET statement_timeout = '15s'`;
 
   try {
-    const tables = ['sentinel_violations'];
-    const results: Record<string, string[]> = {};
-    for (const t of tables) {
-      const cols = await sql`
-        SELECT column_name FROM information_schema.columns 
-        WHERE table_name = ${t} AND table_schema = 'public'
-        ORDER BY ordinal_position
-      `;
-      results[t] = cols.map((c: any) => c.column_name);
-    }
-
-    // Also get a sample row
-    const sample = await sql`SELECT * FROM sentinel_violations LIMIT 1`;
+    const results: Record<string, any> = {};
     
+    // Check canonical_forensic_events date range
+    results.cfe_date_range = await sql`
+      SELECT MIN(event_timestamp) as earliest, MAX(event_timestamp) as latest,
+        COUNT(CASE WHEN registration IS NOT NULL AND registration != '' THEN 1 END)::int as with_reg
+      FROM canonical_forensic_events
+    `.catch((e: any) => [{ error: e.message }]);
+
+    // Check confirmed_biometric_correlations sample  
+    results.cbc_sample = await sql`
+      SELECT aircraft_registration, confidence_level, created_at
+      FROM confirmed_biometric_correlations
+      WHERE aircraft_registration IS NOT NULL AND aircraft_registration != ''
+      LIMIT 3
+    `.catch((e: any) => [{ error: e.message }]);
+
+    // Check xxb_resolution_mapping
+    results.xxb_sample = await sql`
+      SELECT xxb_tag, resolved_aircraft, confidence_score
+      FROM xxb_resolution_mapping
+      LIMIT 3
+    `.catch((e: any) => [{ error: e.message }]);
+
     await sql.end();
-    return new Response(JSON.stringify({ columns: results, sample }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(JSON.stringify(results, null, 2), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {
     await sql.end();
     return new Response(JSON.stringify({ error: (e as Error).message }), { status: 500, headers: corsHeaders });

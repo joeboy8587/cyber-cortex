@@ -71,6 +71,7 @@ const HANDLER4_ACTIONS = new Set([
   'transponderModeAnalysis',
   'ghostFleetScore',
   'transponderModeSwitching',
+  'icaoRecyclingScan',
 ]);
 
 async function getHandler1() {

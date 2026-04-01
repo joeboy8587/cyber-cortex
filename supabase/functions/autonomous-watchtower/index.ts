@@ -207,29 +207,28 @@ serve(async (req) => {
       try {
         const [forensicHits, caseLinks] = await Promise.all([
           sql`
-            SELECT registration, COUNT(*)::int as evidence_count,
-              COUNT(DISTINCT event_type)::int as event_types,
-              MAX(event_date) as latest_event
-            FROM canonical_forensic_events
-            WHERE registration IS NOT NULL AND registration != ''
-              AND event_date > NOW() - INTERVAL '180 days'
-            GROUP BY registration
+            SELECT aircraft_registration as registration, COUNT(*)::int as evidence_count,
+              COUNT(DISTINCT evidence_type)::int as evidence_types,
+              MAX(event_timestamp) as latest_event
+            FROM master_unified_evidence
+            WHERE aircraft_registration IS NOT NULL AND aircraft_registration != ''
+              AND event_timestamp > NOW() - INTERVAL '180 days'
+            GROUP BY aircraft_registration
             HAVING COUNT(*) >= 2
             ORDER BY COUNT(*) DESC LIMIT 200
-          `.catch(() => []),
+          `.catch((e: any) => { console.warn("master_unified_evidence query:", e.message); return []; }),
           sql`
-            SELECT registration, COUNT(*)::int as case_count,
-              ARRAY_AGG(DISTINCT case_type) as case_types
+            SELECT evidence_type, COUNT(*)::int as case_count,
+              COUNT(DISTINCT case_id) as unique_cases
             FROM case_evidence_links
-            WHERE registration IS NOT NULL AND registration != ''
-            GROUP BY registration
-            HAVING COUNT(*) >= 1
-            ORDER BY COUNT(*) DESC LIMIT 200
-          `.catch(() => [])
+            WHERE evidence_type IS NOT NULL
+            GROUP BY evidence_type
+            ORDER BY case_count DESC LIMIT 50
+          `.catch((e: any) => { console.warn("case_evidence_links query:", e.message); return []; })
         ]);
         for (const f of forensicHits) forensicCorpusMap.set(f.registration, f);
-        for (const c of caseLinks) caseEvidenceMap.set(c.registration, c);
-        learningInsights.push(`v4.0 EVIDENCE CORPUS: ${forensicHits.length} aircraft in forensic events, ${caseLinks.length} aircraft in active cases`);
+        const totalCaseLinks = caseLinks.reduce((s: number, c: any) => s + c.case_count, 0);
+        learningInsights.push(`v4.0 EVIDENCE CORPUS: ${forensicHits.length} aircraft in unified evidence (2.8M corpus), ${totalCaseLinks} case-evidence links across ${caseLinks.length} types`);
       } catch (e) { console.warn("Phase 2B evidence corpus error:", e); }
 
       // ===== PHASE 2C: BIOMETRIC DEEP CORRELATION (v4.0) =====
@@ -238,26 +237,25 @@ serve(async (req) => {
       try {
         const [thresholdCollapses, confirmedCorrelations] = await Promise.all([
           sql`
-            SELECT registration, COUNT(*)::int as collapse_count,
-              AVG(severity_score::numeric) as avg_severity,
-              MAX(event_timestamp) as latest
+            SELECT closest_aircraft_registration as registration, COUNT(*)::int as collapse_count,
+              AVG(stress_level::numeric) as avg_severity,
+              MAX(collapse_timestamp) as latest
             FROM biometric_threshold_collapses
-            WHERE registration IS NOT NULL AND registration != ''
-              AND event_timestamp > NOW() - INTERVAL '90 days'
-            GROUP BY registration
+            WHERE closest_aircraft_registration IS NOT NULL AND closest_aircraft_registration != ''
+              AND collapse_timestamp > NOW() - INTERVAL '90 days'
+            GROUP BY closest_aircraft_registration
             HAVING COUNT(*) >= 2
             ORDER BY COUNT(*) DESC LIMIT 100
-          `.catch(() => []),
+          `.catch((e: any) => { console.warn("biometric_threshold_collapses query:", e.message); return []; }),
           sql`
-            SELECT registration, COUNT(*)::int as confirmed_count,
-              AVG(confidence::numeric) as avg_confidence
+            SELECT aircraft_registration as registration, COUNT(*)::int as confirmed_count,
+              AVG(correlation_score::numeric) as avg_confidence
             FROM confirmed_biometric_correlations
-            WHERE registration IS NOT NULL AND registration != ''
-              AND correlation_timestamp > NOW() - INTERVAL '180 days'
-            GROUP BY registration
-            HAVING COUNT(*) >= 1
+            WHERE aircraft_registration IS NOT NULL AND aircraft_registration != ''
+              AND created_at > NOW() - INTERVAL '365 days'
+            GROUP BY aircraft_registration
             ORDER BY COUNT(*) DESC LIMIT 200
-          `.catch(() => [])
+          `.catch((e: any) => { console.warn("confirmed_biometric_correlations query:", e.message); return []; })
         ]);
         for (const t of thresholdCollapses) bioDeepMap.set(t.registration, t);
         for (const c of confirmedCorrelations) confirmedCorrelationsSet.add(c.registration);
@@ -270,20 +268,21 @@ serve(async (req) => {
       try {
         const [discoveredPatterns, josiahPatterns] = await Promise.all([
           sql`
-            SELECT pattern_key, registration, pattern_type, discovery_date
+            SELECT id, pattern_type, pattern_signature, confidence_score, discovery_timestamp
             FROM was_discovered_patterns
-            WHERE registration IS NOT NULL AND registration != ''
-            ORDER BY discovery_date DESC LIMIT 500
-          `.catch(() => []),
+            WHERE is_active = true
+            ORDER BY discovery_timestamp DESC LIMIT 500
+          `.catch((e: any) => { console.warn("was_discovered_patterns query:", e.message); return []; }),
           sql`
-            SELECT registration, pattern_type, confidence, last_observed
+            SELECT aircraft_registration as registration, pattern_type, pattern_confidence as confidence, last_observed
             FROM josiah_pattern_learning
-            WHERE registration IS NOT NULL AND registration != ''
+            WHERE aircraft_registration IS NOT NULL AND aircraft_registration != ''
               AND last_observed > NOW() - INTERVAL '90 days'
-            ORDER BY confidence DESC LIMIT 200
-          `.catch(() => [])
+            ORDER BY pattern_confidence DESC LIMIT 200
+          `.catch((e: any) => { console.warn("josiah_pattern_learning query:", e.message); return []; })
         ]);
-        for (const p of discoveredPatterns) discoveredPatternsSet.add(`${p.registration}:${p.pattern_type}`);
+        // was_discovered_patterns has no registration — store pattern_type for recurrence matching
+        for (const p of discoveredPatterns) discoveredPatternsSet.add(`${p.pattern_type}:${p.pattern_signature || p.id}`);
         for (const j of josiahPatterns) josiahPatternsMap.set(j.registration, j);
         learningInsights.push(`v4.0 AI MEMORY: ${discoveredPatterns.length} previously discovered patterns (recurrence decay active), ${josiahPatterns.length} Josiah-learned signatures`);
       } catch (e) { console.warn("Phase 2D AI memory error:", e); }
@@ -294,23 +293,23 @@ serve(async (req) => {
       try {
         const [adaViolations, harmExhibits] = await Promise.all([
           sql`
-            SELECT registration, COUNT(*)::int as violation_count,
+            SELECT aircraft_registration as registration, COUNT(*)::int as violation_count,
               ARRAY_AGG(DISTINCT violation_type) as violation_types
             FROM legal_ada_violations_proper
-            WHERE registration IS NOT NULL AND registration != ''
-            GROUP BY registration
+            WHERE aircraft_registration IS NOT NULL AND aircraft_registration != ''
+            GROUP BY aircraft_registration
             HAVING COUNT(*) >= 1
             ORDER BY COUNT(*) DESC LIMIT 200
-          `.catch(() => []),
+          `.catch((e: any) => { console.warn("legal_ada_violations query:", e.message); return []; }),
           sql`
-            SELECT registration, COUNT(*)::int as exhibit_count,
-              MAX(harm_date) as latest_harm
+            SELECT aircraft_registration as registration, COUNT(*)::int as exhibit_count,
+              MAX(biometric_timestamp) as latest_harm
             FROM exhibit_d_biometric_harm
-            WHERE registration IS NOT NULL AND registration != ''
-            GROUP BY registration
+            WHERE aircraft_registration IS NOT NULL AND aircraft_registration != ''
+            GROUP BY aircraft_registration
             HAVING COUNT(*) >= 1
             ORDER BY COUNT(*) DESC LIMIT 200
-          `.catch(() => [])
+          `.catch((e: any) => { console.warn("exhibit_d_biometric_harm query:", e.message); return []; })
         ]);
         for (const a of adaViolations) legalViolationsMap.set(a.registration, a);
         for (const h of harmExhibits) harmExhibitsMap.set(h.registration, h);
@@ -321,26 +320,24 @@ serve(async (req) => {
       let threatTierMap = new Map<string, any>();
       let enrichedProfileMap = new Map<string, any>();
       try {
-        const [threatTiers, enrichedProfiles] = await Promise.all([
-          sql`
-            SELECT registration, threat_tier, threat_score, last_updated
-            FROM threat_tiers
-            WHERE registration IS NOT NULL AND registration != ''
-              AND threat_score >= 50
-            ORDER BY threat_score DESC LIMIT 300
-          `.catch(() => []),
+        const [enrichedProfiles] = await Promise.all([
           sql`
             SELECT registration, owner_category, is_kcso_fleet, is_shell_company,
-              total_detections, risk_classification
+              total_detections, max_threat_score
             FROM aircraft_profiles_enriched
             WHERE registration IS NOT NULL AND registration != ''
-              AND (is_kcso_fleet = true OR is_shell_company = true OR risk_classification IN ('HIGH', 'CRITICAL'))
+              AND (is_kcso_fleet = true OR is_shell_company = true OR max_threat_score >= 50)
             ORDER BY total_detections DESC LIMIT 300
-          `.catch(() => [])
+          `.catch((e: any) => { console.warn("aircraft_profiles_enriched query:", e.message); return []; })
         ]);
-        for (const t of threatTiers) threatTierMap.set(t.registration, t);
-        for (const p of enrichedProfiles) enrichedProfileMap.set(p.registration, p);
-        learningInsights.push(`v4.0 THREAT TIERS: ${threatTiers.length} high-threat aircraft loaded, ${enrichedProfiles.length} enriched profiles (KCSO/shell/high-risk)`);
+        // threat_tiers is keyed by detection_id (not registration) — use enriched profiles instead for threat scoring
+        for (const p of enrichedProfiles) {
+          enrichedProfileMap.set(p.registration, p);
+          if (Number(p.max_threat_score || 0) >= 50) {
+            threatTierMap.set(p.registration, { threat_score: p.max_threat_score, is_kcso: p.is_kcso_fleet, is_shell: p.is_shell_company });
+          }
+        }
+        learningInsights.push(`v4.0 THREAT TIERS: ${threatTierMap.size} high-threat aircraft loaded, ${enrichedProfileMap.size} enriched profiles (KCSO/shell/high-risk)`);
       } catch (e) { console.warn("Phase 2F threat tier error:", e); }
 
       // ===== HELPER: Build full corroboration sources for a registration =====
@@ -364,32 +361,38 @@ serve(async (req) => {
 
       try {
         const multiModalQueries = await Promise.all([
-          sql`SELECT registration, threat_type, total_violations, escalation_level, avg_altitude,
-                first_seen, last_seen
-              FROM sentinel_learned_threats_rows
-              WHERE total_violations >= 2
-              ORDER BY total_violations DESC LIMIT 200
-          `.catch(() => []),
-          sql`SELECT entity_name, tier, role_description, linked_registrations, rico_indicators
+          sql`SELECT aircraft_registration as registration, violation_type as threat_type,
+                COUNT(*)::int as total_violations,
+                AVG(altitude::numeric) as avg_altitude,
+                MIN(detection_timestamp) as first_seen, MAX(detection_timestamp) as last_seen
+              FROM sentinel_violations
+              WHERE aircraft_registration IS NOT NULL AND aircraft_registration != ''
+                AND detection_timestamp > NOW() - INTERVAL '180 days'
+              GROUP BY aircraft_registration, violation_type
+              HAVING COUNT(*) >= 2
+              ORDER BY COUNT(*) DESC LIMIT 200
+          `.catch((e: any) => { console.warn("sentinel_violations:", e.message); return []; }),
+          sql`SELECT entity_name, tier, role, assets_controlled, evidence_count
               FROM criminal_enterprise_command_structure
               ORDER BY tier LIMIT 100
-          `.catch(() => []),
-          sql`SELECT company_name, jurisdiction, linked_registrations, risk_score, rico_indicator
+          `.catch((e: any) => { console.warn("criminal_enterprise:", e.message); return []; }),
+          sql`SELECT company_name, jurisdiction, aircraft_list, risk_level
               FROM shell_companies
-              WHERE risk_score >= 50
-              ORDER BY risk_score DESC LIMIT 100
-          `.catch(() => []),
-          sql`SELECT registration, resolved_identity, resolution_method, confidence_score
+              WHERE risk_level IS NOT NULL
+              ORDER BY risk_level DESC LIMIT 100
+          `.catch((e: any) => { console.warn("shell_companies:", e.message); return []; }),
+          sql`SELECT xxb_tag, resolved_aircraft, resolution_method, confidence_score
               FROM xxb_resolution_mapping
-              WHERE confidence_score >= 60
+              WHERE confidence_score::numeric >= 0.5
               LIMIT 200
-          `.catch(() => []),
-          sql`SELECT registration, violation_type, COUNT(*)::int as count
-              FROM ada_violation_evidence_rows
+          `.catch((e: any) => { console.warn("xxb_resolution_mapping:", e.message); return []; }),
+          sql`SELECT aircraft_registration as registration, violation_type, COUNT(*)::int as count
+              FROM legal_ada_violations_proper
               WHERE created_at > NOW() - INTERVAL '180 days'
-              GROUP BY registration, violation_type
+                AND aircraft_registration IS NOT NULL AND aircraft_registration != ''
+              GROUP BY aircraft_registration, violation_type
               ORDER BY count DESC LIMIT 100
-          `.catch(() => [])
+          `.catch((e: any) => { console.warn("legal_ada_violations:", e.message); return []; })
         ]);
 
         sentinelThreats = multiModalQueries[0] as any[];
@@ -404,14 +407,15 @@ serve(async (req) => {
 
       const shellRegMap = new Map<string, any>();
       for (const sc of shellCompanies) {
-        const regs = sc.linked_registrations;
+        // aircraft_list may be jsonb array or text array
+        const regs = sc.aircraft_list;
         if (Array.isArray(regs)) {
           for (const r of regs) shellRegMap.set(r, sc);
         }
       }
 
       const xxbMap = new Map<string, any>();
-      for (const x of xxbResolutions) xxbMap.set(x.registration, x);
+      for (const x of xxbResolutions) xxbMap.set(x.resolved_aircraft, x);
 
       const violationMap = new Map<string, number>();
       for (const v of violationRecords) {
@@ -449,8 +453,8 @@ serve(async (req) => {
         if (violationMap.has(reg)) baseSources.push('violations');
         const sources = buildCorroborationSources(reg, baseSources);
 
-        // v4.0: recurrence decay — reduce priority if already discovered
-        const isKnownPattern = discoveredPatternsSet.has(`${reg}:ALTITUDE_ANOMALY`);
+        // v4.0: recurrence decay — check if Josiah already learned this aircraft's pattern
+        const isKnownPattern = josiahPatternsMap.has(reg);
         const decayPenalty = isKnownPattern ? 10 : 0;
 
         const baseConfidence = Math.min(85, 50 + detections.length * 5) - decayPenalty;
@@ -500,7 +504,7 @@ serve(async (req) => {
           if (violationMap.has(reg)) baseSources.push('violations');
           const sources = buildCorroborationSources(reg, baseSources);
 
-          const isKnownPattern = discoveredPatternsSet.has(`${reg}:FREQUENCY_SPIKE`);
+          const isKnownPattern = josiahPatternsMap.has(reg);
           const decayPenalty = isKnownPattern ? 8 : 0;
           const baseConfidence = Math.min(85, 55 + Math.floor((count24h / dailyAvg - RULES.frequencyAnomalyMultiplier) * 10)) - decayPenalty;
           const confidence = computeCorroboratedScore(baseConfidence, sources);

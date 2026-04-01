@@ -27,16 +27,26 @@ export async function handleAction3(action: string, body: Record<string, any>, s
 
     case 'getLegalAnalysisStats': {
       const [flightStats, enterpriseStats, shellStats, watchtowerStats, biometricStats, josiahStats, ecgStats, chainStats] = await Promise.all([
-        sql`SELECT COUNT(*)::int as total_detections, COUNT(DISTINCT registration)::int as unique_aircraft, COUNT(CASE WHEN taxonomy_tag IN ('tier0_kcso','xxb_kcso','xxb_kcso_shell','tier2_shell','xxb_tier2_shell','xxb_shell') THEN 1 END)::int as kcso_shell_count, COUNT(CASE WHEN taxonomy_tag IN ('military_asset','xxb_military') OR registration ~ '^[0-9]{2}-[0-9]{5}$' THEN 1 END)::int as military_count, COUNT(CASE WHEN taxonomy_tag IN ('medical_air','xxb_medical_air') OR callsign ~ '^(PHI|CAL|CARE|AIR1|LIFE|EVAC|N[0-9]+AM)' THEN 1 END)::int as medical_count, ROUND(AVG(NULLIF(altitude,0))::numeric,0)::int as avg_altitude, COUNT(CASE WHEN registration IN ('N912KC','N913KC') THEN 1 END)::int as kcso_primary_count, COUNT(CASE WHEN icao_code IS NULL OR icao_code='' THEN 1 END)::int as null_icao_count, COUNT(CASE WHEN taxonomy_tag LIKE 'xxb_%' AND taxonomy_tag != 'normal_traffic' THEN 1 END)::int as xxb_tagged_count, MAX(detection_timestamp) as last_detection FROM live_flight_detections_rows`,
+        sql`SELECT
+          (SELECT COALESCE(reltuples,-1)::bigint FROM pg_class WHERE relname='live_flight_detections_rows') as total_detections,
+          (SELECT COUNT(DISTINCT registration) FROM (SELECT DISTINCT registration FROM live_flight_detections_rows LIMIT 10000) r) as unique_aircraft,
+          COUNT(CASE WHEN taxonomy_tag IN ('tier0_kcso','xxb_kcso','xxb_kcso_shell','tier2_shell','xxb_tier2_shell','xxb_shell') THEN 1 END)::int as kcso_shell_count,
+          COUNT(CASE WHEN taxonomy_tag IN ('military_asset','xxb_military') OR registration ~ '^[0-9]{2}-[0-9]{5}$' THEN 1 END)::int as military_count,
+          COUNT(CASE WHEN taxonomy_tag IN ('medical_air','xxb_medical_air') OR callsign ~ '^(PHI|CAL|CARE|AIR1|LIFE|EVAC|N[0-9]+AM)' THEN 1 END)::int as medical_count,
+          ROUND(AVG(NULLIF(altitude,0))::numeric,0)::int as avg_altitude,
+          COUNT(CASE WHEN registration IN ('N912KC','N913KC') THEN 1 END)::int as kcso_primary_count,
+          COUNT(CASE WHEN taxonomy_tag LIKE 'xxb_%' AND taxonomy_tag != 'normal_traffic' THEN 1 END)::int as xxb_tagged_count,
+          MAX(detection_timestamp) as last_detection
+          FROM live_flight_detections_rows WHERE detection_timestamp > NOW() - INTERVAL '90 days'`,
         sql`SELECT COUNT(DISTINCT entity_name)::int as enterprise_count FROM criminal_enterprise_command_structure`,
-        sql`SELECT COUNT(*)::int as total FROM shell_companies`,
-        sql`SELECT COUNT(*)::int as total FROM watchtower_unified_master`,
-        sql`SELECT COUNT(*)::int as total, ROUND(AVG(NULLIF(heart_rate,0))::numeric,0)::int as avg_hr FROM biometric_monitoring`,
-        sql`SELECT COUNT(*)::int as total FROM josiah_reflections_rows`,
-        sql`SELECT COUNT(*)::int as total FROM physician_verified_ecgs`,
-        sql`SELECT COUNT(*)::int as total FROM evidence_chain_links`,
+        sql`SELECT (SELECT COALESCE(reltuples,-1)::bigint FROM pg_class WHERE relname='shell_companies') as total`,
+        sql`SELECT (SELECT COALESCE(reltuples,-1)::bigint FROM pg_class WHERE relname='watchtower_unified_master') as total`,
+        sql`SELECT (SELECT COALESCE(reltuples,-1)::bigint FROM pg_class WHERE relname='biometric_monitoring') as total, ROUND(AVG(NULLIF(heart_rate,0))::numeric,0)::int as avg_hr FROM biometric_monitoring WHERE COALESCE(measurement_timestamp,created_at) > NOW() - INTERVAL '90 days'`,
+        sql`SELECT (SELECT COALESCE(reltuples,-1)::bigint FROM pg_class WHERE relname='josiah_reflections_rows') as total`,
+        sql`SELECT (SELECT COALESCE(reltuples,-1)::bigint FROM pg_class WHERE relname='physician_verified_ecgs') as total`,
+        sql`SELECT (SELECT COALESCE(reltuples,-1)::bigint FROM pg_class WHERE relname='evidence_chain_links') as total`,
       ]);
-      return { totalDetections: (flightStats[0] as any)?.total_detections??0, uniqueAircraft: (flightStats[0] as any)?.unique_aircraft??0, kcsoShellCount: ((flightStats[0] as any)?.kcso_shell_count??0)+((shellStats[0] as any)?.total??0), militaryCount: (flightStats[0] as any)?.military_count??0, medicalCount: (flightStats[0] as any)?.medical_count??0, avgAltitude: (flightStats[0] as any)?.avg_altitude??0, enterpriseEntities: (enterpriseStats[0] as any)?.enterprise_count??0, kcsoAircraftDetections: (flightStats[0] as any)?.kcso_primary_count??0, nullIcaoCount: (flightStats[0] as any)?.null_icao_count??0, xxbTaggedCount: (flightStats[0] as any)?.xxb_tagged_count??0, watchtowerEvents: (watchtowerStats[0] as any)?.total??0, biometricEvents: (biometricStats[0] as any)?.total??0, avgHeartRate: (biometricStats[0] as any)?.avg_hr??0, josiahReflections: (josiahStats[0] as any)?.total??0, verifiedECGs: (ecgStats[0] as any)?.total??0, chainLinks: (chainStats[0] as any)?.total??0, lastDetection: (flightStats[0] as any)?.last_detection??null, dataFetchedAt: new Date().toISOString() };
+      return { totalDetections: (flightStats[0] as any)?.total_detections??0, uniqueAircraft: (flightStats[0] as any)?.unique_aircraft??0, kcsoShellCount: ((flightStats[0] as any)?.kcso_shell_count??0)+((shellStats[0] as any)?.total??0), militaryCount: (flightStats[0] as any)?.military_count??0, medicalCount: (flightStats[0] as any)?.medical_count??0, avgAltitude: (flightStats[0] as any)?.avg_altitude??0, enterpriseEntities: (enterpriseStats[0] as any)?.enterprise_count??0, kcsoAircraftDetections: (flightStats[0] as any)?.kcso_primary_count??0, nullIcaoCount: 0, xxbTaggedCount: (flightStats[0] as any)?.xxb_tagged_count??0, watchtowerEvents: (watchtowerStats[0] as any)?.total??0, biometricEvents: (biometricStats[0] as any)?.total??0, avgHeartRate: (biometricStats[0] as any)?.avg_hr??0, josiahReflections: (josiahStats[0] as any)?.total??0, verifiedECGs: (ecgStats[0] as any)?.total??0, chainLinks: (chainStats[0] as any)?.total??0, lastDetection: (flightStats[0] as any)?.last_detection??null, dataFetchedAt: new Date().toISOString() };
     }
 
     case 'getFederalCaseConvergence': {

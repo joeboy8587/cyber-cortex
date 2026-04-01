@@ -207,16 +207,16 @@ serve(async (req) => {
       try {
         const [forensicHits, caseLinks] = await Promise.all([
           sql`
-            SELECT registration, COUNT(*)::int as evidence_count,
-              COUNT(DISTINCT source_table)::int as source_types,
+            SELECT aircraft_registration as registration, COUNT(*)::int as evidence_count,
+              COUNT(DISTINCT evidence_type)::int as evidence_types,
               MAX(event_timestamp) as latest_event
-            FROM canonical_forensic_events
-            WHERE registration IS NOT NULL AND registration != ''
+            FROM master_unified_evidence
+            WHERE aircraft_registration IS NOT NULL AND aircraft_registration != ''
               AND event_timestamp > NOW() - INTERVAL '180 days'
-            GROUP BY registration
+            GROUP BY aircraft_registration
             HAVING COUNT(*) >= 2
             ORDER BY COUNT(*) DESC LIMIT 200
-          `.catch((e: any) => { console.warn("canonical_forensic_events query:", e.message); return []; }),
+          `.catch((e: any) => { console.warn("master_unified_evidence query:", e.message); return []; }),
           sql`
             SELECT evidence_type, COUNT(*)::int as case_count,
               COUNT(DISTINCT case_id) as unique_cases
@@ -227,9 +227,8 @@ serve(async (req) => {
           `.catch((e: any) => { console.warn("case_evidence_links query:", e.message); return []; })
         ]);
         for (const f of forensicHits) forensicCorpusMap.set(f.registration, f);
-        // case_evidence_links has no registration column — store total case count for AI context
         const totalCaseLinks = caseLinks.reduce((s: number, c: any) => s + c.case_count, 0);
-        learningInsights.push(`v4.0 EVIDENCE CORPUS: ${forensicHits.length} aircraft in forensic events, ${totalCaseLinks} total case-evidence links across ${caseLinks.length} evidence types`);
+        learningInsights.push(`v4.0 EVIDENCE CORPUS: ${forensicHits.length} aircraft in unified evidence (2.8M corpus), ${totalCaseLinks} case-evidence links across ${caseLinks.length} types`);
       } catch (e) { console.warn("Phase 2B evidence corpus error:", e); }
 
       // ===== PHASE 2C: BIOMETRIC DEEP CORRELATION (v4.0) =====

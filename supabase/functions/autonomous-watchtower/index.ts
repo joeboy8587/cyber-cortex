@@ -295,23 +295,23 @@ serve(async (req) => {
       try {
         const [adaViolations, harmExhibits] = await Promise.all([
           sql`
-            SELECT registration, COUNT(*)::int as violation_count,
+            SELECT aircraft_registration as registration, COUNT(*)::int as violation_count,
               ARRAY_AGG(DISTINCT violation_type) as violation_types
             FROM legal_ada_violations_proper
-            WHERE registration IS NOT NULL AND registration != ''
-            GROUP BY registration
+            WHERE aircraft_registration IS NOT NULL AND aircraft_registration != ''
+            GROUP BY aircraft_registration
             HAVING COUNT(*) >= 1
             ORDER BY COUNT(*) DESC LIMIT 200
-          `.catch(() => []),
+          `.catch((e: any) => { console.warn("legal_ada_violations query:", e.message); return []; }),
           sql`
-            SELECT registration, COUNT(*)::int as exhibit_count,
-              MAX(harm_date) as latest_harm
+            SELECT aircraft_registration as registration, COUNT(*)::int as exhibit_count,
+              MAX(biometric_timestamp) as latest_harm
             FROM exhibit_d_biometric_harm
-            WHERE registration IS NOT NULL AND registration != ''
-            GROUP BY registration
+            WHERE aircraft_registration IS NOT NULL AND aircraft_registration != ''
+            GROUP BY aircraft_registration
             HAVING COUNT(*) >= 1
             ORDER BY COUNT(*) DESC LIMIT 200
-          `.catch(() => [])
+          `.catch((e: any) => { console.warn("exhibit_d_biometric_harm query:", e.message); return []; })
         ]);
         for (const a of adaViolations) legalViolationsMap.set(a.registration, a);
         for (const h of harmExhibits) harmExhibitsMap.set(h.registration, h);

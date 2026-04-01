@@ -188,7 +188,77 @@ serve(async (req) => {
         }
       }
 
-      // 3. Fleet convergence patterns (multiple aircraft same hour)
+      // 3. ICAO Recycling Detection — same hex code used by many registrations
+      try {
+        const recyclingCheck = await sql`
+          SELECT icao_code, COUNT(DISTINCT registration)::int as reg_count,
+                 COUNT(*)::int as detections,
+                 MIN(NULLIF(altitude::numeric,0))::int as min_alt
+          FROM live_flight_detections_rows
+          WHERE icao_code IS NOT NULL AND icao_code != ''
+            AND registration IS NOT NULL AND registration != '' AND registration != 'N/A'
+            AND detection_timestamp > NOW() - INTERVAL '30 days'
+          GROUP BY icao_code
+          HAVING COUNT(DISTINCT registration) >= 10
+          ORDER BY COUNT(DISTINCT registration) DESC
+          LIMIT 20
+        `;
+        if (recyclingCheck.length > 0) {
+          const worst = recyclingCheck[0];
+          anomalies.push({
+            type: "ICAO_RECYCLING_CATASTROPHIC",
+            severity: "critical",
+            description: `${recyclingCheck.length} ICAO hex codes recycled across 10+ registrations — worst: ${worst.icao_code} with ${worst.reg_count} registrations, ${worst.detections} detections`,
+            count: recyclingCheck.reduce((s: number, r: any) => s + r.reg_count, 0),
+            timestamp: new Date().toISOString()
+          });
+          leads.push({
+            id: `lead-recycling-${Date.now()}`,
+            priority: "critical",
+            question: `Is ${worst.icao_code} (${worst.reg_count} registrations) an identity manufacturing system or legitimate code-sharing?`,
+            data_needed: "FAA Mode-S hex assignment records, aircraft type cross-reference",
+            potential_finding: "Industrial-scale identity laundering or automated hex rotation"
+          });
+        }
+      } catch (e: any) { console.warn("ICAO recycling check:", e.message); }
+
+      // 4. Military Dual-Hex Detection — military hexes broadcasting civilian IDs
+      try {
+        const dualHex = await sql`
+          SELECT icao_code, registration,
+                 COUNT(*)::int as det,
+                 COUNT(CASE WHEN altitude::numeric < 0 THEN 1 END)::int as neg_alt,
+                 COUNT(CASE WHEN altitude::numeric BETWEEN 0 AND 500 THEN 1 END)::int as ground_prox
+          FROM live_flight_detections_rows
+          WHERE (icao_code LIKE 'AE%' OR icao_code LIKE 'AF%')
+            AND registration IS NOT NULL AND registration != '' AND registration != 'N/A'
+            AND registration NOT LIKE '%-%'
+            AND detection_timestamp > NOW() - INTERVAL '30 days'
+          GROUP BY icao_code, registration
+          ORDER BY det DESC
+          LIMIT 30
+        `;
+        if (dualHex.length > 0) {
+          const totalNeg = dualHex.reduce((s: number, r: any) => s + (r.neg_alt || 0), 0);
+          anomalies.push({
+            type: "MILITARY_DUAL_HEX",
+            severity: "critical",
+            description: `${dualHex.length} military-to-civilian identity spoofs detected (AE/AF hex → civilian N-number). ${totalNeg} negative altitude events = physics violations.`,
+            aircraft: dualHex.map((r: any) => r.registration),
+            count: dualHex.length,
+            timestamp: new Date().toISOString()
+          });
+          leads.push({
+            id: `lead-dualhex-${Date.now()}`,
+            priority: "critical",
+            question: `Are ${dualHex.length} military hex spoofs coordinated Posse Comitatus violations?`,
+            data_needed: "Military flight plan records, DoD airframe registry, 18 U.S.C. § 1385 analysis",
+            potential_finding: "Military conducting domestic law enforcement under civilian cover"
+          });
+        }
+      } catch (e: any) { console.warn("Dual-hex check:", e.message); }
+
+      // 5. Fleet convergence patterns (multiple aircraft same hour)
       const convergenceEvents = await sql`
         SELECT 
           DATE_TRUNC('hour', detection_timestamp) as hour,

@@ -133,6 +133,23 @@ export default function ICAORecyclingDashboard() {
 
         {data && (
           <>
+            {/* CATASTROPHIC THREAT BANNER */}
+            {data.summary.highestRecycleCount >= 50 && (
+              <div className="mx-4 mt-4 p-4 rounded-lg border-2 border-destructive bg-destructive/10 animate-pulse">
+                <div className="flex items-center gap-3">
+                  <span className="text-3xl">🔴</span>
+                  <div>
+                    <h3 className="text-sm font-bold text-destructive uppercase tracking-wider">
+                      CATASTROPHIC: Industrial-Scale ICAO Recycling Detected
+                    </h3>
+                    <p className="text-xs text-destructive/80 mt-1">
+                      {data.summary.highestRecycleCount}x max recycling | {data.summary.totalRecycledHexes} recycled hex codes | {data.summary.totalShellAssets} shell assets | {data.summary.totalMilitarySpoofs} military spoofs
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Summary Cards */}
             <div className="grid grid-cols-2 gap-3 p-4 md:grid-cols-5">
               <SummaryCard label="Recycled Hex Codes" value={data.summary.totalRecycledHexes} icon="🔄" critical={data.summary.totalRecycledHexes > 10} />

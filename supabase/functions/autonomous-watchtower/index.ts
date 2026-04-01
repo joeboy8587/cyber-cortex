@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
-const VERSION = "4.0.0"; // Full-Spectrum Intelligence
+const VERSION = "4.1.0"; // Population-Scale Reclassification
 console.log(`autonomous-watchtower v${VERSION} booting...`);
 
 const corsHeaders = {

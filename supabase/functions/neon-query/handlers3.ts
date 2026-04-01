@@ -5,7 +5,15 @@ type SQL = ReturnType<typeof postgres>;
 export async function handleAction3(action: string, body: Record<string, any>, sql: SQL): Promise<unknown> {
   switch (action) {
     case 'getDashboardCounts': {
-      const counts = await sql`SELECT (SELECT COUNT(*) FROM live_flight_detections_rows) as total_flights, (SELECT COUNT(*) FROM live_flight_detections_rows WHERE flagged=true) as flagged_flights, (SELECT COUNT(*) FROM flagged_aircraft_rows_rows) as flagged_aircraft, (SELECT COUNT(*) FROM shell_companies) as shell_companies, (SELECT COUNT(*) FROM criminal_enterprise_command_structure) as criminal_entities, (SELECT COUNT(*) FROM operator_profiles_enriched) as operators, (SELECT COUNT(*) FROM biometric_monitoring) as biometric_records, (SELECT COUNT(DISTINCT taxonomy_tag) FROM live_flight_detections_rows WHERE taxonomy_tag IS NOT NULL) as taxonomy_categories`;
+      const counts = await sql`SELECT
+        (SELECT COALESCE(reltuples,-1)::bigint FROM pg_class WHERE relname='live_flight_detections_rows') as total_flights,
+        (SELECT COALESCE(reltuples,-1)::bigint FROM pg_class WHERE relname='flagged_aircraft_rows_rows') as flagged_aircraft,
+        (SELECT COALESCE(reltuples,-1)::bigint FROM pg_class WHERE relname='shell_companies') as shell_companies,
+        (SELECT COALESCE(reltuples,-1)::bigint FROM pg_class WHERE relname='criminal_enterprise_command_structure') as criminal_entities,
+        (SELECT COALESCE(reltuples,-1)::bigint FROM pg_class WHERE relname='operator_profiles_enriched') as operators,
+        (SELECT COALESCE(reltuples,-1)::bigint FROM pg_class WHERE relname='biometric_monitoring') as biometric_records,
+        (SELECT COUNT(DISTINCT taxonomy_tag) FROM (SELECT DISTINCT taxonomy_tag FROM live_flight_detections_rows WHERE taxonomy_tag IS NOT NULL LIMIT 500) t) as taxonomy_categories,
+        (SELECT COUNT(*) FROM live_flight_detections_rows WHERE flagged=true AND detection_timestamp > NOW() - INTERVAL '30 days') as flagged_flights`;
       return (counts[0] as any) || {};
     }
 

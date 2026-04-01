@@ -238,26 +238,26 @@ serve(async (req) => {
       try {
         const [thresholdCollapses, confirmedCorrelations] = await Promise.all([
           sql`
-            SELECT registration, COUNT(*)::int as collapse_count,
-              AVG(severity_score::numeric) as avg_severity,
-              MAX(event_timestamp) as latest
+            SELECT closest_aircraft_registration as registration, COUNT(*)::int as collapse_count,
+              AVG(stress_level::numeric) as avg_severity,
+              MAX(collapse_timestamp) as latest
             FROM biometric_threshold_collapses
-            WHERE registration IS NOT NULL AND registration != ''
-              AND event_timestamp > NOW() - INTERVAL '90 days'
-            GROUP BY registration
+            WHERE closest_aircraft_registration IS NOT NULL AND closest_aircraft_registration != ''
+              AND collapse_timestamp > NOW() - INTERVAL '90 days'
+            GROUP BY closest_aircraft_registration
             HAVING COUNT(*) >= 2
             ORDER BY COUNT(*) DESC LIMIT 100
-          `.catch(() => []),
+          `.catch((e: any) => { console.warn("biometric_threshold_collapses query:", e.message); return []; }),
           sql`
-            SELECT registration, COUNT(*)::int as confirmed_count,
-              AVG(confidence::numeric) as avg_confidence
+            SELECT aircraft_registration as registration, COUNT(*)::int as confirmed_count,
+              AVG(confidence_level::numeric) as avg_confidence
             FROM confirmed_biometric_correlations
-            WHERE registration IS NOT NULL AND registration != ''
-              AND correlation_timestamp > NOW() - INTERVAL '180 days'
-            GROUP BY registration
+            WHERE aircraft_registration IS NOT NULL AND aircraft_registration != ''
+              AND created_at > NOW() - INTERVAL '180 days'
+            GROUP BY aircraft_registration
             HAVING COUNT(*) >= 1
             ORDER BY COUNT(*) DESC LIMIT 200
-          `.catch(() => [])
+          `.catch((e: any) => { console.warn("confirmed_biometric_correlations query:", e.message); return []; })
         ]);
         for (const t of thresholdCollapses) bioDeepMap.set(t.registration, t);
         for (const c of confirmedCorrelations) confirmedCorrelationsSet.add(c.registration);

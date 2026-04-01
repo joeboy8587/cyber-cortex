@@ -249,12 +249,11 @@ serve(async (req) => {
           `.catch((e: any) => { console.warn("biometric_threshold_collapses query:", e.message); return []; }),
           sql`
             SELECT aircraft_registration as registration, COUNT(*)::int as confirmed_count,
-              AVG(confidence_level::numeric) as avg_confidence
+              AVG(correlation_score::numeric) as avg_confidence
             FROM confirmed_biometric_correlations
             WHERE aircraft_registration IS NOT NULL AND aircraft_registration != ''
-              AND created_at > NOW() - INTERVAL '180 days'
+              AND created_at > NOW() - INTERVAL '365 days'
             GROUP BY aircraft_registration
-            HAVING COUNT(*) >= 1
             ORDER BY COUNT(*) DESC LIMIT 200
           `.catch((e: any) => { console.warn("confirmed_biometric_correlations query:", e.message); return []; })
         ]);

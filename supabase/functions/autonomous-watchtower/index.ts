@@ -208,28 +208,28 @@ serve(async (req) => {
         const [forensicHits, caseLinks] = await Promise.all([
           sql`
             SELECT registration, COUNT(*)::int as evidence_count,
-              COUNT(DISTINCT event_type)::int as event_types,
-              MAX(event_date) as latest_event
+              COUNT(DISTINCT source_table)::int as source_types,
+              MAX(event_timestamp) as latest_event
             FROM canonical_forensic_events
             WHERE registration IS NOT NULL AND registration != ''
-              AND event_date > NOW() - INTERVAL '180 days'
+              AND event_timestamp > NOW() - INTERVAL '180 days'
             GROUP BY registration
             HAVING COUNT(*) >= 2
             ORDER BY COUNT(*) DESC LIMIT 200
-          `.catch(() => []),
+          `.catch((e: any) => { console.warn("canonical_forensic_events query:", e.message); return []; }),
           sql`
-            SELECT registration, COUNT(*)::int as case_count,
-              ARRAY_AGG(DISTINCT case_type) as case_types
+            SELECT evidence_type, COUNT(*)::int as case_count,
+              COUNT(DISTINCT case_id) as unique_cases
             FROM case_evidence_links
-            WHERE registration IS NOT NULL AND registration != ''
-            GROUP BY registration
-            HAVING COUNT(*) >= 1
-            ORDER BY COUNT(*) DESC LIMIT 200
-          `.catch(() => [])
+            WHERE evidence_type IS NOT NULL
+            GROUP BY evidence_type
+            ORDER BY case_count DESC LIMIT 50
+          `.catch((e: any) => { console.warn("case_evidence_links query:", e.message); return []; })
         ]);
         for (const f of forensicHits) forensicCorpusMap.set(f.registration, f);
-        for (const c of caseLinks) caseEvidenceMap.set(c.registration, c);
-        learningInsights.push(`v4.0 EVIDENCE CORPUS: ${forensicHits.length} aircraft in forensic events, ${caseLinks.length} aircraft in active cases`);
+        // case_evidence_links has no registration column — store total case count for AI context
+        const totalCaseLinks = caseLinks.reduce((s: number, c: any) => s + c.case_count, 0);
+        learningInsights.push(`v4.0 EVIDENCE CORPUS: ${forensicHits.length} aircraft in forensic events, ${totalCaseLinks} total case-evidence links across ${caseLinks.length} evidence types`);
       } catch (e) { console.warn("Phase 2B evidence corpus error:", e); }
 
       // ===== PHASE 2C: BIOMETRIC DEEP CORRELATION (v4.0) =====

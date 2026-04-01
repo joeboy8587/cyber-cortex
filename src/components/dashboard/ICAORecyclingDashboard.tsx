@@ -348,7 +348,7 @@ export default function ICAORecyclingDashboard() {
           </>
         )}
 
-        {!data && !error && isLoading && (
+        {!data && !error && scanning && (
           <div className="p-8 text-center text-muted-foreground">
             <RefreshCw className="h-8 w-8 animate-spin mx-auto mb-2" />
             Scanning ICAO recycling patterns and shell assets...

@@ -78,12 +78,17 @@ export async function handleAction3(action: string, body: Record<string, any>, s
         if (safeRegistrations.length === 0) continue;
 
         const inClause = safeRegistrations.map((reg) => `'${reg}'`).join(',');
-        const registryData = await sql.unsafe(`
-          SELECT n_number, mode_s_hex, mode_s_code
-          FROM aircraft_registry
-          WHERE n_number IN (${inClause})
-            AND mode_s_code IS NOT NULL
-        `);
+        let registryData: any[] = [];
+        try {
+          registryData = await sql.unsafe(`
+            SELECT n_number, mode_s_hex, mode_s_code
+            FROM aircraft_registry
+            WHERE n_number IN (${inClause})
+              AND mode_s_code IS NOT NULL
+          `) as any[];
+        } catch (e) {
+          console.warn('aircraft_registry not available in Neon, skipping registry lookup');
+        }
 
         for (const entry of registryData as any[]) {
           let icaoHex: string | null = null;

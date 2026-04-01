@@ -270,20 +270,21 @@ serve(async (req) => {
       try {
         const [discoveredPatterns, josiahPatterns] = await Promise.all([
           sql`
-            SELECT pattern_key, registration, pattern_type, discovery_date
+            SELECT id, pattern_type, pattern_signature, confidence_score, discovery_timestamp
             FROM was_discovered_patterns
-            WHERE registration IS NOT NULL AND registration != ''
-            ORDER BY discovery_date DESC LIMIT 500
-          `.catch(() => []),
+            WHERE is_active = true
+            ORDER BY discovery_timestamp DESC LIMIT 500
+          `.catch((e: any) => { console.warn("was_discovered_patterns query:", e.message); return []; }),
           sql`
-            SELECT registration, pattern_type, confidence, last_observed
+            SELECT aircraft_registration as registration, pattern_type, pattern_confidence as confidence, last_observed
             FROM josiah_pattern_learning
-            WHERE registration IS NOT NULL AND registration != ''
+            WHERE aircraft_registration IS NOT NULL AND aircraft_registration != ''
               AND last_observed > NOW() - INTERVAL '90 days'
-            ORDER BY confidence DESC LIMIT 200
-          `.catch(() => [])
+            ORDER BY pattern_confidence DESC LIMIT 200
+          `.catch((e: any) => { console.warn("josiah_pattern_learning query:", e.message); return []; })
         ]);
-        for (const p of discoveredPatterns) discoveredPatternsSet.add(`${p.registration}:${p.pattern_type}`);
+        // was_discovered_patterns has no registration — store pattern_type for recurrence matching
+        for (const p of discoveredPatterns) discoveredPatternsSet.add(`${p.pattern_type}:${p.pattern_signature || p.id}`);
         for (const j of josiahPatterns) josiahPatternsMap.set(j.registration, j);
         learningInsights.push(`v4.0 AI MEMORY: ${discoveredPatterns.length} previously discovered patterns (recurrence decay active), ${josiahPatterns.length} Josiah-learned signatures`);
       } catch (e) { console.warn("Phase 2D AI memory error:", e); }

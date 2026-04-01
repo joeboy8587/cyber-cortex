@@ -98,6 +98,15 @@ export default function ICAORecyclingDashboard() {
 
   useEffect(() => { runScan(); }, []);
 
+  const parseArr = (v: any): string[] => {
+    if (Array.isArray(v)) return v;
+    if (typeof v === 'string') {
+      try { const p = JSON.parse(v); if (Array.isArray(p)) return p; } catch {}
+      if (v.startsWith('{') && v.endsWith('}')) return v.slice(1, -1).split(',').map(s => s.trim().replace(/"/g, ''));
+    }
+    return [];
+  };
+
   const severityBadge = (count: number) => {
     if (count >= 5) return <Badge variant="destructive">CRITICAL</Badge>;
     if (count >= 3) return <Badge className="bg-orange-600">HIGH</Badge>;

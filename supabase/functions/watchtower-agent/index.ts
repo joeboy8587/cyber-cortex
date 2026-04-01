@@ -257,18 +257,19 @@ serve(async (req) => {
         }
       } catch (e: any) { console.warn("Dual-hex check:", e.message); }
 
-      // 5. Fleet convergence patterns (multiple aircraft same hour)
+      // 5. Fleet convergence patterns — reduced to 7 days to avoid timeout on 3M rows
       const convergenceEvents = await sql`
         SELECT 
           DATE_TRUNC('hour', detection_timestamp) as hour,
           COUNT(DISTINCT registration) as unique_aircraft,
-          ARRAY_AGG(DISTINCT registration) as aircraft_list
+          ARRAY_AGG(DISTINCT registration ORDER BY registration) as aircraft_list
         FROM live_flight_detections_rows
-        WHERE detection_timestamp > NOW() - INTERVAL '90 days'
+        WHERE detection_timestamp > NOW() - INTERVAL '7 days'
+          AND registration IS NOT NULL AND registration != ''
         GROUP BY DATE_TRUNC('hour', detection_timestamp)
-        HAVING COUNT(DISTINCT registration) >= 3
+        HAVING COUNT(DISTINCT registration) >= 4
         ORDER BY unique_aircraft DESC
-        LIMIT 30
+        LIMIT 20
       `;
 
       if (convergenceEvents.length > 0) {

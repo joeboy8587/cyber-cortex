@@ -41,7 +41,9 @@ serve(async (req) => {
       );
     }
 
-    const sql = postgres(NEON_DATABASE_URL, { ssl: "require", max: 1 });
+    const sql = postgres(NEON_DATABASE_URL, { ssl: "require", max: 1, connect_timeout: 10, idle_timeout: 10 });
+    // Set statement timeout to prevent runaway queries on 3M+ row tables
+    await sql`SET statement_timeout = '25s'`;
     const anomalies: PatternAnomaly[] = [];
     const leads: InvestigativeLead[] = [];
     

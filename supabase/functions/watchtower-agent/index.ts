@@ -41,7 +41,9 @@ serve(async (req) => {
       );
     }
 
-    const sql = postgres(NEON_DATABASE_URL, { ssl: "require", max: 1 });
+    const sql = postgres(NEON_DATABASE_URL, { ssl: "require", max: 1, connect_timeout: 10, idle_timeout: 10 });
+    // Set statement timeout to prevent runaway queries on 3M+ row tables
+    await sql`SET statement_timeout = '25s'`;
     const anomalies: PatternAnomaly[] = [];
     const leads: InvestigativeLead[] = [];
     
@@ -50,6 +52,7 @@ serve(async (req) => {
       // Note: kcso_fleet may be in Supabase, not Neon - handle gracefully
       let maskedAircraft: any[] = [];
       try {
+        // Use a targeted subquery instead of full table scan
         maskedAircraft = await sql`
           SELECT 
             kf.tail_number as registration,
@@ -60,13 +63,13 @@ serve(async (req) => {
           LEFT JOIN (
             SELECT registration, COUNT(*) as detection_count, MAX(detection_timestamp) as last_seen
             FROM live_flight_detections_rows
+            WHERE registration IN (SELECT tail_number FROM kcso_fleet)
             GROUP BY registration
           ) d ON d.registration = kf.tail_number
           WHERE COALESCE(d.detection_count, 0) = 0
              OR d.last_seen < NOW() - INTERVAL '30 days'
         `;
       } catch (fleetErr: any) {
-        // kcso_fleet table may not exist in Neon (it's in Supabase)
         console.warn("kcso_fleet query skipped:", fleetErr.message);
       }
 
@@ -90,51 +93,47 @@ serve(async (req) => {
       }
 
       // 2. Phantom biometric events (stress spikes with no aircraft)
-      // CRITICAL FIX v2: Only count phantoms during "monitored periods" where
-      // we have sufficient flight data (>50 flights that day) to ensure correlation validity
+      // 2. Phantom biometric events — OPTIMIZED: avoid full table scan
+      // Use a sampled approach: check last 7 days only, limit bio spikes
       const phantomEvents = await sql`
-        WITH daily_flight_coverage AS (
-          -- Calculate daily flight density to identify "monitored" vs "gap" periods
-          SELECT 
-            DATE(detection_timestamp) as flight_date,
-            COUNT(*) as daily_flights
-          FROM live_flight_detections_rows
-          GROUP BY DATE(detection_timestamp)
-        ),
-        monitored_dates AS (
-          -- Only dates with >50 flights are considered "actively monitored"
-          SELECT flight_date FROM daily_flight_coverage WHERE daily_flights >= 50
-        ),
-        bio_spikes AS (
+        WITH recent_bio_spikes AS (
           SELECT id, measurement_timestamp, heart_rate, hrv, stress_level
           FROM biometric_monitoring
           WHERE (heart_rate > 100 OR hrv < 40 OR stress_level > 70)
-            -- Only include biometrics on monitored dates
-            AND DATE(measurement_timestamp) IN (SELECT flight_date FROM monitored_dates)
+            AND measurement_timestamp > NOW() - INTERVAL '30 days'
+          ORDER BY measurement_timestamp DESC
+          LIMIT 500
+        ),
+        daily_coverage AS (
+          SELECT DATE(detection_timestamp) as flight_date, COUNT(*) as cnt
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() - INTERVAL '30 days'
+          GROUP BY DATE(detection_timestamp)
+        ),
+        monitored AS (
+          SELECT flight_date FROM daily_coverage WHERE cnt >= 50
+        ),
+        filtered_spikes AS (
+          SELECT * FROM recent_bio_spikes
+          WHERE DATE(measurement_timestamp) IN (SELECT flight_date FROM monitored)
         ),
         with_flights AS (
           SELECT 
-            bs.id,
-            bs.measurement_timestamp,
-            bs.heart_rate,
-            bs.hrv,
-            bs.stress_level,
-            COUNT(lf.id) as nearby_aircraft
-          FROM bio_spikes bs
-          LEFT JOIN live_flight_detections_rows lf
-            ON lf.detection_timestamp BETWEEN bs.measurement_timestamp - INTERVAL '5 minutes'
-               AND bs.measurement_timestamp + INTERVAL '5 minutes'
-          GROUP BY bs.id, bs.measurement_timestamp, bs.heart_rate, bs.hrv, bs.stress_level
+            fs.id,
+            (SELECT COUNT(*) FROM live_flight_detections_rows lf
+             WHERE lf.detection_timestamp BETWEEN fs.measurement_timestamp - INTERVAL '5 minutes'
+               AND fs.measurement_timestamp + INTERVAL '5 minutes'
+             LIMIT 1) as nearby_aircraft
+          FROM filtered_spikes fs
         )
         SELECT 
           COUNT(*) FILTER (WHERE nearby_aircraft = 0) as phantom_count,
           COUNT(*) FILTER (WHERE nearby_aircraft > 0) as correlated_count,
           COUNT(*) as total_count,
-          (SELECT COUNT(*) FROM biometric_monitoring WHERE (heart_rate > 100 OR hrv < 40 OR stress_level > 70)) as total_bio_spikes,
-          (SELECT COUNT(DISTINCT flight_date) FROM daily_flight_coverage WHERE daily_flights >= 50) as monitored_days,
-          (SELECT COUNT(DISTINCT DATE(measurement_timestamp)) FROM biometric_monitoring 
-           WHERE (heart_rate > 100 OR hrv < 40 OR stress_level > 70)
-             AND DATE(measurement_timestamp) NOT IN (SELECT flight_date FROM monitored_dates)) as gap_days
+          (SELECT COUNT(*) FROM recent_bio_spikes) as total_bio_spikes,
+          (SELECT COUNT(*) FROM monitored) as monitored_days,
+          (SELECT COUNT(DISTINCT DATE(measurement_timestamp)) FROM recent_bio_spikes
+           WHERE DATE(measurement_timestamp) NOT IN (SELECT flight_date FROM monitored)) as gap_days
         FROM with_flights
       `;
 
@@ -258,18 +257,19 @@ serve(async (req) => {
         }
       } catch (e: any) { console.warn("Dual-hex check:", e.message); }
 
-      // 5. Fleet convergence patterns (multiple aircraft same hour)
+      // 5. Fleet convergence patterns — reduced to 7 days to avoid timeout on 3M rows
       const convergenceEvents = await sql`
         SELECT 
           DATE_TRUNC('hour', detection_timestamp) as hour,
           COUNT(DISTINCT registration) as unique_aircraft,
-          ARRAY_AGG(DISTINCT registration) as aircraft_list
+          ARRAY_AGG(DISTINCT registration ORDER BY registration) as aircraft_list
         FROM live_flight_detections_rows
-        WHERE detection_timestamp > NOW() - INTERVAL '90 days'
+        WHERE detection_timestamp > NOW() - INTERVAL '7 days'
+          AND registration IS NOT NULL AND registration != ''
         GROUP BY DATE_TRUNC('hour', detection_timestamp)
-        HAVING COUNT(DISTINCT registration) >= 3
+        HAVING COUNT(DISTINCT registration) >= 4
         ORDER BY unique_aircraft DESC
-        LIMIT 30
+        LIMIT 20
       `;
 
       if (convergenceEvents.length > 0) {

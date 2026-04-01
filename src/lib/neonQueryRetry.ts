@@ -20,7 +20,7 @@ function ensureWarmup() {
  */
 export async function neonQuery(
   body: Record<string, unknown>,
-  maxRetries = 3,
+  maxRetries = 4,
 ): Promise<{ data: any; error: any }> {
   ensureWarmup();
 
@@ -37,14 +37,16 @@ export async function neonQuery(
       msg.includes('503') ||
       msg.includes('502') ||
       msg.includes('Failed to fetch') ||
-      msg.includes('Function failed to start');
+      msg.includes('Function failed to start') ||
+      msg.includes('NetworkError') ||
+      msg.includes('AbortError');
 
     if (!isBootError || attempt === maxRetries) {
       return { data, error };
     }
 
-    // Exponential backoff with jitter: 800ms, 1.6s, 3.2s + random 0-500ms
-    const delay = (800 * Math.pow(2, attempt)) + Math.random() * 500;
+    // Exponential backoff with jitter: 1s, 2s, 4s, 8s + random 0-800ms
+    const delay = (1000 * Math.pow(2, attempt)) + Math.random() * 800;
     await new Promise(r => setTimeout(r, delay));
   }
 

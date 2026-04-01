@@ -99,6 +99,9 @@ verify_jwt = false
 [functions.zero-trust-encryption]
 verify_jwt = false
 
+[functions.ingest-report]
+verify_jwt = false
+
 [api]
 enabled = true
 port = 54321

@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
-const VERSION = "3.0.0"; // Absolute Certainty Protocol
+const VERSION = "4.0.0"; // Full-Spectrum Intelligence
 console.log(`autonomous-watchtower v${VERSION} booting...`);
 
 const corsHeaders = {
@@ -23,14 +23,13 @@ const RULES = {
   convergencePercentThreshold: 30,
   convergenceMinAbsolute: 8,
   baselineInfraMaxWindows: 20,
-  // Absolute Certainty tiers
-  TIER_STATISTICAL_ANOMALY: 60,  // single source
-  TIER_HIGH_CONFIDENCE: 75,      // 2 sources
-  TIER_NEAR_CERTAINTY: 85,       // 3+ sources
-  TIER_ABSOLUTE_CERTAINTY: 95,   // 4+ sources + external verification
+  TIER_STATISTICAL_ANOMALY: 60,
+  TIER_HIGH_CONFIDENCE: 75,
+  TIER_NEAR_CERTAINTY: 85,
+  TIER_ABSOLUTE_CERTAINTY: 95,
 };
 
-// Corroboration weight matrix
+// v4.0 expanded corroboration weight matrix (7 → 13 sources)
 const CORROBORATION_WEIGHTS: Record<string, number> = {
   flight_telemetry: 1.0,
   raw_adsb_receiver: 1.0,
@@ -42,6 +41,13 @@ const CORROBORATION_WEIGHTS: Record<string, number> = {
   visual_ocr: 1.2,
   violations: 1.0,
   external_faa_web: 1.5,
+  // v4.0 new sources
+  forensic_corpus: 1.3,
+  biometric_deep: 1.5,
+  josiah_memory: 1.0,
+  legal_history: 1.4,
+  threat_tier: 0.8,
+  active_case: 1.8,
 };
 
 interface AutonomousFlag {
@@ -92,6 +98,7 @@ serve(async (req) => {
     }
 
     const sql = postgres(NEON_DATABASE_URL, { ssl: "require", max: 2, idle_timeout: 20 });
+    await sql`SET statement_timeout = '25s'`;
     const supabase = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
       ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY) : null;
 
@@ -169,39 +176,186 @@ serve(async (req) => {
       } catch (e) { console.warn("XXB taxonomy scan error:", e); }
 
       const xxbAircraft = new Map<string, any>();
-      for (const r of xxbRecords) {
-        xxbAircraft.set(r.registration, r);
-      }
+      for (const r of xxbRecords) xxbAircraft.set(r.registration, r);
 
       if (xxbRecords.length > 0) {
-        learningInsights.push(`XXB/MLAT-ONLY TAXONOMY: ${xxbRecords.length} aircraft with non-broadcast tracking signatures across ${xxbRecords.reduce((s: number, r: any) => s + r.count, 0)} detections`);
-        
+        learningInsights.push(`XXB/MLAT-ONLY TAXONOMY: ${xxbRecords.length} aircraft with non-broadcast tracking signatures`);
         for (const r of xxbRecords) {
           if (r.count >= 10) {
             flags.push({
               flag_type: 'XXB_MLAT_ANOMALY',
               severity: r.count >= 50 ? 'critical' : r.count >= 20 ? 'high' : 'medium',
               registration: r.registration,
-              description: `${r.registration} tracked via MLAT-only (non-broadcast) — ${r.count} detections over ${Math.round((new Date(r.last_seen).getTime() - new Date(r.first_seen).getTime()) / 86400000)} days at avg ${Math.round(Number(r.avg_alt || 0))}ft. Taxonomy: ${r.taxonomy_tag || 'unknown'}`,
+              description: `${r.registration} tracked via MLAT-only — ${r.count} detections at avg ${Math.round(Number(r.avg_alt || 0))}ft. Taxonomy: ${r.taxonomy_tag || 'unknown'}`,
               evidence_summary: {
-                taxonomy_tag: r.taxonomy_tag,
-                network_classification: r.network_classification,
-                detection_count: r.count,
-                avg_altitude: Math.round(Number(r.avg_alt || 0)),
-                tracking_method: 'MLAT-only / Non-broadcast',
+                taxonomy_tag: r.taxonomy_tag, network_classification: r.network_classification,
+                detection_count: r.count, avg_altitude: Math.round(Number(r.avg_alt || 0)),
               },
               cross_references: [{ type: 'xxb_resolution', source: 'taxonomy_scan' }],
               confidence_score: Math.min(85, 55 + r.count),
               certainty_tier: 'STATISTICAL_ANOMALY',
               corroboration_sources: ['flight_telemetry', 'xxb_resolution'],
-              learning_context: { method: 'xxb_taxonomy_scan', replaced_spoofing_language: true }
+              learning_context: { method: 'xxb_taxonomy_scan' }
             });
           }
         }
       }
 
+      // ===== PHASE 2B: EVIDENCE CORPUS INTELLIGENCE (v4.0) =====
+      let forensicCorpusMap = new Map<string, any>();
+      let caseEvidenceMap = new Map<string, any>();
+      try {
+        const [forensicHits, caseLinks] = await Promise.all([
+          sql`
+            SELECT registration, COUNT(*)::int as evidence_count,
+              COUNT(DISTINCT event_type)::int as event_types,
+              MAX(event_date) as latest_event
+            FROM canonical_forensic_events
+            WHERE registration IS NOT NULL AND registration != ''
+              AND event_date > NOW() - INTERVAL '180 days'
+            GROUP BY registration
+            HAVING COUNT(*) >= 2
+            ORDER BY COUNT(*) DESC LIMIT 200
+          `.catch(() => []),
+          sql`
+            SELECT registration, COUNT(*)::int as case_count,
+              ARRAY_AGG(DISTINCT case_type) as case_types
+            FROM case_evidence_links
+            WHERE registration IS NOT NULL AND registration != ''
+            GROUP BY registration
+            HAVING COUNT(*) >= 1
+            ORDER BY COUNT(*) DESC LIMIT 200
+          `.catch(() => [])
+        ]);
+        for (const f of forensicHits) forensicCorpusMap.set(f.registration, f);
+        for (const c of caseLinks) caseEvidenceMap.set(c.registration, c);
+        learningInsights.push(`v4.0 EVIDENCE CORPUS: ${forensicHits.length} aircraft in forensic events, ${caseLinks.length} aircraft in active cases`);
+      } catch (e) { console.warn("Phase 2B evidence corpus error:", e); }
+
+      // ===== PHASE 2C: BIOMETRIC DEEP CORRELATION (v4.0) =====
+      let bioDeepMap = new Map<string, any>();
+      let confirmedCorrelationsSet = new Set<string>();
+      try {
+        const [thresholdCollapses, confirmedCorrelations] = await Promise.all([
+          sql`
+            SELECT registration, COUNT(*)::int as collapse_count,
+              AVG(severity_score::numeric) as avg_severity,
+              MAX(event_timestamp) as latest
+            FROM biometric_threshold_collapses
+            WHERE registration IS NOT NULL AND registration != ''
+              AND event_timestamp > NOW() - INTERVAL '90 days'
+            GROUP BY registration
+            HAVING COUNT(*) >= 2
+            ORDER BY COUNT(*) DESC LIMIT 100
+          `.catch(() => []),
+          sql`
+            SELECT registration, COUNT(*)::int as confirmed_count,
+              AVG(confidence::numeric) as avg_confidence
+            FROM confirmed_biometric_correlations
+            WHERE registration IS NOT NULL AND registration != ''
+              AND correlation_timestamp > NOW() - INTERVAL '180 days'
+            GROUP BY registration
+            HAVING COUNT(*) >= 1
+            ORDER BY COUNT(*) DESC LIMIT 200
+          `.catch(() => [])
+        ]);
+        for (const t of thresholdCollapses) bioDeepMap.set(t.registration, t);
+        for (const c of confirmedCorrelations) confirmedCorrelationsSet.add(c.registration);
+        learningInsights.push(`v4.0 BIOMETRIC DEEP: ${thresholdCollapses.length} aircraft linked to threshold collapses, ${confirmedCorrelations.length} with pre-confirmed correlations`);
+      } catch (e) { console.warn("Phase 2C biometric deep error:", e); }
+
+      // ===== PHASE 2D: JOSIAH AI + WATCHTOWER MEMORY (v4.0) =====
+      let discoveredPatternsSet = new Set<string>();
+      let josiahPatternsMap = new Map<string, any>();
+      try {
+        const [discoveredPatterns, josiahPatterns] = await Promise.all([
+          sql`
+            SELECT pattern_key, registration, pattern_type, discovery_date
+            FROM was_discovered_patterns
+            WHERE registration IS NOT NULL AND registration != ''
+            ORDER BY discovery_date DESC LIMIT 500
+          `.catch(() => []),
+          sql`
+            SELECT registration, pattern_type, confidence, last_observed
+            FROM josiah_pattern_learning
+            WHERE registration IS NOT NULL AND registration != ''
+              AND last_observed > NOW() - INTERVAL '90 days'
+            ORDER BY confidence DESC LIMIT 200
+          `.catch(() => [])
+        ]);
+        for (const p of discoveredPatterns) discoveredPatternsSet.add(`${p.registration}:${p.pattern_type}`);
+        for (const j of josiahPatterns) josiahPatternsMap.set(j.registration, j);
+        learningInsights.push(`v4.0 AI MEMORY: ${discoveredPatterns.length} previously discovered patterns (recurrence decay active), ${josiahPatterns.length} Josiah-learned signatures`);
+      } catch (e) { console.warn("Phase 2D AI memory error:", e); }
+
+      // ===== PHASE 2E: LEGAL + KCSO AWARENESS (v4.0) =====
+      let legalViolationsMap = new Map<string, any>();
+      let harmExhibitsMap = new Map<string, any>();
+      try {
+        const [adaViolations, harmExhibits] = await Promise.all([
+          sql`
+            SELECT registration, COUNT(*)::int as violation_count,
+              ARRAY_AGG(DISTINCT violation_type) as violation_types
+            FROM legal_ada_violations_proper
+            WHERE registration IS NOT NULL AND registration != ''
+            GROUP BY registration
+            HAVING COUNT(*) >= 1
+            ORDER BY COUNT(*) DESC LIMIT 200
+          `.catch(() => []),
+          sql`
+            SELECT registration, COUNT(*)::int as exhibit_count,
+              MAX(harm_date) as latest_harm
+            FROM exhibit_d_biometric_harm
+            WHERE registration IS NOT NULL AND registration != ''
+            GROUP BY registration
+            HAVING COUNT(*) >= 1
+            ORDER BY COUNT(*) DESC LIMIT 200
+          `.catch(() => [])
+        ]);
+        for (const a of adaViolations) legalViolationsMap.set(a.registration, a);
+        for (const h of harmExhibits) harmExhibitsMap.set(h.registration, h);
+        learningInsights.push(`v4.0 LEGAL: ${adaViolations.length} aircraft with ADA violations, ${harmExhibits.length} with biometric harm exhibits`);
+      } catch (e) { console.warn("Phase 2E legal awareness error:", e); }
+
+      // ===== PHASE 2F: THREAT TIER + AIRCRAFT PROFILE ENRICHMENT (v4.0) =====
+      let threatTierMap = new Map<string, any>();
+      let enrichedProfileMap = new Map<string, any>();
+      try {
+        const [threatTiers, enrichedProfiles] = await Promise.all([
+          sql`
+            SELECT registration, threat_tier, threat_score, last_updated
+            FROM threat_tiers
+            WHERE registration IS NOT NULL AND registration != ''
+              AND threat_score >= 50
+            ORDER BY threat_score DESC LIMIT 300
+          `.catch(() => []),
+          sql`
+            SELECT registration, owner_category, is_kcso_fleet, is_shell_company,
+              total_detections, risk_classification
+            FROM aircraft_profiles_enriched
+            WHERE registration IS NOT NULL AND registration != ''
+              AND (is_kcso_fleet = true OR is_shell_company = true OR risk_classification IN ('HIGH', 'CRITICAL'))
+            ORDER BY total_detections DESC LIMIT 300
+          `.catch(() => [])
+        ]);
+        for (const t of threatTiers) threatTierMap.set(t.registration, t);
+        for (const p of enrichedProfiles) enrichedProfileMap.set(p.registration, p);
+        learningInsights.push(`v4.0 THREAT TIERS: ${threatTiers.length} high-threat aircraft loaded, ${enrichedProfiles.length} enriched profiles (KCSO/shell/high-risk)`);
+      } catch (e) { console.warn("Phase 2F threat tier error:", e); }
+
+      // ===== HELPER: Build full corroboration sources for a registration =====
+      function buildCorroborationSources(reg: string, baseSources: string[]): string[] {
+        const sources = [...baseSources];
+        if (forensicCorpusMap.has(reg)) sources.push('forensic_corpus');
+        if (caseEvidenceMap.has(reg)) sources.push('active_case');
+        if (bioDeepMap.has(reg) || confirmedCorrelationsSet.has(reg)) sources.push('biometric_deep');
+        if (josiahPatternsMap.has(reg)) sources.push('josiah_memory');
+        if (legalViolationsMap.has(reg) || harmExhibitsMap.has(reg)) sources.push('legal_history');
+        if (threatTierMap.has(reg)) sources.push('threat_tier');
+        return [...new Set(sources)];
+      }
+
       // ===== PHASE 3: MULTI-MODAL DEEP CORROBORATION =====
-      // Query sentinel threats, enterprise structure, shell companies, violations
       let sentinelThreats: any[] = [];
       let enterpriseEntities: any[] = [];
       let shellCompanies: any[] = [];
@@ -245,7 +399,6 @@ serve(async (req) => {
         violationRecords = multiModalQueries[4] as any[];
       } catch (e) { console.warn("Multi-modal query error:", e); }
 
-      // Build lookup maps
       const sentinelMap = new Map<string, any>();
       for (const t of sentinelThreats) sentinelMap.set(t.registration, t);
 
@@ -287,15 +440,20 @@ serve(async (req) => {
         const baseline = baselineMap.get(reg);
         if (!baseline) continue;
         const avgAnomAlt = detections.reduce((s: number, d: any) => s + Number(d.altitude), 0) / detections.length;
-        
-        // Build corroboration sources
-        const sources: string[] = ['flight_telemetry'];
-        if (sentinelMap.has(reg)) sources.push('sentinel_history');
-        if (shellRegMap.has(reg)) sources.push('enterprise_structure');
-        if (xxbAircraft.has(reg)) sources.push('xxb_resolution');
-        if (violationMap.has(reg)) sources.push('violations');
 
-        const baseConfidence = Math.min(85, 50 + detections.length * 5);
+        // v4.0: full-spectrum corroboration
+        const baseSources: string[] = ['flight_telemetry'];
+        if (sentinelMap.has(reg)) baseSources.push('sentinel_history');
+        if (shellRegMap.has(reg)) baseSources.push('enterprise_structure');
+        if (xxbAircraft.has(reg)) baseSources.push('xxb_resolution');
+        if (violationMap.has(reg)) baseSources.push('violations');
+        const sources = buildCorroborationSources(reg, baseSources);
+
+        // v4.0: recurrence decay — reduce priority if already discovered
+        const isKnownPattern = discoveredPatternsSet.has(`${reg}:ALTITUDE_ANOMALY`);
+        const decayPenalty = isKnownPattern ? 10 : 0;
+
+        const baseConfidence = Math.min(85, 50 + detections.length * 5) - decayPenalty;
         const confidence = computeCorroboratedScore(baseConfidence, sources);
         const tier = computeCertaintyTier(sources);
 
@@ -304,19 +462,20 @@ serve(async (req) => {
             flag_type: 'ALTITUDE_ANOMALY',
             severity: avgAnomAlt < 500 ? 'critical' : avgAnomAlt < 1500 ? 'high' : 'medium',
             registration: reg,
-            description: `${reg} at avg ${Math.round(avgAnomAlt)}ft — ${Math.round(Number(baseline.mean_altitude) - avgAnomAlt)}ft below 90-day mean (${detections.length} anomalous in 24h) [${tier}]`,
+            description: `${reg} at avg ${Math.round(avgAnomAlt)}ft — ${Math.round(Number(baseline.mean_altitude) - avgAnomAlt)}ft below 90-day mean (${detections.length} anomalous in 24h) [${tier}]${isKnownPattern ? ' [RECURRENCE]' : ''}`,
             evidence_summary: {
               mean_altitude: Math.round(Number(baseline.mean_altitude)),
               anomalous_altitude: Math.round(avgAnomAlt),
               detection_count: detections.length,
               z_score: ((Number(baseline.mean_altitude) - avgAnomAlt) / Number(baseline.stddev_altitude)).toFixed(1),
               corroboration_count: sources.length,
+              recurrence_decay: isKnownPattern,
             },
             cross_references: sources.map(s => ({ type: s })),
             confidence_score: confidence,
             certainty_tier: tier,
             corroboration_sources: sources,
-            learning_context: { method: 'statistical_z_score_v3', absolute_certainty_protocol: true }
+            learning_context: { method: 'statistical_z_score_v4', absolute_certainty_protocol: true, recurrence_decay: isKnownPattern }
           });
         }
       }
@@ -335,12 +494,15 @@ serve(async (req) => {
         if (dailyAvg < 2) continue;
 
         if (count24h > dailyAvg * RULES.frequencyAnomalyMultiplier) {
-          const sources: string[] = ['flight_telemetry'];
-          if (sentinelMap.has(reg)) sources.push('sentinel_history');
-          if (shellRegMap.has(reg)) sources.push('enterprise_structure');
-          if (violationMap.has(reg)) sources.push('violations');
+          const baseSources: string[] = ['flight_telemetry'];
+          if (sentinelMap.has(reg)) baseSources.push('sentinel_history');
+          if (shellRegMap.has(reg)) baseSources.push('enterprise_structure');
+          if (violationMap.has(reg)) baseSources.push('violations');
+          const sources = buildCorroborationSources(reg, baseSources);
 
-          const baseConfidence = Math.min(85, 55 + Math.floor((count24h / dailyAvg - RULES.frequencyAnomalyMultiplier) * 10));
+          const isKnownPattern = discoveredPatternsSet.has(`${reg}:FREQUENCY_SPIKE`);
+          const decayPenalty = isKnownPattern ? 8 : 0;
+          const baseConfidence = Math.min(85, 55 + Math.floor((count24h / dailyAvg - RULES.frequencyAnomalyMultiplier) * 10)) - decayPenalty;
           const confidence = computeCorroboratedScore(baseConfidence, sources);
 
           if (confidence >= RULES.minConfidenceToFlag) {
@@ -348,13 +510,13 @@ serve(async (req) => {
               flag_type: 'FREQUENCY_SPIKE',
               severity: count24h > dailyAvg * 5 ? 'critical' : 'high',
               registration: reg,
-              description: `${reg} detected ${count24h}x in 24h vs avg ${dailyAvg.toFixed(1)} — ${(count24h / dailyAvg).toFixed(1)}x normal [${computeCertaintyTier(sources)}]`,
+              description: `${reg} detected ${count24h}x in 24h vs avg ${dailyAvg.toFixed(1)} — ${(count24h / dailyAvg).toFixed(1)}x normal [${computeCertaintyTier(sources)}]${isKnownPattern ? ' [RECURRENCE]' : ''}`,
               evidence_summary: { daily_average: dailyAvg.toFixed(1), last_24h: count24h, multiplier: (count24h / dailyAvg).toFixed(1) },
               cross_references: sources.map(s => ({ type: s })),
               confidence_score: confidence,
               certainty_tier: computeCertaintyTier(sources),
               corroboration_sources: sources,
-              learning_context: { method: 'frequency_analysis_v3' }
+              learning_context: { method: 'frequency_analysis_v4', recurrence_decay: isKnownPattern }
             });
           }
         }
@@ -375,17 +537,18 @@ serve(async (req) => {
           byReg.get(reg)!.push(d);
         }
         for (const [reg, dets] of byReg) {
+          const sources = buildCorroborationSources(reg, ['flight_telemetry']);
           flags.push({
             flag_type: 'PHYSICS_VIOLATION',
             severity: 'critical',
             registration: reg,
-            description: `${reg}: ${dets.length} impossible data points — indicates ADS-B data injection or transponder manipulation`,
-            evidence_summary: { total: dets.length, negative_altitude: dets.filter((d: any) => Number(d.altitude) < 0).length },
-            cross_references: [],
-            confidence_score: 95,
-            certainty_tier: 'NEAR_CERTAINTY',
-            corroboration_sources: ['flight_telemetry'],
-            learning_context: { method: 'physics_validation' }
+            description: `${reg}: ${dets.length} impossible data points — ADS-B data injection or transponder manipulation [${computeCertaintyTier(sources)}]`,
+            evidence_summary: { total: dets.length, negative_altitude: dets.filter((d: any) => Number(d.altitude) < 0).length, corroboration_count: sources.length },
+            cross_references: sources.map(s => ({ type: s })),
+            confidence_score: computeCorroboratedScore(95, sources),
+            certainty_tier: computeCertaintyTier(sources),
+            corroboration_sources: sources,
+            learning_context: { method: 'physics_validation_v4' }
           });
         }
       }
@@ -426,7 +589,7 @@ serve(async (req) => {
             confidence_score: Math.min(90, 50 + Math.round(clusterPercent)),
             certainty_tier: 'HIGH_CONFIDENCE',
             corroboration_sources: ['flight_telemetry'],
-            learning_context: { method: 'percentage_sector_v3', recurrence_decay_applied: true }
+            learning_context: { method: 'percentage_sector_v4', recurrence_decay_applied: true }
           });
         }
       }
@@ -463,11 +626,13 @@ serve(async (req) => {
       } catch (e) { console.warn("Bio correlation error:", e); }
 
       for (const corr of bioCorrelations) {
-        const sources: string[] = ['flight_telemetry', 'biometric_stress'];
-        if (sentinelMap.has(corr.registration)) sources.push('sentinel_history');
-        if (shellRegMap.has(corr.registration)) sources.push('enterprise_structure');
-        if (xxbAircraft.has(corr.registration)) sources.push('xxb_resolution');
-        if (violationMap.has(corr.registration)) sources.push('violations');
+        // v4.0: full-spectrum sources
+        const baseSources: string[] = ['flight_telemetry', 'biometric_stress'];
+        if (sentinelMap.has(corr.registration)) baseSources.push('sentinel_history');
+        if (shellRegMap.has(corr.registration)) baseSources.push('enterprise_structure');
+        if (xxbAircraft.has(corr.registration)) baseSources.push('xxb_resolution');
+        if (violationMap.has(corr.registration)) baseSources.push('violations');
+        const sources = buildCorroborationSources(corr.registration, baseSources);
 
         const baseConfidence = Math.min(88, 55 + Number(corr.correlation_count) * 4);
         const confidence = computeCorroboratedScore(baseConfidence, sources);
@@ -484,17 +649,19 @@ serve(async (req) => {
               avg_heart_rate: Math.round(Number(corr.avg_hr)),
               avg_altitude: Math.round(Number(corr.avg_alt)),
               corroboration_count: sources.length,
+              has_confirmed_correlation: confirmedCorrelationsSet.has(corr.registration),
+              has_threshold_collapse: bioDeepMap.has(corr.registration),
             },
             cross_references: sources.map(s => ({ type: s })),
             confidence_score: confidence,
             certainty_tier: tier,
             corroboration_sources: sources,
-            learning_context: { method: 'temporal_biometric_crossref_v3', absolute_certainty_protocol: true }
+            learning_context: { method: 'temporal_biometric_crossref_v4', absolute_certainty_protocol: true }
           });
         }
       }
 
-      // ===== PHASE 7: FAA REGISTRY LOOKUP & WEB SEARCH (for high-confidence flags) =====
+      // ===== PHASE 7: FAA REGISTRY LOOKUP & WEB SEARCH =====
       const FIRECRAWL_AVAILABLE = !!Deno.env.get("FIRECRAWL_API_KEY");
       let faaLookupCount = 0;
       let webSearchCount = 0;
@@ -503,14 +670,12 @@ serve(async (req) => {
         const highConfidenceRegs = new Set(
           flags.filter(f => f.confidence_score >= 80 && f.registration && !f.registration.includes(','))
             .map(f => f.registration!)
-            .slice(0, 5) // Max 5 lookups per scan to stay within time budget
+            .slice(0, 5)
         );
 
         for (const reg of highConfidenceRegs) {
-          if (Date.now() - startTime > 40000) break; // Time budget: 40s
-
+          if (Date.now() - startTime > 40000) break;
           try {
-            // Check if we already have registry data
             const existing = await sql`
               SELECT n_number, registrant_name FROM aircraft_registry
               WHERE n_number = ${reg.replace('N', '')} OR n_number = ${reg}
@@ -518,33 +683,23 @@ serve(async (req) => {
             `.catch(() => []);
 
             if (existing.length === 0) {
-              // FAA Registry lookup via firecrawl-scrape
               const faaUrl = `https://registry.faa.gov/AircraftInquiry/Search/NNumberResult?nNumberTxt=${reg.replace('N', '')}`;
               const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY");
-
               const faaResponse = await fetch('https://api.firecrawl.dev/v1/scrape', {
                 method: 'POST',
-                headers: {
-                  'Authorization': `Bearer ${FIRECRAWL_API_KEY}`,
-                  'Content-Type': 'application/json',
-                },
+                headers: { 'Authorization': `Bearer ${FIRECRAWL_API_KEY}`, 'Content-Type': 'application/json' },
                 body: JSON.stringify({ url: faaUrl, formats: ['markdown'], onlyMainContent: true }),
               });
-
               if (faaResponse.ok) {
                 const faaData = await faaResponse.json();
                 const markdown = faaData?.data?.markdown || faaData?.markdown || '';
                 faaLookupCount++;
-
-                // Update flags with FAA data
                 for (const flag of flags) {
                   if (flag.registration === reg) {
                     flag.corroboration_sources.push('external_faa_web');
                     flag.confidence_score = computeCorroboratedScore(flag.confidence_score, ['external_faa_web']);
                     flag.certainty_tier = computeCertaintyTier(flag.corroboration_sources);
                     (flag.evidence_summary as any).faa_lookup = markdown.slice(0, 500);
-
-                    // Check if owner matches shell companies
                     for (const sc of shellCompanies) {
                       if (markdown.toLowerCase().includes((sc.company_name || '').toLowerCase())) {
                         flag.corroboration_sources.push('enterprise_structure');
@@ -555,11 +710,8 @@ serve(async (req) => {
                     }
                   }
                 }
-              } else {
-                await faaResponse.text(); // consume
-              }
+              } else { await faaResponse.text(); }
             } else {
-              // Already in registry — check against shell companies
               const owner = existing[0]?.registrant_name || '';
               for (const flag of flags) {
                 if (flag.registration === reg) {
@@ -573,28 +725,19 @@ serve(async (req) => {
           } catch (e) { console.warn(`FAA lookup failed for ${reg}:`, e); }
         }
 
-        // Web search for near-certainty flags
         if (Date.now() - startTime < 45000) {
-          const nearCertaintyFlags = flags.filter(f => 
+          const nearCertaintyFlags = flags.filter(f =>
             f.confidence_score >= 85 && f.registration && !f.registration.includes(',')
           ).slice(0, 3);
-
           for (const flag of nearCertaintyFlags) {
             if (Date.now() - startTime > 48000) break;
             try {
               const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY");
               const searchResponse = await fetch('https://api.firecrawl.dev/v1/search', {
                 method: 'POST',
-                headers: {
-                  'Authorization': `Bearer ${FIRECRAWL_API_KEY}`,
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                  query: `"${flag.registration}" aircraft owner operator`,
-                  limit: 3,
-                }),
+                headers: { 'Authorization': `Bearer ${FIRECRAWL_API_KEY}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query: `"${flag.registration}" aircraft owner operator`, limit: 3 }),
               });
-
               if (searchResponse.ok) {
                 const searchData = await searchResponse.json();
                 const results = searchData?.data || [];
@@ -604,9 +747,7 @@ serve(async (req) => {
                     title: r.title, url: r.url, snippet: (r.description || '').slice(0, 200)
                   }));
                 }
-              } else {
-                await searchResponse.text();
-              }
+              } else { await searchResponse.text(); }
             } catch (e) { console.warn(`Web search failed for ${flag.registration}:`, e); }
           }
         }
@@ -616,24 +757,43 @@ serve(async (req) => {
         learningInsights.push(`External verification: ${faaLookupCount} FAA lookups, ${webSearchCount} web searches completed`);
       }
 
-      // ===== PHASE 8: AI SYNTHESIS =====
+      // ===== PHASE 8: AI SYNTHESIS (v4.0 enhanced prompt) =====
       let aiAnalysis: string | null = null;
       if (LOVABLE_API_KEY && flags.length > 0) {
         try {
           const topFlags = flags.sort((a, b) => b.confidence_score - a.confidence_score).slice(0, 12);
-          const prompt = `AUTONOMOUS WATCHTOWER v3.0 — ABSOLUTE CERTAINTY PROTOCOL
+          const v4Stats = {
+            forensicCorpus: forensicCorpusMap.size,
+            activeCases: caseEvidenceMap.size,
+            bioDeep: bioDeepMap.size,
+            confirmedBio: confirmedCorrelationsSet.size,
+            discoveredPatterns: discoveredPatternsSet.size,
+            josiahPatterns: josiahPatternsMap.size,
+            legalViolations: legalViolationsMap.size,
+            harmExhibits: harmExhibitsMap.size,
+            threatTiers: threatTierMap.size,
+            enrichedProfiles: enrichedProfileMap.size,
+          };
+          const prompt = `AUTONOMOUS WATCHTOWER v4.0 — FULL-SPECTRUM ABSOLUTE CERTAINTY PROTOCOL
 
 DETECTED FLAGS (${flags.length} total, top ${topFlags.length}):
 ${topFlags.map(f => `- [${f.certainty_tier}] ${f.flag_type} | ${f.registration} | ${f.confidence_score}% | Sources: ${f.corroboration_sources.join('+')} | ${f.description}`).join('\n')}
 
-MULTI-MODAL INTELLIGENCE:
+MULTI-MODAL INTELLIGENCE (v3 legacy):
 - ${sentinelThreats.length} sentinel threats, ${shellCompanies.length} shell companies, ${xxbRecords.length} XXB/MLAT aircraft
 - ${bioCorrelations.length} biometric correlations, ${violationRecords.length} violation records
 - ${faaLookupCount} FAA lookups, ${webSearchCount} web searches
 
-XXB TAXONOMY NOTE: XXB = MLAT-only non-broadcast tracking (NOT spoofing). These are legitimate MLAT signals indicating aircraft avoiding ADS-B broadcast.
+v4.0 FULL-SPECTRUM INTELLIGENCE:
+- EVIDENCE CORPUS: ${v4Stats.forensicCorpus} aircraft in forensic events, ${v4Stats.activeCases} in active litigation
+- BIOMETRIC DEEP: ${v4Stats.bioDeep} threshold collapse aircraft, ${v4Stats.confirmedBio} pre-confirmed correlations
+- AI MEMORY: ${v4Stats.discoveredPatterns} known patterns (recurrence decay active), ${v4Stats.josiahPatterns} Josiah signatures
+- LEGAL: ${v4Stats.legalViolations} ADA violation aircraft, ${v4Stats.harmExhibits} harm exhibits
+- THREAT TIERS: ${v4Stats.threatTiers} high-threat aircraft, ${v4Stats.enrichedProfiles} enriched profiles
 
-Analyze: 1) Top 3 statistically significant patterns 2) Certainty tier accuracy 3) False positive risks 4) Recommended actions`;
+CORROBORATION SOURCES NOW: 13 (flight_telemetry, biometric_stress, sentinel_history, enterprise_structure, xxb_resolution, violations, external_faa_web, forensic_corpus, biometric_deep, josiah_memory, legal_history, threat_tier, active_case)
+
+Analyze: 1) Top 3 statistically significant patterns 2) Which flags achieved ABSOLUTE_CERTAINTY and why 3) Recurrence patterns vs novel threats 4) Court-readiness assessment`;
 
           const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
             method: "POST",
@@ -641,10 +801,10 @@ Analyze: 1) Top 3 statistically significant patterns 2) Certainty tier accuracy 
             body: JSON.stringify({
               model: "google/gemini-3-flash-preview",
               messages: [
-                { role: "system", content: "You are an autonomous bias-free surveillance anomaly analyst. XXB means MLAT-only tracking, NOT spoofing. Be precise and demand multi-source corroboration." },
+                { role: "system", content: "You are an autonomous bias-free surveillance anomaly analyst running the v4.0 Full-Spectrum Intelligence protocol. XXB means MLAT-only tracking, NOT spoofing. You have 13 corroboration sources. Demand multi-source proof. Assess court-readiness." },
                 { role: "user", content: prompt }
               ],
-              max_tokens: 800,
+              max_tokens: 1000,
             }),
           });
 
@@ -693,11 +853,24 @@ Analyze: 1) Top 3 statistically significant patterns 2) Certainty tier accuracy 
 
       await sql.end();
 
+      const v4Summary = {
+        forensic_corpus_aircraft: forensicCorpusMap.size,
+        active_case_aircraft: caseEvidenceMap.size,
+        biometric_deep_aircraft: bioDeepMap.size,
+        confirmed_correlations: confirmedCorrelationsSet.size,
+        discovered_patterns: discoveredPatternsSet.size,
+        josiah_patterns: josiahPatternsMap.size,
+        legal_violations_aircraft: legalViolationsMap.size,
+        harm_exhibits_aircraft: harmExhibitsMap.size,
+        threat_tier_aircraft: threatTierMap.size,
+        enriched_profiles: enrichedProfileMap.size,
+      };
+
       return new Response(JSON.stringify({
         success: true,
         scan_id: scanId,
         version: VERSION,
-        protocol: 'ABSOLUTE_CERTAINTY',
+        protocol: 'ABSOLUTE_CERTAINTY_V4',
         timestamp: new Date().toISOString(),
         execution_time_ms: Date.now() - startTime,
         summary: {
@@ -711,6 +884,9 @@ Analyze: 1) Top 3 statistically significant patterns 2) Certainty tier accuracy 
           shell_companies_loaded: shellCompanies.length,
           faa_lookups: faaLookupCount,
           web_searches: webSearchCount,
+          corroboration_sources_available: 13,
+          tables_queried: 22,
+          v4_intelligence: v4Summary,
           certainty_breakdown: {
             absolute: flags.filter(f => f.certainty_tier === 'ABSOLUTE_CERTAINTY').length,
             near: flags.filter(f => f.certainty_tier === 'NEAR_CERTAINTY').length,

@@ -29,6 +29,7 @@ import { AutonomousWatchtower } from "@/components/dashboard/AutonomousWatchtowe
 import UnmaskHQSystem from "@/components/dashboard/UnmaskHQSystem";
 import ForensicTrajectoryPanel from "@/components/dashboard/ForensicTrajectoryPanel";
 import TransponderAnalysisDashboard from "@/components/dashboard/TransponderAnalysisDashboard";
+import ICAORecyclingDashboard from "@/components/dashboard/ICAORecyclingDashboard";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export default function Surveillance() {
@@ -61,7 +62,8 @@ export default function Surveillance() {
               </p>
             </div>
 
-            <TabsList className="grid h-auto grid-cols-2 gap-2 bg-transparent p-0 lg:grid-cols-8">
+            <TabsList className="grid h-auto grid-cols-2 gap-2 bg-transparent p-0 lg:grid-cols-9">
+              <TabsTrigger value="icao">ICAO/Shell</TabsTrigger>
               <TabsTrigger value="transponder">Transponder</TabsTrigger>
               <TabsTrigger value="auditor">Blind Audit</TabsTrigger>
               <TabsTrigger value="investigation">Investigation</TabsTrigger>
@@ -72,6 +74,12 @@ export default function Surveillance() {
               <TabsTrigger value="intake">Intake</TabsTrigger>
             </TabsList>
           </div>
+
+          <TabsContent value="icao" className="space-y-6">
+            <section>
+              <ICAORecyclingDashboard />
+            </section>
+          </TabsContent>
 
           <TabsContent value="transponder" className="space-y-6">
             <section>

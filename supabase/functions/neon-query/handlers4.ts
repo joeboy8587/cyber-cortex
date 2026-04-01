@@ -201,6 +201,150 @@ export async function handleAction4(action: string, body: Record<string, any>, s
       };
     }
 
+    case 'icaoRecyclingScan': {
+      const timeWindow = body.timeWindow || '90 days';
+      const kernOnly = body.kernCountyOnly !== false;
+      const geoFilter = kernOnly
+        ? `AND latitude BETWEEN 35.0 AND 36.0 AND longitude BETWEEN -119.5 AND -118.0`
+        : '';
+
+      const [hexSharing, shellFleet, kcsoTagged, militaryDualHex] = await Promise.all([
+        // 1. ICAO hex codes used by multiple registrations (recycling/sharing)
+        sql.unsafe(`
+          SELECT
+            icao_code as hex_code,
+            COUNT(DISTINCT registration)::int as registration_count,
+            array_agg(DISTINCT registration ORDER BY registration) FILTER (WHERE registration IS NOT NULL AND registration != '' AND registration != 'N/A') as registrations,
+            COUNT(*)::int as total_detections,
+            MIN(NULLIF(altitude::numeric,0))::int as min_altitude,
+            ROUND(AVG(NULLIF(altitude::numeric,0))::numeric,0)::int as avg_altitude,
+            MIN(detection_timestamp) as first_seen,
+            MAX(detection_timestamp) as last_seen,
+            COUNT(CASE WHEN altitude::numeric < 500 AND altitude::numeric > 0 THEN 1 END)::int as ground_proximity,
+            COUNT(CASE WHEN altitude::numeric < 0 THEN 1 END)::int as negative_altitude,
+            COUNT(DISTINCT DATE(detection_timestamp))::int as active_days
+          FROM live_flight_detections_rows
+          WHERE icao_code IS NOT NULL AND icao_code != ''
+            AND registration IS NOT NULL AND registration != '' AND registration != 'N/A'
+            AND detection_timestamp > NOW() - INTERVAL '${timeWindow}'
+            ${geoFilter}
+          GROUP BY icao_code
+          HAVING COUNT(DISTINCT registration) >= 2
+          ORDER BY COUNT(DISTINCT registration) DESC, total_detections DESC
+          LIMIT 50
+        `),
+
+        // 2. Shell company fleet — aircraft tagged with shell/medical/unknown taxonomy
+        sql.unsafe(`
+          SELECT
+            registration,
+            icao_code,
+            taxonomy_tag,
+            COUNT(*)::int as detections,
+            ROUND(AVG(NULLIF(altitude::numeric,0))::numeric,0)::int as avg_alt,
+            MIN(NULLIF(altitude::numeric,0))::int as min_alt,
+            COUNT(CASE WHEN altitude::numeric < 1000 AND altitude::numeric > 0 THEN 1 END)::int as low_ops,
+            MIN(detection_timestamp) as first_seen,
+            MAX(detection_timestamp) as last_seen,
+            ROUND(AVG(NULLIF(speed::numeric,0))::numeric,0)::int as avg_speed
+          FROM live_flight_detections_rows
+          WHERE (taxonomy_tag LIKE '%shell%' OR taxonomy_tag LIKE '%medical%' 
+                 OR taxonomy_tag LIKE '%xxb%' OR taxonomy_tag LIKE '%unknown%'
+                 OR registration LIKE '%AM' OR registration LIKE '%LLC%')
+            AND registration IS NOT NULL AND registration != '' AND registration != 'N/A'
+            AND detection_timestamp > NOW() - INTERVAL '${timeWindow}'
+            ${geoFilter}
+          GROUP BY registration, icao_code, taxonomy_tag
+          ORDER BY detections DESC
+          LIMIT 80
+        `),
+
+        // 3. KCSO-tagged aircraft cross-reference
+        sql.unsafe(`
+          SELECT
+            registration,
+            icao_code,
+            taxonomy_tag,
+            COUNT(*)::int as detections,
+            COUNT(CASE WHEN altitude::numeric < 1500 AND altitude::numeric > 0 THEN 1 END)::int as low_altitude,
+            ROUND(AVG(NULLIF(altitude::numeric,0))::numeric,0)::int as avg_alt,
+            ROUND(AVG(NULLIF(speed::numeric,0))::numeric,0)::int as avg_speed,
+            MIN(detection_timestamp) as first_seen,
+            MAX(detection_timestamp) as last_seen
+          FROM live_flight_detections_rows
+          WHERE taxonomy_tag LIKE '%kcso%'
+            AND registration IS NOT NULL AND registration != '' AND registration != 'N/A'
+            AND detection_timestamp > NOW() - INTERVAL '${timeWindow}'
+            ${geoFilter}
+          GROUP BY registration, icao_code, taxonomy_tag
+          ORDER BY detections DESC
+          LIMIT 50
+        `),
+
+        // 4. Military dual-hex detection — military hex codes broadcasting civilian IDs
+        sql.unsafe(`
+          WITH military_hexes AS (
+            SELECT DISTINCT icao_code
+            FROM live_flight_detections_rows
+            WHERE icao_code IS NOT NULL AND icao_code != ''
+              AND (
+                icao_code LIKE 'AE%' OR icao_code LIKE 'AF%'
+                OR icao_code LIKE 'A0%' OR icao_code LIKE 'A1%'
+                OR (registration ~ '^[0-9]{2}-[0-9]{4,5}$')
+                OR callsign LIKE 'RCH%' OR callsign LIKE 'CONGO%'
+                OR callsign LIKE 'STMPD%' OR callsign LIKE 'KOME%'
+              )
+              AND detection_timestamp > NOW() - INTERVAL '${timeWindow}'
+              ${geoFilter}
+          ),
+          civilian_aliases AS (
+            SELECT
+              d.icao_code as military_hex,
+              d.registration as civilian_reg,
+              d2.icao_code as civilian_hex,
+              COUNT(*)::int as detections,
+              MIN(NULLIF(d.altitude::numeric,0))::int as min_alt,
+              MAX(NULLIF(d.altitude::numeric,0))::int as max_alt,
+              ROUND(AVG(NULLIF(d.altitude::numeric,0))::numeric,0)::int as avg_alt,
+              COUNT(CASE WHEN d.altitude::numeric < 0 THEN 1 END)::int as negative_alt_count,
+              COUNT(CASE WHEN d.altitude::numeric < 500 AND d.altitude::numeric > 0 THEN 1 END)::int as ground_prox,
+              MIN(d.detection_timestamp) as first_seen,
+              MAX(d.detection_timestamp) as last_seen
+            FROM live_flight_detections_rows d
+            LEFT JOIN LATERAL (
+              SELECT DISTINCT icao_code FROM live_flight_detections_rows
+              WHERE registration = d.registration
+                AND icao_code != d.icao_code
+                AND detection_timestamp > NOW() - INTERVAL '${timeWindow}'
+              LIMIT 1
+            ) d2 ON true
+            WHERE d.icao_code IN (SELECT icao_code FROM military_hexes)
+              AND d.registration IS NOT NULL AND d.registration != '' AND d.registration != 'N/A'
+              AND d.detection_timestamp > NOW() - INTERVAL '${timeWindow}'
+              ${geoFilter}
+            GROUP BY d.icao_code, d.registration, d2.icao_code
+            ORDER BY detections DESC
+          )
+          SELECT * FROM civilian_aliases LIMIT 50
+        `).catch(() => []),
+      ]);
+
+      return {
+        hexSharing,
+        shellFleet,
+        kcsoTagged,
+        militaryDualHex,
+        summary: {
+          totalRecycledHexes: hexSharing.length,
+          totalShellAssets: shellFleet.length,
+          totalKcsoTagged: kcsoTagged.length,
+          totalMilitarySpoofs: militaryDualHex.length,
+          highestRecycleCount: hexSharing.length > 0 ? Math.max(...hexSharing.map((r: any) => r.registration_count)) : 0,
+        },
+        analyzedAt: new Date().toISOString(),
+      };
+    }
+
     case 'transponderModeSwitching': {
       // Detect aircraft that switch between visible/blocked registration
       const timeWindow = body.timeWindow || '90 days';

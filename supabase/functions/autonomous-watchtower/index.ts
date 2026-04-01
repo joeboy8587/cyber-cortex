@@ -450,8 +450,8 @@ serve(async (req) => {
         if (violationMap.has(reg)) baseSources.push('violations');
         const sources = buildCorroborationSources(reg, baseSources);
 
-        // v4.0: recurrence decay — reduce priority if already discovered
-        const isKnownPattern = discoveredPatternsSet.has(`${reg}:ALTITUDE_ANOMALY`);
+        // v4.0: recurrence decay — check if Josiah already learned this aircraft's pattern
+        const isKnownPattern = josiahPatternsMap.has(reg);
         const decayPenalty = isKnownPattern ? 10 : 0;
 
         const baseConfidence = Math.min(85, 50 + detections.length * 5) - decayPenalty;

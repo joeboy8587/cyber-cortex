@@ -115,8 +115,8 @@ export default function ICAORecyclingDashboard() {
         icon={<Radar className="h-5 w-5" />}
         variant="threat"
         headerActions={
-          <Button size="sm" variant="outline" onClick={runScan} disabled={isLoading}>
-            <RefreshCw className={`h-4 w-4 mr-1 ${isLoading ? "animate-spin" : ""}`} />
+          <Button size="sm" variant="outline" onClick={runScan} disabled={scanning}>
+            <RefreshCw className={`h-4 w-4 mr-1 ${scanning ? "animate-spin" : ""}`} />
             Scan
           </Button>
         }

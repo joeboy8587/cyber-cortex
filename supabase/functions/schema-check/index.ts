@@ -17,20 +17,24 @@ serve(async (req) => {
 
   try {
     const results: Record<string, any> = {};
-    
-    // Sample canonical_forensic_events to see what data actually looks like
-    results.cfe_sample = await sql`
-      SELECT * FROM canonical_forensic_events LIMIT 2
-    `.catch((e: any) => [{ error: e.message }]);
 
-    // Count with non-null registration
-    results.cfe_counts = await sql`
-      SELECT 
-        COUNT(CASE WHEN registration IS NOT NULL AND registration != '' THEN 1 END)::int as with_reg,
-        COUNT(CASE WHEN callsign IS NOT NULL AND callsign != '' THEN 1 END)::int as with_callsign,
-        COUNT(CASE WHEN icao_code IS NOT NULL AND icao_code != '' THEN 1 END)::int as with_icao
-      FROM canonical_forensic_events
-      WHERE canonical_id IN (SELECT canonical_id FROM canonical_forensic_events LIMIT 1000)
+    // Check row counts using pg_class for accuracy
+    results.actual_counts = await sql`
+      SELECT relname as table_name, reltuples::bigint as est_rows
+      FROM pg_class 
+      WHERE relname IN ('canonical_forensic_events', 'master_unified_evidence', 'confirmed_biometric_correlations')
+      ORDER BY reltuples DESC
+    `;
+
+    // Sample master_unified_evidence
+    results.mue_cols = await sql`
+      SELECT column_name FROM information_schema.columns 
+      WHERE table_name = 'master_unified_evidence' AND table_schema = 'public'
+      ORDER BY ordinal_position
+    `.then(r => r.map((c: any) => c.column_name));
+
+    results.mue_sample = await sql`
+      SELECT * FROM master_unified_evidence LIMIT 1
     `.catch((e: any) => [{ error: e.message }]);
 
     await sql.end();

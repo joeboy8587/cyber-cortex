@@ -19,8 +19,8 @@ export async function handleAction3(action: string, body: Record<string, any>, s
 
     case 'getDataSourceStatus': {
       const [liveCount, biometricCount] = await Promise.all([
-        sql`SELECT COUNT(*) as total, MAX(detection_timestamp) as last_update, COUNT(CASE WHEN detection_timestamp > NOW() - INTERVAL '30 days' THEN 1 END) as recent FROM live_flight_detections_rows`,
-        sql`SELECT COUNT(*) as total, MAX(COALESCE(measurement_timestamp,created_at)) as last_update FROM biometric_monitoring`,
+        sql`SELECT (SELECT COALESCE(reltuples,-1)::bigint FROM pg_class WHERE relname='live_flight_detections_rows') as total, MAX(detection_timestamp) as last_update, COUNT(*) as recent FROM live_flight_detections_rows WHERE detection_timestamp > NOW() - INTERVAL '30 days'`,
+        sql`SELECT (SELECT COALESCE(reltuples,-1)::bigint FROM pg_class WHERE relname='biometric_monitoring') as total, MAX(COALESCE(measurement_timestamp,created_at)) as last_update FROM biometric_monitoring WHERE COALESCE(measurement_timestamp,created_at) > NOW() - INTERVAL '90 days'`,
       ]);
       return { live_detections: { total: parseInt((liveCount[0] as any)?.total||'0'), lastUpdate: (liveCount[0] as any)?.last_update, recentCount: parseInt((liveCount[0] as any)?.recent||'0') }, biometrics: { total: parseInt((biometricCount[0] as any)?.total||'0'), lastUpdate: (biometricCount[0] as any)?.last_update }, timestamp: new Date().toISOString() };
     }

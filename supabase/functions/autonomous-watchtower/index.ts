@@ -501,7 +501,7 @@ serve(async (req) => {
           if (violationMap.has(reg)) baseSources.push('violations');
           const sources = buildCorroborationSources(reg, baseSources);
 
-          const isKnownPattern = discoveredPatternsSet.has(`${reg}:FREQUENCY_SPIKE`);
+          const isKnownPattern = josiahPatternsMap.has(reg);
           const decayPenalty = isKnownPattern ? 8 : 0;
           const baseConfidence = Math.min(85, 55 + Math.floor((count24h / dailyAvg - RULES.frequencyAnomalyMultiplier) * 10)) - decayPenalty;
           const confidence = computeCorroboratedScore(baseConfidence, sources);

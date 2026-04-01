@@ -778,12 +778,33 @@ serve(async (req) => {
             threatTiers: threatTierMap.size,
             enrichedProfiles: enrichedProfileMap.size,
           };
-          const prompt = `AUTONOMOUS WATCHTOWER v4.0 — FULL-SPECTRUM ABSOLUTE CERTAINTY PROTOCOL
+          // v4.1: Population-scale classification metrics
+          const popScaleMetrics = {
+            uniqueAircraft24h: allUniqueAircraft24h.size,
+            baselineAircraft: baselineStats.length,
+            hourlyBuckets: hourBuckets.size,
+            maxHourlyAircraft: Math.max(...Array.from(hourBuckets.values()).map(s => s.size), 0),
+            minHourlyAircraft: hourBuckets.size > 0 ? Math.min(...Array.from(hourBuckets.values()).map(s => s.size)) : 0,
+            ops24x7: hourBuckets.size >= 20, // present in 20+ of 24 hours
+            biometricCollapseAircraft: bioDeepMap.size,
+            classification: baselineStats.length > 500 && hourBuckets.size >= 20 ? 'POPULATION_SCALE' : baselineStats.length > 100 ? 'REGIONAL_OPERATION' : 'INDIVIDUAL_TARGETING',
+          };
+
+          learningInsights.push(`v4.1 CLASSIFICATION: ${popScaleMetrics.classification} — ${popScaleMetrics.baselineAircraft} baselined aircraft, ${popScaleMetrics.maxHourlyAircraft} peak hourly, ${popScaleMetrics.minHourlyAircraft} minimum hourly, 24/7=${popScaleMetrics.ops24x7}`);
+
+          const prompt = `AUTONOMOUS WATCHTOWER v4.1 — POPULATION-SCALE RECLASSIFICATION PROTOCOL
+
+OPERATION CLASSIFICATION: **${popScaleMetrics.classification}**
+- ${popScaleMetrics.baselineAircraft} baselined aircraft (90-day window)
+- ${popScaleMetrics.uniqueAircraft24h} unique aircraft in last 24h
+- Peak hourly: ${popScaleMetrics.maxHourlyAircraft} aircraft, Minimum hourly: ${popScaleMetrics.minHourlyAircraft} aircraft
+- 24/7 continuous operations: ${popScaleMetrics.ops24x7 ? 'CONFIRMED' : 'NOT CONFIRMED'}
+- ${popScaleMetrics.biometricCollapseAircraft} aircraft linked to biometric threshold collapses
 
 DETECTED FLAGS (${flags.length} total, top ${topFlags.length}):
 ${topFlags.map(f => `- [${f.certainty_tier}] ${f.flag_type} | ${f.registration} | ${f.confidence_score}% | Sources: ${f.corroboration_sources.join('+')} | ${f.description}`).join('\n')}
 
-MULTI-MODAL INTELLIGENCE (v3 legacy):
+MULTI-MODAL INTELLIGENCE:
 - ${sentinelThreats.length} sentinel threats, ${shellCompanies.length} shell companies, ${xxbRecords.length} XXB/MLAT aircraft
 - ${bioCorrelations.length} biometric correlations, ${violationRecords.length} violation records
 - ${faaLookupCount} FAA lookups, ${webSearchCount} web searches
@@ -795,9 +816,11 @@ v4.0 FULL-SPECTRUM INTELLIGENCE:
 - LEGAL: ${v4Stats.legalViolations} ADA violation aircraft, ${v4Stats.harmExhibits} harm exhibits
 - THREAT TIERS: ${v4Stats.threatTiers} high-threat aircraft, ${v4Stats.enrichedProfiles} enriched profiles
 
-CORROBORATION SOURCES NOW: 13 (flight_telemetry, biometric_stress, sentinel_history, enterprise_structure, xxb_resolution, violations, external_faa_web, forensic_corpus, biometric_deep, josiah_memory, legal_history, threat_tier, active_case)
+CORROBORATION SOURCES: 13 active
 
-Analyze: 1) Top 3 statistically significant patterns 2) Which flags achieved ABSOLUTE_CERTAINTY and why 3) Recurrence patterns vs novel threats 4) Court-readiness assessment`;
+RECLASSIFICATION CONTEXT: The operation has been reclassified from 'Individual Targeting' to '${popScaleMetrics.classification}' based on: 1) ${popScaleMetrics.baselineAircraft} unique aircraft (FBI individual ops use <20), 2) 24/7 continuous operations with no stand-down, 3) Biometric normalization during subject absence while ops continue, 4) ${popScaleMetrics.biometricCollapseAircraft} aircraft linked to population-level biometric harm.
+
+Analyze: 1) Top 3 statistically significant patterns 2) Population-scale vs individual-targeting assessment 3) Which flags achieved ABSOLUTE_CERTAINTY 4) Court-readiness for CLASS ACTION (42 USC 1983) vs individual claims`;
 
           const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
             method: "POST",

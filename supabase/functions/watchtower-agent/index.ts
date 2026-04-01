@@ -52,6 +52,7 @@ serve(async (req) => {
       // Note: kcso_fleet may be in Supabase, not Neon - handle gracefully
       let maskedAircraft: any[] = [];
       try {
+        // Use a targeted subquery instead of full table scan
         maskedAircraft = await sql`
           SELECT 
             kf.tail_number as registration,
@@ -62,13 +63,13 @@ serve(async (req) => {
           LEFT JOIN (
             SELECT registration, COUNT(*) as detection_count, MAX(detection_timestamp) as last_seen
             FROM live_flight_detections_rows
+            WHERE registration IN (SELECT tail_number FROM kcso_fleet)
             GROUP BY registration
           ) d ON d.registration = kf.tail_number
           WHERE COALESCE(d.detection_count, 0) = 0
              OR d.last_seen < NOW() - INTERVAL '30 days'
         `;
       } catch (fleetErr: any) {
-        // kcso_fleet table may not exist in Neon (it's in Supabase)
         console.warn("kcso_fleet query skipped:", fleetErr.message);
       }
 

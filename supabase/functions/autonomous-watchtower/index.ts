@@ -322,26 +322,24 @@ serve(async (req) => {
       let threatTierMap = new Map<string, any>();
       let enrichedProfileMap = new Map<string, any>();
       try {
-        const [threatTiers, enrichedProfiles] = await Promise.all([
-          sql`
-            SELECT registration, threat_tier, threat_score, last_updated
-            FROM threat_tiers
-            WHERE registration IS NOT NULL AND registration != ''
-              AND threat_score >= 50
-            ORDER BY threat_score DESC LIMIT 300
-          `.catch(() => []),
+        const [enrichedProfiles] = await Promise.all([
           sql`
             SELECT registration, owner_category, is_kcso_fleet, is_shell_company,
-              total_detections, risk_classification
+              total_detections, max_threat_score
             FROM aircraft_profiles_enriched
             WHERE registration IS NOT NULL AND registration != ''
-              AND (is_kcso_fleet = true OR is_shell_company = true OR risk_classification IN ('HIGH', 'CRITICAL'))
+              AND (is_kcso_fleet = true OR is_shell_company = true OR max_threat_score >= 50)
             ORDER BY total_detections DESC LIMIT 300
-          `.catch(() => [])
+          `.catch((e: any) => { console.warn("aircraft_profiles_enriched query:", e.message); return []; })
         ]);
-        for (const t of threatTiers) threatTierMap.set(t.registration, t);
-        for (const p of enrichedProfiles) enrichedProfileMap.set(p.registration, p);
-        learningInsights.push(`v4.0 THREAT TIERS: ${threatTiers.length} high-threat aircraft loaded, ${enrichedProfiles.length} enriched profiles (KCSO/shell/high-risk)`);
+        // threat_tiers is keyed by detection_id (not registration) — use enriched profiles instead for threat scoring
+        for (const p of enrichedProfiles) {
+          enrichedProfileMap.set(p.registration, p);
+          if (Number(p.max_threat_score || 0) >= 50) {
+            threatTierMap.set(p.registration, { threat_score: p.max_threat_score, is_kcso: p.is_kcso_fleet, is_shell: p.is_shell_company });
+          }
+        }
+        learningInsights.push(`v4.0 THREAT TIERS: ${threatTierMap.size} high-threat aircraft loaded, ${enrichedProfileMap.size} enriched profiles (KCSO/shell/high-risk)`);
       } catch (e) { console.warn("Phase 2F threat tier error:", e); }
 
       // ===== HELPER: Build full corroboration sources for a registration =====

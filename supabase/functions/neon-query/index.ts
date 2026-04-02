@@ -23,6 +23,8 @@ const HANDLER1_ACTIONS = new Set([
   'retroactiveFlagging',
   'biometricCollisionCheck',
   'getValidatedXXB',
+  'crossModalStitch',
+  'crossModalStitchSummary',
 ]);
 
 const HANDLER2_ACTIONS = new Set([

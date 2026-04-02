@@ -307,6 +307,81 @@ export function useArchiveDatabase() {
     return result;
   }, [customQuery]);
 
+  // ===== Cross-Modal Stitched View =====
+  const getCrossModalStitched = useCallback(async (params: ArchiveQueryParams = {}) => {
+    const { limit = 25, offset = 0 } = params;
+    const data = await customQuery(`
+      SELECT
+        spine.event_time,
+        spine.event_type,
+        COALESCE(spine.aircraft_id, spine.registration) as registration,
+        f.altitude as flight_altitude,
+        f.speed as flight_speed,
+        f.callsign as flight_callsign,
+        b.heart_rate as bio_heart_rate,
+        b.collapse_severity as bio_severity,
+        ada.violation_type as legal_violation,
+        ada.ada_section as legal_section,
+        cel.case_id,
+        (CASE WHEN f.detection_id IS NOT NULL THEN 1 ELSE 0 END
+         + CASE WHEN b.id IS NOT NULL THEN 1 ELSE 0 END
+         + CASE WHEN ada.id IS NOT NULL THEN 1 ELSE 0 END
+         + CASE WHEN cel.id IS NOT NULL THEN 1 ELSE 0 END) as modal_count
+      FROM unified_timeline_enhanced spine
+      LEFT JOIN LATERAL (
+        SELECT detection_id, altitude, speed, callsign
+        FROM live_flight_detections_rows
+        WHERE registration = COALESCE(spine.aircraft_id, spine.registration)
+          AND ABS(EXTRACT(EPOCH FROM (detection_timestamp - spine.event_time))) < 1800
+        ORDER BY ABS(EXTRACT(EPOCH FROM (detection_timestamp - spine.event_time)))
+        LIMIT 1
+      ) f ON true
+      LEFT JOIN LATERAL (
+        SELECT id, heart_rate, collapse_severity
+        FROM biometric_threshold_collapses
+        WHERE (evidence_hash IS NOT NULL AND evidence_hash = spine.evidence_hash)
+           OR ABS(EXTRACT(EPOCH FROM (collapse_timestamp - spine.event_time))) < 300
+        ORDER BY ABS(EXTRACT(EPOCH FROM (collapse_timestamp - spine.event_time)))
+        LIMIT 1
+      ) b ON true
+      LEFT JOIN LATERAL (
+        SELECT id, violation_type, ada_section
+        FROM legal_ada_violations_proper
+        WHERE aircraft_registration = COALESCE(spine.aircraft_id, spine.registration)
+        LIMIT 1
+      ) ada ON true
+      LEFT JOIN LATERAL (
+        SELECT id, case_id
+        FROM case_evidence_links
+        WHERE sha256_hash IS NOT NULL AND sha256_hash = spine.sha256_hash
+        LIMIT 1
+      ) cel ON true
+      ORDER BY spine.event_time DESC NULLS LAST
+      LIMIT ${limit} OFFSET ${offset}
+    `);
+    return extractNeonData(data);
+  }, [customQuery]);
+
+  const getCrossModalStitchSummary = useCallback(async () => {
+    const data = await customQuery(
+      `SELECT
+        (SELECT reltuples::bigint FROM pg_class WHERE relname = 'unified_timeline_enhanced') as spine_count,
+        (SELECT reltuples::bigint FROM pg_class WHERE relname = 'live_flight_detections_rows') as flight_count,
+        (SELECT reltuples::bigint FROM pg_class WHERE relname = 'biometric_threshold_collapses') as bio_count,
+        (SELECT reltuples::bigint FROM pg_class WHERE relname = 'legal_ada_violations_proper') as legal_count,
+        (SELECT reltuples::bigint FROM pg_class WHERE relname = 'case_evidence_links') as case_count`
+    );
+    const rows = extractNeonData(data);
+    const row = rows[0] || {};
+    return {
+      spineEvents: safeNumber(row.spine_count),
+      flightRecords: safeNumber(row.flight_count),
+      biometricRecords: safeNumber(row.bio_count),
+      legalRecords: safeNumber(row.legal_count),
+      caseLinks: safeNumber(row.case_count),
+    };
+  }, [customQuery]);
+
   return {
     isLoading,
     error,
@@ -328,5 +403,7 @@ export function useArchiveDatabase() {
     getCaseEvidenceLinks,
     getCaseEvidenceLinksSummary,
     getInvestigatorMasterView,
+    getCrossModalStitched,
+    getCrossModalStitchSummary,
   };
 }

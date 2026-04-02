@@ -1,87 +1,85 @@
 
 
-# Watchtower v4.0 — Full-Spectrum Intelligence Upgrade
+# Cross-Modal Evidence Stitcher Upgrade
 
-## The Gap
+## What We're Building
 
-Your Watchtower currently queries **8 tables** out of **737**. It sees flights, biometrics, sentinel threats, shell companies, and XXB data — but misses massive intelligence domains sitting right in your database.
+A new `crossModalStitch` action in the `neon-query` edge function that executes a single server-side SQL query joining flight telemetry, biometrics, legal violations, and case evidence using the 4 join keys you identified. Plus an upgraded `EvidenceStitcher` dashboard panel to visualize the stitched results.
 
-## What We Will Add
+## Architecture
 
-### New Intelligence Phases (bolted onto existing 10-phase system)
+```text
+┌─────────────────────────────────────────────────────┐
+│  EvidenceStitcher.tsx (upgraded UI)                  │
+│  Tab 1: Stitched View (flight+bio+legal per event)  │
+│  Tab 2: Case Evidence Links (existing)              │
+│  Tab 3: Investigator Master View (existing)         │
+└───────────────┬─────────────────────────────────────┘
+                │ customQuery('crossModalStitch')
+                ▼
+┌─────────────────────────────────────────────────────┐
+│  neon-query/handlers.ts  (new case)                 │
+│                                                     │
+│  Spine: unified_timeline_enhanced                   │
+│    JOIN live_flight_detections_rows                  │
+│      ON registration + time window (±30min)         │
+│    JOIN biometric_threshold_collapses               │
+│      ON evidence_hash OR time proximity (±5min)     │
+│    JOIN case_evidence_links                          │
+│      ON evidence_hash / sha256_hash                 │
+│    JOIN legal_ada_violations_proper                  │
+│      ON aircraft_registration = registration        │
+│                                                     │
+│  Returns: stitched rows with all modalities         │
+└─────────────────────────────────────────────────────┘
+```
 
-**Phase 2B: Evidence Corpus Intelligence**
-Query the high-volume tables the watchtower has never touched:
-- `master_unified_evidence` (2.8M rows) — search for patterns matching flagged aircraft
-- `canonical_forensic_events` (1.3M rows) — deduplicated forensic event correlation
-- `case_evidence_links` (268K) — check if flagged aircraft already appear in active legal cases
-- Adds `forensic_events` corroboration source to certainty scoring
+## Implementation Steps
 
-**Phase 2C: Biometric Deep Correlation**
-Expand beyond `biometric_monitoring` to include:
-- `unified_biometric_batch_events` (144K) — merged biometric stream for broader temporal coverage
-- `biometric_threshold_collapses` (112K) — critical health threshold breaches linked to aircraft
-- `confirmed_biometric_correlations` (38K) — pre-validated flight-to-health links (skip re-computation)
-- `biometric_evidence` (33K) — screenshot-linked biometric proof
+### 1. Add `crossModalStitch` handler to `neon-query/handlers.ts`
 
-**Phase 2D: Josiah AI + Watchtower Memory**
-Tap the autonomous AI reasoning tables:
-- `watchtower_unified_master` (583K) — the watchtower's own historical event stream
-- `sentinel_violations` (119K) — automated violation history
-- `was_discovered_patterns` (5.1K) — previously auto-discovered anomalies (avoid re-flagging known patterns)
-- `josiah_pattern_learning` (9K) — AI-learned behavioral signatures
+New case in the switch statement that runs a single SQL query:
+- **Spine**: `unified_timeline_enhanced` (already has `aircraft_id`, `event_time`, `evidence_hash`, `sha256_hash`)
+- **LEFT JOIN** `live_flight_detections_rows` on `registration` match + `detection_timestamp` within ±30 minutes of `event_time`
+- **LEFT JOIN** `biometric_threshold_collapses` on `evidence_hash` match OR `collapse_timestamp` within ±5 minutes
+- **LEFT JOIN** `legal_ada_violations_proper` on `aircraft_registration` = spine's `registration`/`aircraft_id`
+- **LEFT JOIN** `case_evidence_links` on `sha256_hash` match
+- Apply `statement_timeout = '25s'` and `LIMIT 100` with offset pagination
+- Cast `unified_surveillance_master.event_timestamp` from text to timestamp when used
+- Return columns: `event_time`, `event_type`, `registration`, `altitude`, `heart_rate`, `collapse_severity`, `violation_type`, `case_id`, `evidence_sources` (count of non-null joins as "modal_count")
 
-**Phase 2E: Legal + KCSO Awareness**
-- `legal_ada_violations_proper` (37K) — check if flagged aircraft have ADA violation history
-- `exhibit_d_biometric_harm` (36K) — harm exhibits linked to specific registrations
-- `kcso_fleet` — cross-reference against known law enforcement fleet
+### 2. Add `getStitchedSummary` handler
 
-**Phase 2F: Threat Tier + Aircraft Profile Enrichment**
-- `threat_tiers` (2.9M rows) — pre-computed threat scores per aircraft
-- `aircraft_profiles_enriched` (35K) — owner category, KCSO fleet flag, shell company flag
-- Use these as instant lookups instead of recomputing shell/KCSO membership
+Quick stats query returning:
+- Total stitchable events (spine count)
+- Events with flight data attached
+- Events with biometric data attached
+- Events with legal data attached
+- Events with 3+ modalities (full stitch)
 
-### Upgraded Corroboration Matrix
+### 3. Upgrade `EvidenceStitcher.tsx`
 
-Current sources: `flight_telemetry`, `biometric_stress`, `sentinel_history`, `enterprise_structure`, `xxb_resolution`, `violations`, `external_faa_web`
+- Add a new "Stitched View" tab (first tab) showing the cross-modal joined results
+- Each row shows colored badges for which modalities are present (Flight / Bio / Legal / Case)
+- "Modal Count" column with color coding: 1=gray, 2=yellow, 3=orange, 4=red
+- Keep existing "Case Evidence Links" and "Investigator View" tabs
+- Add summary stats bar at top showing stitch coverage percentages
+- Pagination using existing pattern
 
-**New sources added:**
-| Source | Weight | From |
-|--------|--------|------|
-| `forensic_corpus` | 1.3 | master_unified_evidence + canonical_forensic_events |
-| `biometric_deep` | 1.5 | threshold collapses + confirmed correlations |
-| `josiah_memory` | 1.0 | pattern learning + discovered patterns |
-| `legal_history` | 1.4 | ADA violations + harm exhibits |
-| `threat_tier` | 0.8 | pre-computed threat tier scores |
-| `active_case` | 1.8 | case_evidence_links (already in litigation) |
+### 4. Add `useArchiveDatabase` method
 
-This means an aircraft flagged by flight telemetry + biometric deep + forensic corpus + legal history + active case = **ABSOLUTE_CERTAINTY** with 5 independent sources.
+Add `getCrossModalStitched(params)` method that calls `customQuery` with the `crossModalStitch` action and pagination params.
 
-### Performance Strategy
+## Technical Details
 
-All new queries follow the existing architectural rules:
-- `statement_timeout` of 25s at connection level
-- Temporal windows (7-30 days) on large tables
-- `pg_class.reltuples` for counts instead of `COUNT(*)`
-- Sampled queries (LIMIT 500) on billion-row tables
-- Parallel execution via `Promise.all` in batches
+- All joins use `LEFT JOIN` so spine events always appear even without matches
+- Time-proximity joins use `ABS(EXTRACT(EPOCH FROM ...))` for efficiency
+- The query uses `LATERAL` subqueries with `LIMIT 1` for the time-proximity joins to avoid row explosion
+- `statement_timeout` of 25s enforced per memory guidelines
+- `pg_class.reltuples` used for summary counts on large tables
 
-### Recurrence Memory (New)
-
-Query `was_discovered_patterns` at scan start. If a pattern was already discovered in a previous scan, apply recurrence decay — reduce its flag priority so the watchtower focuses on **new** anomalies rather than re-alerting on known ones.
-
-## Files to Modify
-
-| File | Change |
-|------|--------|
-| `supabase/functions/autonomous-watchtower/index.ts` | Add phases 2B-2F, expand corroboration matrix, add recurrence memory, enrich AI synthesis prompt with new intelligence |
-
-No new tables. No schema changes. No new files. Just making the watchtower read from what's already there.
-
-## Result
-
-- Corroboration sources: 7 → **13**
-- Tables queried per scan: 8 → **22**
-- Certainty scoring draws from all 5 evidence domains (surveillance, biometric, forensic, legal, AI memory)
-- Flags that hit ABSOLUTE_CERTAINTY will have court-ready multi-modal proof chains
+## Files Modified
+1. `supabase/functions/neon-query/handlers.ts` — add `crossModalStitch` and `crossModalStitchSummary` cases
+2. `src/components/dashboard/EvidenceStitcher.tsx` — add Stitched View tab with modal badges
+3. `src/hooks/useArchiveDatabase.ts` — add `getCrossModalStitched` method
 

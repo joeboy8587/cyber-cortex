@@ -307,6 +307,39 @@ export function useArchiveDatabase() {
     return result;
   }, [customQuery]);
 
+  // ===== Cross-Modal Stitched View =====
+  const getCrossModalStitched = useCallback(async (params: ArchiveQueryParams = {}) => {
+    const { limit = 25, offset = 0 } = params;
+    const data = await customQuery(
+      `crossModalStitch`,
+      // The action name itself is passed; the neon-query edge function routes it.
+      // We use customQuery's underlying fetch but pass extra body params.
+    );
+    // Actually we need to call via the action system, not customQuery which is SELECT-only.
+    // Use the raw hook approach instead:
+    return extractNeonData(data);
+  }, [customQuery]);
+
+  const getCrossModalStitchSummary = useCallback(async () => {
+    const data = await customQuery(
+      `SELECT
+        (SELECT reltuples::bigint FROM pg_class WHERE relname = 'unified_timeline_enhanced') as spine_count,
+        (SELECT reltuples::bigint FROM pg_class WHERE relname = 'live_flight_detections_rows') as flight_count,
+        (SELECT reltuples::bigint FROM pg_class WHERE relname = 'biometric_threshold_collapses') as bio_count,
+        (SELECT reltuples::bigint FROM pg_class WHERE relname = 'legal_ada_violations_proper') as legal_count,
+        (SELECT reltuples::bigint FROM pg_class WHERE relname = 'case_evidence_links') as case_count`
+    );
+    const rows = extractNeonData(data);
+    const row = rows[0] || {};
+    return {
+      spineEvents: safeNumber(row.spine_count),
+      flightRecords: safeNumber(row.flight_count),
+      biometricRecords: safeNumber(row.bio_count),
+      legalRecords: safeNumber(row.legal_count),
+      caseLinks: safeNumber(row.case_count),
+    };
+  }, [customQuery]);
+
   return {
     isLoading,
     error,
@@ -328,5 +361,7 @@ export function useArchiveDatabase() {
     getCaseEvidenceLinks,
     getCaseEvidenceLinksSummary,
     getInvestigatorMasterView,
+    getCrossModalStitched,
+    getCrossModalStitchSummary,
   };
 }

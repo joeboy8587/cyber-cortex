@@ -487,6 +487,102 @@ export async function handleAction(action: string, body: Record<string, any>, sq
       }
     }
 
+    // ============== CROSS-MODAL EVIDENCE STITCHER ==============
+    case 'crossModalStitch': {
+      try {
+        const pg_limit = Math.min(parseInt(body.limit) || 100, 200);
+        const pg_offset = parseInt(body.offset) || 0;
+        await sql`SET LOCAL statement_timeout = '25s'`;
+        const rows = await sql.unsafe(`
+          SELECT
+            spine.event_time,
+            spine.event_type,
+            COALESCE(spine.aircraft_id, spine.registration) as registration,
+            spine.evidence_hash as spine_hash,
+            -- flight data
+            f.altitude as flight_altitude,
+            f.speed as flight_speed,
+            f.callsign as flight_callsign,
+            f.taxonomy_tag as flight_tag,
+            -- biometric data
+            b.heart_rate as bio_heart_rate,
+            b.collapse_severity as bio_severity,
+            b.collapse_timestamp as bio_timestamp,
+            -- legal data
+            ada.violation_type as legal_violation,
+            ada.ada_section as legal_section,
+            -- case link
+            cel.case_id,
+            cel.evidence_type as case_evidence_type,
+            -- modal count
+            (CASE WHEN f.detection_id IS NOT NULL THEN 1 ELSE 0 END
+             + CASE WHEN b.id IS NOT NULL THEN 1 ELSE 0 END
+             + CASE WHEN ada.id IS NOT NULL THEN 1 ELSE 0 END
+             + CASE WHEN cel.id IS NOT NULL THEN 1 ELSE 0 END) as modal_count
+          FROM unified_timeline_enhanced spine
+          LEFT JOIN LATERAL (
+            SELECT detection_id, altitude, speed, callsign, taxonomy_tag
+            FROM live_flight_detections_rows
+            WHERE registration = COALESCE(spine.aircraft_id, spine.registration)
+              AND ABS(EXTRACT(EPOCH FROM (detection_timestamp - spine.event_time))) < 1800
+            ORDER BY ABS(EXTRACT(EPOCH FROM (detection_timestamp - spine.event_time)))
+            LIMIT 1
+          ) f ON true
+          LEFT JOIN LATERAL (
+            SELECT id, heart_rate, collapse_severity, collapse_timestamp
+            FROM biometric_threshold_collapses
+            WHERE (evidence_hash IS NOT NULL AND evidence_hash = spine.evidence_hash)
+               OR ABS(EXTRACT(EPOCH FROM (collapse_timestamp - spine.event_time))) < 300
+            ORDER BY ABS(EXTRACT(EPOCH FROM (collapse_timestamp - spine.event_time)))
+            LIMIT 1
+          ) b ON true
+          LEFT JOIN LATERAL (
+            SELECT id, violation_type, ada_section
+            FROM legal_ada_violations_proper
+            WHERE aircraft_registration = COALESCE(spine.aircraft_id, spine.registration)
+            LIMIT 1
+          ) ada ON true
+          LEFT JOIN LATERAL (
+            SELECT id, case_id, evidence_type
+            FROM case_evidence_links
+            WHERE sha256_hash IS NOT NULL AND sha256_hash = spine.sha256_hash
+            LIMIT 1
+          ) cel ON true
+          ORDER BY spine.event_time DESC NULLS LAST
+          LIMIT ${pg_limit} OFFSET ${pg_offset}
+        `);
+        return { data: rows || [] };
+      } catch (e) {
+        console.error('crossModalStitch error:', e);
+        return { data: [], error: String((e as any)?.message || 'Stitch query failed') };
+      }
+    }
+
+    case 'crossModalStitchSummary': {
+      try {
+        await sql`SET LOCAL statement_timeout = '25s'`;
+        const counts = await sql`
+          SELECT
+            (SELECT reltuples::bigint FROM pg_class WHERE relname = 'unified_timeline_enhanced') as spine_count,
+            (SELECT reltuples::bigint FROM pg_class WHERE relname = 'live_flight_detections_rows') as flight_count,
+            (SELECT reltuples::bigint FROM pg_class WHERE relname = 'biometric_threshold_collapses') as bio_count,
+            (SELECT reltuples::bigint FROM pg_class WHERE relname = 'legal_ada_violations_proper') as legal_count,
+            (SELECT reltuples::bigint FROM pg_class WHERE relname = 'case_evidence_links') as case_count
+        `;
+        const row = counts[0] || {};
+        return { data: {
+          spineEvents: parseInt(String(row.spine_count || '0')),
+          flightRecords: parseInt(String(row.flight_count || '0')),
+          biometricRecords: parseInt(String(row.bio_count || '0')),
+          legalRecords: parseInt(String(row.legal_count || '0')),
+          caseLinks: parseInt(String(row.case_count || '0')),
+        }};
+      } catch (e) {
+        console.error('crossModalStitchSummary error:', e);
+        return { data: { spineEvents: 0, flightRecords: 0, biometricRecords: 0, legalRecords: 0, caseLinks: 0 } };
+      }
+    }
+
     default:
       return null; // Signal "not handled" back to main router
   }

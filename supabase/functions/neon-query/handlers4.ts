@@ -610,7 +610,7 @@ export async function handleAction4(action: string, body: Record<string, any>, s
         // 1. All detections for target registrations
         sql.unsafe(`
           SELECT registration, callsign, detection_timestamp, 
-                 altitude_baro, ground_speed, latitude, longitude,
+                 altitude, ground_speed, latitude, longitude,
                  icao_code, flagged
           FROM live_flight_detections_rows
           WHERE registration IN (${regList})
@@ -624,12 +624,12 @@ export async function handleAction4(action: string, body: Record<string, any>, s
           SELECT 
             a.registration as kcso_asset,
             a.detection_timestamp as kcso_time,
-            a.altitude_baro as kcso_alt,
+            a.altitude as kcso_alt,
             a.latitude as kcso_lat,
             a.longitude as kcso_lng,
             b.registration as military_asset,
             b.detection_timestamp as military_time,
-            b.altitude_baro as military_alt,
+            b.altitude as military_alt,
             b.latitude as mil_lat,
             b.longitude as mil_lng,
             ROUND(EXTRACT(EPOCH FROM (a.detection_timestamp - b.detection_timestamp))::numeric / 60, 1) as time_delta_min,
@@ -652,10 +652,10 @@ export async function handleAction4(action: string, body: Record<string, any>, s
         sql.unsafe(`
           SELECT registration,
                  COUNT(*)::int as total_detections,
-                 ROUND(AVG(NULLIF(altitude_baro, 0))::numeric)::int as avg_alt,
-                 MIN(NULLIF(altitude_baro, 0))::int as min_alt,
-                 MAX(altitude_baro)::int as max_alt,
-                 COUNT(CASE WHEN altitude_baro < 1500 AND altitude_baro > 0 THEN 1 END)::int as low_alt_count,
+                 ROUND(AVG(NULLIF(altitude, 0))::numeric)::int as avg_alt,
+                 MIN(NULLIF(altitude, 0))::int as min_alt,
+                 MAX(altitude)::int as max_alt,
+                 COUNT(CASE WHEN altitude < 1500 AND altitude > 0 THEN 1 END)::int as low_alt_count,
                  MIN(detection_timestamp) as first_seen,
                  MAX(detection_timestamp) as last_seen
           FROM live_flight_detections_rows
@@ -670,7 +670,7 @@ export async function handleAction4(action: string, body: Record<string, any>, s
           SELECT DATE(detection_timestamp) as date,
                  registration,
                  COUNT(*)::int as detections,
-                 ROUND(AVG(NULLIF(altitude_baro, 0))::numeric)::int as avg_alt
+                 ROUND(AVG(NULLIF(altitude, 0))::numeric)::int as avg_alt
           FROM live_flight_detections_rows
           WHERE registration IN (${regList})
             AND detection_timestamp > NOW() - INTERVAL '${timeWindow}'

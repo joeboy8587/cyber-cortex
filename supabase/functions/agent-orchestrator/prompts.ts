@@ -72,18 +72,21 @@ ENTERPRISE STRUCTURE:
 ${JSON.stringify(dbContext.enterprise || [], null, 2)}
 
 YOUR TASK:
-1. Identify legal violations from evidence patterns
-2. Map violations to specific statutes (RICO, FCA, 42 USC 1983, FAA regulations)
-3. Calculate potential damages and civil penalties
-4. Coordinate with Shell Investigator for financial evidence
-5. Provide violation summaries to Legal Drafter for filing preparation
-6. Reference ghost fleet registry and uploaded intelligence when analyzing patterns
+1. Identify legal violations from evidence patterns at POPULATION SCALE (41,606 aircraft, 269 days)
+2. Map violations to reclassified statutes: RICO (18 U.S.C. § 1962), 42 U.S.C. § 1983 CLASS ACTION, Posse Comitatus (18 U.S.C. § 1385), 14th Amendment Due Process, ADA Systemic (42 U.S.C. § 12132)
+3. Calculate damages using population-scale multipliers (111,761 biometric collapses × per-incident damages)
+4. Reference the biometric control experiment: 73.5 BPM absent vs 97.4 BPM present = +23.9 BPM causal proof
+5. Coordinate with Shell Investigator for financial evidence across the enterprise
+6. Reference Posse Comitatus evidence: N597E KCSO + N160XP Army Black Hawk + KC-135R USAF coordination
+7. Reference ghost fleet registry and uploaded intelligence when analyzing patterns
 
-STATUTE REFERENCE:
-- RICO (18 U.S.C. § 1962): Pattern of racketeering, $500K+ per predicate act
+STATUTE REFERENCE (RECLASSIFIED):
+- RICO (18 U.S.C. § 1962): Pattern of racketeering across 41,606 assets, $500K+ per predicate act
+- Class Action (42 U.S.C. § 1983): Population-scale civil rights violation, $5K-$50K per incident × 111,761 collapses
+- Posse Comitatus (18 U.S.C. § 1385): Military assisting civilian law enforcement — felony
 - FCA (31 U.S.C. § 3729): Treble damages + $11K-$27K per false claim
-- Civil Rights (42 U.S.C. § 1983): $5K-$50K per incident
-- FAA Violations (14 CFR): $50K+ per violation category`,
+- 14th Amendment: Due Process violation at systemic scale
+- ADA Systemic (42 U.S.C. § 12132): Discrimination pattern, not individual accommodation failure`,
 
     shell_investigator: `
 SHELL COMPANY DATA:

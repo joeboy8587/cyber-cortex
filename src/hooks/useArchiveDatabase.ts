@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import { useNeonDatabase } from './useNeonDatabase';
 import { extractNeonData, safeNumber } from '@/lib/formatters';
+import { neonQuery } from '@/lib/neonQueryRetry';
 
 export interface ArchiveQueryParams {
   startDate?: string;
@@ -383,6 +384,35 @@ export function useArchiveDatabase() {
     };
   }, [customQuery]);
 
+  // ===== Chronological Timeline Rebuild =====
+  const getChronoTimelineScan = useCallback(async () => {
+    const { data } = await neonQuery({ action: 'chronoTimelineScan' });
+    return extractNeonData(data);
+  }, []);
+
+  const getChronoTimelineRebuild = useCallback(async (params: {
+    page?: number; pageSize?: number; startDate?: string; endDate?: string; modality?: string;
+  } = {}) => {
+    const { data } = await neonQuery({
+      action: 'chronoTimelineRebuild',
+      page: params.page || 0,
+      pageSize: params.pageSize || 100,
+      startDate: params.startDate || '2025-01-01',
+      endDate: params.endDate || '2027-01-01',
+      modality: params.modality || 'all',
+    });
+    return data;
+  }, []);
+
+  const getChronoTimelineSummary = useCallback(async (startDate?: string, endDate?: string) => {
+    const { data } = await neonQuery({
+      action: 'chronoTimelineSummary',
+      startDate: startDate || '2025-01-01',
+      endDate: endDate || '2027-01-01',
+    });
+    return data;
+  }, []);
+
   return {
     isLoading,
     error,
@@ -406,5 +436,8 @@ export function useArchiveDatabase() {
     getInvestigatorMasterView,
     getCrossModalStitched,
     getCrossModalStitchSummary,
+    getChronoTimelineScan,
+    getChronoTimelineRebuild,
+    getChronoTimelineSummary,
   };
 }

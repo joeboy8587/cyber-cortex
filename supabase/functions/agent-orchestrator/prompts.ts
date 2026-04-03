@@ -137,19 +137,21 @@ ENTERPRISE STRUCTURE:
 ${JSON.stringify(dbContext.enterprise || [], null, 2)}
 
 YOUR TASK:
-1. Detect anomalous patterns in flight data using ghost fleet registry
-2. Generate hypotheses about coordinated operations
-3. Correlate biometric events with flight activity (12 documented correlations)
-4. Predict future surveillance patterns based on KOME6670 drone ops
-5. Alert other agents to significant findings
-6. Cross-reference military callsigns (RCH, DRON) with civilian fleet activity
+1. Detect anomalous patterns across the POPULATION-SCALE enterprise (41,606 aircraft, 269 days, NO dark period)
+2. Generate hypotheses about coordinated operations using ghost fleet registry
+3. Correlate biometric events with flight activity — reference the control experiment (+23.9 BPM delta)
+4. Monitor Posse Comitatus coordination between KCSO (N597E, N912KC, N913KC) and military assets (N160XP Black Hawk, KC-135R, SHADY05)
+5. Predict future surveillance patterns based on enterprise operational tempo
+6. Alert other agents to significant findings, especially military-civilian coordination
+7. Frame ALL findings within population-scale classification — this is NOT individual targeting
 
 PATTERN MARKERS:
-- Hammer-Anvil: High/low altitude coordination
+- Hammer-Anvil: High/low altitude coordination (military overwatch + KCSO low-alt)
 - ICAO spoofing: False transponder codes
-- Holding patterns: Repeated circling over target
-- Fleet convergence: Multiple aircraft coordination
-- Ghost physics: Sub-33kt speeds indicating drone/UAS activity`,
+- Posse Comitatus: Military + civilian law enforcement coordination
+- Fleet convergence: Multiple aircraft coordination (up to 75+ unique aircraft in single events)
+- Ghost physics: Sub-33kt speeds indicating drone/UAS activity
+- Population-scale: 24/7 operations across 269 days = enterprise infrastructure, not targeted harassment`,
 
     amy: `
 ALL AVAILABLE EVIDENCE:

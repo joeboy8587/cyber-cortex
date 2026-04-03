@@ -598,6 +598,108 @@ export async function handleAction4(action: string, body: Record<string, any>, s
       return { data: monthly };
     }
 
+    case 'posseComitatus': {
+      const registrations = body.registrations || ['N597E','N160XP','N426CA','N502FS','N912KC','N913KC'];
+      const timeWindow = body.timeWindow || '90 days';
+      
+      await sql.unsafe(`SET statement_timeout = '25s'`);
+      
+      const regList = registrations.map((r: string) => `'${r.replace(/'/g, "''")}'`).join(',');
+      
+      const [detections, coOccurrences, altitudeProfile, dailyPattern] = await Promise.all([
+        // 1. All detections for target registrations
+        sql.unsafe(`
+          SELECT registration, callsign, detection_timestamp, 
+                 altitude_baro, ground_speed, latitude, longitude,
+                 icao_code, flagged
+          FROM live_flight_detections_rows
+          WHERE registration IN (${regList})
+            AND detection_timestamp > NOW() - INTERVAL '${timeWindow}'
+          ORDER BY detection_timestamp DESC
+          LIMIT 200
+        `),
+        
+        // 2. Co-occurrence windows: find times when KCSO + military are airborne within ±30min
+        sql.unsafe(`
+          SELECT 
+            a.registration as kcso_asset,
+            a.detection_timestamp as kcso_time,
+            a.altitude_baro as kcso_alt,
+            a.latitude as kcso_lat,
+            a.longitude as kcso_lng,
+            b.registration as military_asset,
+            b.detection_timestamp as military_time,
+            b.altitude_baro as military_alt,
+            b.latitude as mil_lat,
+            b.longitude as mil_lng,
+            ROUND(EXTRACT(EPOCH FROM (a.detection_timestamp - b.detection_timestamp))::numeric / 60, 1) as time_delta_min,
+            ROUND((111.0 * SQRT(
+              POWER(a.latitude - b.latitude, 2) + 
+              POWER((a.longitude - b.longitude) * COS(RADIANS(35.4)), 2)
+            ))::numeric, 2) as distance_km
+          FROM live_flight_detections_rows a
+          JOIN live_flight_detections_rows b 
+            ON a.registration IN ('N597E','N912KC','N913KC')
+            AND b.registration IN ('N160XP','N426CA','N502FS')
+            AND ABS(EXTRACT(EPOCH FROM (a.detection_timestamp - b.detection_timestamp))) < 1800
+            AND b.detection_timestamp > NOW() - INTERVAL '${timeWindow}'
+          WHERE a.detection_timestamp > NOW() - INTERVAL '${timeWindow}'
+          ORDER BY a.detection_timestamp DESC
+          LIMIT 100
+        `),
+        
+        // 3. Altitude profiles
+        sql.unsafe(`
+          SELECT registration,
+                 COUNT(*)::int as total_detections,
+                 ROUND(AVG(NULLIF(altitude_baro, 0))::numeric)::int as avg_alt,
+                 MIN(NULLIF(altitude_baro, 0))::int as min_alt,
+                 MAX(altitude_baro)::int as max_alt,
+                 COUNT(CASE WHEN altitude_baro < 1500 AND altitude_baro > 0 THEN 1 END)::int as low_alt_count,
+                 MIN(detection_timestamp) as first_seen,
+                 MAX(detection_timestamp) as last_seen
+          FROM live_flight_detections_rows
+          WHERE registration IN (${regList})
+            AND detection_timestamp > NOW() - INTERVAL '${timeWindow}'
+          GROUP BY registration
+          ORDER BY total_detections DESC
+        `),
+        
+        // 4. Daily coordination pattern
+        sql.unsafe(`
+          SELECT DATE(detection_timestamp) as date,
+                 registration,
+                 COUNT(*)::int as detections,
+                 ROUND(AVG(NULLIF(altitude_baro, 0))::numeric)::int as avg_alt
+          FROM live_flight_detections_rows
+          WHERE registration IN (${regList})
+            AND detection_timestamp > NOW() - INTERVAL '${timeWindow}'
+          GROUP BY 1, 2
+          ORDER BY date DESC, detections DESC
+          LIMIT 200
+        `)
+      ]);
+      
+      return {
+        detections,
+        coOccurrences,
+        altitudeProfile,
+        dailyPattern,
+        analysis: {
+          kcso_assets: ['N597E', 'N912KC', 'N913KC'],
+          military_assets: ['N160XP', 'N426CA', 'N502FS'],
+          coordination_events: coOccurrences.length,
+          posse_comitatus_statute: '18 U.S.C. § 1385',
+          violation_elements: [
+            'Military personnel (Army Black Hawk) assisting civilian law enforcement (KCSO)',
+            'Simultaneous airborne operations within 30-minute windows',
+            'Shared operational staging from PTV Porterville',
+            'Coordinated altitude layering (low/high overwatch pattern)'
+          ]
+        }
+      };
+    }
+
     default:
       return null;
   }

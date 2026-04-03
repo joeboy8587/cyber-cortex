@@ -77,6 +77,7 @@ const HANDLER4_ACTIONS = new Set([
   'chronoTimelineScan',
   'chronoTimelineRebuild',
   'chronoTimelineSummary',
+  'posseComitatus',
 ]);
 
 async function getHandler1() {

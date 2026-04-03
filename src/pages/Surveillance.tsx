@@ -30,6 +30,7 @@ import UnmaskHQSystem from "@/components/dashboard/UnmaskHQSystem";
 import ForensicTrajectoryPanel from "@/components/dashboard/ForensicTrajectoryPanel";
 import TransponderAnalysisDashboard from "@/components/dashboard/TransponderAnalysisDashboard";
 import ICAORecyclingDashboard from "@/components/dashboard/ICAORecyclingDashboard";
+import PosseComitausAnalyzer from "@/components/dashboard/PosseComitausAnalyzer";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export default function Surveillance() {
@@ -51,7 +52,7 @@ export default function Surveillance() {
           </div>
         </div>
 
-        <Tabs defaultValue="auditor" className="space-y-6">
+        <Tabs defaultValue="posse" className="space-y-6">
           <div className="rounded-lg border border-border/50 bg-background/40 p-3">
             <div className="mb-3 flex flex-col gap-1">
               <h2 className="font-mono text-sm uppercase tracking-[0.2em] text-foreground">
@@ -62,7 +63,8 @@ export default function Surveillance() {
               </p>
             </div>
 
-            <TabsList className="grid h-auto grid-cols-2 gap-2 bg-transparent p-0 lg:grid-cols-9">
+            <TabsList className="grid h-auto grid-cols-2 gap-2 bg-transparent p-0 lg:grid-cols-10">
+              <TabsTrigger value="posse" className="text-destructive">⚖️ Posse</TabsTrigger>
               <TabsTrigger value="icao">ICAO/Shell</TabsTrigger>
               <TabsTrigger value="transponder">Transponder</TabsTrigger>
               <TabsTrigger value="auditor">Blind Audit</TabsTrigger>
@@ -74,6 +76,12 @@ export default function Surveillance() {
               <TabsTrigger value="intake">Intake</TabsTrigger>
             </TabsList>
           </div>
+
+          <TabsContent value="posse" className="space-y-6">
+            <section>
+              <PosseComitausAnalyzer />
+            </section>
+          </TabsContent>
 
           <TabsContent value="icao" className="space-y-6">
             <section>

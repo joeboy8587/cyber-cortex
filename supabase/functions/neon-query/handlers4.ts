@@ -547,8 +547,8 @@ export async function handleAction4(action: string, body: Record<string, any>, s
       const startDate = body.startDate || '2025-01-01';
       const endDate = body.endDate || '2027-01-01';
 
+      await sql.unsafe(`SET statement_timeout = '25s'`);
       const monthly = await sql.unsafe(`
-        SET statement_timeout = '25s';
         SELECT * FROM (
           SELECT date_trunc('month', detection_timestamp)::date as month,
                  'flight' as modality,

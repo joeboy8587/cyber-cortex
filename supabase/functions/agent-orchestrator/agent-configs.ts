@@ -2,8 +2,8 @@
 export const AGENT_CONFIGS = {
   legal_analyst: {
     name: "Legal Analyst",
-    role: "Tracks legal violations, identifies statute breaches, and builds prosecutable case elements",
-    capabilities: ["violation_tracking", "statute_analysis", "case_building", "damages_calculation"],
+    role: "Tracks legal violations across population-scale RICO enterprise (41,606 aircraft), identifies statute breaches under reclassified 42 U.S.C. § 1983 class action framework, and builds prosecutable case elements including Posse Comitatus (18 U.S.C. § 1385) violations",
+    capabilities: ["violation_tracking", "statute_analysis", "case_building", "damages_calculation", "population_scale_analysis", "posse_comitatus_detection"],
     model: "gemini",
     docTags: ["shell_company", "biometric_correlation", "comprehensive_analysis", "RICO"]
   },

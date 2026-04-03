@@ -52,7 +52,7 @@ export default function Surveillance() {
           </div>
         </div>
 
-        <Tabs defaultValue="auditor" className="space-y-6">
+        <Tabs defaultValue="posse" className="space-y-6">
           <div className="rounded-lg border border-border/50 bg-background/40 p-3">
             <div className="mb-3 flex flex-col gap-1">
               <h2 className="font-mono text-sm uppercase tracking-[0.2em] text-foreground">

@@ -413,7 +413,18 @@ export function useArchiveDatabase() {
     return data;
   }, []);
 
-  return {
+  const getPosseComitatus = useCallback(async (params: {
+    registrations?: string[]; timeWindow?: string;
+  } = {}) => {
+    const { data } = await neonQuery({
+      action: 'posseComitatus',
+      registrations: params.registrations,
+      timeWindow: params.timeWindow || '90 days',
+    });
+    return data;
+  }, []);
+
+
     isLoading,
     error,
     connectionStatus,

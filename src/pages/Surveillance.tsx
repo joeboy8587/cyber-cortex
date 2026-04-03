@@ -30,6 +30,7 @@ import UnmaskHQSystem from "@/components/dashboard/UnmaskHQSystem";
 import ForensicTrajectoryPanel from "@/components/dashboard/ForensicTrajectoryPanel";
 import TransponderAnalysisDashboard from "@/components/dashboard/TransponderAnalysisDashboard";
 import ICAORecyclingDashboard from "@/components/dashboard/ICAORecyclingDashboard";
+import PosseComitausAnalyzer from "@/components/dashboard/PosseComitausAnalyzer";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export default function Surveillance() {

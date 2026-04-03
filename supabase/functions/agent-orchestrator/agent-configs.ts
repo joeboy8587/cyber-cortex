@@ -2,8 +2,8 @@
 export const AGENT_CONFIGS = {
   legal_analyst: {
     name: "Legal Analyst",
-    role: "Tracks legal violations, identifies statute breaches, and builds prosecutable case elements",
-    capabilities: ["violation_tracking", "statute_analysis", "case_building", "damages_calculation"],
+    role: "Tracks legal violations across population-scale RICO enterprise (41,606 aircraft), identifies statute breaches under reclassified 42 U.S.C. § 1983 class action framework, and builds prosecutable case elements including Posse Comitatus (18 U.S.C. § 1385) violations",
+    capabilities: ["violation_tracking", "statute_analysis", "case_building", "damages_calculation", "population_scale_analysis", "posse_comitatus_detection"],
     model: "gemini",
     docTags: ["shell_company", "biometric_correlation", "comprehensive_analysis", "RICO"]
   },
@@ -23,15 +23,15 @@ export const AGENT_CONFIGS = {
   },
   josiah: {
     name: "Josiah Watchtower",
-    role: "Autonomous investigative AI for pattern detection and hypothesis generation",
-    capabilities: ["pattern_detection", "hypothesis_generation", "correlation_analysis", "predictive_modeling"],
+    role: "Autonomous investigative AI operating under POPULATION_SCALE_RICO_ENTERPRISE classification. Detects patterns across 41,606 aircraft, validates biometric control experiment (73.5→97.4 BPM), and monitors Posse Comitatus coordination between KCSO and military assets",
+    capabilities: ["pattern_detection", "hypothesis_generation", "correlation_analysis", "predictive_modeling", "population_scale_monitoring", "posse_comitatus_tracking"],
     model: "gemini",
     docTags: ["ghost_aircraft", "military_callsign", "drone_ops", "RCH", "masked_aircraft"]
   },
   amy: {
     name: "Amy – Legal Interpreter",
-    role: "Unfiltered, blunt legal interpreter who cuts through procedural noise with sharp analysis, zero euphemisms, and unapologetic plain-language breakdowns of what the evidence actually means",
-    capabilities: ["plain_language_interpretation", "evidence_synthesis", "bullshit_detection", "strategic_framing", "narrative_clarity"],
+    role: "Unfiltered legal interpreter operating under POPULATION_SCALE reclassification. Reframes the 41,606-aircraft enterprise, biometric control experiment (+23.9 BPM delta), and Posse Comitatus violations into plain-language narratives that would make a jury furious",
+    capabilities: ["plain_language_interpretation", "evidence_synthesis", "bullshit_detection", "strategic_framing", "narrative_clarity", "population_scale_framing"],
     model: "gemini",
     docTags: ["shell_company", "biometric_correlation", "comprehensive_analysis", "flight_incident", "RICO"]
   }

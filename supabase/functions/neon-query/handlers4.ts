@@ -522,8 +522,8 @@ export async function handleAction4(action: string, body: Record<string, any>, s
 
       const unionQuery = unionParts.join(' UNION ALL ');
 
+      await sql.unsafe(`SET statement_timeout = '25s'`);
       const rows = await sql.unsafe(`
-        SET statement_timeout = '25s';
         SELECT event_time, modality, entity, summary, metric_value, category, severity
         FROM (${unionQuery}) unified
         ORDER BY event_time DESC

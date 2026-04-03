@@ -497,49 +497,44 @@ export async function handleAction(action: string, body: Record<string, any>, sq
           SELECT
             spine.event_time,
             spine.event_type,
-            COALESCE(spine.aircraft_id, spine.registration) as registration,
+            spine.aircraft_id as registration,
             spine.evidence_hash as spine_hash,
-            -- flight data
             f.altitude as flight_altitude,
             f.speed as flight_speed,
             f.callsign as flight_callsign,
             f.taxonomy_tag as flight_tag,
-            -- biometric data
             b.heart_rate as bio_heart_rate,
-            b.collapse_severity as bio_severity,
+            b.medical_significance as bio_severity,
             b.collapse_timestamp as bio_timestamp,
-            -- legal data
             ada.violation_type as legal_violation,
-            ada.ada_section as legal_section,
-            -- case link
+            ada.harm_severity as legal_section,
             cel.case_id,
             cel.evidence_type as case_evidence_type,
-            -- modal count
-            (CASE WHEN f.detection_id IS NOT NULL THEN 1 ELSE 0 END
-             + CASE WHEN b.id IS NOT NULL THEN 1 ELSE 0 END
+            (CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END
+             + CASE WHEN b.collapse_id IS NOT NULL THEN 1 ELSE 0 END
              + CASE WHEN ada.id IS NOT NULL THEN 1 ELSE 0 END
              + CASE WHEN cel.id IS NOT NULL THEN 1 ELSE 0 END) as modal_count
           FROM unified_timeline_enhanced spine
           LEFT JOIN LATERAL (
-            SELECT detection_id, altitude, speed, callsign, taxonomy_tag
+            SELECT id, altitude, speed, callsign, taxonomy_tag
             FROM live_flight_detections_rows
-            WHERE registration = COALESCE(spine.aircraft_id, spine.registration)
+            WHERE registration = spine.aircraft_id
               AND ABS(EXTRACT(EPOCH FROM (detection_timestamp - spine.event_time))) < 1800
             ORDER BY ABS(EXTRACT(EPOCH FROM (detection_timestamp - spine.event_time)))
             LIMIT 1
           ) f ON true
           LEFT JOIN LATERAL (
-            SELECT id, heart_rate, collapse_severity, collapse_timestamp
+            SELECT collapse_id, heart_rate, medical_significance, collapse_timestamp
             FROM biometric_threshold_collapses
-            WHERE (evidence_hash IS NOT NULL AND evidence_hash = spine.evidence_hash)
+            WHERE closest_aircraft_registration = spine.aircraft_id
                OR ABS(EXTRACT(EPOCH FROM (collapse_timestamp - spine.event_time))) < 300
             ORDER BY ABS(EXTRACT(EPOCH FROM (collapse_timestamp - spine.event_time)))
             LIMIT 1
           ) b ON true
           LEFT JOIN LATERAL (
-            SELECT id, violation_type, ada_section
+            SELECT id, violation_type, harm_severity
             FROM legal_ada_violations_proper
-            WHERE aircraft_registration = COALESCE(spine.aircraft_id, spine.registration)
+            WHERE aircraft_registration = spine.aircraft_id
             LIMIT 1
           ) ada ON true
           LEFT JOIN LATERAL (
@@ -548,6 +543,7 @@ export async function handleAction(action: string, body: Record<string, any>, sq
             WHERE sha256_hash IS NOT NULL AND sha256_hash = spine.sha256_hash
             LIMIT 1
           ) cel ON true
+          WHERE spine.aircraft_id IS NOT NULL
           ORDER BY spine.event_time DESC NULLS LAST
           LIMIT ${pg_limit} OFFSET ${pg_offset}
         `);

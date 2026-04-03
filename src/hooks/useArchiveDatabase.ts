@@ -314,40 +314,40 @@ export function useArchiveDatabase() {
       SELECT
         spine.event_time,
         spine.event_type,
-        COALESCE(spine.aircraft_id, spine.registration) as registration,
+        spine.aircraft_id as registration,
         f.altitude as flight_altitude,
         f.speed as flight_speed,
         f.callsign as flight_callsign,
         b.heart_rate as bio_heart_rate,
-        b.collapse_severity as bio_severity,
+        b.medical_significance as bio_severity,
         ada.violation_type as legal_violation,
-        ada.ada_section as legal_section,
+        ada.harm_severity as legal_section,
         cel.case_id,
-        (CASE WHEN f.detection_id IS NOT NULL THEN 1 ELSE 0 END
-         + CASE WHEN b.id IS NOT NULL THEN 1 ELSE 0 END
+        (CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END
+         + CASE WHEN b.collapse_id IS NOT NULL THEN 1 ELSE 0 END
          + CASE WHEN ada.id IS NOT NULL THEN 1 ELSE 0 END
          + CASE WHEN cel.id IS NOT NULL THEN 1 ELSE 0 END) as modal_count
       FROM unified_timeline_enhanced spine
       LEFT JOIN LATERAL (
-        SELECT detection_id, altitude, speed, callsign
+        SELECT id, altitude, speed, callsign
         FROM live_flight_detections_rows
-        WHERE registration = COALESCE(spine.aircraft_id, spine.registration)
+        WHERE registration = spine.aircraft_id
           AND ABS(EXTRACT(EPOCH FROM (detection_timestamp - spine.event_time))) < 1800
         ORDER BY ABS(EXTRACT(EPOCH FROM (detection_timestamp - spine.event_time)))
         LIMIT 1
       ) f ON true
       LEFT JOIN LATERAL (
-        SELECT id, heart_rate, collapse_severity
+        SELECT collapse_id, heart_rate, medical_significance
         FROM biometric_threshold_collapses
-        WHERE (evidence_hash IS NOT NULL AND evidence_hash = spine.evidence_hash)
-           OR ABS(EXTRACT(EPOCH FROM (collapse_timestamp - spine.event_time))) < 300
+        WHERE closest_aircraft_registration = spine.aircraft_id
+          OR ABS(EXTRACT(EPOCH FROM (collapse_timestamp - spine.event_time))) < 300
         ORDER BY ABS(EXTRACT(EPOCH FROM (collapse_timestamp - spine.event_time)))
         LIMIT 1
       ) b ON true
       LEFT JOIN LATERAL (
-        SELECT id, violation_type, ada_section
+        SELECT id, violation_type, harm_severity
         FROM legal_ada_violations_proper
-        WHERE aircraft_registration = COALESCE(spine.aircraft_id, spine.registration)
+        WHERE aircraft_registration = spine.aircraft_id
         LIMIT 1
       ) ada ON true
       LEFT JOIN LATERAL (
@@ -356,6 +356,7 @@ export function useArchiveDatabase() {
         WHERE sha256_hash IS NOT NULL AND sha256_hash = spine.sha256_hash
         LIMIT 1
       ) cel ON true
+      WHERE spine.aircraft_id IS NOT NULL
       ORDER BY spine.event_time DESC NULLS LAST
       LIMIT ${limit} OFFSET ${offset}
     `);

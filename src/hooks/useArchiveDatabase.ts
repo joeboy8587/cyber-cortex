@@ -425,6 +425,7 @@ export function useArchiveDatabase() {
   }, []);
 
   return {
+    isLoading,
     error,
     connectionStatus,
     getForensicEvents,

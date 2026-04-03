@@ -63,7 +63,8 @@ export default function Surveillance() {
               </p>
             </div>
 
-            <TabsList className="grid h-auto grid-cols-2 gap-2 bg-transparent p-0 lg:grid-cols-9">
+            <TabsList className="grid h-auto grid-cols-2 gap-2 bg-transparent p-0 lg:grid-cols-10">
+              <TabsTrigger value="posse" className="text-destructive">⚖️ Posse</TabsTrigger>
               <TabsTrigger value="icao">ICAO/Shell</TabsTrigger>
               <TabsTrigger value="transponder">Transponder</TabsTrigger>
               <TabsTrigger value="auditor">Blind Audit</TabsTrigger>

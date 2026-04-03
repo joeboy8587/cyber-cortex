@@ -323,13 +323,13 @@ export function useArchiveDatabase() {
         ada.violation_type as legal_violation,
         ada.harm_severity as legal_section,
         cel.case_id,
-        (CASE WHEN f.detection_id IS NOT NULL THEN 1 ELSE 0 END
+        (CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END
          + CASE WHEN b.collapse_id IS NOT NULL THEN 1 ELSE 0 END
          + CASE WHEN ada.id IS NOT NULL THEN 1 ELSE 0 END
          + CASE WHEN cel.id IS NOT NULL THEN 1 ELSE 0 END) as modal_count
       FROM unified_timeline_enhanced spine
       LEFT JOIN LATERAL (
-        SELECT detection_id, altitude, speed, callsign
+        SELECT id, altitude, speed, callsign
         FROM live_flight_detections_rows
         WHERE registration = spine.aircraft_id
           AND ABS(EXTRACT(EPOCH FROM (detection_timestamp - spine.event_time))) < 1800

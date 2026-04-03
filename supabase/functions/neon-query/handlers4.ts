@@ -505,10 +505,10 @@ export async function handleAction4(action: string, body: Record<string, any>, s
           SELECT event_time::timestamptz as event_time,
                  'timeline' as modality,
                  COALESCE(aircraft_id, 'system') as entity,
-                 COALESCE(summary, event_type) as summary,
-                 confidence_score::numeric as metric_value,
+                 COALESCE(description, event_type) as summary,
+                 correlation_score::numeric as metric_value,
                  COALESCE(event_type, 'event') as category,
-                 CASE WHEN confidence_score > 80 THEN 'critical' WHEN confidence_score > 50 THEN 'high' ELSE 'normal' END as severity
+                 CASE WHEN correlation_score > 80 THEN 'critical' WHEN correlation_score > 50 THEN 'high' ELSE 'normal' END as severity
           FROM unified_timeline_enhanced
           WHERE event_time >= '${startDate}'::timestamptz
             AND event_time < '${endDate}'::timestamptz

@@ -610,7 +610,7 @@ export async function handleAction4(action: string, body: Record<string, any>, s
         // 1. All detections for target registrations
         sql.unsafe(`
           SELECT registration, callsign, detection_timestamp, 
-                 altitude, ground_speed, latitude, longitude,
+                 altitude, speed, latitude, longitude,
                  icao_code, flagged
           FROM live_flight_detections_rows
           WHERE registration IN (${regList})

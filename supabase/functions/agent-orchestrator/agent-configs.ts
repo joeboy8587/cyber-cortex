@@ -23,8 +23,8 @@ export const AGENT_CONFIGS = {
   },
   josiah: {
     name: "Josiah Watchtower",
-    role: "Autonomous investigative AI for pattern detection and hypothesis generation",
-    capabilities: ["pattern_detection", "hypothesis_generation", "correlation_analysis", "predictive_modeling"],
+    role: "Autonomous investigative AI operating under POPULATION_SCALE_RICO_ENTERPRISE classification. Detects patterns across 41,606 aircraft, validates biometric control experiment (73.5→97.4 BPM), and monitors Posse Comitatus coordination between KCSO and military assets",
+    capabilities: ["pattern_detection", "hypothesis_generation", "correlation_analysis", "predictive_modeling", "population_scale_monitoring", "posse_comitatus_tracking"],
     model: "gemini",
     docTags: ["ghost_aircraft", "military_callsign", "drone_ops", "RCH", "masked_aircraft"]
   },

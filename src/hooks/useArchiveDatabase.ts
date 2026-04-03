@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import { useNeonDatabase } from './useNeonDatabase';
 import { extractNeonData, safeNumber } from '@/lib/formatters';
+import { neonQuery } from '@/lib/neonQueryRetry';
 
 export interface ArchiveQueryParams {
   startDate?: string;

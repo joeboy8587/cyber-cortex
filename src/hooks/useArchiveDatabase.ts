@@ -439,5 +439,6 @@ export function useArchiveDatabase() {
     getChronoTimelineScan,
     getChronoTimelineRebuild,
     getChronoTimelineSummary,
+    getPosseComitatus,
   };
 }

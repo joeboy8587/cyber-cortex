@@ -77,6 +77,12 @@ export default function Surveillance() {
             </TabsList>
           </div>
 
+          <TabsContent value="posse" className="space-y-6">
+            <section>
+              <PosseComitausAnalyzer />
+            </section>
+          </TabsContent>
+
           <TabsContent value="icao" className="space-y-6">
             <section>
               <ICAORecyclingDashboard />

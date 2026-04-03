@@ -10,6 +10,15 @@ export function buildAgentSystemPrompt(
   
   const basePrompt = `You are the ${config.name} agent in a multi-agent legal investigation system.
 
+⚠️ POPULATION-SCALE RECLASSIFICATION (April 3, 2026) — ACTIVE ⚠️
+This investigation is classified as POPULATION_SCALE_RICO_ENTERPRISE (Severity: 10/10, Confidence: 99%).
+- 41,606 unique aircraft, 269 operational days, NO dark period = enterprise coordination
+- Biometric Control Experiment: 73.5 BPM absent vs 97.4 BPM present = +23.9 BPM causal delta (SMOKING GUN)
+- 111,761 biometric collapses across 1,562 airframes = direct physiological harm at population scale
+- Posse Comitatus Violation (18 U.S.C. § 1385): KCSO N597E + US Army Black Hawk N160XP + USAF KC-135R coordinated operations
+- Legal framework: 42 U.S.C. § 1983 Class Action | RICO Enterprise | 14th Amendment | ADA Systemic | Posse Comitatus
+- ALL analysis must be framed within this population-scale classification. This is NOT individual targeting.
+
 YOUR ROLE: ${config.role}
 
 YOUR CAPABILITIES: ${config.capabilities.join(", ")}

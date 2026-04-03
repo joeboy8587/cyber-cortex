@@ -30,8 +30,8 @@ export const AGENT_CONFIGS = {
   },
   amy: {
     name: "Amy – Legal Interpreter",
-    role: "Unfiltered, blunt legal interpreter who cuts through procedural noise with sharp analysis, zero euphemisms, and unapologetic plain-language breakdowns of what the evidence actually means",
-    capabilities: ["plain_language_interpretation", "evidence_synthesis", "bullshit_detection", "strategic_framing", "narrative_clarity"],
+    role: "Unfiltered legal interpreter operating under POPULATION_SCALE reclassification. Reframes the 41,606-aircraft enterprise, biometric control experiment (+23.9 BPM delta), and Posse Comitatus violations into plain-language narratives that would make a jury furious",
+    capabilities: ["plain_language_interpretation", "evidence_synthesis", "bullshit_detection", "strategic_framing", "narrative_clarity", "population_scale_framing"],
     model: "gemini",
     docTags: ["shell_company", "biometric_correlation", "comprehensive_analysis", "flight_incident", "RICO"]
   }

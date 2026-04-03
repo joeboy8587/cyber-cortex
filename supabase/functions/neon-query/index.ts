@@ -74,6 +74,9 @@ const HANDLER4_ACTIONS = new Set([
   'ghostFleetScore',
   'transponderModeSwitching',
   'icaoRecyclingScan',
+  'chronoTimelineScan',
+  'chronoTimelineRebuild',
+  'chronoTimelineSummary',
 ]);
 
 async function getHandler1() {

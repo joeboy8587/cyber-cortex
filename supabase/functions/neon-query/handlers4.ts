@@ -404,6 +404,200 @@ export async function handleAction4(action: string, body: Record<string, any>, s
       };
     }
 
+    // ============== CHRONOLOGICAL TIMELINE REBUILD ==============
+    case 'chronoTimelineScan': {
+      // Discover all timeline-eligible tables with their date ranges and row counts
+      const tableProbes = await sql.unsafe(`
+        WITH candidates(tbl, ts_col) AS (VALUES
+          ('live_flight_detections_rows', 'detection_timestamp'),
+          ('biometric_monitoring', 'measurement_timestamp'),
+          ('biometric_threshold_collapses', 'collapse_timestamp'),
+          ('unified_timeline_enhanced', 'event_time'),
+          ('biometrics_unified', 'event_timestamp'),
+          ('biometric_data_rows', 'created_at'),
+          ('whoop_biometrics', 'timestamp'),
+          ('flight_detections_may_june', 'timestamp'),
+          ('comprehensive_timeline_events', 'event_date'),
+          ('josiah_event_log', 'timestamp'),
+          ('biometric_events', 'timestamp'),
+          ('biometric_logs_parsed', 'timestamp'),
+          ('integrated_biometric_data', 'timestamp'),
+          ('biometric_correlation_events', 'created_at'),
+          ('welltory_biometric_data', 'timestamp'),
+          ('aircraft_events', 'created_at'),
+          ('flight_events', 'created_at'),
+          ('surveillance_events', 'created_at'),
+          ('alert_logs', 'created_at'),
+          ('josiah_live_events', 'created_at'),
+          ('sentinel_alerts', 'created_at'),
+          ('watchtower_alerts', 'created_at'),
+          ('drone_swarm_events', 'created_at')
+        )
+        SELECT c.tbl, c.ts_col,
+               COALESCE(p.reltuples, -1)::bigint as est_rows
+        FROM candidates c
+        LEFT JOIN pg_class p ON p.relname = c.tbl
+        WHERE p.reltuples IS NOT NULL AND p.reltuples > 0
+        ORDER BY p.reltuples DESC
+      `);
+      return { data: tableProbes };
+    }
+
+    case 'chronoTimelineRebuild': {
+      // Build a unified chronological timeline across all major tables
+      // Uses UNION ALL with normalized columns, paginated
+      const page = parseInt(body.page || '0');
+      const pageSize = parseInt(body.pageSize || '100');
+      const offset = page * pageSize;
+      const startDate = body.startDate || '2025-01-01';
+      const endDate = body.endDate || '2027-01-01';
+      const modality = body.modality || 'all'; // 'all', 'flight', 'biometric', 'alert', 'legal'
+
+      let unionParts: string[] = [];
+
+      if (modality === 'all' || modality === 'flight') {
+        unionParts.push(`
+          SELECT detection_timestamp::timestamptz as event_time,
+                 'flight' as modality,
+                 COALESCE(registration, callsign, icao_code, 'unknown') as entity,
+                 COALESCE('Alt:' || altitude::text || 'ft Spd:' || speed::text || 'kt', 'detection') as summary,
+                 altitude::numeric as metric_value,
+                 COALESCE(taxonomy_tag, 'unclassified') as category,
+                 CASE WHEN flagged THEN 'critical' WHEN altitude < 1000 AND altitude > 0 THEN 'high' ELSE 'normal' END as severity
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp >= '${startDate}'::timestamptz
+            AND detection_timestamp < '${endDate}'::timestamptz
+            AND detection_timestamp IS NOT NULL
+        `);
+      }
+
+      if (modality === 'all' || modality === 'biometric') {
+        unionParts.push(`
+          SELECT measurement_timestamp::timestamptz as event_time,
+                 'biometric' as modality,
+                 'subject' as entity,
+                 COALESCE('HR:' || heart_rate::text || ' Stress:' || stress_level::text, 'reading') as summary,
+                 heart_rate::numeric as metric_value,
+                 CASE WHEN medical_alert THEN 'medical_alert' ELSE 'routine' END as category,
+                 CASE WHEN medical_alert THEN 'critical' WHEN stress_level > 70 THEN 'high' ELSE 'normal' END as severity
+          FROM biometric_monitoring
+          WHERE measurement_timestamp >= '${startDate}'::timestamptz
+            AND measurement_timestamp < '${endDate}'::timestamptz
+            AND measurement_timestamp IS NOT NULL
+        `);
+        unionParts.push(`
+          SELECT collapse_timestamp::timestamptz as event_time,
+                 'biometric_collapse' as modality,
+                 COALESCE(closest_aircraft_registration, 'unknown') as entity,
+                 COALESCE('HR:' || heart_rate::text || ' ' || medical_significance, 'collapse') as summary,
+                 heart_rate::numeric as metric_value,
+                 COALESCE(medical_significance, 'collapse') as category,
+                 'critical' as severity
+          FROM biometric_threshold_collapses
+          WHERE collapse_timestamp >= '${startDate}'::timestamptz
+            AND collapse_timestamp < '${endDate}'::timestamptz
+            AND collapse_timestamp IS NOT NULL
+        `);
+      }
+
+      if (modality === 'all' || modality === 'alert') {
+        unionParts.push(`
+          SELECT event_time::timestamptz as event_time,
+                 'timeline' as modality,
+                 COALESCE(aircraft_id, 'system') as entity,
+                 COALESCE(summary, event_type) as summary,
+                 confidence_score::numeric as metric_value,
+                 COALESCE(event_type, 'event') as category,
+                 CASE WHEN confidence_score > 80 THEN 'critical' WHEN confidence_score > 50 THEN 'high' ELSE 'normal' END as severity
+          FROM unified_timeline_enhanced
+          WHERE event_time >= '${startDate}'::timestamptz
+            AND event_time < '${endDate}'::timestamptz
+            AND event_time IS NOT NULL
+        `);
+      }
+
+      if (unionParts.length === 0) {
+        return { data: [], total: 0 };
+      }
+
+      const unionQuery = unionParts.join(' UNION ALL ');
+
+      const rows = await sql.unsafe(`
+        SET statement_timeout = '25s';
+        SELECT event_time, modality, entity, summary, metric_value, category, severity
+        FROM (${unionQuery}) unified
+        ORDER BY event_time DESC
+        LIMIT ${pageSize} OFFSET ${offset}
+      `);
+
+      // Get total count estimate
+      const countResult = await sql.unsafe(`
+        SELECT (
+          ${modality === 'all' || modality === 'flight' ? `(SELECT reltuples FROM pg_class WHERE relname='live_flight_detections_rows')` : '0'}
+          + ${modality === 'all' || modality === 'biometric' ? `(SELECT COALESCE(reltuples,0) FROM pg_class WHERE relname='biometric_monitoring') + (SELECT COALESCE(reltuples,0) FROM pg_class WHERE relname='biometric_threshold_collapses')` : '0'}
+          + ${modality === 'all' || modality === 'alert' ? `(SELECT COALESCE(reltuples,0) FROM pg_class WHERE relname='unified_timeline_enhanced')` : '0'}
+        )::bigint as total_estimate
+      `);
+
+      return { data: rows, totalEstimate: parseInt(String(countResult[0]?.total_estimate || '0')) };
+    }
+
+    case 'chronoTimelineSummary': {
+      // Monthly breakdown across all modalities
+      const startDate = body.startDate || '2025-01-01';
+      const endDate = body.endDate || '2027-01-01';
+
+      const monthly = await sql.unsafe(`
+        SET statement_timeout = '25s';
+        SELECT * FROM (
+          SELECT date_trunc('month', detection_timestamp)::date as month,
+                 'flight' as modality,
+                 COUNT(*)::int as event_count
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp >= '${startDate}'::timestamptz
+            AND detection_timestamp < '${endDate}'::timestamptz
+            AND detection_timestamp IS NOT NULL
+          GROUP BY 1
+
+          UNION ALL
+
+          SELECT date_trunc('month', measurement_timestamp)::date as month,
+                 'biometric' as modality,
+                 COUNT(*)::int as event_count
+          FROM biometric_monitoring
+          WHERE measurement_timestamp >= '${startDate}'::timestamptz
+            AND measurement_timestamp < '${endDate}'::timestamptz
+            AND measurement_timestamp IS NOT NULL
+          GROUP BY 1
+
+          UNION ALL
+
+          SELECT date_trunc('month', collapse_timestamp)::date as month,
+                 'biometric_collapse' as modality,
+                 COUNT(*)::int as event_count
+          FROM biometric_threshold_collapses
+          WHERE collapse_timestamp >= '${startDate}'::timestamptz
+            AND collapse_timestamp < '${endDate}'::timestamptz
+            AND collapse_timestamp IS NOT NULL
+          GROUP BY 1
+
+          UNION ALL
+
+          SELECT date_trunc('month', event_time)::date as month,
+                 'timeline' as modality,
+                 COUNT(*)::int as event_count
+          FROM unified_timeline_enhanced
+          WHERE event_time >= '${startDate}'::timestamptz
+            AND event_time < '${endDate}'::timestamptz
+            AND event_time IS NOT NULL
+          GROUP BY 1
+        ) combined
+        ORDER BY month ASC, modality
+      `);
+
+      return { data: monthly };
+    }
+
     default:
       return null;
   }

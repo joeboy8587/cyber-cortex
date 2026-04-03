@@ -46,6 +46,11 @@ export default function DataTools() {
           </div>
         </div>
 
+        {/* Chronological Timeline Rebuilder - cross-table timeline */}
+        <section>
+          <ChronologicalTimelineRebuilder />
+        </section>
+
         {/* Live DB Health Monitor - top priority */}
         <section>
           <DBHealthMonitor />

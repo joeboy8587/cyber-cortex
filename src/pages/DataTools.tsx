@@ -25,6 +25,8 @@ import FlaggedAircraftImporter from "@/components/dashboard/FlaggedAircraftImpor
 import { NotionFullSyncPanel } from "@/components/dashboard/NotionFullSyncPanel";
 import { ArchiveConsolidationPanel } from "@/components/dashboard/ArchiveConsolidationPanel";
 
+import { ChronologicalTimelineRebuilder } from "@/components/dashboard/ChronologicalTimelineRebuilder";
+
 export default function DataTools() {
   return (
     <DashboardLayout>

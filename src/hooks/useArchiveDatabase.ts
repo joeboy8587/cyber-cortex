@@ -386,40 +386,32 @@ export function useArchiveDatabase() {
 
   // ===== Chronological Timeline Rebuild =====
   const getChronoTimelineScan = useCallback(async () => {
-    const data = await customQuery(`chronoTimelineScan`, 'chronoTimelineScan' as any);
+    const { data } = await neonQuery({ action: 'chronoTimelineScan' });
     return extractNeonData(data);
-  }, [customQuery]);
+  }, []);
 
   const getChronoTimelineRebuild = useCallback(async (params: {
     page?: number; pageSize?: number; startDate?: string; endDate?: string; modality?: string;
   } = {}) => {
-    const body = {
+    const { data } = await neonQuery({
       action: 'chronoTimelineRebuild',
       page: params.page || 0,
       pageSize: params.pageSize || 100,
       startDate: params.startDate || '2025-01-01',
       endDate: params.endDate || '2027-01-01',
       modality: params.modality || 'all',
-    };
-    const data = await customQuery(
-      JSON.stringify(body),
-      'chronoTimelineRebuild' as any
-    );
+    });
     return data;
-  }, [customQuery]);
+  }, []);
 
   const getChronoTimelineSummary = useCallback(async (startDate?: string, endDate?: string) => {
-    const body = {
+    const { data } = await neonQuery({
       action: 'chronoTimelineSummary',
       startDate: startDate || '2025-01-01',
       endDate: endDate || '2027-01-01',
-    };
-    const data = await customQuery(
-      JSON.stringify(body),
-      'chronoTimelineSummary' as any
-    );
+    });
     return data;
-  }, [customQuery]);
+  }, []);
 
   return {
     isLoading,

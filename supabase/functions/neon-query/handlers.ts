@@ -129,18 +129,32 @@ export async function handleAction(action: string, body: Record<string, any>, sq
               ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as avg_altitude_ft,
               ROUND(((SUM(CASE WHEN altitude < 1500 AND altitude > 0 THEN 1 ELSE 0 END)::numeric / NULLIF(COUNT(*), 0)) * 100), 1) as low_altitude_pct,
               SUM(CASE WHEN COALESCE(speed, 0) < 80 THEN 1 ELSE 0 END) as loiter_count,
-              BOOL_OR(callsign ILIKE '%MED%' OR callsign ILIKE '%LIFE%' OR callsign ILIKE '%MERCY%' OR callsign ILIKE '%REACH%' OR callsign ILIKE '%CARE%' OR callsign ILIKE '%PHI%' OR callsign ILIKE '%CAL%' OR callsign ILIKE '%AIR%') as medical_mission_logged,
+              BOOL_OR(
+                callsign ILIKE 'MED%' OR callsign ILIKE 'LIFE%' OR callsign ILIKE 'MERCY%'
+                OR callsign ILIKE 'REACH%' OR callsign ILIKE 'CARE%' OR callsign ILIKE 'EVAC%'
+                OR callsign ILIKE 'AIR1%' OR callsign ILIKE 'AMB%' OR callsign ILIKE 'MEDEVAC%'
+                OR callsign ILIKE 'PHI%'
+              ) as medical_mission_logged,
               MIN(COALESCE(detection_timestamp, created_at)) as first_detection,
               MAX(COALESCE(detection_timestamp, created_at)) as last_detection
             FROM live_flight_detections_rows
             WHERE registration IS NOT NULL AND registration != ''
-              AND (taxonomy_tag IN ('xxb_medical_air', 'xxb_tier1_priority')
+              AND latitude BETWEEN 35.25 AND 35.55
+              AND longitude BETWEEN -119.25 AND -118.85
+              AND registration NOT IN ('N912KC','N913KC','N597E')
+              AND (
+                taxonomy_tag IN ('xxb_medical_air', 'xxb_tier1_priority')
+                OR registration ~ '^N[0-9]+AM$'
                 OR registration ~ '^N[0-9]+RX$'
-                OR callsign ILIKE '%MED%' OR callsign ILIKE '%LIFE%' OR callsign ILIKE '%MERCY%'
-                OR callsign ILIKE '%REACH%' OR callsign ILIKE '%PHI%' OR callsign ILIKE '%CARE%'
-                OR callsign ILIKE '%CAL%' OR callsign ILIKE '%AIR1%' OR callsign ILIKE '%EVAC%'
-                OR callsign ~ '^N[0-9]+AM$')
-            GROUP BY registration HAVING COUNT(*) > 2
+                OR registration ILIKE 'N%FF'
+                OR registration ILIKE 'N%HP'
+                OR callsign ILIKE 'MED%' OR callsign ILIKE 'LIFE%' OR callsign ILIKE 'MERCY%'
+                OR callsign ILIKE 'REACH%' OR callsign ILIKE 'CARE%' OR callsign ILIKE 'EVAC%'
+                OR callsign ILIKE 'AIR1%' OR callsign ILIKE 'AMB%' OR callsign ILIKE 'MEDEVAC%'
+                OR callsign ILIKE 'PHI%' OR callsign ILIKE 'REH%'
+              )
+            GROUP BY registration HAVING COUNT(*) > 5
+              AND AVG(COALESCE(altitude, 0)) < 8000
             ORDER BY COUNT(*) DESC LIMIT 50
           ), scored AS (
             SELECT ROW_NUMBER() OVER () as id, operator_name, aircraft_tail, detection_count,
@@ -188,10 +202,15 @@ export async function handleAction(action: string, body: Record<string, any>, sq
       try {
         const count = await sql`SELECT COUNT(DISTINCT registration) as c FROM live_flight_detections_rows
           WHERE registration IS NOT NULL AND registration != ''
-          AND (taxonomy_tag IN ('xxb_medical_air','xxb_tier1_priority','medical_air','tier1_priority') OR registration ~ '^N[0-9]+RX$'
-            OR callsign ILIKE '%MED%' OR callsign ILIKE '%LIFE%' OR callsign ILIKE '%MERCY%'
-            OR callsign ILIKE '%REACH%' OR callsign ILIKE '%PHI%' OR callsign ILIKE '%CARE%'
-            OR callsign ILIKE '%CAL%' OR callsign ILIKE '%AIR1%' OR callsign ILIKE '%EVAC%')`;
+          AND latitude BETWEEN 35.25 AND 35.55
+          AND longitude BETWEEN -119.25 AND -118.85
+          AND registration NOT IN ('N912KC','N913KC','N597E')
+          AND (taxonomy_tag IN ('xxb_medical_air','xxb_tier1_priority','medical_air','tier1_priority')
+            OR registration ~ '^N[0-9]+RX$' OR registration ~ '^N[0-9]+AM$'
+            OR callsign ILIKE 'MED%' OR callsign ILIKE 'LIFE%' OR callsign ILIKE 'MERCY%'
+            OR callsign ILIKE 'REACH%' OR callsign ILIKE 'CARE%' OR callsign ILIKE 'EVAC%'
+            OR callsign ILIKE 'AIR1%' OR callsign ILIKE 'AMB%' OR callsign ILIKE 'PHI%'
+            OR callsign ILIKE 'REH%')`;
         return { data: { alignmentRecordsCreated: parseInt(count[0]?.c || '0') } };
       } catch { return { data: { alignmentRecordsCreated: 0 } }; }
     }

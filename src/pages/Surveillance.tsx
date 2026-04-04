@@ -82,6 +82,12 @@ export default function Surveillance() {
             </TabsList>
           </div>
 
+          <TabsContent value="identity" className="space-y-6">
+            <section>
+              <IcaoIdentityCleanup />
+            </section>
+          </TabsContent>
+
           <TabsContent value="ifr" className="space-y-6">
             <section>
               <IFRSurveillanceDetector />

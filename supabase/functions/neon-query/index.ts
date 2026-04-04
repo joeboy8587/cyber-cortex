@@ -82,6 +82,7 @@ const HANDLER4_ACTIONS = new Set([
   'getFAARegistry',
   'ifrSurveillanceDetection',
   'icaoIdentityCleanup',
+  'ghostAircraftForensics',
 ]);
 
 async function getHandler1() {

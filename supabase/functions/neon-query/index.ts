@@ -80,6 +80,7 @@ const HANDLER4_ACTIONS = new Set([
   'posseComitatus',
   'upsertFAARecords',
   'getFAARegistry',
+  'ifrSurveillanceDetection',
 ]);
 
 async function getHandler1() {

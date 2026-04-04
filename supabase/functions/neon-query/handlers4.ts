@@ -821,6 +821,157 @@ export async function handleAction4(action: string, body: Record<string, any>, s
       return { records: data, count: data.length };
     }
 
+    case 'ifrSurveillanceDetection': {
+      const timeWindow = body.timeWindow || '30 days';
+      const kernOnly = body.kernCountyOnly !== false;
+      const geoFilter = kernOnly
+        ? `AND latitude BETWEEN 35.0 AND 36.0 AND longitude BETWEEN -119.5 AND -118.0`
+        : '';
+
+      // IFR Approach Category thresholds (KIAS)
+      // CAT A: < 91 kts | CAT B: 91-120 | CAT C: 121-140 | CAT D: 141-165 | CAT E: > 165
+      // Surveillance signatures: hover (<5 kts), sub-stall (<40 kts), loiter (<60 kts at <1000ft)
+
+      const [surveillanceHits, categoryBreakdown, topOffenders, recentFlags] = await Promise.all([
+        // 1. Aircraft with impossible/surveillance speed profiles
+        sql.unsafe(`
+          SELECT
+            registration,
+            COUNT(*)::int as total_detections,
+            COUNT(CASE WHEN speed < 5 THEN 1 END)::int as hover_detections,
+            COUNT(CASE WHEN speed BETWEEN 5 AND 40 THEN 1 END)::int as sub_stall_detections,
+            COUNT(CASE WHEN speed BETWEEN 40 AND 60 AND altitude < 1000 THEN 1 END)::int as loiter_detections,
+            COUNT(CASE WHEN speed < 60 AND altitude < 1000 THEN 1 END)::int as surveillance_total,
+            ROUND(AVG(NULLIF(speed, 0))::numeric, 1) as avg_speed,
+            ROUND(AVG(NULLIF(altitude, 0))::numeric, 0)::int as avg_altitude,
+            MIN(NULLIF(speed, 0))::numeric as min_speed,
+            MIN(NULLIF(altitude, 0))::int as min_altitude,
+            MAX(detection_timestamp)::text as last_seen,
+            MIN(detection_timestamp)::text as first_seen,
+            CASE
+              WHEN COUNT(CASE WHEN speed < 5 THEN 1 END) > 0 THEN 'HOVER_SURVEILLANCE'
+              WHEN COUNT(CASE WHEN speed BETWEEN 5 AND 40 THEN 1 END) > 5 THEN 'SUB_STALL_IMPOSSIBLE'
+              WHEN COUNT(CASE WHEN speed < 60 AND altitude < 500 THEN 1 END) > 10 THEN 'LOW_SLOW_LOITER'
+              ELSE 'PATTERN_ANOMALY'
+            END as surveillance_classification
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() - INTERVAL '${timeWindow}'
+            AND speed IS NOT NULL AND speed >= 0
+            AND altitude IS NOT NULL AND altitude > 0
+            AND altitude < 3000
+            AND (speed < 60 OR (speed < 91 AND altitude < 500))
+            ${geoFilter}
+          GROUP BY registration
+          HAVING COUNT(CASE WHEN speed < 60 AND altitude < 1000 THEN 1 END) > 0
+          ORDER BY COUNT(CASE WHEN speed < 60 AND altitude < 1000 THEN 1 END) DESC
+          LIMIT 50
+        `),
+
+        // 2. IFR category distribution for all low-altitude traffic
+        sql.unsafe(`
+          SELECT
+            CASE
+              WHEN speed < 5 THEN 'HOVER (0-5 kts)'
+              WHEN speed < 40 THEN 'SUB-STALL (5-40 kts)'
+              WHEN speed < 91 THEN 'CAT A (<91 kts)'
+              WHEN speed < 121 THEN 'CAT B (91-120 kts)'
+              WHEN speed < 141 THEN 'CAT C (121-140 kts)'
+              WHEN speed < 166 THEN 'CAT D (141-165 kts)'
+              ELSE 'CAT E (165+ kts)'
+            END as ifr_category,
+            COUNT(*)::int as detections,
+            COUNT(DISTINCT registration)::int as unique_aircraft,
+            ROUND(AVG(altitude)::numeric, 0)::int as avg_alt,
+            MIN(altitude)::int as min_alt
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() - INTERVAL '${timeWindow}'
+            AND speed IS NOT NULL AND speed >= 0
+            AND altitude IS NOT NULL AND altitude > 0
+            AND altitude < 3000
+            ${geoFilter}
+          GROUP BY ifr_category
+          ORDER BY
+            CASE
+              WHEN speed < 5 THEN 1
+              WHEN speed < 40 THEN 2
+              WHEN speed < 91 THEN 3
+              WHEN speed < 121 THEN 4
+              WHEN speed < 141 THEN 5
+              WHEN speed < 166 THEN 6
+              ELSE 7
+            END
+        `),
+
+        // 3. Top offenders with FAA registry cross-ref
+        sql.unsafe(`
+          SELECT
+            d.registration,
+            COUNT(*)::int as surveillance_detections,
+            ROUND(AVG(d.speed)::numeric, 1) as avg_speed,
+            ROUND(AVG(d.altitude)::numeric, 0)::int as avg_altitude,
+            MIN(d.speed)::numeric as min_speed,
+            MIN(d.altitude)::int as min_altitude,
+            f.registrant_name,
+            f.aircraft_model,
+            f.registrant_city,
+            f.registrant_state,
+            f.classification
+          FROM live_flight_detections_rows d
+          LEFT JOIN faa_aircraft_registry f ON d.registration = f.n_number
+          WHERE d.detection_timestamp > NOW() - INTERVAL '${timeWindow}'
+            AND d.speed IS NOT NULL AND d.speed < 60
+            AND d.altitude IS NOT NULL AND d.altitude > 0 AND d.altitude < 1500
+            ${geoFilter.replace(/AND /g, 'AND d.')}
+          GROUP BY d.registration, f.registrant_name, f.aircraft_model, f.registrant_city, f.registrant_state, f.classification
+          HAVING COUNT(*) >= 3
+          ORDER BY COUNT(*) DESC
+          LIMIT 25
+        `),
+
+        // 4. Most recent surveillance-pattern detections
+        sql.unsafe(`
+          SELECT
+            registration,
+            speed,
+            altitude,
+            latitude,
+            longitude,
+            detection_timestamp::text as timestamp,
+            CASE
+              WHEN speed < 5 THEN 'HOVER'
+              WHEN speed < 40 THEN 'SUB-STALL'
+              WHEN speed < 60 THEN 'LOITER'
+              ELSE 'LOW-SLOW'
+            END as pattern_type
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() - INTERVAL '7 days'
+            AND speed IS NOT NULL AND speed < 60
+            AND altitude IS NOT NULL AND altitude > 0 AND altitude < 1500
+            ${geoFilter}
+          ORDER BY detection_timestamp DESC
+          LIMIT 100
+        `)
+      ]);
+
+      const totalSurveillanceHits = surveillanceHits.reduce((sum: number, r: any) => sum + r.surveillance_total, 0);
+      const hoverCount = surveillanceHits.reduce((sum: number, r: any) => sum + r.hover_detections, 0);
+      const subStallCount = surveillanceHits.reduce((sum: number, r: any) => sum + r.sub_stall_detections, 0);
+
+      return {
+        summary: {
+          totalSurveillanceDetections: totalSurveillanceHits,
+          hoverDetections: hoverCount,
+          subStallDetections: subStallCount,
+          uniqueAircraft: surveillanceHits.length,
+          timeWindow
+        },
+        surveillanceAircraft: surveillanceHits,
+        ifrCategoryBreakdown: categoryBreakdown,
+        topOffenders,
+        recentFlags
+      };
+    }
+
     default:
       return null;
   }

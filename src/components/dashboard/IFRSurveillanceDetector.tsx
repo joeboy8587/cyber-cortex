@@ -7,7 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
 import { Alert, AlertDescription } from '../ui/alert';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { toast } from 'sonner';
-import { useNeonDatabase } from '@/hooks/useNeonDatabase';
+import { supabase } from '@/integrations/supabase/client';
 import {
   Plane,
   AlertTriangle,

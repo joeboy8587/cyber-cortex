@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { CyberPanel } from "@/components/ui/cyber-panel";
 import { Microscope, XCircle, Eye, EyeOff, AlertTriangle, Loader2, Network, Shield } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { supabase } from "@/integrations/supabase/client";
+import { neonQuery } from "@/lib/neonQueryRetry";
 import { extractNeonData, safeNumber } from "@/lib/formatters";
 
 interface HypothesisTest {
@@ -54,8 +54,8 @@ export function NullHypothesisPanel() {
   useEffect(() => {
     const loadData = async () => {
       try {
-        const { data: config } = await supabase.functions.invoke("neon-query", {
-          body: { action: "getInvestigationConfig" }
+        const { data: config } = await neonQuery({
+          action: "getInvestigationConfig"
         });
 
         const metrics = config?.hypothesis_metrics || {};
@@ -116,11 +116,9 @@ export function NullHypothesisPanel() {
         for (const aircraft of kcsoFleet) {
           const reg = aircraft.tail_number;
           if (!reg) continue;
-          const { data: detData } = await supabase.functions.invoke("neon-query", {
-            body: {
+          const { data: detData } = await neonQuery({
               action: "customQuery",
               query: `SELECT COUNT(*) as count FROM live_flight_detections_rows WHERE registration = '${reg.replace(/[^a-zA-Z0-9]/g, '')}' LIMIT 1`
-            }
           });
           const detCount = safeNumber(extractNeonData(detData)?.[0]?.count);
           if (detCount < 10) {

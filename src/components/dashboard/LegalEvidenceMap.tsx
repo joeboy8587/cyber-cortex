@@ -47,51 +47,43 @@ export function LegalEvidenceMap() {
   const fetchEvidenceMap = async () => {
     setLoading(true);
     try {
-      // Query for primary evidence counts
-      const primaryQuery = await supabase.functions.invoke('neon-query', {
-        body: {
+      // Use pg_class.reltuples for fast estimates on large tables
+      const [primaryQuery, correlationQuery, contextualQuery] = await Promise.all([
+        neonQuery({
           action: 'customQuery',
           query: `
             SELECT 
-              (SELECT COUNT(*) FROM live_flight_detections_rows) as flight_count,
-              (SELECT COUNT(*) FROM biometric_monitoring) as biometric_count,
-              (SELECT COUNT(*) FROM screenshot_ocr_data) as screenshot_count,
-              (SELECT COUNT(*) FROM forensic_file_registry) as forensic_count
+              (SELECT GREATEST(reltuples,0)::bigint FROM pg_class WHERE relname='live_flight_detections_rows') as flight_count,
+              (SELECT GREATEST(reltuples,0)::bigint FROM pg_class WHERE relname='biometric_monitoring') as biometric_count,
+              (SELECT GREATEST(reltuples,0)::bigint FROM pg_class WHERE relname='screenshot_ocr_data') as screenshot_count,
+              (SELECT GREATEST(reltuples,0)::bigint FROM pg_class WHERE relname='forensic_file_registry') as forensic_count
           `
-        }
-      });
-
-      // Query for correlation evidence
-      const correlationQuery = await supabase.functions.invoke('neon-query', {
-        body: {
+        }),
+        neonQuery({
           action: 'customQuery',
           query: `
             SELECT 
-              (SELECT COUNT(*) FROM josiah_reflections_rows) as reflections_count,
-              (SELECT COUNT(*) FROM josiah_unified_embeddings) as embeddings_count,
-              (SELECT COUNT(*) FROM josiah_timeline) as timeline_count,
-              0 as correlation_count
+              (SELECT GREATEST(reltuples,0)::bigint FROM pg_class WHERE relname='josiah_reflections_rows') as reflections_count,
+              (SELECT GREATEST(reltuples,0)::bigint FROM pg_class WHERE relname='josiah_unified_embeddings') as embeddings_count,
+              (SELECT GREATEST(reltuples,0)::bigint FROM pg_class WHERE relname='josiah_timeline') as timeline_count,
+              (SELECT GREATEST(reltuples,0)::bigint FROM pg_class WHERE relname='realtime_correlation_log') as correlation_count
           `
-        }
-      });
-
-      // Query for contextual evidence
-      const contextualQuery = await supabase.functions.invoke('neon-query', {
-        body: {
+        }),
+        neonQuery({
           action: 'customQuery',
           query: `
             SELECT 
-              (SELECT COUNT(*) FROM aircraft_registry_enriched) as registry_count,
-              (SELECT COUNT(*) FROM shell_companies) as shell_count,
-              0 as kcso_count,
-              (SELECT COUNT(*) FROM criminal_enterprise_command_structure) as enterprise_count
+              (SELECT GREATEST(reltuples,0)::bigint FROM pg_class WHERE relname='aircraft_registry_enriched') as registry_count,
+              (SELECT GREATEST(reltuples,0)::bigint FROM pg_class WHERE relname='shell_companies') as shell_count,
+              (SELECT GREATEST(reltuples,0)::bigint FROM pg_class WHERE relname='kcso_fleet_enhanced') as kcso_count,
+              (SELECT GREATEST(reltuples,0)::bigint FROM pg_class WHERE relname='criminal_enterprise_command_structure') as enterprise_count
           `
-        }
-      });
+        })
+      ]);
 
-      const primary = primaryQuery.data?.results?.[0] || {};
-      const correlation = correlationQuery.data?.results?.[0] || {};
-      const contextual = contextualQuery.data?.results?.[0] || {};
+      const primary = primaryQuery?.results?.[0] || {};
+      const correlation = correlationQuery?.results?.[0] || {};
+      const contextual = contextualQuery?.results?.[0] || {};
 
       const primaryTotal = 
         parseInt(primary.flight_count || '0') +

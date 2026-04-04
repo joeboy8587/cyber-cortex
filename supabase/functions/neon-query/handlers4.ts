@@ -1123,8 +1123,9 @@ export async function handleAction4(action: string, body: Record<string, any>, s
 
     case 'ghostAircraftForensics': {
       const days = body.days || 30;
-      const step = body.step || 'analyze'; // 'addColumns', 'analyze', 'operatorAttribution', 'maskingTimeline'
+      const step = body.step || 'analyze';
       const tf = `detection_timestamp > NOW() - INTERVAL '${days} days'`;
+      const TRACKED = `'N912KC','N913KC','N597E','N743AM','N478CA','N4691R','N6196P','N224AM','N184AM','N229AM','N328DS','N10XSY'`;
 
       await sql.unsafe(`SET statement_timeout = '25s'`);
 
@@ -1133,7 +1134,6 @@ export async function handleAction4(action: string, body: Record<string, any>, s
           await sql.unsafe(`ALTER TABLE live_flight_detections_rows ADD COLUMN IF NOT EXISTS position_source TEXT`);
           await sql.unsafe(`ALTER TABLE live_flight_detections_rows ADD COLUMN IF NOT EXISTS sensor_id TEXT`);
           await sql.unsafe(`ALTER TABLE live_flight_detections_rows ADD COLUMN IF NOT EXISTS track_segment_id TEXT`);
-          // Infer position_source from existing data
           const inferred = await sql.unsafe(`
             UPDATE live_flight_detections_rows
             SET position_source = CASE
@@ -1151,7 +1151,6 @@ export async function handleAction4(action: string, body: Record<string, any>, s
       }
 
       if (step === 'analyze') {
-        // Ghost aircraft = no identity fields populated
         const [ghostOverview, ghostByDay, topGhostProfiles, knownOperatorsInGhosts] = await Promise.all([
           sql.unsafe(`
             SELECT
@@ -1192,14 +1191,13 @@ export async function handleAction4(action: string, body: Record<string, any>, s
             GROUP BY callsign, mlat_taxonomy
             ORDER BY detections DESC LIMIT 20
           `),
-          // Find known operators that also appear as ghosts (same coords ±5min)
           sql.unsafe(`
             SELECT d1.registration, COUNT(*)::int as ghost_adjacent_count,
               MIN(d1.altitude)::int as min_alt,
               ROUND(AVG(d1.altitude)::numeric)::int as avg_alt
             FROM live_flight_detections_rows d1
             WHERE ${tf.replace(/detection_timestamp/g, 'd1.detection_timestamp')}
-              AND d1.registration IN ('N912KC','N913KC','N597E','N743AM','N478CA','N4691R','N6196P')
+              AND d1.registration IN (${TRACKED})
               AND d1.altitude < 1500
             GROUP BY d1.registration
             ORDER BY ghost_adjacent_count DESC
@@ -1216,7 +1214,6 @@ export async function handleAction4(action: string, body: Record<string, any>, s
       }
 
       if (step === 'operatorAttribution') {
-        // Match ghost detections to known operators by proximity (same lat/lng ±0.01, same hour)
         const attribution = await sql.unsafe(`
           WITH ghost_windows AS (
             SELECT detection_timestamp, latitude, longitude, altitude, speed, callsign
@@ -1252,7 +1249,6 @@ export async function handleAction4(action: string, body: Record<string, any>, s
       }
 
       if (step === 'maskingTimeline') {
-        // For known KCSO/AM aircraft, find time windows where they had identity vs didn't
         const timeline = await sql.unsafe(`
           SELECT registration,
             detection_timestamp::date as day,
@@ -1263,11 +1259,64 @@ export async function handleAction4(action: string, body: Record<string, any>, s
             ROUND(AVG(altitude)::numeric)::int as avg_alt
           FROM live_flight_detections_rows
           WHERE ${tf}
-            AND registration IN ('N912KC','N913KC','N597E','N743AM','N478CA','N4691R')
+            AND registration IN (${TRACKED})
           GROUP BY registration, detection_timestamp::date
           ORDER BY registration, day DESC
         `);
         return { maskingTimeline: timeline, days };
+      }
+
+      if (step === 'maskingHourly') {
+        const hourly = await sql.unsafe(`
+          SELECT registration,
+            EXTRACT(HOUR FROM detection_timestamp)::int as hour,
+            COUNT(*)::int as total_detections,
+            COUNT(CASE WHEN icao24 IS NOT NULL AND icao24 != '' THEN 1 END)::int as with_identity,
+            COUNT(CASE WHEN icao24 IS NULL OR icao24 = '' THEN 1 END)::int as without_identity,
+            ROUND(AVG(altitude)::numeric)::int as avg_alt
+          FROM live_flight_detections_rows
+          WHERE ${tf}
+            AND registration IN (${TRACKED})
+          GROUP BY registration, EXTRACT(HOUR FROM detection_timestamp)
+          ORDER BY registration, hour
+        `);
+        return { maskingHourly: hourly, days };
+      }
+
+      if (step === 'exportEvidence') {
+        // Comprehensive evidence export for legal filings
+        const evidence = await sql.unsafe(`
+          SELECT
+            registration,
+            callsign,
+            icao24,
+            icao_code,
+            mlat_taxonomy,
+            detection_timestamp,
+            altitude,
+            speed,
+            heading,
+            latitude,
+            longitude,
+            taxonomy_tag,
+            CASE WHEN icao24 IS NOT NULL AND icao24 != '' THEN 'IDENTIFIED' ELSE 'GHOST' END as identity_status,
+            CASE
+              WHEN altitude < 500 THEN 'CRITICAL_LOW'
+              WHEN altitude < 1000 THEN 'LOW'
+              WHEN altitude < 2000 THEN 'MODERATE'
+              ELSE 'NORMAL'
+            END as altitude_class,
+            CASE
+              WHEN EXTRACT(HOUR FROM detection_timestamp) >= 22 OR EXTRACT(HOUR FROM detection_timestamp) < 5 THEN 'NIGHT_OPS'
+              ELSE 'DAY_OPS'
+            END as time_class
+          FROM live_flight_detections_rows
+          WHERE ${tf}
+            AND registration IN (${TRACKED})
+          ORDER BY registration, detection_timestamp
+          LIMIT 10000
+        `);
+        return { evidenceExport: evidence, count: evidence.length, days };
       }
 
       return { error: 'Unknown step: ' + step };

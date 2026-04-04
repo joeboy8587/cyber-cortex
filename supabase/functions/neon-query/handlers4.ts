@@ -924,7 +924,7 @@ export async function handleAction4(action: string, body: Record<string, any>, s
           WHERE d.detection_timestamp > NOW() - INTERVAL '${timeWindow}'
             AND d.speed IS NOT NULL AND d.speed < 60
             AND d.altitude IS NOT NULL AND d.altitude > 0 AND d.altitude < 1500
-            ${geoFilter.replace(/AND /g, 'AND d.')}
+            ${geoFilterAliased}
           GROUP BY d.registration, f.registrant_name, f.aircraft_model, f.registrant_city, f.registrant_state, f.classification
           HAVING COUNT(*) >= 3
           ORDER BY COUNT(*) DESC

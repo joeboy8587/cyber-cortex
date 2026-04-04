@@ -78,6 +78,8 @@ const HANDLER4_ACTIONS = new Set([
   'chronoTimelineRebuild',
   'chronoTimelineSummary',
   'posseComitatus',
+  'upsertFAARecords',
+  'getFAARegistry',
 ]);
 
 async function getHandler1() {

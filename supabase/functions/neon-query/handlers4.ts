@@ -827,6 +827,9 @@ export async function handleAction4(action: string, body: Record<string, any>, s
       const geoFilter = kernOnly
         ? `AND latitude BETWEEN 35.0 AND 36.0 AND longitude BETWEEN -119.5 AND -118.0`
         : '';
+      const geoFilterAliased = kernOnly
+        ? `AND d.latitude BETWEEN 35.0 AND 36.0 AND d.longitude BETWEEN -119.5 AND -118.0`
+        : '';
 
       // IFR Approach Category thresholds (KIAS)
       // CAT A: < 91 kts | CAT B: 91-120 | CAT C: 121-140 | CAT D: 141-165 | CAT E: > 165

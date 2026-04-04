@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { CyberPanel } from "@/components/ui/cyber-panel";
 import { Microscope, XCircle, Eye, EyeOff, AlertTriangle, Loader2, Network, Shield } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { supabase } from "@/integrations/supabase/client";
+import { neonQuery } from "@/lib/neonQueryRetry";
 import { extractNeonData, safeNumber } from "@/lib/formatters";
 
 interface HypothesisTest {

@@ -802,12 +802,13 @@ export async function handleAction4(action: string, body: Record<string, any>, s
 
       // Also cross-reference with flight detections
       const nNumbers = records.map((r: any) => r.n_number);
+      const placeholders = nNumbers.map((_: string, i: number) => `$${i + 1}`).join(',');
       const crossRef = await sql.unsafe(
         `SELECT registration, COUNT(*)::int as detection_count
          FROM live_flight_detections_rows
-         WHERE registration = ANY($1)
+         WHERE registration IN (${placeholders})
          GROUP BY registration`,
-        [nNumbers]
+        nNumbers
       );
 
       return { inserted, total: records.length, results, flightCrossReferences: crossRef };

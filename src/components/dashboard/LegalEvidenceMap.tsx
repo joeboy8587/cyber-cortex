@@ -81,9 +81,9 @@ export function LegalEvidenceMap() {
         })
       ]);
 
-      const primary = primaryQuery?.results?.[0] || {};
-      const correlation = correlationQuery?.results?.[0] || {};
-      const contextual = contextualQuery?.results?.[0] || {};
+      const primary = primaryQuery?.data?.results?.[0] || {};
+      const correlation = correlationQuery?.data?.results?.[0] || {};
+      const contextual = contextualQuery?.data?.results?.[0] || {};
 
       const primaryTotal = 
         parseInt(primary.flight_count || '0') +

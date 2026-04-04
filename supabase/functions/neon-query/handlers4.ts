@@ -702,6 +702,125 @@ export async function handleAction4(action: string, body: Record<string, any>, s
       };
     }
 
+    case 'upsertFAARecords': {
+      const records = body.records || [];
+      if (!records.length) return { inserted: 0, error: 'No records provided' };
+
+      // Create table if not exists
+      await sql`
+        CREATE TABLE IF NOT EXISTS faa_aircraft_registry (
+          id SERIAL PRIMARY KEY,
+          n_number TEXT UNIQUE NOT NULL,
+          serial_number TEXT,
+          status TEXT,
+          aircraft_manufacturer TEXT,
+          aircraft_model TEXT,
+          type_aircraft TEXT,
+          type_engine TEXT,
+          mode_s_code TEXT,
+          mode_s_hex TEXT,
+          year_manufactured INT,
+          registrant_type TEXT,
+          registrant_name TEXT,
+          registrant_street TEXT,
+          registrant_city TEXT,
+          registrant_state TEXT,
+          registrant_zip TEXT,
+          registrant_country TEXT,
+          engine_manufacturer TEXT,
+          engine_model TEXT,
+          classification TEXT,
+          certificate_issue_date TEXT,
+          expiration_date TEXT,
+          airworthiness_date TEXT,
+          fractional_owner BOOLEAN DEFAULT false,
+          source TEXT DEFAULT 'faa_pdf_upload',
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `;
+
+      let inserted = 0;
+      const results: any[] = [];
+      for (const r of records) {
+        try {
+          await sql`
+            INSERT INTO faa_aircraft_registry (
+              n_number, serial_number, status, aircraft_manufacturer, aircraft_model,
+              type_aircraft, type_engine, mode_s_code, mode_s_hex, year_manufactured,
+              registrant_type, registrant_name, registrant_street, registrant_city,
+              registrant_state, registrant_zip, registrant_country,
+              engine_manufacturer, engine_model, classification,
+              certificate_issue_date, expiration_date, airworthiness_date,
+              fractional_owner, source
+            ) VALUES (
+              ${r.n_number}, ${r.serial_number || null}, ${r.status || null},
+              ${r.aircraft_manufacturer || null}, ${r.aircraft_model || null},
+              ${r.type_aircraft || null}, ${r.type_engine || null},
+              ${r.mode_s_code || null}, ${r.mode_s_hex || null},
+              ${r.year_manufactured || null}, ${r.registrant_type || null},
+              ${r.registrant_name || null}, ${r.registrant_street || null},
+              ${r.registrant_city || null}, ${r.registrant_state || null},
+              ${r.registrant_zip || null}, ${r.registrant_country || null},
+              ${r.engine_manufacturer || null}, ${r.engine_model || null},
+              ${r.classification || null}, ${r.certificate_issue_date || null},
+              ${r.expiration_date || null}, ${r.airworthiness_date || null},
+              ${r.fractional_owner || false}, ${r.source || 'faa_pdf_upload'}
+            )
+            ON CONFLICT (n_number) DO UPDATE SET
+              serial_number = EXCLUDED.serial_number,
+              status = EXCLUDED.status,
+              aircraft_manufacturer = EXCLUDED.aircraft_manufacturer,
+              aircraft_model = EXCLUDED.aircraft_model,
+              type_aircraft = EXCLUDED.type_aircraft,
+              type_engine = EXCLUDED.type_engine,
+              mode_s_code = EXCLUDED.mode_s_code,
+              mode_s_hex = EXCLUDED.mode_s_hex,
+              year_manufactured = EXCLUDED.year_manufactured,
+              registrant_type = EXCLUDED.registrant_type,
+              registrant_name = EXCLUDED.registrant_name,
+              registrant_street = EXCLUDED.registrant_street,
+              registrant_city = EXCLUDED.registrant_city,
+              registrant_state = EXCLUDED.registrant_state,
+              registrant_zip = EXCLUDED.registrant_zip,
+              registrant_country = EXCLUDED.registrant_country,
+              engine_manufacturer = EXCLUDED.engine_manufacturer,
+              engine_model = EXCLUDED.engine_model,
+              classification = EXCLUDED.classification,
+              certificate_issue_date = EXCLUDED.certificate_issue_date,
+              expiration_date = EXCLUDED.expiration_date,
+              airworthiness_date = EXCLUDED.airworthiness_date,
+              fractional_owner = EXCLUDED.fractional_owner,
+              updated_at = NOW()
+          `;
+          inserted++;
+          results.push({ n_number: r.n_number, status: 'inserted' });
+        } catch (e: any) {
+          results.push({ n_number: r.n_number, status: 'error', error: e.message });
+        }
+      }
+
+      // Also cross-reference with flight detections
+      const nNumbers = records.map((r: any) => r.n_number);
+      const placeholders = nNumbers.map((_: string, i: number) => `$${i + 1}`).join(',');
+      const crossRef = await sql.unsafe(
+        `SELECT registration, COUNT(*)::int as detection_count
+         FROM live_flight_detections_rows
+         WHERE registration IN (${placeholders})
+         GROUP BY registration`,
+        nNumbers
+      );
+
+      return { inserted, total: records.length, results, flightCrossReferences: crossRef };
+    }
+
+    case 'getFAARegistry': {
+      const data = await sql`
+        SELECT * FROM faa_aircraft_registry ORDER BY updated_at DESC LIMIT 100
+      `;
+      return { records: data, count: data.length };
+    }
+
     default:
       return null;
   }

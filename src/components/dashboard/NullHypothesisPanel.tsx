@@ -54,8 +54,8 @@ export function NullHypothesisPanel() {
   useEffect(() => {
     const loadData = async () => {
       try {
-        const { data: config } = await supabase.functions.invoke("neon-query", {
-          body: { action: "getInvestigationConfig" }
+        const { data: config } = await neonQuery({
+          action: "getInvestigationConfig"
         });
 
         const metrics = config?.hypothesis_metrics || {};

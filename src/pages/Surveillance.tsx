@@ -80,6 +80,12 @@ export default function Surveillance() {
             </TabsList>
           </div>
 
+          <TabsContent value="ifr" className="space-y-6">
+            <section>
+              <IFRSurveillanceDetector />
+            </section>
+          </TabsContent>
+
           <TabsContent value="posse" className="space-y-6">
             <section>
               <PosseComitausAnalyzer />

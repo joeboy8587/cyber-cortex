@@ -133,7 +133,7 @@ export function LegalEvidenceMap() {
           status: 'PARTIAL'
         },
         totalRecords: primaryTotal + correlationTotal + contextualTotal,
-        tablesAudited: 238,
+        tablesAudited: tablesAudited || 238,
         overallIntegrity: 94
       });
 

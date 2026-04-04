@@ -87,7 +87,7 @@ export function LegalEvidenceMap() {
 
       const primary = primaryQuery?.data?.results?.[0] || {};
       const correlation = correlationQuery?.data?.results?.[0] || {};
-      const contextual = contextualQuery?.data?.results?.[0] || {};
+      const tablesAudited = parseInt(tableCountQuery?.data?.results?.[0]?.table_count || '0');
 
       const primaryTotal = 
         parseInt(primary.flight_count || '0') +

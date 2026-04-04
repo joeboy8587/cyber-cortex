@@ -827,6 +827,9 @@ export async function handleAction4(action: string, body: Record<string, any>, s
       const geoFilter = kernOnly
         ? `AND latitude BETWEEN 35.0 AND 36.0 AND longitude BETWEEN -119.5 AND -118.0`
         : '';
+      const geoFilterAliased = kernOnly
+        ? `AND d.latitude BETWEEN 35.0 AND 36.0 AND d.longitude BETWEEN -119.5 AND -118.0`
+        : '';
 
       // IFR Approach Category thresholds (KIAS)
       // CAT A: < 91 kts | CAT B: 91-120 | CAT C: 121-140 | CAT D: 141-165 | CAT E: > 165
@@ -889,17 +892,8 @@ export async function handleAction4(action: string, body: Record<string, any>, s
             AND altitude IS NOT NULL AND altitude > 0
             AND altitude < 3000
             ${geoFilter}
-          GROUP BY ifr_category
-          ORDER BY
-            CASE
-              WHEN speed < 5 THEN 1
-              WHEN speed < 40 THEN 2
-              WHEN speed < 91 THEN 3
-              WHEN speed < 121 THEN 4
-              WHEN speed < 141 THEN 5
-              WHEN speed < 166 THEN 6
-              ELSE 7
-            END
+          GROUP BY 1
+          ORDER BY MIN(speed)
         `),
 
         // 3. Top offenders with FAA registry cross-ref
@@ -921,7 +915,7 @@ export async function handleAction4(action: string, body: Record<string, any>, s
           WHERE d.detection_timestamp > NOW() - INTERVAL '${timeWindow}'
             AND d.speed IS NOT NULL AND d.speed < 60
             AND d.altitude IS NOT NULL AND d.altitude > 0 AND d.altitude < 1500
-            ${geoFilter.replace(/AND /g, 'AND d.')}
+            ${geoFilterAliased}
           GROUP BY d.registration, f.registrant_name, f.aircraft_model, f.registrant_city, f.registrant_state, f.classification
           HAVING COUNT(*) >= 3
           ORDER BY COUNT(*) DESC

@@ -109,6 +109,13 @@ export function LegalEvidenceMap() {
         parseInt(contextual.kcso_count || '0') +
         parseInt(contextual.enterprise_count || '0');
 
+      setSubCounts({
+        flights: parseInt(primary.flight_count || '0'),
+        biometrics: parseInt(primary.biometric_count || '0'),
+        screenshots: parseInt(primary.screenshot_count || '0'),
+        forensic: parseInt(primary.forensic_count || '0'),
+      });
+
       setSummary({
         primaryEvidence: {
           name: 'Primary Evidence',

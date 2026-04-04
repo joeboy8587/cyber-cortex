@@ -118,20 +118,30 @@ export function ChronologicalTimelineRebuilder() {
             </Badge>
           </div>
 
-          {/* Stats bar */}
-          <div className="grid grid-cols-4 gap-2 mb-4">
-            {[
-              { label: "Flights", value: "3M+", color: "text-blue-400" },
-              { label: "Biometrics", value: "122K+", color: "text-emerald-400" },
-              { label: "Collapses", value: "112K+", color: "text-destructive" },
-              { label: "Timeline", value: "109K+", color: "text-amber-400" },
-            ].map(s => (
-              <div key={s.label} className="bg-muted/30 rounded p-2 text-center">
-                <div className={cn("text-sm font-bold font-mono", s.color)}>{s.value}</div>
-                <div className="text-xs text-muted-foreground">{s.label}</div>
+          {/* Stats bar - computed from monthly data */}
+          {(() => {
+            const totals = monthlyData.reduce((acc: any, m: any) => ({
+              flights: (acc.flights || 0) + (m.flight || 0),
+              biometrics: (acc.biometrics || 0) + (m.biometric || 0),
+              collapses: (acc.collapses || 0) + (m.biometric_collapse || 0),
+              timeline: (acc.timeline || 0) + (m.timeline || 0),
+            }), { flights: 0, biometrics: 0, collapses: 0, timeline: 0 });
+            return (
+              <div className="grid grid-cols-4 gap-2 mb-4">
+                {[
+                  { label: "Flights", value: totals.flights.toLocaleString(), color: "text-blue-400" },
+                  { label: "Biometrics", value: totals.biometrics.toLocaleString(), color: "text-emerald-400" },
+                  { label: "Collapses", value: totals.collapses.toLocaleString(), color: "text-destructive" },
+                  { label: "Timeline", value: totals.timeline.toLocaleString(), color: "text-amber-400" },
+                ].map(s => (
+                  <div key={s.label} className="bg-muted/30 rounded p-2 text-center">
+                    <div className={cn("text-sm font-bold font-mono", s.color)}>{s.value}</div>
+                    <div className="text-xs text-muted-foreground">{s.label}</div>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            );
+          })()}
 
           {/* Event table */}
           {loading ? (

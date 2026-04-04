@@ -337,22 +337,22 @@ export function LegalEvidenceMap() {
             <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3">
               <div className="bg-background/20 rounded-lg p-3 border border-border/20 text-center">
                 <Plane className="w-6 h-6 mx-auto mb-1 text-cyan-400" />
-                <div className="text-lg font-bold text-cyan-400">101,646+</div>
+                <div className="text-lg font-bold text-cyan-400">{(subCounts.flights || 0).toLocaleString()}</div>
                 <div className="text-xs text-muted-foreground">Flight Detections</div>
               </div>
               <div className="bg-background/20 rounded-lg p-3 border border-border/20 text-center">
                 <Heart className="w-6 h-6 mx-auto mb-1 text-red-400" />
-                <div className="text-lg font-bold text-red-400">7,403+</div>
+                <div className="text-lg font-bold text-red-400">{(subCounts.biometrics || 0).toLocaleString()}</div>
                 <div className="text-xs text-muted-foreground">Biometric Events</div>
               </div>
               <div className="bg-background/20 rounded-lg p-3 border border-border/20 text-center">
                 <FileText className="w-6 h-6 mx-auto mb-1 text-yellow-400" />
-                <div className="text-lg font-bold text-yellow-400">1,852+</div>
+                <div className="text-lg font-bold text-yellow-400">{(subCounts.screenshots || 0).toLocaleString()}</div>
                 <div className="text-xs text-muted-foreground">Screenshots</div>
               </div>
               <div className="bg-background/20 rounded-lg p-3 border border-border/20 text-center">
                 <Database className="w-6 h-6 mx-auto mb-1 text-purple-400" />
-                <div className="text-lg font-bold text-purple-400">8,000+</div>
+                <div className="text-lg font-bold text-purple-400">{(subCounts.forensic || 0).toLocaleString()}</div>
                 <div className="text-xs text-muted-foreground">Forensic Files</div>
               </div>
             </div>

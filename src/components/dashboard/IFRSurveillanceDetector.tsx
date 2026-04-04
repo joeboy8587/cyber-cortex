@@ -94,14 +94,13 @@ const patternColors: Record<string, string> = {
 };
 
 const IFRSurveillanceDetector = () => {
-  const { neonQuery, isLoading } = useNeonDatabase();
+  const { queryDatabase, isLoading } = useNeonDatabase();
   const [result, setResult] = useState<ScanResult | null>(null);
   const [timeWindow, setTimeWindow] = useState('30 days');
 
   const runScan = useCallback(async () => {
     try {
-      const { data } = await neonQuery({
-        action: 'ifrSurveillanceDetection',
+      const data = await queryDatabase('ifrSurveillanceDetection', {
         timeWindow,
         kernCountyOnly: true,
       });

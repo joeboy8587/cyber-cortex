@@ -48,7 +48,7 @@ export function LegalEvidenceMap() {
     setLoading(true);
     try {
       // Use pg_class.reltuples for fast estimates on large tables
-      const [primaryQuery, correlationQuery, contextualQuery] = await Promise.all([
+      const [primaryQuery, correlationQuery, contextualQuery, tableCountQuery] = await Promise.all([
         neonQuery({
           action: 'customQuery',
           query: `
@@ -78,6 +78,10 @@ export function LegalEvidenceMap() {
               (SELECT GREATEST(reltuples,0)::bigint FROM pg_class WHERE relname='kcso_fleet_enhanced') as kcso_count,
               (SELECT GREATEST(reltuples,0)::bigint FROM pg_class WHERE relname='criminal_enterprise_command_structure') as enterprise_count
           `
+        }),
+        neonQuery({
+          action: 'customQuery',
+          query: `SELECT count(*)::int as table_count FROM pg_class WHERE relkind='r' AND relnamespace = (SELECT oid FROM pg_namespace WHERE nspname='public')`
         })
       ]);
 

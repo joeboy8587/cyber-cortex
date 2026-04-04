@@ -25,6 +25,7 @@ import DeepPatternAnalyzer from "@/components/dashboard/DeepPatternAnalyzer";
 import { NullIcaoForensicPanel } from "@/components/dashboard/NullIcaoForensicPanel";
 import CrossCallsignTracker from "@/components/dashboard/CrossCallsignTracker";
 import F24RadarUploader from "@/components/dashboard/F24RadarUploader";
+import FAARegistryUploader from "@/components/dashboard/FAARegistryUploader";
 import { AutonomousWatchtower } from "@/components/dashboard/AutonomousWatchtower";
 import UnmaskHQSystem from "@/components/dashboard/UnmaskHQSystem";
 import ForensicTrajectoryPanel from "@/components/dashboard/ForensicTrajectoryPanel";

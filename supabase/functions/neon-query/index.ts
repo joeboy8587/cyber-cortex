@@ -81,6 +81,7 @@ const HANDLER4_ACTIONS = new Set([
   'upsertFAARecords',
   'getFAARegistry',
   'ifrSurveillanceDetection',
+  'icaoIdentityCleanup',
 ]);
 
 async function getHandler1() {

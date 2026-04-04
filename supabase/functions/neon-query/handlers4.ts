@@ -966,6 +966,192 @@ export async function handleAction4(action: string, body: Record<string, any>, s
       };
     }
 
+    case 'icaoIdentityCleanup': {
+      const dryRun = body.dryRun !== false;
+      const step = body.step || 'full'; // 'scan', 'addColumns', 'moveTaxonomy', 'separateTypes', 'cleanRegistration', 'buildStableId', 'full'
+
+      // Step 1: Scan current state
+      const scanResults = await sql.unsafe(`
+        SELECT
+          COUNT(*)::int as total_rows,
+          COUNT(CASE WHEN icao_code ~ '^XX' THEN 1 END)::int as taxonomy_in_icao,
+          COUNT(CASE WHEN icao_code ~ '^[A-Z][0-9][A-Z0-9]{1,3}$' AND icao_code !~ '^[0-9A-Fa-f]{6}$' THEN 1 END)::int as type_code_in_icao,
+          COUNT(CASE WHEN icao_code ~ '^[0-9A-Fa-f]{6}$' THEN 1 END)::int as valid_hex_icao,
+          COUNT(CASE WHEN registration ~ '^XX' THEN 1 END)::int as taxonomy_in_registration,
+          COUNT(CASE WHEN registration IS NULL OR registration = '' OR registration = 'N/A' THEN 1 END)::int as missing_registration,
+          COUNT(CASE WHEN icao24 ~ '^[0-9A-Fa-f]{6}$' THEN 1 END)::int as valid_icao24,
+          COUNT(CASE WHEN unmasked_icao ~ '^[0-9A-Fa-f]{6}$' THEN 1 END)::int as valid_unmasked_icao
+        FROM live_flight_detections_rows
+        WHERE detection_timestamp > NOW() - INTERVAL '90 days'
+      `);
+
+      if (step === 'scan') {
+        // Also get top offenders
+        const topXXB = await sql.unsafe(`
+          SELECT registration, COUNT(*)::int as count,
+            COUNT(DISTINCT callsign)::int as unique_callsigns,
+            MIN(altitude)::int as min_alt, ROUND(AVG(altitude)::numeric)::int as avg_alt
+          FROM live_flight_detections_rows
+          WHERE registration ~ '^XX'
+            AND detection_timestamp > NOW() - INTERVAL '90 days'
+          GROUP BY registration ORDER BY count DESC LIMIT 10
+        `);
+
+        const icaoContamination = await sql.unsafe(`
+          SELECT icao_code, COUNT(*)::int as count,
+            CASE
+              WHEN icao_code ~ '^XX' THEN 'TAXONOMY'
+              WHEN icao_code ~ '^[A-Z][0-9][A-Z0-9]{1,3}$' AND icao_code !~ '^[0-9A-Fa-f]{6}$' THEN 'TYPE_CODE'
+              WHEN icao_code ~ '^[0-9A-Fa-f]{6}$' THEN 'VALID_HEX'
+              ELSE 'OTHER'
+            END as classification
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() - INTERVAL '90 days'
+            AND icao_code IS NOT NULL AND icao_code != ''
+          GROUP BY icao_code, classification
+          ORDER BY count DESC LIMIT 20
+        `);
+
+        return {
+          scan: scanResults[0],
+          topXXBRegistrations: topXXB,
+          icaoContamination,
+          dryRun
+        };
+      }
+
+      if (dryRun) {
+        // Preview what would change
+        const preview = {
+          scan: scanResults[0],
+          wouldFix: {
+            taxonomyMovedFromIcao: scanResults[0]?.taxonomy_in_icao || 0,
+            typeCodesSeparated: scanResults[0]?.type_code_in_icao || 0,
+            registrationXXBCleaned: scanResults[0]?.taxonomy_in_registration || 0,
+          },
+          message: 'Dry run - no changes made. Set dryRun=false to execute.'
+        };
+        return preview;
+      }
+
+      // Execute cleanup steps
+      const results: Record<string, any> = { scan: scanResults[0] };
+
+      // Add columns if missing
+      if (step === 'addColumns' || step === 'full') {
+        try {
+          await sql.unsafe(`
+            DO $$ BEGIN
+              ALTER TABLE live_flight_detections_rows ADD COLUMN IF NOT EXISTS mlat_taxonomy TEXT;
+              ALTER TABLE live_flight_detections_rows ADD COLUMN IF NOT EXISTS aircraft_type_code TEXT;
+              ALTER TABLE live_flight_detections_rows ADD COLUMN IF NOT EXISTS stable_aircraft_id TEXT;
+              ALTER TABLE live_flight_detections_rows ADD COLUMN IF NOT EXISTS best_icao24 TEXT;
+            EXCEPTION WHEN others THEN NULL;
+            END $$
+          `);
+          results.addColumns = 'success';
+        } catch (e) {
+          results.addColumns = { error: String(e) };
+        }
+      }
+
+      // Move taxonomy codes from icao_code
+      if (step === 'moveTaxonomy' || step === 'full') {
+        try {
+          const moved = await sql.unsafe(`
+            UPDATE live_flight_detections_rows
+            SET mlat_taxonomy = icao_code,
+                icao_code = NULL
+            WHERE icao_code ~ '^XX'
+              AND (mlat_taxonomy IS NULL OR mlat_taxonomy = '')
+              AND detection_timestamp > NOW() - INTERVAL '90 days'
+          `);
+          results.moveTaxonomy = { rowsUpdated: moved.count };
+        } catch (e) {
+          results.moveTaxonomy = { error: String(e) };
+        }
+      }
+
+      // Separate aircraft type codes from icao_code
+      if (step === 'separateTypes' || step === 'full') {
+        try {
+          const separated = await sql.unsafe(`
+            UPDATE live_flight_detections_rows
+            SET aircraft_type_code = icao_code,
+                icao_code = NULL
+            WHERE icao_code ~ '^[A-Z][0-9][A-Z0-9]{1,3}$'
+              AND icao_code !~ '^[0-9A-Fa-f]{6}$'
+              AND (aircraft_type_code IS NULL OR aircraft_type_code = '')
+              AND detection_timestamp > NOW() - INTERVAL '90 days'
+          `);
+          results.separateTypes = { rowsUpdated: separated.count };
+        } catch (e) {
+          results.separateTypes = { error: String(e) };
+        }
+      }
+
+      // Clean XXB from registration
+      if (step === 'cleanRegistration' || step === 'full') {
+        try {
+          const cleaned = await sql.unsafe(`
+            UPDATE live_flight_detections_rows
+            SET mlat_taxonomy = COALESCE(mlat_taxonomy, registration),
+                registration = NULL
+            WHERE registration ~ '^XX'
+              AND detection_timestamp > NOW() - INTERVAL '90 days'
+          `);
+          results.cleanRegistration = { rowsUpdated: cleaned.count };
+        } catch (e) {
+          results.cleanRegistration = { error: String(e) };
+        }
+      }
+
+      // Build best_icao24 and stable_aircraft_id
+      if (step === 'buildStableId' || step === 'full') {
+        try {
+          const built = await sql.unsafe(`
+            UPDATE live_flight_detections_rows
+            SET best_icao24 = CASE
+                  WHEN unmasked_icao ~ '^[0-9A-Fa-f]{6}$' THEN unmasked_icao
+                  WHEN icao24 ~ '^[0-9A-Fa-f]{6}$' THEN icao24
+                  WHEN icao_code ~ '^[0-9A-Fa-f]{6}$' THEN icao_code
+                  ELSE NULL
+                END,
+                stable_aircraft_id = CASE
+                  WHEN unmasked_icao ~ '^[0-9A-Fa-f]{6}$' THEN 'icao24:' || unmasked_icao
+                  WHEN icao24 ~ '^[0-9A-Fa-f]{6}$' THEN 'icao24:' || icao24
+                  WHEN icao_code ~ '^[0-9A-Fa-f]{6}$' THEN 'icao24:' || icao_code
+                  WHEN registration IS NOT NULL AND registration != '' AND registration != 'N/A' THEN 'reg:' || registration
+                  WHEN callsign IS NOT NULL AND callsign != '' THEN 'cs:' || callsign
+                  ELSE 'unknown'
+                END
+            WHERE detection_timestamp > NOW() - INTERVAL '90 days'
+          `);
+          results.buildStableId = { rowsUpdated: built.count };
+        } catch (e) {
+          results.buildStableId = { error: String(e) };
+        }
+      }
+
+      // Post-cleanup verification
+      const postScan = await sql.unsafe(`
+        SELECT
+          COUNT(*)::int as total,
+          COUNT(CASE WHEN stable_aircraft_id LIKE 'icao24:%' THEN 1 END)::int as icao24_keyed,
+          COUNT(CASE WHEN stable_aircraft_id LIKE 'reg:%' THEN 1 END)::int as reg_keyed,
+          COUNT(CASE WHEN stable_aircraft_id LIKE 'cs:%' THEN 1 END)::int as cs_keyed,
+          COUNT(CASE WHEN stable_aircraft_id = 'unknown' THEN 1 END)::int as unknown_keyed,
+          COUNT(CASE WHEN registration ~ '^XX' THEN 1 END)::int as remaining_xxb_registration,
+          COUNT(CASE WHEN icao_code ~ '^XX' THEN 1 END)::int as remaining_xxb_icao,
+          COUNT(CASE WHEN mlat_taxonomy IS NOT NULL THEN 1 END)::int as taxonomy_captured
+        FROM live_flight_detections_rows
+        WHERE detection_timestamp > NOW() - INTERVAL '90 days'
+      `);
+
+      results.postCleanup = postScan[0];
+      return results;
+    }
+
     default:
       return null;
   }

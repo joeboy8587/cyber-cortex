@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { supabase } from '@/integrations/supabase/client';
+import { neonQuery } from '@/lib/neonQueryRetry';
 import { 
   Scale, 
   Shield, 
@@ -43,55 +43,53 @@ interface EvidenceSummary {
 export function LegalEvidenceMap() {
   const [loading, setLoading] = useState(false);
   const [summary, setSummary] = useState<EvidenceSummary | null>(null);
+  const [subCounts, setSubCounts] = useState<Record<string, number>>({});
 
   const fetchEvidenceMap = async () => {
     setLoading(true);
     try {
-      // Query for primary evidence counts
-      const primaryQuery = await supabase.functions.invoke('neon-query', {
-        body: {
+      // Use pg_class.reltuples for fast estimates on large tables
+      const [primaryQuery, correlationQuery, contextualQuery, tableCountQuery] = await Promise.all([
+        neonQuery({
           action: 'customQuery',
           query: `
             SELECT 
-              (SELECT COUNT(*) FROM live_flight_detections_rows) as flight_count,
-              (SELECT COUNT(*) FROM biometric_monitoring) as biometric_count,
-              (SELECT COUNT(*) FROM screenshot_ocr_data) as screenshot_count,
-              (SELECT COUNT(*) FROM forensic_file_registry) as forensic_count
+              (SELECT GREATEST(reltuples,0)::bigint FROM pg_class WHERE relname='live_flight_detections_rows') as flight_count,
+              (SELECT GREATEST(reltuples,0)::bigint FROM pg_class WHERE relname='biometric_monitoring') as biometric_count,
+              (SELECT GREATEST(reltuples,0)::bigint FROM pg_class WHERE relname='screenshot_ocr_data') as screenshot_count,
+              (SELECT GREATEST(reltuples,0)::bigint FROM pg_class WHERE relname='forensic_file_registry') as forensic_count
           `
-        }
-      });
-
-      // Query for correlation evidence
-      const correlationQuery = await supabase.functions.invoke('neon-query', {
-        body: {
+        }),
+        neonQuery({
           action: 'customQuery',
           query: `
             SELECT 
-              (SELECT COUNT(*) FROM josiah_reflections_rows) as reflections_count,
-              (SELECT COUNT(*) FROM josiah_unified_embeddings) as embeddings_count,
-              (SELECT COUNT(*) FROM josiah_timeline) as timeline_count,
-              0 as correlation_count
+              (SELECT GREATEST(reltuples,0)::bigint FROM pg_class WHERE relname='josiah_reflections_rows') as reflections_count,
+              (SELECT GREATEST(reltuples,0)::bigint FROM pg_class WHERE relname='josiah_unified_embeddings') as embeddings_count,
+              (SELECT GREATEST(reltuples,0)::bigint FROM pg_class WHERE relname='josiah_timeline') as timeline_count,
+              (SELECT GREATEST(reltuples,0)::bigint FROM pg_class WHERE relname='realtime_correlation_log') as correlation_count
           `
-        }
-      });
-
-      // Query for contextual evidence
-      const contextualQuery = await supabase.functions.invoke('neon-query', {
-        body: {
+        }),
+        neonQuery({
           action: 'customQuery',
           query: `
             SELECT 
-              (SELECT COUNT(*) FROM aircraft_registry_enriched) as registry_count,
-              (SELECT COUNT(*) FROM shell_companies) as shell_count,
-              0 as kcso_count,
-              (SELECT COUNT(*) FROM criminal_enterprise_command_structure) as enterprise_count
+              (SELECT GREATEST(reltuples,0)::bigint FROM pg_class WHERE relname='aircraft_registry_enriched') as registry_count,
+              (SELECT GREATEST(reltuples,0)::bigint FROM pg_class WHERE relname='shell_companies') as shell_count,
+              (SELECT GREATEST(reltuples,0)::bigint FROM pg_class WHERE relname='kcso_fleet_enhanced') as kcso_count,
+              (SELECT GREATEST(reltuples,0)::bigint FROM pg_class WHERE relname='criminal_enterprise_command_structure') as enterprise_count
           `
-        }
-      });
+        }),
+        neonQuery({
+          action: 'customQuery',
+          query: `SELECT count(*)::int as table_count FROM pg_class WHERE relkind='r' AND relnamespace = (SELECT oid FROM pg_namespace WHERE nspname='public')`
+        })
+      ]);
 
-      const primary = primaryQuery.data?.results?.[0] || {};
-      const correlation = correlationQuery.data?.results?.[0] || {};
-      const contextual = contextualQuery.data?.results?.[0] || {};
+      const primary = primaryQuery?.data?.results?.[0] || {};
+      const correlation = correlationQuery?.data?.results?.[0] || {};
+      const contextual = contextualQuery?.data?.results?.[0] || {};
+      const tablesAudited = parseInt(tableCountQuery?.data?.results?.[0]?.table_count || '0');
 
       const primaryTotal = 
         parseInt(primary.flight_count || '0') +
@@ -110,6 +108,13 @@ export function LegalEvidenceMap() {
         parseInt(contextual.shell_count || '0') +
         parseInt(contextual.kcso_count || '0') +
         parseInt(contextual.enterprise_count || '0');
+
+      setSubCounts({
+        flights: parseInt(primary.flight_count || '0'),
+        biometrics: parseInt(primary.biometric_count || '0'),
+        screenshots: parseInt(primary.screenshot_count || '0'),
+        forensic: parseInt(primary.forensic_count || '0'),
+      });
 
       setSummary({
         primaryEvidence: {
@@ -137,7 +142,7 @@ export function LegalEvidenceMap() {
           status: 'PARTIAL'
         },
         totalRecords: primaryTotal + correlationTotal + contextualTotal,
-        tablesAudited: 238,
+        tablesAudited: tablesAudited || 238,
         overallIntegrity: 94
       });
 
@@ -332,22 +337,22 @@ export function LegalEvidenceMap() {
             <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3">
               <div className="bg-background/20 rounded-lg p-3 border border-border/20 text-center">
                 <Plane className="w-6 h-6 mx-auto mb-1 text-cyan-400" />
-                <div className="text-lg font-bold text-cyan-400">101,646+</div>
+                <div className="text-lg font-bold text-cyan-400">{(subCounts.flights || 0).toLocaleString()}</div>
                 <div className="text-xs text-muted-foreground">Flight Detections</div>
               </div>
               <div className="bg-background/20 rounded-lg p-3 border border-border/20 text-center">
                 <Heart className="w-6 h-6 mx-auto mb-1 text-red-400" />
-                <div className="text-lg font-bold text-red-400">7,403+</div>
+                <div className="text-lg font-bold text-red-400">{(subCounts.biometrics || 0).toLocaleString()}</div>
                 <div className="text-xs text-muted-foreground">Biometric Events</div>
               </div>
               <div className="bg-background/20 rounded-lg p-3 border border-border/20 text-center">
                 <FileText className="w-6 h-6 mx-auto mb-1 text-yellow-400" />
-                <div className="text-lg font-bold text-yellow-400">1,852+</div>
+                <div className="text-lg font-bold text-yellow-400">{(subCounts.screenshots || 0).toLocaleString()}</div>
                 <div className="text-xs text-muted-foreground">Screenshots</div>
               </div>
               <div className="bg-background/20 rounded-lg p-3 border border-border/20 text-center">
                 <Database className="w-6 h-6 mx-auto mb-1 text-purple-400" />
-                <div className="text-lg font-bold text-purple-400">8,000+</div>
+                <div className="text-lg font-bold text-purple-400">{(subCounts.forensic || 0).toLocaleString()}</div>
                 <div className="text-xs text-muted-foreground">Forensic Files</div>
               </div>
             </div>

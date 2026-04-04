@@ -32,6 +32,7 @@ import ForensicTrajectoryPanel from "@/components/dashboard/ForensicTrajectoryPa
 import TransponderAnalysisDashboard from "@/components/dashboard/TransponderAnalysisDashboard";
 import ICAORecyclingDashboard from "@/components/dashboard/ICAORecyclingDashboard";
 import PosseComitausAnalyzer from "@/components/dashboard/PosseComitausAnalyzer";
+import IFRSurveillanceDetector from "@/components/dashboard/IFRSurveillanceDetector";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export default function Surveillance() {
@@ -64,7 +65,8 @@ export default function Surveillance() {
               </p>
             </div>
 
-            <TabsList className="grid h-auto grid-cols-2 gap-2 bg-transparent p-0 lg:grid-cols-10">
+            <TabsList className="grid h-auto grid-cols-2 gap-2 bg-transparent p-0 lg:grid-cols-11">
+              <TabsTrigger value="ifr" className="text-chart-2">🎯 IFR Detect</TabsTrigger>
               <TabsTrigger value="posse" className="text-destructive">⚖️ Posse</TabsTrigger>
               <TabsTrigger value="icao">ICAO/Shell</TabsTrigger>
               <TabsTrigger value="transponder">Transponder</TabsTrigger>
@@ -77,6 +79,12 @@ export default function Surveillance() {
               <TabsTrigger value="intake">Intake</TabsTrigger>
             </TabsList>
           </div>
+
+          <TabsContent value="ifr" className="space-y-6">
+            <section>
+              <IFRSurveillanceDetector />
+            </section>
+          </TabsContent>
 
           <TabsContent value="posse" className="space-y-6">
             <section>

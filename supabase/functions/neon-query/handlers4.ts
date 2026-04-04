@@ -892,17 +892,8 @@ export async function handleAction4(action: string, body: Record<string, any>, s
             AND altitude IS NOT NULL AND altitude > 0
             AND altitude < 3000
             ${geoFilter}
-          GROUP BY ifr_category
-          ORDER BY
-            CASE
-              WHEN speed < 5 THEN 1
-              WHEN speed < 40 THEN 2
-              WHEN speed < 91 THEN 3
-              WHEN speed < 121 THEN 4
-              WHEN speed < 141 THEN 5
-              WHEN speed < 166 THEN 6
-              ELSE 7
-            END
+          GROUP BY 1
+          ORDER BY MIN(speed)
         `),
 
         // 3. Top offenders with FAA registry cross-ref

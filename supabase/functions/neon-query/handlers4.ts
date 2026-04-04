@@ -1164,7 +1164,7 @@ export async function handleAction4(action: string, body: Record<string, any>, s
               MIN(altitude)::int as min_alt,
               ROUND(AVG(CASE WHEN (icao24 IS NULL OR icao24 = '') AND (registration IS NULL OR registration = '' OR registration = 'N/A') THEN altitude END)::numeric)::int as ghost_avg_alt,
               COUNT(CASE WHEN (icao24 IS NULL OR icao24 = '') AND (registration IS NULL OR registration = '' OR registration = 'N/A') AND altitude < 1000 THEN 1 END)::int as ghost_low_alt,
-              COUNT(CASE WHEN (icao24 IS NULL OR icao24 = '') AND (registration IS NULL OR registration = '' OR registration = 'N/A') AND EXTRACT(HOUR FROM detection_timestamp) >= 22 OR EXTRACT(HOUR FROM detection_timestamp) < 5 THEN 1 END)::int as ghost_night_ops
+              COUNT(CASE WHEN (icao24 IS NULL OR icao24 = '') AND (registration IS NULL OR registration = '' OR registration = 'N/A') AND (EXTRACT(HOUR FROM detection_timestamp) >= 22 OR EXTRACT(HOUR FROM detection_timestamp) < 5) THEN 1 END)::int as ghost_night_ops
             FROM live_flight_detections_rows WHERE ${tf}
           `),
           sql.unsafe(`

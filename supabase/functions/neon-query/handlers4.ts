@@ -1073,26 +1073,31 @@ export async function handleAction4(action: string, body: Record<string, any>, s
 
       if (step === 'buildStableId' || step === 'full') {
         try {
-          const built = await sql.unsafe(`
-            UPDATE live_flight_detections_rows
-            SET best_icao24 = CASE
-                  WHEN unmasked_icao ~ '^[0-9A-Fa-f]{6}$' THEN unmasked_icao
-                  WHEN icao24 ~ '^[0-9A-Fa-f]{6}$' THEN icao24
-                  WHEN icao_code ~ '^[0-9A-Fa-f]{6}$' THEN icao_code
-                  ELSE NULL
-                END,
-                stable_aircraft_id = CASE
-                  WHEN unmasked_icao ~ '^[0-9A-Fa-f]{6}$' THEN 'icao24:' || unmasked_icao
-                  WHEN icao24 ~ '^[0-9A-Fa-f]{6}$' THEN 'icao24:' || icao24
-                  WHEN icao_code ~ '^[0-9A-Fa-f]{6}$' THEN 'icao24:' || icao_code
-                  WHEN registration IS NOT NULL AND registration != '' AND registration != 'N/A' THEN 'reg:' || registration
-                  WHEN callsign IS NOT NULL AND callsign != '' THEN 'cs:' || callsign
-                  ELSE 'unknown'
-                END
-            WHERE (stable_aircraft_id IS NULL OR stable_aircraft_id = '')
-              AND ${timeFilter}
-          `);
-          results.buildStableId = { rowsUpdated: built.count };
+          // Use LIKE instead of regex for speed; process in chunks by day
+          let totalBuilt = 0;
+          for (let d = 0; d < Math.min(days, 30); d++) {
+            const dayResult = await sql.unsafe(`
+              UPDATE live_flight_detections_rows
+              SET best_icao24 = COALESCE(
+                    CASE WHEN LENGTH(unmasked_icao) = 6 THEN unmasked_icao ELSE NULL END,
+                    CASE WHEN LENGTH(icao24) = 6 THEN icao24 ELSE NULL END,
+                    CASE WHEN LENGTH(icao_code) = 6 AND icao_code NOT LIKE 'XX%' THEN icao_code ELSE NULL END
+                  ),
+                  stable_aircraft_id = COALESCE(
+                    CASE WHEN LENGTH(unmasked_icao) = 6 THEN 'icao24:' || unmasked_icao ELSE NULL END,
+                    CASE WHEN LENGTH(icao24) = 6 THEN 'icao24:' || icao24 ELSE NULL END,
+                    CASE WHEN LENGTH(icao_code) = 6 AND icao_code NOT LIKE 'XX%' THEN 'icao24:' || icao_code ELSE NULL END,
+                    CASE WHEN registration IS NOT NULL AND registration != '' AND registration != 'N/A' THEN 'reg:' || registration ELSE NULL END,
+                    CASE WHEN callsign IS NOT NULL AND callsign != '' THEN 'cs:' || callsign ELSE NULL END,
+                    'unknown'
+                  )
+              WHERE (stable_aircraft_id IS NULL OR stable_aircraft_id = '')
+                AND detection_timestamp >= NOW() - INTERVAL '${d + 1} days'
+                AND detection_timestamp < NOW() - INTERVAL '${d} days'
+            `);
+            totalBuilt += Number(dayResult.count || 0);
+          }
+          results.buildStableId = { rowsUpdated: totalBuilt, daysProcessed: Math.min(days, 30) };
         } catch (e) {
           results.buildStableId = { error: String(e) };
         }

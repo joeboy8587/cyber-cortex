@@ -94,13 +94,13 @@ const patternColors: Record<string, string> = {
 };
 
 const IFRSurveillanceDetector = () => {
-  const { queryDatabase, isLoading } = useNeonDatabase();
+  const { customQuery, isLoading } = useNeonDatabase();
   const [result, setResult] = useState<ScanResult | null>(null);
   const [timeWindow, setTimeWindow] = useState('30 days');
 
   const runScan = useCallback(async () => {
     try {
-      const data = await queryDatabase('ifrSurveillanceDetection', {
+      const data = await customQuery('ifrSurveillanceDetection', {
         timeWindow,
         kernCountyOnly: true,
       });
@@ -112,7 +112,7 @@ const IFRSurveillanceDetector = () => {
     } catch {
       toast.error('Scan failed');
     }
-  }, [neonQuery, timeWindow]);
+  }, [customQuery, timeWindow]);
 
   return (
     <CyberPanel

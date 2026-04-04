@@ -94,16 +94,17 @@ const patternColors: Record<string, string> = {
 };
 
 const IFRSurveillanceDetector = () => {
-  const { customQuery, isLoading } = useNeonDatabase();
+  const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<ScanResult | null>(null);
   const [timeWindow, setTimeWindow] = useState('30 days');
 
   const runScan = useCallback(async () => {
+    setIsLoading(true);
     try {
-      const data = await customQuery('ifrSurveillanceDetection', {
-        timeWindow,
-        kernCountyOnly: true,
+      const { data, error } = await supabase.functions.invoke('neon-query', {
+        body: { action: 'ifrSurveillanceDetection', timeWindow, kernCountyOnly: true },
       });
+      if (error) throw error;
       setResult(data as ScanResult);
       const summary = (data as ScanResult).summary;
       toast.success('IFR Surveillance Scan Complete', {
@@ -111,8 +112,10 @@ const IFRSurveillanceDetector = () => {
       });
     } catch {
       toast.error('Scan failed');
+    } finally {
+      setIsLoading(false);
     }
-  }, [customQuery, timeWindow]);
+  }, [timeWindow]);
 
   return (
     <CyberPanel

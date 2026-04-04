@@ -43,6 +43,7 @@ interface EvidenceSummary {
 export function LegalEvidenceMap() {
   const [loading, setLoading] = useState(false);
   const [summary, setSummary] = useState<EvidenceSummary | null>(null);
+  const [subCounts, setSubCounts] = useState<Record<string, number>>({});
 
   const fetchEvidenceMap = async () => {
     setLoading(true);

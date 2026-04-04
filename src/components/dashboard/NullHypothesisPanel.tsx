@@ -116,11 +116,9 @@ export function NullHypothesisPanel() {
         for (const aircraft of kcsoFleet) {
           const reg = aircraft.tail_number;
           if (!reg) continue;
-          const { data: detData } = await supabase.functions.invoke("neon-query", {
-            body: {
+          const { data: detData } = await neonQuery({
               action: "customQuery",
               query: `SELECT COUNT(*) as count FROM live_flight_detections_rows WHERE registration = '${reg.replace(/[^a-zA-Z0-9]/g, '')}' LIMIT 1`
-            }
           });
           const detCount = safeNumber(extractNeonData(detData)?.[0]?.count);
           if (detCount < 10) {

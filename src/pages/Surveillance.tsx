@@ -34,6 +34,7 @@ import ICAORecyclingDashboard from "@/components/dashboard/ICAORecyclingDashboar
 import PosseComitausAnalyzer from "@/components/dashboard/PosseComitausAnalyzer";
 import IFRSurveillanceDetector from "@/components/dashboard/IFRSurveillanceDetector";
 import IcaoIdentityCleanup from "@/components/dashboard/IcaoIdentityCleanup";
+import GhostAircraftForensics from "@/components/dashboard/GhostAircraftForensics";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export default function Surveillance() {
@@ -83,6 +84,9 @@ export default function Surveillance() {
           </div>
 
           <TabsContent value="identity" className="space-y-6">
+            <section>
+              <GhostAircraftForensics />
+            </section>
             <section>
               <IcaoIdentityCleanup />
             </section>

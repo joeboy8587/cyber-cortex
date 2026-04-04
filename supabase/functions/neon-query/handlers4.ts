@@ -1121,6 +1121,158 @@ export async function handleAction4(action: string, body: Record<string, any>, s
       return results;
     }
 
+    case 'ghostAircraftForensics': {
+      const days = body.days || 30;
+      const step = body.step || 'analyze'; // 'addColumns', 'analyze', 'operatorAttribution', 'maskingTimeline'
+      const tf = `detection_timestamp > NOW() - INTERVAL '${days} days'`;
+
+      await sql.unsafe(`SET statement_timeout = '25s'`);
+
+      if (step === 'addColumns') {
+        try {
+          await sql.unsafe(`ALTER TABLE live_flight_detections_rows ADD COLUMN IF NOT EXISTS position_source TEXT`);
+          await sql.unsafe(`ALTER TABLE live_flight_detections_rows ADD COLUMN IF NOT EXISTS sensor_id TEXT`);
+          await sql.unsafe(`ALTER TABLE live_flight_detections_rows ADD COLUMN IF NOT EXISTS track_segment_id TEXT`);
+          // Infer position_source from existing data
+          const inferred = await sql.unsafe(`
+            UPDATE live_flight_detections_rows
+            SET position_source = CASE
+              WHEN mlat_taxonomy LIKE 'XX%' THEN 'MLAT'
+              WHEN icao24 IS NOT NULL AND icao24 != '' AND LENGTH(icao24) = 6 THEN 'ADS-B'
+              WHEN unmasked_icao IS NOT NULL AND unmasked_icao != '' THEN 'ADS-B'
+              ELSE 'UNKNOWN'
+            END
+            WHERE position_source IS NULL AND ${tf}
+          `);
+          return { addColumns: 'success', positionSourceInferred: inferred.count };
+        } catch (e) {
+          return { error: String(e) };
+        }
+      }
+
+      if (step === 'analyze') {
+        // Ghost aircraft = no identity fields populated
+        const [ghostOverview, ghostByDay, topGhostProfiles, knownOperatorsInGhosts] = await Promise.all([
+          sql.unsafe(`
+            SELECT
+              COUNT(*)::int as total_detections,
+              COUNT(CASE WHEN (icao24 IS NULL OR icao24 = '') AND (registration IS NULL OR registration = '' OR registration = 'N/A') AND (callsign IS NULL OR callsign = '') THEN 1 END)::int as pure_ghost,
+              COUNT(CASE WHEN mlat_taxonomy IS NOT NULL THEN 1 END)::int as mlat_tagged,
+              COUNT(CASE WHEN icao24 IS NOT NULL AND icao24 != '' AND LENGTH(icao24) = 6 THEN 1 END)::int as has_icao24,
+              COUNT(CASE WHEN registration IS NOT NULL AND registration != '' AND registration != 'N/A' THEN 1 END)::int as has_registration,
+              COUNT(CASE WHEN callsign IS NOT NULL AND callsign != '' THEN 1 END)::int as has_callsign,
+              MIN(altitude)::int as min_alt,
+              ROUND(AVG(CASE WHEN (icao24 IS NULL OR icao24 = '') AND (registration IS NULL OR registration = '' OR registration = 'N/A') THEN altitude END)::numeric)::int as ghost_avg_alt,
+              COUNT(CASE WHEN (icao24 IS NULL OR icao24 = '') AND (registration IS NULL OR registration = '' OR registration = 'N/A') AND altitude < 1000 THEN 1 END)::int as ghost_low_alt,
+              COUNT(CASE WHEN (icao24 IS NULL OR icao24 = '') AND (registration IS NULL OR registration = '' OR registration = 'N/A') AND (EXTRACT(HOUR FROM detection_timestamp) >= 22 OR EXTRACT(HOUR FROM detection_timestamp) < 5) THEN 1 END)::int as ghost_night_ops
+            FROM live_flight_detections_rows WHERE ${tf}
+          `),
+          sql.unsafe(`
+            SELECT detection_timestamp::date as day,
+              COUNT(*)::int as total,
+              COUNT(CASE WHEN (icao24 IS NULL OR icao24 = '') AND (registration IS NULL OR registration = '' OR registration = 'N/A') THEN 1 END)::int as ghosts
+            FROM live_flight_detections_rows WHERE ${tf}
+            GROUP BY 1 ORDER BY 1 DESC LIMIT 30
+          `),
+          sql.unsafe(`
+            SELECT
+              COALESCE(callsign, 'NO_CALLSIGN') as identifier,
+              COUNT(*)::int as detections,
+              COUNT(DISTINCT detection_timestamp::date)::int as active_days,
+              MIN(altitude)::int as min_alt,
+              ROUND(AVG(altitude)::numeric)::int as avg_alt,
+              ROUND(AVG(speed)::numeric)::int as avg_speed,
+              MIN(detection_timestamp) as first_seen,
+              MAX(detection_timestamp) as last_seen,
+              COALESCE(mlat_taxonomy, 'NONE') as taxonomy
+            FROM live_flight_detections_rows
+            WHERE ${tf}
+              AND (icao24 IS NULL OR icao24 = '')
+              AND (registration IS NULL OR registration = '' OR registration = 'N/A')
+            GROUP BY callsign, mlat_taxonomy
+            ORDER BY detections DESC LIMIT 20
+          `),
+          // Find known operators that also appear as ghosts (same coords ±5min)
+          sql.unsafe(`
+            SELECT d1.registration, COUNT(*)::int as ghost_adjacent_count,
+              MIN(d1.altitude)::int as min_alt,
+              ROUND(AVG(d1.altitude)::numeric)::int as avg_alt
+            FROM live_flight_detections_rows d1
+            WHERE ${tf.replace(/detection_timestamp/g, 'd1.detection_timestamp')}
+              AND d1.registration IN ('N912KC','N913KC','N597E','N743AM','N478CA','N4691R','N6196P')
+              AND d1.altitude < 1500
+            GROUP BY d1.registration
+            ORDER BY ghost_adjacent_count DESC
+          `)
+        ]);
+
+        return {
+          overview: ghostOverview[0],
+          dailyTrend: ghostByDay,
+          topGhostProfiles: topGhostProfiles,
+          knownOperatorsLowAlt: knownOperatorsInGhosts,
+          days
+        };
+      }
+
+      if (step === 'operatorAttribution') {
+        // Match ghost detections to known operators by proximity (same lat/lng ±0.01, same hour)
+        const attribution = await sql.unsafe(`
+          WITH ghost_windows AS (
+            SELECT detection_timestamp, latitude, longitude, altitude, speed, callsign
+            FROM live_flight_detections_rows
+            WHERE ${tf}
+              AND (icao24 IS NULL OR icao24 = '')
+              AND (registration IS NULL OR registration = '' OR registration = 'N/A')
+              AND latitude IS NOT NULL AND longitude IS NOT NULL
+              AND altitude < 2000
+            LIMIT 50000
+          ),
+          known_ops AS (
+            SELECT registration, detection_timestamp, latitude, longitude, altitude
+            FROM live_flight_detections_rows
+            WHERE ${tf}
+              AND registration IS NOT NULL AND registration != '' AND registration != 'N/A'
+              AND latitude IS NOT NULL AND longitude IS NOT NULL
+          )
+          SELECT k.registration,
+            COUNT(*)::int as proximity_matches,
+            ROUND(AVG(g.altitude)::numeric)::int as ghost_avg_alt,
+            ROUND(AVG(k.altitude)::numeric)::int as known_avg_alt
+          FROM ghost_windows g
+          JOIN known_ops k ON
+            ABS(EXTRACT(EPOCH FROM g.detection_timestamp - k.detection_timestamp)) < 300
+            AND ABS(g.latitude - k.latitude) < 0.01
+            AND ABS(g.longitude - k.longitude) < 0.01
+          GROUP BY k.registration
+          HAVING COUNT(*) > 2
+          ORDER BY proximity_matches DESC LIMIT 15
+        `);
+        return { operatorAttribution: attribution, days };
+      }
+
+      if (step === 'maskingTimeline') {
+        // For known KCSO/AM aircraft, find time windows where they had identity vs didn't
+        const timeline = await sql.unsafe(`
+          SELECT registration,
+            detection_timestamp::date as day,
+            COUNT(*)::int as total_detections,
+            COUNT(CASE WHEN icao24 IS NOT NULL AND icao24 != '' THEN 1 END)::int as with_identity,
+            COUNT(CASE WHEN icao24 IS NULL OR icao24 = '' THEN 1 END)::int as without_identity,
+            MIN(altitude)::int as min_alt,
+            ROUND(AVG(altitude)::numeric)::int as avg_alt
+          FROM live_flight_detections_rows
+          WHERE ${tf}
+            AND registration IN ('N912KC','N913KC','N597E','N743AM','N478CA','N4691R')
+          GROUP BY registration, detection_timestamp::date
+          ORDER BY registration, day DESC
+        `);
+        return { maskingTimeline: timeline, days };
+      }
+
+      return { error: 'Unknown step: ' + step };
+    }
+
     default:
       return null;
   }

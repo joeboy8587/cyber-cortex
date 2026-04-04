@@ -32,6 +32,7 @@ import ForensicTrajectoryPanel from "@/components/dashboard/ForensicTrajectoryPa
 import TransponderAnalysisDashboard from "@/components/dashboard/TransponderAnalysisDashboard";
 import ICAORecyclingDashboard from "@/components/dashboard/ICAORecyclingDashboard";
 import PosseComitausAnalyzer from "@/components/dashboard/PosseComitausAnalyzer";
+import IFRSurveillanceDetector from "@/components/dashboard/IFRSurveillanceDetector";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export default function Surveillance() {

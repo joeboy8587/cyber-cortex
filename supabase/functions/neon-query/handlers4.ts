@@ -497,6 +497,7 @@ export async function handleAction4(action: string, body: Record<string, any>, s
           WHERE collapse_timestamp >= '${startDate}'::timestamptz
             AND collapse_timestamp < '${endDate}'::timestamptz
             AND collapse_timestamp IS NOT NULL
+            AND COALESCE(medical_significance, '') != 'Detection correlation event'
         `);
       }
 

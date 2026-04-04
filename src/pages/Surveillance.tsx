@@ -85,6 +85,9 @@ export default function Surveillance() {
 
           <TabsContent value="identity" className="space-y-6">
             <section>
+              <GhostAircraftForensics />
+            </section>
+            <section>
               <IcaoIdentityCleanup />
             </section>
           </TabsContent>

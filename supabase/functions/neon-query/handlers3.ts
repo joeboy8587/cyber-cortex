@@ -549,14 +549,18 @@ export async function handleAction3(action: string, body: Record<string, any>, s
 
     case 'getInvestigationConfig': {
       try {
-        const [priorityAircraft, enterpriseStructure, shellCompanies, kcsoFleet, detectionStats, shellDetections] = await Promise.all([
+        const [priorityAircraft, enterpriseStructure, shellCompanies, kcsoFleet, detectionStats, shellCorrelations, shellBehavioral] = await Promise.all([
           sql`SELECT DISTINCT registration FROM live_flight_detections_rows 
               WHERE flagged = true AND registration IS NOT NULL AND registration != '' 
               ORDER BY registration LIMIT 50`,
           sql`SELECT * FROM criminal_enterprise_command_structure ORDER BY tier, entity_name LIMIT 100`,
-          sql`SELECT * FROM shell_companies ORDER BY company_name LIMIT 50`,
+          sql`SELECT sc.company_name, sc.aircraft_list, sc.red_flags, sc.address,
+                     scr.defense_contractor_link, scr.threat_score, scr.red_flags as registry_flags
+              FROM shell_companies sc
+              LEFT JOIN shell_company_registry scr ON sc.company_name = scr.company_name
+              ORDER BY sc.company_name LIMIT 50`,
           sql`SELECT * FROM kcso_fleet ORDER BY tail_number LIMIT 20`,
-          sql`WITH total AS (SELECT COUNT(*) as total FROM live_flight_detections_rows),
+          sql`WITH total AS (SELECT reltuples::bigint as total FROM pg_class WHERE relname = 'live_flight_detections_rows'),
               flagged AS (SELECT COUNT(*) as flagged FROM live_flight_detections_rows WHERE flagged = true),
               kern AS (SELECT COUNT(*) as kern FROM live_flight_detections_rows WHERE latitude BETWEEN 35.20 AND 35.60 AND longitude BETWEEN -119.25 AND -118.75),
               low_alt AS (SELECT COUNT(*) as low FROM live_flight_detections_rows WHERE altitude::numeric < 1000 AND altitude::numeric > 0),
@@ -567,10 +571,13 @@ export async function handleAction3(action: string, body: Record<string, any>, s
               )
               SELECT t.total, f.flagged, k.kern, l.low, tp.days_with_flights, tp.total_days
               FROM total t, flagged f, kern k, low_alt l, time_present tp`,
-          sql`SELECT registration, COUNT(*) as detection_count 
-              FROM live_flight_detections_rows 
-              WHERE registration IN ('N788FA','N787FA','N790FA','N791FA','N997SE','N2464D','N172CA')
-              GROUP BY registration`
+          sql`SELECT shell_operator, shell_aircraft, kcso_aircraft, event_count, 
+                     shell_violations, kcso_violations, evidence_strength, rico_relevance
+              FROM kcso_shell_correlations ORDER BY event_count DESC LIMIT 50`,
+          sql`SELECT entity_name, aircraft_tail, detection_count, low_altitude_pct, 
+                     avg_altitude_ft, loiter_count, match_score_to_kcso, legal_exposure,
+                     risk_tier, behavior_type
+              FROM shell_entity_behavioral_alignment ORDER BY detection_count DESC LIMIT 30`
         ]);
 
         const stats = detectionStats[0] || {};
@@ -583,15 +590,21 @@ export async function handleAction3(action: string, body: Record<string, any>, s
         const aircraftPresentPct = totalDays > 0 ? ((daysWithFlights / totalDays) * 100).toFixed(1) : '0';
         const controlPct = totalRecords > 0 ? (((totalRecords - flaggedRecords) / totalRecords) * 100).toFixed(1) : '0';
 
+        // Build shell detections from behavioral alignment real data
+        const shellDetMap: Record<string, number> = {};
+        for (const r of shellBehavioral) {
+          const reg = String(r.aircraft_tail || '');
+          if (reg) shellDetMap[reg] = parseInt(String(r.detection_count || '0'));
+        }
+
         return {
           priority_aircraft: priorityAircraft.map((r: any) => r.registration),
           enterprise_hierarchy: enterpriseStructure,
           shell_companies: shellCompanies,
           kcso_fleet: kcsoFleet,
-          shell_detections: shellDetections.reduce((acc: Record<string, number>, r: any) => {
-            acc[r.registration] = parseInt(String(r.detection_count || '0'));
-            return acc;
-          }, {}),
+          shell_correlations: shellCorrelations,
+          shell_behavioral: shellBehavioral,
+          shell_detections: shellDetMap,
           hypothesis_metrics: {
             total_records: totalRecords,
             flagged_records: flaggedRecords,

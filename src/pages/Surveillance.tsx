@@ -85,6 +85,12 @@ export default function Surveillance() {
             </TabsList>
           </div>
 
+          <TabsContent value="squawk" className="space-y-6">
+            <section>
+              <SquawkDeceptionDashboard />
+            </section>
+          </TabsContent>
+
           <TabsContent value="identity" className="space-y-6">
             <section>
               <GhostAircraftForensics />

@@ -7,8 +7,8 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Radio, Plus, RefreshCw, AlertTriangle, Signal } from "lucide-react";
-import { useNeonQuery } from "@/hooks/useNeonDatabase";
+import { Radio, Plus, RefreshCw, Signal } from "lucide-react";
+import { neonQuery } from "@/lib/neonQueryRetry";
 import { toast } from "sonner";
 
 const COMMON_DRONE_FREQUENCIES = [

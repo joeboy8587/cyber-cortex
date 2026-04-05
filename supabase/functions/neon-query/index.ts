@@ -127,7 +127,15 @@ async function getHandler4() {
   return _handleAction4;
 }
 
-const VERSION = "2.10.1";
+async function getHandler5() {
+  if (!_handleAction5) {
+    const mod = await import("./handlers5.ts");
+    _handleAction5 = mod.handleAction5;
+  }
+  return _handleAction5;
+}
+
+const VERSION = "2.11.0";
 console.log(`neon-query v${VERSION} booting...`);
 
 const corsHeaders = {

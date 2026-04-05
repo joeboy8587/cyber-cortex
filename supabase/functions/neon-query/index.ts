@@ -4,7 +4,7 @@ import postgres from "npm:postgres@3.4.4";
 let _handleAction: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
 let _handleAction2: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
 let _handleAction3: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
-let _handleAction4: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
+let _handleAction5: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
 
 const HANDLER1_ACTIONS = new Set([
   'getBehavioralAlignment',
@@ -86,6 +86,13 @@ const HANDLER4_ACTIONS = new Set([
   'squawkDeceptionAnalysis',
   'mlAnomalyScore',
   'tulareCountyScan',
+]);
+
+const HANDLER5_ACTIONS = new Set([
+  'schemaCatalog',
+  'schemaTablePreview',
+  'schemaRelationshipMap',
+  'schemaSearch',
 ]);
 
 async function getHandler1() {

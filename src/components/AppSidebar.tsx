@@ -13,7 +13,8 @@ import {
   Radio,
   PlayCircle,
   GraduationCap,
-  MapPin
+  MapPin,
+  Network
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useAuth } from "@/hooks/useAuth";
@@ -90,7 +91,7 @@ const navigationItems = [
   { 
     title: "Knowledge Engine", 
     url: "/knowledge", 
-    icon: Database,
+    icon: Network,
     description: "Schema Discovery"
   },
 ];

@@ -68,7 +68,8 @@ export default function Surveillance() {
               </p>
             </div>
 
-            <TabsList className="grid h-auto grid-cols-2 gap-2 bg-transparent p-0 lg:grid-cols-12">
+            <TabsList className="grid h-auto grid-cols-2 gap-2 bg-transparent p-0 lg:grid-cols-13">
+              <TabsTrigger value="squawk" className="text-chart-4">📡 Squawk/ML</TabsTrigger>
               <TabsTrigger value="identity" className="text-chart-1">🧬 Identity</TabsTrigger>
               <TabsTrigger value="ifr" className="text-chart-2">🎯 IFR Detect</TabsTrigger>
               <TabsTrigger value="posse" className="text-destructive">⚖️ Posse</TabsTrigger>

@@ -69,9 +69,9 @@ export default function DenverLogisticsAnalyzer() {
                   <div className="text-xs text-muted-foreground">High Suspicion</div>
                 </CardContent>
               </Card>
-              <Card className="bg-orange-500/10 border-orange-500/30">
+              <Card className="bg-accent/10 border-accent/30">
                 <CardContent className="pt-3 pb-2 text-center">
-                  <div className="text-2xl font-bold text-orange-400">{summary.logisticsPattern}</div>
+                  <div className="text-2xl font-bold text-accent-foreground">{summary.logisticsPattern}</div>
                   <div className="text-xs text-muted-foreground">Logistics Pattern</div>
                 </CardContent>
               </Card>

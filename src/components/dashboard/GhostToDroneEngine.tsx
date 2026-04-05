@@ -62,15 +62,15 @@ export default function GhostToDroneEngine() {
                   <div className="text-xs text-muted-foreground">Confirmed Drones</div>
                 </CardContent>
               </Card>
-              <Card className="bg-orange-500/10 border-orange-500/30">
+              <Card className="bg-accent/10 border-accent/30">
                 <CardContent className="pt-3 pb-2 text-center">
-                  <div className="text-2xl font-bold text-orange-400">{summary.probable}</div>
+                  <div className="text-2xl font-bold text-accent-foreground">{summary.probable}</div>
                   <div className="text-xs text-muted-foreground">Probable</div>
                 </CardContent>
               </Card>
-              <Card className="bg-yellow-500/10 border-yellow-500/30">
+              <Card className="bg-secondary/30 border-secondary/50">
                 <CardContent className="pt-3 pb-2 text-center">
-                  <div className="text-2xl font-bold text-yellow-400">{summary.suspected}</div>
+                  <div className="text-2xl font-bold text-secondary-foreground">{summary.suspected}</div>
                   <div className="text-xs text-muted-foreground">Suspected</div>
                 </CardContent>
               </Card>

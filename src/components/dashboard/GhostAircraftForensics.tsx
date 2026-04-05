@@ -109,11 +109,13 @@ export default function GhostAircraftForensics() {
       }
     >
       <Tabs defaultValue="analyze" className="p-4 space-y-4">
-        <TabsList className="grid grid-cols-4 w-full">
-          <TabsTrigger value="analyze">👻 Ghost Analysis</TabsTrigger>
-          <TabsTrigger value="attribution">🔗 Attribution</TabsTrigger>
-          <TabsTrigger value="masking">🎭 Masking Timeline</TabsTrigger>
-          <TabsTrigger value="hourly">🕐 Hourly Masking</TabsTrigger>
+        <TabsList className="grid grid-cols-6 w-full">
+          <TabsTrigger value="analyze" className="text-xs">👻 Ghosts</TabsTrigger>
+          <TabsTrigger value="attribution" className="text-xs">🔗 Attribution</TabsTrigger>
+          <TabsTrigger value="masking" className="text-xs">🎭 Masking</TabsTrigger>
+          <TabsTrigger value="hourly" className="text-xs">🕐 Hourly</TabsTrigger>
+          <TabsTrigger value="segments" className="text-xs">✂️ Segments</TabsTrigger>
+          <TabsTrigger value="exhibit" className="text-xs">📋 Exhibit</TabsTrigger>
         </TabsList>
 
         {/* ── ANALYSIS ── */}

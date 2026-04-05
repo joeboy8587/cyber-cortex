@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 
@@ -402,6 +402,9 @@ export function EvidenceUploader() {
                         <DialogContent className="max-w-4xl max-h-[80vh]">
                           <DialogHeader>
                             <DialogTitle>{doc.title}</DialogTitle>
+                            <DialogDescription>
+                              Evidence document preview for {doc.filename}.
+                            </DialogDescription>
                           </DialogHeader>
                           <ScrollArea className="h-[60vh]">
                             <pre className="whitespace-pre-wrap text-sm font-mono p-4 bg-muted/30 rounded">

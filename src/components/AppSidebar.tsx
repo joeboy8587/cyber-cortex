@@ -87,6 +87,12 @@ const navigationItems = [
     icon: Radio,
     description: "Expanded Airspace"
   },
+  { 
+    title: "Knowledge Engine", 
+    url: "/knowledge", 
+    icon: Database,
+    description: "Schema Discovery"
+  },
 ];
 
 export function AppSidebar() {

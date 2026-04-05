@@ -135,7 +135,7 @@ async function getHandler4() {
 }
 
 
-const VERSION = "2.12.1";
+const VERSION = "2.12.2";
 console.log(`neon-query v${VERSION} booting...`);
 
 const corsHeaders = {
@@ -170,7 +170,10 @@ function getConnection(): Promise<ReturnType<typeof postgres>> {
       connect_timeout: 15,
       fetch_types: false,
       prepare: false,
-      connection: { application_name: 'neon-query-edge-v' + VERSION },
+      connection: {
+        application_name: 'neon-query-edge-v' + VERSION,
+        statement_timeout: '25000',   // 25s hard limit per query
+      },
       onnotice: () => {},
       debug: false,
       transform: { undefined: null },

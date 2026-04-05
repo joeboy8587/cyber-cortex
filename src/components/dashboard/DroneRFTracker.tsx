@@ -21,7 +21,8 @@ const COMMON_DRONE_FREQUENCIES = [
 ];
 
 export default function DroneRFTracker() {
-  const [showForm, setShowForm] = useState(false);
+  const [signatures, setSignatures] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
   const [formData, setFormData] = useState({
     frequency_mhz: "",
     signal_strength_dbm: "",
@@ -38,8 +39,14 @@ export default function DroneRFTracker() {
     notes: "",
   });
 
-  const { data: rfData, isLoading, refetch } = useNeonQuery("droneRFScan", {});
-  const { mutateAsync: insertRF } = useNeonQuery("insertDroneRF", {}, { enabled: false });
+  const refetch = async () => {
+    setIsLoading(true);
+    try {
+      const { data } = await neonQuery({ action: "droneRFScan" });
+      setSignatures(data?.signatures || []);
+    } catch { /* ignore */ }
+    setIsLoading(false);
+  };
 
   const handleSubmit = async () => {
     try {
@@ -50,11 +57,7 @@ export default function DroneRFTracker() {
         altitude_ft: parseFloat(formData.altitude_ft) || null,
         confidence_score: parseFloat(formData.confidence_score) || 50,
       };
-      await fetch(`https://${import.meta.env.VITE_SUPABASE_PROJECT_ID}.supabase.co/functions/v1/neon-query`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "apikey": import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY },
-        body: JSON.stringify({ action: "insertDroneRF", data: payload }),
-      });
+      await neonQuery({ action: "insertDroneRF", data: payload });
       toast.success("RF signature logged");
       setShowForm(false);
       refetch();
@@ -63,7 +66,6 @@ export default function DroneRFTracker() {
     }
   };
 
-  const signatures = (rfData as any)?.signatures || [];
 
   return (
     <div className="space-y-4">

@@ -402,6 +402,9 @@ export function EvidenceUploader() {
                         <DialogContent className="max-w-4xl max-h-[80vh]">
                           <DialogHeader>
                             <DialogTitle>{doc.title}</DialogTitle>
+                            <DialogDescription>
+                              Evidence document preview for {doc.filename}.
+                            </DialogDescription>
                           </DialogHeader>
                           <ScrollArea className="h-[60vh]">
                             <pre className="whitespace-pre-wrap text-sm font-mono p-4 bg-muted/30 rounded">

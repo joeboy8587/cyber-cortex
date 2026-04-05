@@ -1127,6 +1127,153 @@ export async function handleAction4(action: string, body: Record<string, any>, s
       const tf = `detection_timestamp > NOW() - INTERVAL '${days} days'`;
       const TRACKED = `'N912KC','N913KC','N597E','N743AM','N478CA','N4691R','N6196P','N224AM','N184AM','N229AM','N328DS','N10XSY'`;
 
+      // Gap-break track segmentation
+      if (step === 'gapBreakSegmentation') {
+        const maxGapMin = body.maxGapMinutes || 30;
+        const targetReg = body.registration || null;
+        const regFilter = targetReg ? `AND registration = '${targetReg.replace(/'/g, "''")}'` : `AND registration IN (${TRACKED})`;
+
+        const segments = await sql.unsafe(`
+          WITH ordered AS (
+            SELECT registration, detection_timestamp, altitude, speed, latitude, longitude,
+              LAG(detection_timestamp) OVER (PARTITION BY registration ORDER BY detection_timestamp) as prev_ts,
+              LAG(latitude) OVER (PARTITION BY registration ORDER BY detection_timestamp) as prev_lat,
+              LAG(longitude) OVER (PARTITION BY registration ORDER BY detection_timestamp) as prev_lng
+            FROM live_flight_detections_rows
+            WHERE ${tf} ${regFilter}
+              AND latitude IS NOT NULL AND longitude IS NOT NULL
+          ),
+          breaks AS (
+            SELECT *,
+              CASE WHEN prev_ts IS NULL OR EXTRACT(EPOCH FROM detection_timestamp - prev_ts) > ${maxGapMin * 60} THEN 1 ELSE 0 END as is_break
+            FROM ordered
+          ),
+          segmented AS (
+            SELECT *, SUM(is_break) OVER (PARTITION BY registration ORDER BY detection_timestamp) as segment_id
+            FROM breaks
+          )
+          SELECT registration, segment_id::int,
+            COUNT(*)::int as points,
+            MIN(detection_timestamp) as start_time,
+            MAX(detection_timestamp) as end_time,
+            ROUND(EXTRACT(EPOCH FROM MAX(detection_timestamp) - MIN(detection_timestamp)) / 60)::int as duration_min,
+            MIN(altitude)::int as min_alt,
+            ROUND(AVG(altitude)::numeric)::int as avg_alt,
+            MAX(altitude)::int as max_alt,
+            ROUND(AVG(speed)::numeric)::int as avg_speed,
+            ROUND(AVG(latitude)::numeric, 4) as center_lat,
+            ROUND(AVG(longitude)::numeric, 4) as center_lng,
+            ROUND((MAX(latitude) - MIN(latitude))::numeric, 4) as lat_spread,
+            ROUND((MAX(longitude) - MIN(longitude))::numeric, 4) as lng_spread,
+            CASE
+              WHEN COUNT(*) >= 5 AND (MAX(latitude) - MIN(latitude)) < 0.02 AND (MAX(longitude) - MIN(longitude)) < 0.02 THEN 'ORBIT'
+              WHEN COUNT(*) >= 3 AND (MAX(latitude) - MIN(latitude)) >= 0.02 THEN 'TRANSIT'
+              WHEN COUNT(*) < 3 THEN 'BLIP'
+              ELSE 'PATROL'
+            END as pattern_type
+          FROM segmented
+          GROUP BY registration, segment_id
+          HAVING COUNT(*) >= 2
+          ORDER BY registration, start_time DESC
+          LIMIT 500
+        `);
+
+        // Summary stats
+        const summary = {
+          totalSegments: segments.length,
+          byPattern: {} as Record<string, number>,
+          byOperator: {} as Record<string, number>,
+          avgDuration: 0,
+          orbits: 0,
+        };
+        let totalDur = 0;
+        for (const s of segments) {
+          summary.byPattern[s.pattern_type] = (summary.byPattern[s.pattern_type] || 0) + 1;
+          summary.byOperator[s.registration] = (summary.byOperator[s.registration] || 0) + 1;
+          totalDur += s.duration_min || 0;
+          if (s.pattern_type === 'ORBIT') summary.orbits++;
+        }
+        summary.avgDuration = segments.length > 0 ? Math.round(totalDur / segments.length) : 0;
+
+        return { segments, summary, days, maxGapMinutes: maxGapMin };
+      }
+
+      // Legal exhibit generator
+      if (step === 'legalExhibit') {
+        const [ghostStats, maskingEvents, lowAltEvents, attributionSummary] = await Promise.all([
+          sql.unsafe(`
+            SELECT
+              COUNT(*)::int as total_detections,
+              COUNT(CASE WHEN (icao24 IS NULL OR icao24 = '') AND (registration IS NULL OR registration = '' OR registration = 'N/A') THEN 1 END)::int as pure_ghost,
+              COUNT(CASE WHEN altitude < 500 THEN 1 END)::int as critical_low,
+              COUNT(CASE WHEN EXTRACT(HOUR FROM detection_timestamp) >= 22 OR EXTRACT(HOUR FROM detection_timestamp) < 5 THEN 1 END)::int as night_ops,
+              MIN(detection_timestamp) as period_start,
+              MAX(detection_timestamp) as period_end
+            FROM live_flight_detections_rows WHERE ${tf}
+          `),
+          sql.unsafe(`
+            SELECT registration,
+              COUNT(*)::int as total,
+              COUNT(CASE WHEN icao24 IS NULL OR icao24 = '' THEN 1 END)::int as masked,
+              ROUND(100.0 * COUNT(CASE WHEN icao24 IS NULL OR icao24 = '' THEN 1 END) / NULLIF(COUNT(*), 0), 1) as mask_pct,
+              MIN(altitude)::int as min_alt,
+              ROUND(AVG(altitude)::numeric)::int as avg_alt
+            FROM live_flight_detections_rows
+            WHERE ${tf} AND registration IN (${TRACKED})
+            GROUP BY registration ORDER BY masked DESC
+          `),
+          sql.unsafe(`
+            SELECT registration, detection_timestamp, altitude, speed, latitude, longitude,
+              CASE WHEN icao24 IS NOT NULL AND icao24 != '' THEN 'IDENTIFIED' ELSE 'GHOST' END as identity_status
+            FROM live_flight_detections_rows
+            WHERE ${tf} AND registration IN (${TRACKED}) AND altitude < 500
+            ORDER BY altitude ASC LIMIT 50
+          `),
+          sql.unsafe(`
+            WITH ghost_w AS (
+              SELECT detection_timestamp, latitude, longitude, altitude
+              FROM live_flight_detections_rows
+              WHERE ${tf}
+                AND (icao24 IS NULL OR icao24 = '') AND (registration IS NULL OR registration = '' OR registration = 'N/A')
+                AND latitude IS NOT NULL AND longitude IS NOT NULL AND altitude < 2000
+              LIMIT 20000
+            ),
+            known AS (
+              SELECT registration, detection_timestamp, latitude, longitude
+              FROM live_flight_detections_rows
+              WHERE ${tf} AND registration IN (${TRACKED}) AND latitude IS NOT NULL
+            )
+            SELECT k.registration, COUNT(*)::int as matches
+            FROM ghost_w g JOIN known k ON
+              ABS(EXTRACT(EPOCH FROM g.detection_timestamp - k.detection_timestamp)) < 300
+              AND ABS(g.latitude - k.latitude) < 0.01
+              AND ABS(g.longitude - k.longitude) < 0.01
+            GROUP BY k.registration HAVING COUNT(*) > 1
+            ORDER BY matches DESC
+          `)
+        ]);
+
+        return {
+          exhibit: {
+            title: 'GHOST AIRCRAFT FORENSIC EXHIBIT',
+            generatedAt: new Date().toISOString(),
+            analysisPeriod: { start: ghostStats[0]?.period_start, end: ghostStats[0]?.period_end, days },
+            overview: ghostStats[0],
+            operatorMaskingBreakdown: maskingEvents,
+            criticalLowAltitudeEvents: lowAltEvents,
+            ghostAttributionMatches: attributionSummary,
+            findings: [
+              `${ghostStats[0]?.pure_ghost || 0} pure ghost detections (no ICAO/Reg/Callsign) in ${days}-day window`,
+              `${ghostStats[0]?.critical_low || 0} detections below 500ft altitude`,
+              `${ghostStats[0]?.night_ops || 0} night operations (22:00-05:00 UTC)`,
+              `${maskingEvents.filter((m: any) => m.masked > 0).length} tracked operators showed identity masking`,
+              `${lowAltEvents.length} critical low-altitude events documented`,
+              `${attributionSummary.length} operators linked to ghost detections via spatiotemporal proximity`
+            ]
+          }
+        };
+      }
+
       await sql.unsafe(`SET statement_timeout = '25s'`);
 
       if (step === 'addColumns') {

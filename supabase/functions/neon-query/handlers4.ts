@@ -1758,6 +1758,132 @@ export async function handleAction4(action: string, body: Record<string, any>, s
       };
     }
 
+    case 'tulareCountyScan': {
+      const timeWindow = body.timeWindow || '30 days';
+      // Tulare County bounding box: 35.8-36.5 lat, -119.6 to -118.3 lng
+      const tulareGeo = `AND latitude BETWEEN 35.8 AND 36.5 AND longitude BETWEEN -119.6 AND -118.3`;
+      const kernGeo = `AND latitude BETWEEN 35.0 AND 36.0 AND longitude BETWEEN -119.5 AND -118.0`;
+
+      await sql.unsafe(`SET statement_timeout = '25s'`);
+
+      const [overview, topAircraft, dailyActivity, crossCounty] = await Promise.all([
+        // 1. Overview stats
+        sql.unsafe(`
+          SELECT
+            COUNT(*)::int as total_detections,
+            COUNT(DISTINCT COALESCE(NULLIF(registration, ''), NULLIF(icao_code, '')))::int as unique_aircraft,
+            COUNT(CASE WHEN altitude < 1000 AND altitude > 0 THEN 1 END)::int as low_altitude,
+            COUNT(CASE WHEN flagged = true THEN 1 END)::int as flagged,
+            COUNT(CASE WHEN taxonomy_tag ILIKE '%military%' THEN 1 END)::int as military,
+            COUNT(CASE WHEN (registration IS NULL OR registration = '' OR registration = 'N/A')
+                        AND (icao_code IS NULL OR icao_code = '') THEN 1 END)::int as ghost_count,
+            ROUND(AVG(NULLIF(altitude, 0))::numeric, 0)::int as avg_altitude,
+            COUNT(CASE WHEN taxonomy_tag ILIKE '%mode_switch%' OR taxonomy_tag ILIKE '%identity_cycling%' THEN 1 END)::int as mode_switching
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() - INTERVAL '${timeWindow}'
+            ${tulareGeo}
+        `),
+
+        // 2. Top aircraft by detections
+        sql.unsafe(`
+          SELECT
+            COALESCE(NULLIF(registration, ''), NULLIF(icao_code, ''), 'GHOST') as registration,
+            COUNT(*)::int as detections,
+            ROUND(AVG(NULLIF(altitude, 0))::numeric, 0)::int as avg_altitude,
+            MIN(NULLIF(altitude, 0))::int as min_altitude,
+            COUNT(CASE WHEN altitude < 1000 AND altitude > 0 THEN 1 END)::int as low_passes,
+            COUNT(CASE WHEN flagged = true THEN 1 END)::int as flagged,
+            ROUND(
+              (COUNT(CASE WHEN (registration IS NULL OR registration = '' OR registration = 'N/A') THEN 1 END)::float
+               / GREATEST(COUNT(*), 1) * 50
+               + CASE WHEN AVG(NULLIF(altitude, 0)) < 1500 THEN 30 ELSE 0 END
+               + CASE WHEN COUNT(CASE WHEN altitude < 500 AND altitude > 0 THEN 1 END) > 3 THEN 20 ELSE 0 END
+              )::numeric, 0
+            )::int as ghost_score,
+            MODE() WITHIN GROUP (ORDER BY COALESCE(taxonomy_tag, 'unknown')) as taxonomy_tag
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() - INTERVAL '${timeWindow}'
+            ${tulareGeo}
+          GROUP BY COALESCE(NULLIF(registration, ''), NULLIF(icao_code, ''), 'GHOST')
+          ORDER BY detections DESC
+          LIMIT 50
+        `),
+
+        // 3. Daily activity
+        sql.unsafe(`
+          SELECT
+            TO_CHAR(DATE(detection_timestamp), 'MM/DD') as date,
+            COUNT(*)::int as detections,
+            COUNT(DISTINCT COALESCE(NULLIF(registration, ''), NULLIF(icao_code, '')))::int as unique_aircraft,
+            COUNT(CASE WHEN altitude < 1000 AND altitude > 0 THEN 1 END)::int as low_altitude,
+            COUNT(CASE WHEN (registration IS NULL OR registration = '' OR registration = 'N/A')
+                        AND (icao_code IS NULL OR icao_code = '') THEN 1 END)::int as ghost_count
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() - INTERVAL '${timeWindow}'
+            ${tulareGeo}
+          GROUP BY DATE(detection_timestamp)
+          ORDER BY DATE(detection_timestamp)
+        `),
+
+        // 4. Cross-county: aircraft seen in BOTH Kern and Tulare
+        sql.unsafe(`
+          WITH tulare AS (
+            SELECT
+              COALESCE(NULLIF(registration, ''), NULLIF(icao_code, '')) as acid,
+              COUNT(*)::int as det,
+              ROUND(AVG(NULLIF(altitude, 0))::numeric, 0)::int as avg_alt
+            FROM live_flight_detections_rows
+            WHERE detection_timestamp > NOW() - INTERVAL '${timeWindow}'
+              ${tulareGeo}
+              AND COALESCE(NULLIF(registration, ''), NULLIF(icao_code, '')) IS NOT NULL
+            GROUP BY acid
+          ),
+          kern AS (
+            SELECT
+              COALESCE(NULLIF(registration, ''), NULLIF(icao_code, '')) as acid,
+              COUNT(*)::int as det,
+              ROUND(AVG(NULLIF(altitude, 0))::numeric, 0)::int as avg_alt
+            FROM live_flight_detections_rows
+            WHERE detection_timestamp > NOW() - INTERVAL '${timeWindow}'
+              ${kernGeo}
+              AND COALESCE(NULLIF(registration, ''), NULLIF(icao_code, '')) IS NOT NULL
+            GROUP BY acid
+          )
+          SELECT
+            t.acid as registration,
+            k.det as kern_detections,
+            t.det as tulare_detections,
+            k.avg_alt as kern_avg_alt,
+            t.avg_alt as tulare_avg_alt,
+            CASE
+              WHEN k.avg_alt < 1500 AND t.avg_alt < 1500 THEN 'SURVEILLANCE'
+              WHEN k.det > 10 AND t.det > 10 THEN 'FREQUENT_CROSSOVER'
+              ELSE 'TRANSIENT'
+            END as pattern
+          FROM tulare t
+          JOIN kern k ON t.acid = k.acid
+          ORDER BY (t.det + k.det) DESC
+          LIMIT 50
+        `)
+      ]);
+
+      return {
+        stats: {
+          totalDetections: overview[0]?.total_detections || 0,
+          uniqueAircraft: overview[0]?.unique_aircraft || 0,
+          lowAltitude: overview[0]?.low_altitude || 0,
+          flagged: overview[0]?.flagged || 0,
+          military: overview[0]?.military || 0,
+          ghostCount: overview[0]?.ghost_count || 0,
+          avgAltitude: overview[0]?.avg_altitude || 0,
+          modeSwitching: overview[0]?.mode_switching || 0,
+        },
+        topAircraft,
+        dailyActivity,
+        crossCounty,
+      };
+    }
+
     default:
       return null;
   }

@@ -105,6 +105,11 @@ const App = () => (
                 <Oildale />
               </ProtectedRoute>
             } />
+            <Route path="/tulare" element={
+              <ProtectedRoute>
+                <Tulare />
+              </ProtectedRoute>
+            } />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>

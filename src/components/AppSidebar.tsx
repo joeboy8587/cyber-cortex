@@ -81,6 +81,12 @@ const navigationItems = [
     icon: MapPin,
     description: "Oildale/BFL Grid"
   },
+  { 
+    title: "Tulare County", 
+    url: "/tulare", 
+    icon: Radio,
+    description: "Expanded Airspace"
+  },
 ];
 
 export function AppSidebar() {

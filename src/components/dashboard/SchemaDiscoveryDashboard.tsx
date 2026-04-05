@@ -83,7 +83,8 @@ export function SchemaDiscoveryDashboard() {
   const runCatalogScan = async () => {
     setLoading(true);
     try {
-      const data = await neonQuery("schemaCatalog", {});
+      const { data, error } = await neonQuery({ action: "schemaCatalog" });
+      if (error) throw new Error(typeof error === 'string' ? error : error.message);
       setCatalog(data as CatalogData);
       toast.success(`Cataloged ${(data as CatalogData).summary.totalTables} tables`);
     } catch (err: any) {
@@ -97,7 +98,8 @@ export function SchemaDiscoveryDashboard() {
     if (!searchQuery.trim()) return;
     setSearching(true);
     try {
-      const data = await neonQuery("schemaSearch", { query: searchQuery });
+      const { data, error } = await neonQuery({ action: "schemaSearch", query: searchQuery });
+      if (error) throw new Error(typeof error === 'string' ? error : error.message);
       setSearchResults(data);
     } catch (err: any) {
       toast.error(err.message);

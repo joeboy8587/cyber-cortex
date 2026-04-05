@@ -14,6 +14,8 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
   PieChart, Pie
 } from 'recharts';
+import GapBreakSegmentation from './ghost/GapBreakSegmentation';
+import LegalExhibitGenerator from './ghost/LegalExhibitGenerator';
 
 export default function GhostAircraftForensics() {
   const [loading, setLoading] = useState(false);

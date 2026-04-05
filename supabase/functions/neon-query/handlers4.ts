@@ -1469,6 +1469,295 @@ export async function handleAction4(action: string, body: Record<string, any>, s
       return { error: 'Unknown step: ' + step };
     }
 
+    // ==================== SQUAWK DECEPTION ANALYSIS ====================
+    case 'squawkDeceptionAnalysis': {
+      const step = body.step || 'overview';
+      const days = Math.min(body.days || 30, 90);
+      const tf = `detection_timestamp > NOW() - INTERVAL '${days} days'`;
+      const geoFilter = `AND latitude BETWEEN 35.0 AND 36.0 AND longitude BETWEEN -119.5 AND -118.0`;
+
+      const TRACKED = `'N912KC','N913KC','N597E','N229AM','N224AM','N184AM','N787FA','N4022W','N478CA','N10XSY','N6196P','N743AM'`;
+
+      if (step === 'overview') {
+        const [squawkBreakdown, modeCToggling, lowAltVFR, legalViolations] = await Promise.all([
+          // Squawk code distribution for tracked operators
+          sql.unsafe(`
+            SELECT 
+              registration,
+              squawk,
+              COUNT(*)::int as detections,
+              ROUND(AVG(NULLIF(altitude, 0))::numeric, 0)::int as avg_altitude,
+              MIN(NULLIF(altitude, 0))::int as min_altitude,
+              COUNT(CASE WHEN altitude < 1000 AND altitude > 0 THEN 1 END)::int as low_alt_count,
+              COUNT(CASE WHEN altitude IS NULL OR altitude = 0 THEN 1 END)::int as no_alt_count
+            FROM live_flight_detections_rows
+            WHERE ${tf} ${geoFilter}
+              AND registration IN (${TRACKED})
+            GROUP BY registration, squawk
+            ORDER BY detections DESC
+            LIMIT 100
+          `),
+          // Mode-C toggling events: altitude present then absent within same flight
+          sql.unsafe(`
+            WITH ordered AS (
+              SELECT registration, detection_timestamp, altitude, speed,
+                LAG(altitude) OVER (PARTITION BY registration ORDER BY detection_timestamp) as prev_alt,
+                LAG(detection_timestamp) OVER (PARTITION BY registration ORDER BY detection_timestamp) as prev_ts
+              FROM live_flight_detections_rows
+              WHERE ${tf} ${geoFilter}
+                AND registration IN (${TRACKED})
+            )
+            SELECT 
+              registration,
+              COUNT(*)::int as mode_c_toggles,
+              COUNT(CASE WHEN altitude < 500 AND altitude > 0 THEN 1 END)::int as low_after_toggle,
+              MIN(NULLIF(altitude, 0))::int as min_alt_after,
+              ROUND(AVG(NULLIF(speed, 0))::numeric, 1) as avg_speed_during
+            FROM ordered
+            WHERE prev_alt IS NOT NULL AND prev_alt > 0
+              AND (altitude IS NULL OR altitude = 0)
+              AND EXTRACT(EPOCH FROM detection_timestamp - prev_ts) < 600
+            GROUP BY registration
+            ORDER BY mode_c_toggles DESC
+          `),
+          // Low altitude events with VFR squawk 1200
+          sql.unsafe(`
+            SELECT 
+              registration,
+              COUNT(*)::int as vfr_low_alt_events,
+              ROUND(AVG(altitude)::numeric, 0)::int as avg_alt,
+              MIN(altitude)::int as min_alt,
+              ROUND(AVG(NULLIF(speed, 0))::numeric, 1) as avg_speed,
+              COUNT(CASE WHEN altitude < 500 THEN 1 END)::int as critical_low,
+              COUNT(CASE WHEN EXTRACT(HOUR FROM detection_timestamp) >= 22 OR EXTRACT(HOUR FROM detection_timestamp) < 5 THEN 1 END)::int as night_events
+            FROM live_flight_detections_rows
+            WHERE ${tf} ${geoFilter}
+              AND registration IN (${TRACKED})
+              AND altitude > 0 AND altitude < 1000
+              AND (squawk IS NULL OR squawk = '' OR squawk = '1200')
+            GROUP BY registration
+            ORDER BY vfr_low_alt_events DESC
+          `),
+          // Legal violation count per aircraft
+          sql.unsafe(`
+            SELECT 
+              registration,
+              COUNT(*)::int as total_violations,
+              COUNT(CASE WHEN altitude < 500 AND altitude > 0 THEN 1 END)::int as cfr_91_119_violations,
+              COUNT(CASE WHEN altitude IS NULL OR altitude = 0 THEN 1 END)::int as cfr_91_215_violations,
+              COUNT(CASE WHEN speed IS NOT NULL AND speed < 5 AND altitude < 500 AND altitude > 0 THEN 1 END)::int as hover_violations,
+              COUNT(CASE WHEN EXTRACT(HOUR FROM detection_timestamp) >= 22 OR EXTRACT(HOUR FROM detection_timestamp) < 5 THEN 1 END)::int as night_violations
+            FROM live_flight_detections_rows
+            WHERE ${tf} ${geoFilter}
+              AND registration IN (${TRACKED})
+              AND (altitude < 1000 OR altitude IS NULL OR altitude = 0)
+            GROUP BY registration
+            ORDER BY total_violations DESC
+          `)
+        ]);
+
+        return {
+          squawkBreakdown,
+          modeCToggling,
+          lowAltVFR,
+          legalViolations,
+          days,
+          summary: {
+            totalModeCToggles: modeCToggling.reduce((s: number, r: any) => s + (r.mode_c_toggles || 0), 0),
+            totalLowAltVFR: lowAltVFR.reduce((s: number, r: any) => s + (r.vfr_low_alt_events || 0), 0),
+            totalViolations: legalViolations.reduce((s: number, r: any) => s + (r.total_violations || 0), 0),
+            aircraftCount: new Set([...modeCToggling.map((r: any) => r.registration), ...lowAltVFR.map((r: any) => r.registration)]).size
+          }
+        };
+      }
+
+      if (step === 'timeline') {
+        const timeline = await sql.unsafe(`
+          SELECT 
+            DATE(detection_timestamp) as date,
+            registration,
+            COUNT(*)::int as detections,
+            COUNT(CASE WHEN altitude IS NULL OR altitude = 0 THEN 1 END)::int as mode_c_off,
+            COUNT(CASE WHEN altitude > 0 AND altitude < 500 THEN 1 END)::int as critical_low,
+            COUNT(CASE WHEN altitude > 0 AND altitude < 1000 THEN 1 END)::int as low_alt,
+            MIN(NULLIF(altitude, 0))::int as min_alt
+          FROM live_flight_detections_rows
+          WHERE ${tf} ${geoFilter}
+            AND registration IN (${TRACKED})
+          GROUP BY DATE(detection_timestamp), registration
+          ORDER BY date DESC, detections DESC
+          LIMIT 500
+        `);
+        return { timeline, days };
+      }
+
+      if (step === 'exportSquawk') {
+        const evidence = await sql.unsafe(`
+          SELECT 
+            registration, callsign, icao_code, squawk,
+            detection_timestamp, altitude, speed, heading,
+            latitude, longitude,
+            CASE WHEN altitude IS NULL OR altitude = 0 THEN 'MODE_C_OFF' ELSE 'MODE_C_ON' END as mode_c_status,
+            CASE WHEN squawk IS NULL OR squawk = '' OR squawk = '1200' THEN 'VFR_DEFAULT' ELSE 'ASSIGNED_SQUAWK' END as squawk_class,
+            CASE 
+              WHEN altitude < 500 AND altitude > 0 THEN 'CFR_91_119_VIOLATION'
+              WHEN altitude IS NULL OR altitude = 0 THEN 'CFR_91_215_VIOLATION'
+              WHEN altitude < 1000 THEN 'LOW_ALTITUDE'
+              ELSE 'COMPLIANT'
+            END as legal_status,
+            CASE
+              WHEN EXTRACT(HOUR FROM detection_timestamp) >= 22 OR EXTRACT(HOUR FROM detection_timestamp) < 5 THEN 'NIGHT_OPS'
+              ELSE 'DAY_OPS'
+            END as time_class
+          FROM live_flight_detections_rows
+          WHERE ${tf} ${geoFilter}
+            AND registration IN (${TRACKED})
+            AND (altitude < 1000 OR altitude IS NULL OR altitude = 0)
+          ORDER BY registration, detection_timestamp
+          LIMIT 10000
+        `);
+        return { evidence, count: evidence.length, days };
+      }
+
+      return { error: 'Unknown step: ' + step };
+    }
+
+    // ==================== ML ANOMALY SCORING ====================
+    case 'mlAnomalyScore': {
+      const days = Math.min(body.days || 7, 30);
+      const tf = `detection_timestamp > NOW() - INTERVAL '${days} days'`;
+      const geoFilter = `AND latitude BETWEEN 35.0 AND 36.0 AND longitude BETWEEN -119.5 AND -118.0`;
+
+      // Statistical anomaly detection: compute per-aircraft z-scores against population baseline
+      const [baseline, perAircraft, anomalies, biometricCorrelation] = await Promise.all([
+        // Population baseline statistics
+        sql.unsafe(`
+          SELECT 
+            ROUND(AVG(NULLIF(altitude, 0))::numeric, 0)::int as pop_avg_alt,
+            ROUND(STDDEV(NULLIF(altitude, 0))::numeric, 0)::int as pop_std_alt,
+            ROUND(AVG(NULLIF(speed, 0))::numeric, 1) as pop_avg_speed,
+            ROUND(STDDEV(NULLIF(speed, 0))::numeric, 1) as pop_std_speed,
+            COUNT(*)::int as total_detections
+          FROM live_flight_detections_rows
+          WHERE ${tf} ${geoFilter}
+            AND altitude > 0
+          LIMIT 1
+        `),
+        // Per-aircraft feature vectors (anomaly candidates)
+        sql.unsafe(`
+          SELECT 
+            registration,
+            COUNT(*)::int as detections,
+            ROUND(AVG(NULLIF(altitude, 0))::numeric, 0)::int as avg_alt,
+            ROUND(STDDEV(NULLIF(altitude, 0))::numeric, 0)::int as std_alt,
+            MIN(NULLIF(altitude, 0))::int as min_alt,
+            ROUND(AVG(NULLIF(speed, 0))::numeric, 1) as avg_speed,
+            ROUND(STDDEV(NULLIF(speed, 0))::numeric, 1) as std_speed,
+            COUNT(CASE WHEN altitude < 1000 AND altitude > 0 THEN 1 END)::int as low_alt_count,
+            COUNT(CASE WHEN altitude IS NULL OR altitude = 0 THEN 1 END)::int as no_alt_count,
+            COUNT(CASE WHEN speed IS NOT NULL AND speed < 10 THEN 1 END)::int as loiter_count,
+            COUNT(CASE WHEN EXTRACT(HOUR FROM detection_timestamp) >= 22 OR EXTRACT(HOUR FROM detection_timestamp) < 5 THEN 1 END)::int as night_count,
+            COUNT(DISTINCT DATE(detection_timestamp))::int as active_days,
+            ROUND(
+              (COUNT(CASE WHEN altitude < 1000 AND altitude > 0 THEN 1 END)::float / GREATEST(COUNT(*), 1) * 100)::numeric, 1
+            ) as low_alt_pct,
+            ROUND(
+              (COUNT(CASE WHEN speed IS NOT NULL AND speed < 10 THEN 1 END)::float / GREATEST(COUNT(*), 1) * 100)::numeric, 1
+            ) as loiter_pct
+          FROM live_flight_detections_rows
+          WHERE ${tf} ${geoFilter}
+            AND registration IS NOT NULL AND registration != '' AND registration != 'N/A'
+          GROUP BY registration
+          HAVING COUNT(*) >= 5
+          ORDER BY COUNT(*) DESC
+          LIMIT 200
+        `),
+        // Top anomalies: aircraft with extreme z-scores (low altitude, low speed, high frequency)
+        sql.unsafe(`
+          WITH stats AS (
+            SELECT 
+              AVG(NULLIF(altitude, 0)) as pop_alt,
+              STDDEV(NULLIF(altitude, 0)) as std_alt,
+              AVG(NULLIF(speed, 0)) as pop_spd,
+              STDDEV(NULLIF(speed, 0)) as std_spd
+            FROM live_flight_detections_rows
+            WHERE ${tf} ${geoFilter} AND altitude > 0
+          ),
+          aircraft AS (
+            SELECT 
+              registration,
+              COUNT(*)::int as detections,
+              AVG(NULLIF(altitude, 0)) as avg_alt,
+              AVG(NULLIF(speed, 0)) as avg_spd,
+              COUNT(CASE WHEN altitude < 500 AND altitude > 0 THEN 1 END)::int as critical_low
+            FROM live_flight_detections_rows
+            WHERE ${tf} ${geoFilter}
+              AND registration IS NOT NULL AND registration != '' AND registration != 'N/A'
+            GROUP BY registration
+            HAVING COUNT(*) >= 3
+          )
+          SELECT 
+            a.registration,
+            a.detections,
+            ROUND(a.avg_alt::numeric, 0)::int as avg_alt,
+            ROUND(a.avg_spd::numeric, 1) as avg_speed,
+            a.critical_low,
+            ROUND(((s.pop_alt - a.avg_alt) / GREATEST(s.std_alt, 1))::numeric, 2) as alt_z_score,
+            ROUND(((s.pop_spd - a.avg_spd) / GREATEST(s.std_spd, 1))::numeric, 2) as speed_z_score,
+            ROUND((
+              ((s.pop_alt - a.avg_alt) / GREATEST(s.std_alt, 1)) * 0.4 +
+              ((s.pop_spd - a.avg_spd) / GREATEST(s.std_spd, 1)) * 0.3 +
+              (a.critical_low::float / GREATEST(a.detections, 1)) * 100 * 0.3
+            )::numeric, 2) as anomaly_score,
+            CASE
+              WHEN ((s.pop_alt - a.avg_alt) / GREATEST(s.std_alt, 1)) > 2 
+                AND a.critical_low > 5 THEN 'SURVEILLANCE'
+              WHEN ((s.pop_spd - a.avg_spd) / GREATEST(s.std_spd, 1)) > 2 
+                AND a.avg_spd < 30 THEN 'LOITER'
+              WHEN a.critical_low > 0 AND a.avg_alt < 1000 THEN 'LOW_ALTITUDE'
+              ELSE 'NORMAL'
+            END as ml_classification
+          FROM aircraft a, stats s
+          ORDER BY anomaly_score DESC
+          LIMIT 50
+        `),
+        // Biometric correlation for top anomalous aircraft
+        sql.unsafe(`
+          SELECT 
+            f.registration,
+            COUNT(DISTINCT b.id)::int as biometric_events,
+            ROUND(AVG(b.heart_rate)::numeric, 0)::int as avg_hr_during,
+            MAX(b.heart_rate)::int as max_hr,
+            ROUND(AVG(b.stress_level)::numeric, 1) as avg_stress
+          FROM live_flight_detections_rows f
+          JOIN biometric_monitoring b 
+            ON b.measurement_timestamp BETWEEN f.detection_timestamp - INTERVAL '5 minutes' AND f.detection_timestamp + INTERVAL '5 minutes'
+          WHERE f.${tf.replace('detection_timestamp', 'detection_timestamp')} ${geoFilter.replace(/AND /g, 'AND f.')}
+            AND f.altitude > 0 AND f.altitude < 1500
+            AND f.registration IS NOT NULL AND f.registration != ''
+          GROUP BY f.registration
+          HAVING COUNT(DISTINCT b.id) >= 2
+          ORDER BY AVG(b.heart_rate) DESC
+          LIMIT 30
+        `)
+      ]);
+
+      return {
+        baseline: baseline[0] || {},
+        perAircraft,
+        anomalies,
+        biometricCorrelation,
+        days,
+        summary: {
+          totalAircraft: perAircraft.length,
+          surveillanceClassified: anomalies.filter((a: any) => a.ml_classification === 'SURVEILLANCE').length,
+          loiterClassified: anomalies.filter((a: any) => a.ml_classification === 'LOITER').length,
+          lowAltClassified: anomalies.filter((a: any) => a.ml_classification === 'LOW_ALTITUDE').length,
+          biometricCorrelated: biometricCorrelation.length
+        }
+      };
+    }
+
     default:
       return null;
   }

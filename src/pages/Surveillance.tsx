@@ -35,6 +35,7 @@ import PosseComitausAnalyzer from "@/components/dashboard/PosseComitausAnalyzer"
 import IFRSurveillanceDetector from "@/components/dashboard/IFRSurveillanceDetector";
 import IcaoIdentityCleanup from "@/components/dashboard/IcaoIdentityCleanup";
 import GhostAircraftForensics from "@/components/dashboard/GhostAircraftForensics";
+import SquawkDeceptionDashboard from "@/components/dashboard/SquawkDeceptionDashboard";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export default function Surveillance() {
@@ -67,7 +68,8 @@ export default function Surveillance() {
               </p>
             </div>
 
-            <TabsList className="grid h-auto grid-cols-2 gap-2 bg-transparent p-0 lg:grid-cols-12">
+            <TabsList className="grid h-auto grid-cols-2 gap-2 bg-transparent p-0 lg:grid-cols-13">
+              <TabsTrigger value="squawk" className="text-chart-4">📡 Squawk/ML</TabsTrigger>
               <TabsTrigger value="identity" className="text-chart-1">🧬 Identity</TabsTrigger>
               <TabsTrigger value="ifr" className="text-chart-2">🎯 IFR Detect</TabsTrigger>
               <TabsTrigger value="posse" className="text-destructive">⚖️ Posse</TabsTrigger>
@@ -82,6 +84,12 @@ export default function Surveillance() {
               <TabsTrigger value="intake">Intake</TabsTrigger>
             </TabsList>
           </div>
+
+          <TabsContent value="squawk" className="space-y-6">
+            <section>
+              <SquawkDeceptionDashboard />
+            </section>
+          </TabsContent>
 
           <TabsContent value="identity" className="space-y-6">
             <section>

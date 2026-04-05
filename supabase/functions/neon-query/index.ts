@@ -83,6 +83,8 @@ const HANDLER4_ACTIONS = new Set([
   'ifrSurveillanceDetection',
   'icaoIdentityCleanup',
   'ghostAircraftForensics',
+  'squawkDeceptionAnalysis',
+  'mlAnomalyScore',
 ]);
 
 async function getHandler1() {

@@ -573,35 +573,3 @@ export async function handleAction5(action: string, body: Record<string, any>, s
       return null;
   }
 }
-      // Search for tables/columns matching a query
-      const query = (body.query || '').toLowerCase();
-      if (!query) throw new Error('query required');
-
-      await sql`SET statement_timeout = '10s'`;
-
-      const [tableMatches, columnMatches] = await Promise.all([
-        sql`
-          SELECT table_name FROM information_schema.tables
-          WHERE table_schema = 'public'
-            AND LOWER(table_name) LIKE ${'%' + query + '%'}
-          ORDER BY table_name
-          LIMIT 50
-        `,
-        sql`
-          SELECT table_name, column_name, data_type
-          FROM information_schema.columns
-          WHERE table_schema = 'public'
-            AND (LOWER(column_name) LIKE ${'%' + query + '%'}
-                 OR LOWER(table_name) LIKE ${'%' + query + '%'})
-          ORDER BY table_name, ordinal_position
-          LIMIT 100
-        `,
-      ]);
-
-      return { tableMatches, columnMatches };
-    }
-
-    default:
-      return null;
-  }
-}

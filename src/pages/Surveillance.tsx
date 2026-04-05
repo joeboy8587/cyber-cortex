@@ -35,6 +35,7 @@ import PosseComitausAnalyzer from "@/components/dashboard/PosseComitausAnalyzer"
 import IFRSurveillanceDetector from "@/components/dashboard/IFRSurveillanceDetector";
 import IcaoIdentityCleanup from "@/components/dashboard/IcaoIdentityCleanup";
 import GhostAircraftForensics from "@/components/dashboard/GhostAircraftForensics";
+import SquawkDeceptionDashboard from "@/components/dashboard/SquawkDeceptionDashboard";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export default function Surveillance() {

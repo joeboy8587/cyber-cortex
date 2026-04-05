@@ -13,7 +13,8 @@ import {
   Radio,
   PlayCircle,
   GraduationCap,
-  MapPin
+  MapPin,
+  Network
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useAuth } from "@/hooks/useAuth";
@@ -86,6 +87,12 @@ const navigationItems = [
     url: "/tulare", 
     icon: Radio,
     description: "Expanded Airspace"
+  },
+  { 
+    title: "Knowledge Engine", 
+    url: "/knowledge", 
+    icon: Network,
+    description: "Schema Discovery"
   },
 ];
 

@@ -19,6 +19,7 @@ import Simulation from "./pages/Simulation";
 import Academy from "./pages/Academy";
 import Oildale from "./pages/Oildale";
 import Tulare from "./pages/Tulare";
+import KnowledgeEngine from "./pages/KnowledgeEngine";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 2, staleTime: 5000 } },
@@ -108,6 +109,11 @@ const App = () => (
             <Route path="/tulare" element={
               <ProtectedRoute>
                 <Tulare />
+              </ProtectedRoute>
+            } />
+            <Route path="/knowledge" element={
+              <ProtectedRoute>
+                <KnowledgeEngine />
               </ProtectedRoute>
             } />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}

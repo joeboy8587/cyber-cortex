@@ -5,6 +5,7 @@ let _handleAction: ((action: string, body: Record<string, any>, sql: any) => Pro
 let _handleAction2: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
 let _handleAction3: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
 let _handleAction4: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
+let _handleAction5: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
 
 const HANDLER1_ACTIONS = new Set([
   'getBehavioralAlignment',
@@ -88,6 +89,13 @@ const HANDLER4_ACTIONS = new Set([
   'tulareCountyScan',
 ]);
 
+const HANDLER5_ACTIONS = new Set([
+  'schemaCatalog',
+  'schemaTablePreview',
+  'schemaRelationshipMap',
+  'schemaSearch',
+]);
+
 async function getHandler1() {
   if (!_handleAction) {
     const mod = await import("./handlers.ts");
@@ -120,7 +128,15 @@ async function getHandler4() {
   return _handleAction4;
 }
 
-const VERSION = "2.10.1";
+async function getHandler5() {
+  if (!_handleAction5) {
+    const mod = await import("./handlers5.ts");
+    _handleAction5 = mod.handleAction5;
+  }
+  return _handleAction5;
+}
+
+const VERSION = "2.11.0";
 console.log(`neon-query v${VERSION} booting...`);
 
 const corsHeaders = {
@@ -457,6 +473,12 @@ Deno.serve(async (req) => {
           if (HANDLER4_ACTIONS.has(action)) {
             const h4 = await getHandler4();
             result = await h4(action, body, sql);
+            break;
+          }
+
+          if (HANDLER5_ACTIONS.has(action)) {
+            const h5 = await getHandler5();
+            result = await h5(action, body, sql);
             break;
           }
 

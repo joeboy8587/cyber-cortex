@@ -21,6 +21,7 @@ const COMMON_DRONE_FREQUENCIES = [
 ];
 
 export default function DroneRFTracker() {
+  const [showForm, setShowForm] = useState(false);
   const [signatures, setSignatures] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [formData, setFormData] = useState({

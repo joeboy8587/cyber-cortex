@@ -94,6 +94,12 @@ const HANDLER5_ACTIONS = new Set([
   'schemaTablePreview',
   'schemaRelationshipMap',
   'schemaSearch',
+  'ensureDroneTables',
+  'droneRFScan',
+  'insertDroneRF',
+  'ghostToDroneCorrelation',
+  'denverLogisticsScan',
+  'launchRecoveryPoints',
 ]);
 
 async function getHandler1() {
@@ -136,7 +142,7 @@ async function getHandler5() {
   return _handleAction5;
 }
 
-const VERSION = "2.11.0";
+const VERSION = "2.12.0";
 console.log(`neon-query v${VERSION} booting...`);
 
 const corsHeaders = {

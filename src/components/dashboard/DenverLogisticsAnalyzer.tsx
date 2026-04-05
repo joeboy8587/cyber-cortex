@@ -161,7 +161,7 @@ export default function DenverLogisticsAnalyzer() {
                       <TableCell>{f.active_days}</TableCell>
                       <TableCell>{Math.round(parseFloat(f.avg_alt))} ft</TableCell>
                       <TableCell>
-                        <span className={parseFloat(f.night_pct) > 50 ? "text-orange-400 font-bold" : ""}>
+                        <span className={parseFloat(f.night_pct) > 50 ? "text-accent-foreground font-bold" : ""}>
                           {f.night_pct}%
                         </span>
                       </TableCell>

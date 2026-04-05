@@ -128,7 +128,7 @@ export default function GhostToDroneEngine() {
                         </span>
                       </TableCell>
                       <TableCell>
-                        <span className={parseFloat(g.night_ops_pct) > 40 ? "text-orange-400 font-bold" : ""}>
+                        <span className={parseFloat(g.night_ops_pct) > 40 ? "text-accent-foreground font-bold" : ""}>
                           {g.night_ops_pct}%
                         </span>
                       </TableCell>

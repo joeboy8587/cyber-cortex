@@ -413,6 +413,16 @@ export default function GhostAircraftForensics() {
             </div>
           )}
         </TabsContent>
+
+        {/* ── GAP-BREAK SEGMENTATION ── */}
+        <TabsContent value="segments">
+          <GapBreakSegmentation days={days} loading={loading} setLoading={setLoading} />
+        </TabsContent>
+
+        {/* ── LEGAL EXHIBIT ── */}
+        <TabsContent value="exhibit">
+          <LegalExhibitGenerator days={days} loading={loading} setLoading={setLoading} />
+        </TabsContent>
       </Tabs>
     </CyberPanel>
   );

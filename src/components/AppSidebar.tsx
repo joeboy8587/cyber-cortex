@@ -14,7 +14,8 @@ import {
   PlayCircle,
   GraduationCap,
   MapPin,
-  Network
+  Network,
+  Ghost
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useAuth } from "@/hooks/useAuth";
@@ -93,6 +94,12 @@ const navigationItems = [
     url: "/knowledge", 
     icon: Network,
     description: "Schema Discovery"
+  },
+  { 
+    title: "Drone Detection", 
+    url: "/drones", 
+    icon: Ghost,
+    description: "RF & Drone Intel"
   },
 ];
 

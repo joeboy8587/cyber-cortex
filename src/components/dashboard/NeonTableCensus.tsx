@@ -23,11 +23,21 @@ export function NeonTableCensus() {
     setProgress(0);
     
     try {
-      // First get all table names
+      // Use pg_class.reltuples for fast row count estimates instead of COUNT(*)
+      // This avoids statement timeouts on large tables (23M+ rows)
       const { data: tableList } = await supabase.functions.invoke('neon-query', {
         body: { 
           action: 'customQuery',
-          query: `SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename`
+          query: `
+            SELECT 
+              c.relname as table_name,
+              GREATEST(c.reltuples, 0)::bigint as row_count
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public'
+              AND c.relkind = 'r'
+            ORDER BY c.reltuples DESC
+          `
         }
       });
 
@@ -36,36 +46,11 @@ export function NeonTableCensus() {
         return;
       }
 
-      const tableNames = tableList.map((t: { tablename: string }) => t.tablename);
-      const counts: TableCount[] = [];
-      
-      // Query counts in batches for efficiency
-      const batchSize = 20;
-      for (let i = 0; i < tableNames.length; i += batchSize) {
-        const batch = tableNames.slice(i, i + batchSize);
-        
-        // Build a UNION ALL query for batch counting
-        const countQueries = batch.map((name: string) => 
-          `SELECT '${name}' as table_name, COUNT(*)::int as row_count FROM "${name}"`
-        ).join(' UNION ALL ');
-        
-        const { data: batchCounts } = await supabase.functions.invoke('neon-query', {
-          body: { 
-            action: 'customQuery',
-            query: countQueries
-          }
-        });
+      const counts: TableCount[] = tableList.map((t: any) => ({
+        table_name: t.table_name,
+        row_count: Number(t.row_count) || 0
+      }));
 
-        if (batchCounts) {
-          counts.push(...batchCounts);
-        }
-        
-        setProgress(Math.round(((i + batch.length) / tableNames.length) * 100));
-      }
-
-      // Sort by row count descending
-      counts.sort((a, b) => b.row_count - a.row_count);
-      
       setTables(counts);
       setTotalRecords(counts.reduce((sum, t) => sum + t.row_count, 0));
       setLastUpdated(new Date());

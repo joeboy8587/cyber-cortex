@@ -18,6 +18,7 @@ import DataTools from "./pages/DataTools";
 import Simulation from "./pages/Simulation";
 import Academy from "./pages/Academy";
 import Oildale from "./pages/Oildale";
+import Tulare from "./pages/Tulare";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 2, staleTime: 5000 } },

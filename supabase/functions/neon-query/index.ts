@@ -356,8 +356,7 @@ Deno.serve(async (req) => {
           }
 
           if (HANDLER5_ACTIONS.has(action)) {
-            const h5 = await getHandler5();
-            result = await h5(action, body, sql);
+            result = await handleAction5(action, body, sql);
             break;
           }
 

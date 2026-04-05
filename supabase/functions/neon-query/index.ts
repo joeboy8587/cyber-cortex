@@ -6,7 +6,126 @@ let _handleAction: ((action: string, body: Record<string, any>, sql: any) => Pro
 let _handleAction2: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
 let _handleAction3: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
 let _handleAction4: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
-...
+
+const HANDLER1_ACTIONS = new Set([
+  'getBehavioralAlignment',
+  'computeBehavioralAlignment',
+  'createBehavioralAlignmentTable',
+  'getMedicalBehavioralAlignment',
+  'computeMedicalBehavioralAlignment',
+  'createMedicalBehavioralAlignmentTable',
+  'getMilitaryGovBehavioralAlignment',
+  'computeMilitaryGovBehavioralAlignment',
+  'createMilitaryGovBehavioralAlignmentTable',
+  'provenanceAudit',
+  'sealSyntheticData',
+  'getDataProvenanceBreakdown',
+  'disableAutoTagger',
+  'retroactiveFlagging',
+  'biometricCollisionCheck',
+  'getValidatedXXB',
+  'crossModalStitch',
+  'crossModalStitchSummary',
+]);
+
+const HANDLER2_ACTIONS = new Set([
+  'analyzeSaturation',
+  'getMultimodalCoverage',
+  'getFullTimelineStories',
+  'getDataCoverageStats',
+  'createPerformanceIndexes',
+  'syncKcsoFleet',
+  'importKCSOBudgetData',
+  'getUnmaskHQData',
+  'getUnmaskHQLandingTrails',
+  'c2014CohortScan',
+  'operatorEnrichment',
+  'xxbFlightAnalysis',
+  'getTopFlaggedAircraft',
+  'getAnomalousHexCodes',
+  'fixIcaoColumnMapping',
+  'getAircraftTrajectory',
+  'getAltitudeViolations',
+  'getViolationAircraft',
+]);
+
+const HANDLER3_ACTIONS = new Set([
+  'getDashboardCounts',
+  'getDataSourceStatus',
+  'getLegalAnalysisStats',
+  'getFederalCaseConvergence',
+  'backfillIcaoCodes',
+  'scanAllTables',
+  'getTaxonomy',
+  'taxonomyStats',
+  'getEnterpriseProfiles',
+  'getKCSOBudgetData',
+  'getUnfilteredStats',
+  'bridgeTaxonomy',
+  'getGhostAircraftReport',
+  'anonymousAnomalyScan',
+  'getInvestigationConfig',
+  'getTableCategories',
+  'spoofDetectionScan',
+  'droneInvestigationScan',
+]);
+
+const HANDLER4_ACTIONS = new Set([
+  'transponderModeAnalysis',
+  'ghostFleetScore',
+  'transponderModeSwitching',
+  'icaoRecyclingScan',
+  'chronoTimelineScan',
+  'chronoTimelineRebuild',
+  'chronoTimelineSummary',
+  'posseComitatus',
+  'upsertFAARecords',
+  'getFAARegistry',
+  'ifrSurveillanceDetection',
+  'icaoIdentityCleanup',
+  'ghostAircraftForensics',
+  'squawkDeceptionAnalysis',
+  'mlAnomalyScore',
+  'tulareCountyScan',
+]);
+
+const HANDLER5_ACTIONS = new Set([
+  'schemaCatalog',
+  'schemaTablePreview',
+  'schemaRelationshipMap',
+  'schemaSearch',
+  'ensureDroneTables',
+  'droneRFScan',
+  'insertDroneRF',
+  'ghostToDroneCorrelation',
+  'denverLogisticsScan',
+  'launchRecoveryPoints',
+]);
+
+async function getHandler1() {
+  if (!_handleAction) {
+    const mod = await import("./handlers.ts");
+    _handleAction = mod.handleAction;
+  }
+  return _handleAction;
+}
+
+async function getHandler2() {
+  if (!_handleAction2) {
+    const mod = await import("./handlers2.ts");
+    _handleAction2 = mod.handleAction2;
+  }
+  return _handleAction2;
+}
+
+async function getHandler3() {
+  if (!_handleAction3) {
+    const mod = await import("./handlers3.ts");
+    _handleAction3 = mod.handleAction3;
+  }
+  return _handleAction3;
+}
+
 async function getHandler4() {
   if (!_handleAction4) {
     const mod = await import("./handlers4.ts");
@@ -14,6 +133,7 @@ async function getHandler4() {
   }
   return _handleAction4;
 }
+
 
 const VERSION = "2.12.1";
 console.log(`neon-query v${VERSION} booting...`);

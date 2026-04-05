@@ -22,9 +22,9 @@ export default function DenverLogisticsAnalyzer() {
   const runScan = async () => {
     setLoading(true);
     try {
-      const data = await neonQuery("denverLogisticsScan", {});
+      const { data } = await neonQuery({ action: "denverLogisticsScan" });
       setResults(data);
-      toast.success(`Logistics scan complete: ${data.flights?.length || 0} carrier patterns identified`);
+      toast.success(`Logistics scan complete: ${data?.flights?.length || 0} carrier patterns identified`);
     } catch (e) {
       toast.error("Scan failed: " + (e as Error).message);
     } finally {

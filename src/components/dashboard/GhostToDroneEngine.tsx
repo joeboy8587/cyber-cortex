@@ -22,9 +22,9 @@ export default function GhostToDroneEngine() {
   const runCorrelation = async () => {
     setLoading(true);
     try {
-      const data = await neonQuery("ghostToDroneCorrelation", {});
+      const { data } = await neonQuery({ action: "ghostToDroneCorrelation" });
       setResults(data);
-      toast.success(`Correlation complete: ${data.summary?.totalGhosts || 0} ghost platforms analyzed`);
+      toast.success(`Correlation complete: ${data?.summary?.totalGhosts || 0} ghost platforms analyzed`);
     } catch (e) {
       toast.error("Correlation failed: " + (e as Error).message);
     } finally {

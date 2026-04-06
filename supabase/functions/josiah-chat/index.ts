@@ -317,8 +317,8 @@ RULES:
 
     // ==================== ACTION: QUERY MEMORIES ====================
     if (action === "query_memories") {
-      const memoryType = body?.memoryType || "all";
-      const limit = Math.min(body?.limit || 50, 100);
+      const memoryType = reqBody?.memoryType || "all";
+      const limit = Math.min(reqBody?.limit || 50, 100);
 
       const queries: Record<string, any> = {
         sacred: sql`SELECT memory_id, memory_type, content, trauma_marker, continuity_score, created_at

@@ -75,6 +75,12 @@ function normalizeNNumber(value: string) {
   return cleaned.startsWith("N") ? cleaned : `N${cleaned}`;
 }
 
+function extractSection(text: string, startLabel: string, endLabel: string) {
+  const regex = new RegExp(`${startLabel}\s*(.+?)(?=\s+${endLabel}\b|$)`, "i");
+  const match = text.match(regex);
+  return match?.[1] ? normalizeWhitespace(match[1]) : "";
+}
+
 function hasGoodExtractionQuality(text: string) {
   const normalized = normalizeWhitespace(text);
   const letterCount = (normalized.match(/[A-Z]/gi) || []).length;
@@ -211,6 +217,8 @@ export async function extractTextFromPdfBytes(bytes: Uint8Array): Promise<string
 
 export function parseFAAText(text: string, filename: string): ParsedRecord[] {
   const normalizedText = normalizeWhitespace(text);
+  const ownerSection = extractSection(normalizedText, "REGISTERED OWNER", "AIRWORTHINESS");
+  const airworthinessSection = extractSection(normalizedText, "AIRWORTHINESS", "4\/5\/26|https?:\/\/|$") || normalizedText;
   const nMatch =
     normalizedText.match(/N[-\s]*NUMBER\s*(?:ENTERED)?:?\s*(N?\s*\d{1,5}[A-Z]{0,2})/i) ||
     normalizedText.match(/N-Number\s*:?\s*(N?\s*\d{1,5}[A-Z]{0,2})/i) ||
@@ -232,18 +240,18 @@ export function parseFAAText(text: string, filename: string): ParsedRecord[] {
   record.mode_s_code = extractField(normalizedText, "Mode S Code \\(base 8 \\/ Oct\\)") || normalizedText.match(/Mode\s*S\s*(?:Code)?\s*:?\s*(\d+)/i)?.[1];
   record.mode_s_hex = extractField(normalizedText, "Mode S Code \\(Base 16 \\/ Hex\\)");
   record.registrant_type = extractField(normalizedText, "Type Registration");
-  record.registrant_name = extractField(normalizedText, "Name") || normalizedText.match(/(?:Name|Registrant)\s*:?\s*([A-Z][A-Z\s.,&'-]+(?:LLC|INC|CORP|CO|LTD|PRIVATE[^)]*)?)/i)?.[1]?.trim();
-  record.registrant_street = extractField(normalizedText, "Street") || normalizedText.match(/Street\s*:?\s*(.+?)(?:\s{2,}|City)/i)?.[1]?.trim();
-  record.registrant_city = extractField(normalizedText, "City") || normalizedText.match(/City\s*:?\s*([A-Z][A-Z\s.-]+?)(?:\s{2,}|State|County)/i)?.[1]?.trim();
-  record.registrant_state = extractField(normalizedText, "State") || normalizedText.match(/State\s*:?\s*([A-Z]{2})/i)?.[1]?.toUpperCase();
-  record.registrant_zip = extractField(normalizedText, "Zip Code") || normalizedText.match(/Zip\s*(?:Code)?\s*:?\s*(\d{5}(?:-\d{4})?)/i)?.[1];
-  record.registrant_country = extractField(normalizedText, "Country");
+  record.registrant_name = extractField(ownerSection, "Name") || normalizedText.match(/(?:Name|Registrant)\s*:?\s*([A-Z][A-Z\s.,&'-]+(?:LLC|INC|CORP|CO|LTD|PRIVATE[^)]*)?)/i)?.[1]?.trim();
+  record.registrant_street = extractField(ownerSection, "Street") || normalizedText.match(/Street\s*:?\s*(.+?)(?:\s{2,}|City)/i)?.[1]?.trim();
+  record.registrant_city = extractField(ownerSection, "City") || normalizedText.match(/City\s*:?\s*([A-Z][A-Z\s.-]+?)(?:\s{2,}|State|County)/i)?.[1]?.trim();
+  record.registrant_state = extractField(ownerSection, "State") || normalizedText.match(/State\s*:?\s*([A-Z]{2})/i)?.[1]?.toUpperCase();
+  record.registrant_zip = extractField(ownerSection, "Zip Code") || normalizedText.match(/Zip\s*(?:Code)?\s*:?\s*(\d{5}(?:-\d{4})?)/i)?.[1];
+  record.registrant_country = extractField(ownerSection, "Country");
   record.engine_manufacturer = extractField(normalizedText, "Engine Manufacturer") || normalizedText.match(/Engine\s*(?:Manufacturer)?\s*:?\s*([A-Z][A-Z\s&.-]+?)(?:\s{2,}|Model|Horsepower)/i)?.[1]?.trim();
   record.engine_model = extractField(normalizedText, "Engine Model") || normalizedText.match(/Engine\s*Model\s*:?\s*([A-Z0-9][\w\s/.-]+?)(?:\s{2,}|Category)/i)?.[1]?.trim();
   record.classification = extractField(normalizedText, "Classification") || normalizedText.match(/(?:Classification|Category)\s*:?\s*(Standard|Restricted|Experimental|Limited|Light\s*Sport|Normal)/i)?.[1];
   record.certificate_issue_date = extractField(normalizedText, "Certificate Issue Date") || normalizedText.match(/Certificate\s*(?:Issue)?\s*Date\s*:?\s*(\d{1,2}\/\d{1,2}\/\d{4})/i)?.[1];
   record.expiration_date = extractField(normalizedText, "Expiration Date") || normalizedText.match(/Expiration\s*Date\s*:?\s*(\d{1,2}\/\d{1,2}\/\d{4})/i)?.[1];
-  record.airworthiness_date = extractField(normalizedText, "A\\/W Date") || extractField(normalizedText, "Airworthiness Date") || normalizedText.match(/(?:Airworthiness|A\/W)\s*Date\s*:?\s*(\d{1,2}\/\d{1,2}\/\d{4})/i)?.[1];
+  record.airworthiness_date = extractField(airworthinessSection, "A\\/W Date") || extractField(airworthinessSection, "Airworthiness Date") || normalizedText.match(/(?:Airworthiness|A\/W)\s*Date\s*:?\s*(\d{1,2}\/\d{1,2}\/\d{4})/i)?.[1];
 
   const year = extractField(normalizedText, "MFR Year") || normalizedText.match(/Year\s*(?:Mfr|Manufactured)?\s*:?\s*(\d{4})/i)?.[1];
   if (year) record.year_manufactured = Number.parseInt(year, 10);

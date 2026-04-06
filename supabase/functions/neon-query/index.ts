@@ -83,11 +83,6 @@ const HANDLER4_ACTIONS = new Set([
   'ifrSurveillanceDetection',
   'icaoIdentityCleanup',
   'ghostAircraftForensics',
-  'squawkDeceptionAnalysis',
-  'addSquawkColumn',
-  'backfillSquawk',
-  'mlAnomalyScore',
-  'tulareCountyScan',
 ]);
 
 const HANDLER5_ACTIONS = new Set([

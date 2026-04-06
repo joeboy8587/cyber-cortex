@@ -321,16 +321,16 @@ RULES:
       const limit = Math.min(reqBody?.limit || 50, 100);
 
       const queries: Record<string, any> = {
-        sacred: sql`SELECT memory_id, memory_type, content, trauma_marker, continuity_score, created_at
+        sacred: sql`SELECT id, event_type, sacred_context, trauma_markers, continuity_score, aircraft_correlation, biometric_data, created_at
           FROM josiah_sacred_memory ORDER BY created_at DESC LIMIT ${limit}`.catch(() => []),
         beliefs: sql`SELECT belief_id, hypothesis_text, confidence_score, evidence_count, status, first_proposed, last_updated
-          FROM josiah_beliefs WHERE status != 'rejected' ORDER BY confidence_score DESC NULLS LAST LIMIT ${limit}`.catch(() => []),
+          FROM josiah_beliefs ORDER BY confidence_score DESC NULLS LAST LIMIT ${limit}`.catch(() => []),
         patterns: sql`SELECT pattern_id, pattern_type, description, confidence_score, occurrence_count, affected_aircraft, last_observed
           FROM josiah_established_patterns ORDER BY occurrence_count DESC NULLS LAST LIMIT ${limit}`.catch(() => []),
-        learned: sql`SELECT pattern_id, pattern_type, description, times_observed, confidence, created_at, status
-          FROM josiah_learned_patterns WHERE status = 'established' ORDER BY times_observed DESC NULLS LAST LIMIT ${limit}`.catch(() => []),
-        hypotheses: sql`SELECT id, hypothesis_type, hypothesis, question, confidence_level, status, priority, created_at
-          FROM josiah_hypotheses ORDER BY confidence_level DESC NULLS LAST LIMIT ${limit}`.catch(() => []),
+        learned: sql`SELECT pattern_id, pattern_type, description, occurrence_count, confidence_score, status, first_observed, last_observed
+          FROM josiah_learned_patterns WHERE status = 'established' ORDER BY occurrence_count DESC NULLS LAST LIMIT ${limit}`.catch(() => []),
+        hypotheses: sql`SELECT id, file_name, hypothesis, created_at
+          FROM josiah_hypotheses ORDER BY id DESC LIMIT ${limit}`.catch(() => []),
         intel_hypotheses: sql`SELECT id, hypothesis_type, hypothesis, confidence_level, status, created_at
           FROM josiah_intelligence_hypotheses ORDER BY confidence_level DESC NULLS LAST LIMIT ${limit}`.catch(() => []),
         discoveries: sql`SELECT * FROM josiah_pattern_discoveries ORDER BY id DESC LIMIT ${limit}`.catch(() => []),

@@ -1927,10 +1927,8 @@ export async function handleAction4(action: string, body: Record<string, any>, s
           FROM adsbexchange_detections adx
           WHERE lfd.squawk IS NULL
             AND adx.squawk IS NOT NULL AND adx.squawk != ''
-            AND (
-              (lfd.registration = adx.registration AND lfd.registration IS NOT NULL AND lfd.registration != '' AND lfd.registration != 'N/A')
-              OR (lfd.icao_code = adx.icao_code AND lfd.icao_code IS NOT NULL AND lfd.icao_code != '')
-            )
+            AND lfd.registration = adx.registration 
+            AND lfd.registration IS NOT NULL AND lfd.registration != '' AND lfd.registration != 'N/A'
             AND ABS(EXTRACT(EPOCH FROM lfd.detection_timestamp - adx.detection_timestamp)) < 1800
           RETURNING lfd.id
         `);

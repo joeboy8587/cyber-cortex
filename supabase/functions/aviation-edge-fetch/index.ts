@@ -534,7 +534,8 @@ serve(async (req) => {
                   id, icao_code, registration, callsign, altitude, speed,
                   latitude, longitude, heading, vertical_rate,
                   detection_timestamp, created_at, taxonomy_tag,
-                  threat_score, tier_level, flagged, flagged_reasons
+                  threat_score, tier_level, flagged, flagged_reasons,
+                  squawk
                 ) VALUES (
                   ${flightId},
                   ${flight.hex || 'UNKNOWN'},
@@ -552,7 +553,8 @@ serve(async (req) => {
                   ${flight.threatScore},
                   ${flight.tierLevel},
                   ${flight.flagged},
-                  ${flight.flaggedReasons.join('; ')}
+                  ${flight.flaggedReasons.join('; ')},
+                  ${flight.squawk || null}
                 )
                 ON CONFLICT DO NOTHING
               `;

@@ -758,7 +758,8 @@ serve(async (req) => {
                       shell_auto_detected=${flight.shellAutoDetected},
                       shell_detection_reason=${flight.shellDetectionReason||null},
                       data_source=${flight.source},
-                      sha256_hash=${sha256Hash}
+                      sha256_hash=${sha256Hash},
+                      squawk=${flight.squawk||null}
                     WHERE id=${existing[0].id}`;
                   } else {
                     await sql`UPDATE live_flight_detections_rows SET
@@ -784,7 +785,7 @@ serve(async (req) => {
                   threat_score, tier_level, flagged, flagged_reasons,
                   owner_operator, aircraft_type, aircraft_type_desc,
                   is_military, data_source, shell_auto_detected, shell_detection_reason,
-                  sha256_hash
+                  sha256_hash, squawk
                 ) VALUES (
                   ${crypto.randomUUID()}, ${flight.hex}, ${flight.registration},
                   ${flight.callsign}, ${flight.altitude}, ${flight.speed},
@@ -796,7 +797,7 @@ serve(async (req) => {
                   ${flight.aircraftTypeDesc||null}, ${flight.isMilitary},
                   ${flight.source}, ${flight.shellAutoDetected},
                   ${flight.shellDetectionReason||null},
-                  ${sha256Hash}
+                  ${sha256Hash}, ${flight.squawk||null}
                 )`;
               } else {
                 await sql`INSERT INTO live_flight_detections_rows (

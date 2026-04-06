@@ -41,7 +41,7 @@ export function JosiahMemoryInsights() {
     setIsLoading(true);
     try {
       const { data, error } = await supabase.functions.invoke("josiah-chat", {
-        body: { action: "query_memories", body: { memoryType: "all", limit: 30 } },
+        body: { action: "query_memories", memoryType: "all", limit: 30 },
       });
       if (error) throw new Error(error.message);
       setMemories(data?.memories || {});

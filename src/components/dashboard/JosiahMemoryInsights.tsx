@@ -147,7 +147,7 @@ export function JosiahMemoryInsights() {
             )}
           </div>
         </div>
-        {item.trauma_marker && (
+        {(item.trauma_markers || item.trauma_marker) && (
           <Badge variant="destructive" className="text-[10px]">
             <AlertTriangle className="w-2.5 h-2.5 mr-0.5" /> TRAUMA MARKER
           </Badge>

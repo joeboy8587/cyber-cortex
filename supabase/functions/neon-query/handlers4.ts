@@ -1016,6 +1016,7 @@ export async function handleAction4(action: string, body: Record<string, any>, s
           await sql.unsafe(`ALTER TABLE live_flight_detections_rows ADD COLUMN IF NOT EXISTS aircraft_type_code TEXT`);
           await sql.unsafe(`ALTER TABLE live_flight_detections_rows ADD COLUMN IF NOT EXISTS stable_aircraft_id TEXT`);
           await sql.unsafe(`ALTER TABLE live_flight_detections_rows ADD COLUMN IF NOT EXISTS best_icao24 TEXT`);
+          await sql.unsafe(`ALTER TABLE live_flight_detections_rows ADD COLUMN IF NOT EXISTS squawk TEXT`);
           results.addColumns = 'success';
         } catch (e) {
           results.addColumns = { error: String(e) };

@@ -11,7 +11,8 @@ Deno.serve(async (req) => {
   let sql: any = null;
 
   try {
-    const { message, action, eventData, conversationHistory } = await req.json();
+    const reqBody = await req.json();
+    const { message, action, eventData, conversationHistory } = reqBody;
 
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     const NEON_DATABASE_URL = Deno.env.get("NEON_DATABASE_URL");

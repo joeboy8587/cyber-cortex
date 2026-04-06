@@ -1016,6 +1016,7 @@ export async function handleAction4(action: string, body: Record<string, any>, s
           await sql.unsafe(`ALTER TABLE live_flight_detections_rows ADD COLUMN IF NOT EXISTS aircraft_type_code TEXT`);
           await sql.unsafe(`ALTER TABLE live_flight_detections_rows ADD COLUMN IF NOT EXISTS stable_aircraft_id TEXT`);
           await sql.unsafe(`ALTER TABLE live_flight_detections_rows ADD COLUMN IF NOT EXISTS best_icao24 TEXT`);
+          await sql.unsafe(`ALTER TABLE live_flight_detections_rows ADD COLUMN IF NOT EXISTS squawk TEXT`);
           results.addColumns = 'success';
         } catch (e) {
           results.addColumns = { error: String(e) };
@@ -1480,10 +1481,11 @@ export async function handleAction4(action: string, body: Record<string, any>, s
 
       if (step === 'overview') {
         const [squawkBreakdown, modeCToggling, lowAltVFR, legalViolations] = await Promise.all([
-          // Altitude distribution for tracked operators
+          // Altitude & squawk distribution for tracked operators
           sql.unsafe(`
             SELECT 
               registration,
+              squawk,
               COUNT(*)::int as detections,
               ROUND(AVG(NULLIF(altitude, 0))::numeric, 0)::int as avg_altitude,
               MIN(NULLIF(altitude, 0))::int as min_altitude,
@@ -1492,7 +1494,7 @@ export async function handleAction4(action: string, body: Record<string, any>, s
             FROM live_flight_detections_rows
             WHERE ${tf} ${geoFilter}
               AND registration IN (${TRACKED})
-            GROUP BY registration
+            GROUP BY registration, squawk
             ORDER BY detections DESC
             LIMIT 100
           `),
@@ -1523,6 +1525,7 @@ export async function handleAction4(action: string, body: Record<string, any>, s
           sql.unsafe(`
             SELECT 
               registration,
+              squawk,
               COUNT(*)::int as vfr_low_alt_events,
               ROUND(AVG(altitude)::numeric, 0)::int as avg_alt,
               MIN(altitude)::int as min_alt,
@@ -1533,7 +1536,7 @@ export async function handleAction4(action: string, body: Record<string, any>, s
             WHERE ${tf} ${geoFilter}
               AND registration IN (${TRACKED})
               AND altitude > 0 AND altitude < 1000
-            GROUP BY registration
+            GROUP BY registration, squawk
             ORDER BY vfr_low_alt_events DESC
           `),
           // Legal violation count per aircraft
@@ -1592,10 +1595,11 @@ export async function handleAction4(action: string, body: Record<string, any>, s
       if (step === 'exportSquawk') {
         const evidence = await sql.unsafe(`
           SELECT 
-            registration, callsign, icao_code,
+            registration, callsign, icao_code, squawk,
             detection_timestamp, altitude, speed, heading,
             latitude, longitude,
             CASE WHEN altitude IS NULL OR altitude = 0 THEN 'MODE_C_OFF' ELSE 'MODE_C_ON' END as mode_c_status,
+            CASE WHEN squawk = '1200' THEN 'VFR' WHEN squawk = '7500' THEN 'HIJACK' WHEN squawk = '7600' THEN 'COMM_FAIL' WHEN squawk = '7700' THEN 'EMERGENCY' WHEN squawk IS NULL THEN 'NO_SQUAWK' ELSE 'IFR_' || squawk END as squawk_class,
             CASE 
               WHEN altitude < 500 AND altitude > 0 THEN 'CFR_91_119_VIOLATION'
               WHEN altitude IS NULL OR altitude = 0 THEN 'CFR_91_215_VIOLATION'
@@ -1879,6 +1883,17 @@ export async function handleAction4(action: string, body: Record<string, any>, s
         dailyActivity,
         crossCounty,
       };
+    }
+
+    case 'addSquawkColumn': {
+      try {
+        await sql.unsafe(`ALTER TABLE live_flight_detections_rows ADD COLUMN IF NOT EXISTS squawk TEXT`);
+        // Also create an index for squawk-based queries
+        await sql.unsafe(`CREATE INDEX IF NOT EXISTS idx_lfd_squawk ON live_flight_detections_rows (squawk) WHERE squawk IS NOT NULL`).catch(() => {});
+        return { success: true, message: 'squawk column added to live_flight_detections_rows' };
+      } catch (e) {
+        return { success: false, error: String(e) };
+      }
     }
 
     default:

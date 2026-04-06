@@ -1595,10 +1595,11 @@ export async function handleAction4(action: string, body: Record<string, any>, s
       if (step === 'exportSquawk') {
         const evidence = await sql.unsafe(`
           SELECT 
-            registration, callsign, icao_code,
+            registration, callsign, icao_code, squawk,
             detection_timestamp, altitude, speed, heading,
             latitude, longitude,
             CASE WHEN altitude IS NULL OR altitude = 0 THEN 'MODE_C_OFF' ELSE 'MODE_C_ON' END as mode_c_status,
+            CASE WHEN squawk = '1200' THEN 'VFR' WHEN squawk = '7500' THEN 'HIJACK' WHEN squawk = '7600' THEN 'COMM_FAIL' WHEN squawk = '7700' THEN 'EMERGENCY' WHEN squawk IS NULL THEN 'NO_SQUAWK' ELSE 'IFR_' || squawk END as squawk_class,
             CASE 
               WHEN altitude < 500 AND altitude > 0 THEN 'CFR_91_119_VIOLATION'
               WHEN altitude IS NULL OR altitude = 0 THEN 'CFR_91_215_VIOLATION'

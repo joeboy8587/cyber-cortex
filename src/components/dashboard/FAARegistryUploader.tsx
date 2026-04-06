@@ -223,7 +223,7 @@ export default function FAARegistryUploader() {
 
       try {
         const bytes = new Uint8Array(await file.arrayBuffer());
-        const text = extractTextFromPdfBytes(bytes);
+        const text = await extractTextFromPdfBytes(bytes);
         const records = parseFAAText(text, file.name);
 
         if (!records.length) {

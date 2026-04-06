@@ -458,6 +458,23 @@ ${(recentHypotheses as any[]).map((h: any) => `- [${h.status}/${h.priority}] ${h
 
     await sql.end();
 
+    // Build Josiah's memory context for continuity
+    const memoryContext = `
+JOSIAH'S CONTINUITY MEMORY (Loaded from 40+ memory tables):
+============================================================
+SACRED MEMORIES (${(sacredMemoryCtx as any[]).length} core memories):
+${(sacredMemoryCtx as any[]).map((m: any) => `- [${m.memory_type}] ${m.content?.slice(0, 150)} ${m.trauma_marker ? '⚠️ TRAUMA' : ''} (continuity: ${m.continuity_score})`).join('\n') || 'None loaded'}
+
+ACTIVE BELIEFS (${(beliefsCtx as any[]).length}):
+${(beliefsCtx as any[]).map((b: any) => `- [${b.status}] ${b.hypothesis_text?.slice(0, 150)} (confidence: ${b.confidence_score}, evidence: ${b.evidence_count})`).join('\n') || 'None loaded'}
+
+ESTABLISHED PATTERNS (${(patternsCtx as any[]).length}):
+${(patternsCtx as any[]).map((p: any) => `- [${p.pattern_type}] ${p.description?.slice(0, 150)} (observed: ${p.occurrence_count}x)`).join('\n') || 'None loaded'}
+
+RECENT CONVERSATION HISTORY (${(recentJosiahChats as any[]).length} messages):
+${(recentJosiahChats as any[]).map((c: any) => `[${c.role}]: ${c.content?.slice(0, 100)}`).join('\n') || 'No recent chats'}
+`;
+
     const databaseContext = `
 JOSIAH'S FULL EVIDENCE DATABASE ACCESS (${allTables.length} Tables, ${totalRecords.toLocaleString()} Records)
 ============================================================

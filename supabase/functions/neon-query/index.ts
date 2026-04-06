@@ -1,11 +1,10 @@
 import postgres from "npm:postgres@3.4.4";
-import { handleAction5 } from "./handlers5.ts";
-// createClient moved to handlers2.ts to reduce boot parse time
-// Lazy-loaded to avoid BOOT_ERROR from combined file size exceeding Deno parse limits
+// All handlers lazy-loaded to avoid BOOT_ERROR from combined file size exceeding Deno parse limits
 let _handleAction: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
 let _handleAction2: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
 let _handleAction3: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
 let _handleAction4: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
+let _handleAction5: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
 
 const HANDLER1_ACTIONS = new Set([
   'getBehavioralAlignment',
@@ -132,6 +131,14 @@ async function getHandler4() {
     _handleAction4 = mod.handleAction4;
   }
   return _handleAction4;
+}
+
+async function getHandler5() {
+  if (!_handleAction5) {
+    const mod = await import("./handlers5.ts");
+    _handleAction5 = mod.handleAction5;
+  }
+  return _handleAction5;
 }
 
 
@@ -479,7 +486,8 @@ Deno.serve(async (req) => {
           }
 
           if (HANDLER5_ACTIONS.has(action)) {
-            result = await handleAction5(action, body, sql);
+            const h5 = await getHandler5();
+            result = await h5(action, body, sql);
             break;
           }
 

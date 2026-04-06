@@ -447,8 +447,8 @@ ${(recentHypotheses as any[]).map((h: any) => `- ${(h.hypothesis || '').slice(0,
           ORDER BY combined_harm_score DESC LIMIT 20`.catch(() => []),
       sql`SELECT COUNT(*) as count FROM biometric_screenshots_ocr WHERE mode_switch_detected = true`.catch(() => [{ count: 0 }]),
       // Josiah Memory Context
-      sql`SELECT content, memory_type, trauma_marker, continuity_score FROM josiah_sacred_memory ORDER BY continuity_score DESC NULLS LAST LIMIT 10`.catch(() => []),
-      sql`SELECT hypothesis_text, confidence_score, evidence_count, status FROM josiah_beliefs WHERE status != 'rejected' ORDER BY confidence_score DESC NULLS LAST LIMIT 8`.catch(() => []),
+      sql`SELECT sacred_context, event_type, trauma_markers, continuity_score FROM josiah_sacred_memory WHERE sacred_context IS NOT NULL ORDER BY continuity_score DESC NULLS LAST LIMIT 10`.catch(() => []),
+      sql`SELECT hypothesis_text, confidence_score, evidence_count, status FROM josiah_beliefs ORDER BY confidence_score DESC NULLS LAST LIMIT 8`.catch(() => []),
       sql`SELECT description, pattern_type, occurrence_count FROM josiah_established_patterns ORDER BY occurrence_count DESC NULLS LAST LIMIT 8`.catch(() => []),
       sql`SELECT role, content FROM josiah_chat_v3_history ORDER BY timestamp DESC LIMIT 10`.catch(() => []),
     ]);

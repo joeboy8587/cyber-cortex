@@ -569,6 +569,219 @@ export async function handleAction5(action: string, body: Record<string, any>, s
       return { points, count: points.length };
     }
 
+    case 'schemaFragmentationAnalysis': {
+      await sql`SET statement_timeout = '25s'`;
+
+      // Domain keyword clusters
+      const CLUSTERS: Record<string, string[]> = {
+        'Surveillance': ['flight', 'detection', 'tracking', 'adsb', 'opensky', 'radar', 'transponder', 'squawk'],
+        'Biometric': ['biometric', 'heart', 'hrv', 'stress', 'ecg', 'health', 'vitals', 'collapse'],
+        'Aircraft Registry': ['aircraft', 'registry', 'faa', 'fleet', 'icao', 'registration'],
+        'Entity/Shell': ['shell', 'company', 'operator', 'entity', 'corporate', 'enterprise'],
+        'Legal': ['legal', 'violation', 'exhibit', 'complaint', 'filing', 'ada', 'rico', 'tro', 'damages'],
+        'Forensic': ['forensic', 'evidence', 'chain', 'merkle', 'custody', 'hash'],
+        'Drone': ['drone', 'uav', 'unmanned', 'rf_signal'],
+        'Agent/AI': ['agent', 'session', 'chat', 'hypothesis', 'sentinel', 'watchtower'],
+        'OCR/Media': ['ocr', 'screenshot', 'photo', 'image', 'media', 'scan'],
+        'Timeline': ['timeline', 'chrono', 'unified', 'narrative', 'daily'],
+        'Geographic': ['location', 'geo', 'coordinate', 'map', 'cluster', 'hq'],
+      };
+
+      // 1. Get all tables with row counts and column lists
+      const allTables = await sql`
+        SELECT 
+          c.relname as table_name,
+          GREATEST(c.reltuples, 0)::bigint as row_count,
+          pg_total_relation_size(c.oid) as size_bytes
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relkind = 'r'
+        ORDER BY c.reltuples DESC
+      `;
+
+      const allColumns = await sql`
+        SELECT table_name, 
+               array_agg(column_name ORDER BY ordinal_position) as columns,
+               array_agg(data_type ORDER BY ordinal_position) as col_types
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+        GROUP BY table_name
+      `;
+
+      // 2. Staleness info
+      const staleness = await sql`
+        SELECT relname as table_name,
+               last_autoanalyze,
+               last_autovacuum,
+               n_live_tup
+        FROM pg_stat_user_tables
+        WHERE schemaname = 'public'
+      `;
+
+      // 3. Join key audit - which tables have common join keys
+      const joinKeys = await sql`
+        SELECT table_name, column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND column_name IN ('registration', 'icao_code', 'n_number', 'tail_number', 
+                              'hex_code', 'mode_s_hex', 'evidence_hash', 'sha256_hash',
+                              'aircraft_id', 'entity_id', 'forensic_event_id')
+        ORDER BY column_name, table_name
+      `;
+
+      // Build column map for Jaccard computation
+      const colMap: Record<string, string[]> = {};
+      for (const row of allColumns) {
+        colMap[row.table_name] = row.columns;
+      }
+
+      // Build table info map
+      const tableInfo: Record<string, { row_count: number; size_bytes: number }> = {};
+      for (const t of allTables) {
+        tableInfo[t.table_name] = { row_count: Number(t.row_count), size_bytes: Number(t.size_bytes) };
+      }
+
+      // Build staleness map
+      const stalenessMap: Record<string, any> = {};
+      for (const s of staleness) {
+        stalenessMap[s.table_name] = {
+          last_autoanalyze: s.last_autoanalyze,
+          n_live_tup: Number(s.n_live_tup),
+        };
+      }
+
+      // Cluster tables
+      const clusters: Record<string, Array<{
+        table_name: string;
+        row_count: number;
+        size_bytes: number;
+        columns: string[];
+        stale: boolean;
+        empty: boolean;
+      }>> = {};
+      const unclustered: string[] = [];
+
+      const tableNames = allTables.map((t: any) => t.table_name);
+      for (const tName of tableNames) {
+        let assigned = false;
+        const lower = tName.toLowerCase();
+        for (const [cluster, keywords] of Object.entries(CLUSTERS)) {
+          if (keywords.some(kw => lower.includes(kw))) {
+            if (!clusters[cluster]) clusters[cluster] = [];
+            const info = tableInfo[tName] || { row_count: 0, size_bytes: 0 };
+            const st = stalenessMap[tName];
+            clusters[cluster].push({
+              table_name: tName,
+              row_count: info.row_count,
+              size_bytes: info.size_bytes,
+              columns: colMap[tName] || [],
+              stale: st ? (!st.last_autoanalyze || st.n_live_tup === 0) : true,
+              empty: info.row_count === 0,
+            });
+            assigned = true;
+            break;
+          }
+        }
+        if (!assigned) unclustered.push(tName);
+      }
+
+      // Compute Jaccard similarity within each cluster to find duplicates
+      const clusterResults: Array<{
+        cluster: string;
+        table_count: number;
+        total_rows: number;
+        total_size_bytes: number;
+        fragmentation_score: number;
+        canonical_table: string;
+        empty_tables: string[];
+        duplicate_pairs: Array<{ a: string; b: string; jaccard: number }>;
+        tables: Array<{ table_name: string; row_count: number; columns: string[]; empty: boolean; stale: boolean }>;
+      }> = [];
+
+      for (const [clusterName, tables] of Object.entries(clusters)) {
+        const totalRows = tables.reduce((s, t) => s + t.row_count, 0);
+        const totalSize = tables.reduce((s, t) => s + t.size_bytes, 0);
+        const canonical = tables.reduce((best, t) => t.row_count > best.row_count ? t : best, tables[0]);
+        const emptyTables = tables.filter(t => t.empty).map(t => t.table_name);
+
+        // Jaccard pairs (top overlaps)
+        const pairs: Array<{ a: string; b: string; jaccard: number }> = [];
+        for (let i = 0; i < tables.length; i++) {
+          for (let j = i + 1; j < tables.length; j++) {
+            const colsA = new Set(tables[i].columns);
+            const colsB = new Set(tables[j].columns);
+            const intersection = [...colsA].filter(c => colsB.has(c)).length;
+            const union = new Set([...colsA, ...colsB]).size;
+            const jaccard = union > 0 ? Math.round((intersection / union) * 100) / 100 : 0;
+            if (jaccard >= 0.3) {
+              pairs.push({ a: tables[i].table_name, b: tables[j].table_name, jaccard });
+            }
+          }
+        }
+        pairs.sort((a, b) => b.jaccard - a.jaccard);
+
+        // Fragmentation score: more tables + more empty + more duplicates = higher
+        const nonCanonicalSmall = tables.filter(t => t.table_name !== canonical.table_name && t.row_count < 100).length;
+        const fragScore = Math.min(100, Math.round(
+          (tables.length > 1 ? 20 : 0) +
+          (tables.length > 5 ? 20 : tables.length > 3 ? 10 : 0) +
+          (emptyTables.length / Math.max(tables.length, 1)) * 30 +
+          (pairs.filter(p => p.jaccard > 0.6).length * 10) +
+          (nonCanonicalSmall / Math.max(tables.length, 1)) * 20
+        ));
+
+        clusterResults.push({
+          cluster: clusterName,
+          table_count: tables.length,
+          total_rows: totalRows,
+          total_size_bytes: totalSize,
+          fragmentation_score: fragScore,
+          canonical_table: canonical.table_name,
+          empty_tables: emptyTables,
+          duplicate_pairs: pairs.slice(0, 10),
+          tables: tables.map(t => ({
+            table_name: t.table_name,
+            row_count: t.row_count,
+            columns: t.columns,
+            empty: t.empty,
+            stale: t.stale,
+          })),
+        });
+      }
+
+      clusterResults.sort((a, b) => b.fragmentation_score - a.fragmentation_score);
+
+      // Join key summary
+      const joinKeyMap: Record<string, string[]> = {};
+      for (const jk of joinKeys) {
+        if (!joinKeyMap[jk.column_name]) joinKeyMap[jk.column_name] = [];
+        joinKeyMap[jk.column_name].push(jk.table_name);
+      }
+
+      // Summary stats
+      const totalTables = tableNames.length;
+      const totalEmpty = allTables.filter((t: any) => Number(t.row_count) === 0).length;
+      const totalRows = allTables.reduce((s: number, t: any) => s + Number(t.row_count), 0);
+      const avgFragScore = clusterResults.length > 0
+        ? Math.round(clusterResults.reduce((s, c) => s + c.fragmentation_score, 0) / clusterResults.length)
+        : 0;
+
+      return {
+        summary: {
+          total_tables: totalTables,
+          empty_tables: totalEmpty,
+          total_rows: totalRows,
+          clustered_tables: totalTables - unclustered.length,
+          unclustered_tables: unclustered.length,
+          avg_fragmentation_score: avgFragScore,
+          cluster_count: clusterResults.length,
+        },
+        clusters: clusterResults,
+        join_keys: joinKeyMap,
+        unclustered: unclustered.slice(0, 50),
+      };
+    }
+
     default:
       return null;
   }

@@ -97,6 +97,7 @@ const HANDLER5_ACTIONS = new Set([
   'ghostToDroneCorrelation',
   'denverLogisticsScan',
   'launchRecoveryPoints',
+  'schemaFragmentationAnalysis',
 ]);
 
 const HANDLER6_ACTIONS = new Set([

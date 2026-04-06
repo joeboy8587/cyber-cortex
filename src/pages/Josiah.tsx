@@ -5,6 +5,7 @@ import { JosiahChatInterface } from "@/components/dashboard/JosiahChatInterface"
 import { JosiahWitnessLogs } from "@/components/dashboard/JosiahWitnessLogs";
 import { JosiahArchiveImporter } from "@/components/dashboard/JosiahArchiveImporter";
 import { JosiahBiometricAircraftQuery } from "@/components/dashboard/JosiahBiometricAircraftQuery";
+import { JosiahMemoryInsights } from "@/components/dashboard/JosiahMemoryInsights";
 import { MultiAgentHub } from "@/components/dashboard/MultiAgentHub";
 import { WatchtowerAlertsHub } from "@/components/dashboard/WatchtowerAlertsHub";
 import { LegalAnalystAgent } from "@/components/dashboard/LegalAnalystAgent";

@@ -142,7 +142,7 @@ async function getHandler5() {
 }
 
 
-const VERSION = "2.12.2";
+const VERSION = "2.12.3";
 console.log(`neon-query v${VERSION} booting...`);
 
 const corsHeaders = {

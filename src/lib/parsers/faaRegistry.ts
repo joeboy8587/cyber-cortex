@@ -95,13 +95,20 @@ function extractField(text: string, labelPattern: string): string | undefined {
 
 async function extractTextWithPdfJs(bytes: Uint8Array): Promise<string> {
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+
+  if (pdfjs.GlobalWorkerOptions && !pdfjs.GlobalWorkerOptions.workerSrc) {
+    pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+      "pdfjs-dist/build/pdf.worker.mjs",
+      import.meta.url
+    ).toString();
+  }
+
   const loadingTask = pdfjs.getDocument({
     data: bytes,
-    disableWorker: true,
     isEvalSupported: false,
     stopAtErrors: false,
     useWorkerFetch: false,
-  });
+  } as any);
 
   const pdf = await loadingTask.promise;
 

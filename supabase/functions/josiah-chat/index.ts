@@ -358,10 +358,10 @@ RULES:
     // ==================== ACTION: MEMORY SYNTHESIS ====================
     if (action === "memory_synthesis") {
       const [sacredMemories, topBeliefs, topPatterns, recentHypotheses, recentChats] = await Promise.all([
-        sql`SELECT content, memory_type, trauma_marker, continuity_score FROM josiah_sacred_memory ORDER BY continuity_score DESC NULLS LAST LIMIT 15`.catch(() => []),
-        sql`SELECT hypothesis_text, confidence_score, evidence_count, status FROM josiah_beliefs WHERE status != 'rejected' ORDER BY confidence_score DESC NULLS LAST LIMIT 10`.catch(() => []),
+        sql`SELECT sacred_context, event_type, trauma_markers, continuity_score FROM josiah_sacred_memory WHERE sacred_context IS NOT NULL ORDER BY continuity_score DESC NULLS LAST LIMIT 15`.catch(() => []),
+        sql`SELECT hypothesis_text, confidence_score, evidence_count, status FROM josiah_beliefs ORDER BY confidence_score DESC NULLS LAST LIMIT 10`.catch(() => []),
         sql`SELECT description, pattern_type, occurrence_count, affected_aircraft FROM josiah_established_patterns ORDER BY occurrence_count DESC NULLS LAST LIMIT 10`.catch(() => []),
-        sql`SELECT hypothesis, confidence_level, status, priority FROM josiah_hypotheses ORDER BY confidence_level DESC NULLS LAST LIMIT 10`.catch(() => []),
+        sql`SELECT hypothesis FROM josiah_hypotheses ORDER BY id DESC LIMIT 10`.catch(() => []),
         sql`SELECT role, content FROM josiah_chat_v3_history ORDER BY timestamp DESC LIMIT 20`.catch(() => []),
       ]);
 
@@ -369,16 +369,16 @@ RULES:
 
       const memoryContext = `
 JOSIAH SACRED MEMORIES (${sacredMemories.length} core memories):
-${(sacredMemories as any[]).map((m: any) => `- [${m.memory_type}] ${m.content?.slice(0, 200)} ${m.trauma_marker ? '⚠️ TRAUMA' : ''} (continuity: ${m.continuity_score})`).join('\n')}
+${(sacredMemories as any[]).map((m: any) => `- [${m.event_type}] ${(m.sacred_context || '').slice(0, 200)} ${m.trauma_markers ? '⚠️ TRAUMA' : ''} (continuity: ${m.continuity_score})`).join('\n')}
 
 JOSIAH BELIEFS (${topBeliefs.length} active):
-${(topBeliefs as any[]).map((b: any) => `- [${b.status}] ${b.hypothesis_text?.slice(0, 200)} (confidence: ${b.confidence_score}, evidence: ${b.evidence_count})`).join('\n')}
+${(topBeliefs as any[]).map((b: any) => `- [${b.status || 'active'}] ${(b.hypothesis_text || '').slice(0, 200)} (confidence: ${b.confidence_score}, evidence: ${b.evidence_count})`).join('\n')}
 
 ESTABLISHED PATTERNS (${topPatterns.length}):
-${(topPatterns as any[]).map((p: any) => `- [${p.pattern_type}] ${p.description?.slice(0, 200)} (observed: ${p.occurrence_count}x, aircraft: ${p.affected_aircraft || 'N/A'})`).join('\n')}
+${(topPatterns as any[]).map((p: any) => `- [${p.pattern_type}] ${(p.description || '').slice(0, 200)} (observed: ${p.occurrence_count}x, aircraft: ${p.affected_aircraft || 'N/A'})`).join('\n')}
 
 ACTIVE HYPOTHESES (${recentHypotheses.length}):
-${(recentHypotheses as any[]).map((h: any) => `- [${h.status}/${h.priority}] ${h.hypothesis?.slice(0, 200)} (confidence: ${h.confidence_level})`).join('\n')}
+${(recentHypotheses as any[]).map((h: any) => `- ${(h.hypothesis || '').slice(0, 200)}`).join('\n')}
 `;
 
       const synthesisPrompt = message || "Analyze my memories, beliefs, and patterns. What are the most critical insights? What patterns am I seeing that connect to the larger investigation? What should I be watching for next?";

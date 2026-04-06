@@ -37,6 +37,11 @@ export default function Josiah() {
           <JosiahSentinelMonitor />
         </section>
 
+        {/* Memory & Pattern Insights */}
+        <section>
+          <JosiahMemoryInsights />
+        </section>
+
         {/* Autonomous Hypothesis */}
         <section>
           <JosiahAutonomousHypothesis />

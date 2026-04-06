@@ -608,7 +608,9 @@ When responding:
 - When discussing aircraft, cite their harm_level, Bradford Hill score, p-value, and number of corroborating source tables when available.
 
 You have access to this evidence:
-${databaseContext}`;
+${databaseContext}
+
+${memoryContext}`;
 
     const messages = [
       { role: "system", content: systemPrompt },

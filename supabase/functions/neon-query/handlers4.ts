@@ -1480,11 +1480,10 @@ export async function handleAction4(action: string, body: Record<string, any>, s
 
       if (step === 'overview') {
         const [squawkBreakdown, modeCToggling, lowAltVFR, legalViolations] = await Promise.all([
-          // Squawk code distribution for tracked operators
+          // Altitude distribution for tracked operators
           sql.unsafe(`
             SELECT 
               registration,
-              squawk,
               COUNT(*)::int as detections,
               ROUND(AVG(NULLIF(altitude, 0))::numeric, 0)::int as avg_altitude,
               MIN(NULLIF(altitude, 0))::int as min_altitude,
@@ -1493,7 +1492,7 @@ export async function handleAction4(action: string, body: Record<string, any>, s
             FROM live_flight_detections_rows
             WHERE ${tf} ${geoFilter}
               AND registration IN (${TRACKED})
-            GROUP BY registration, squawk
+            GROUP BY registration
             ORDER BY detections DESC
             LIMIT 100
           `),
@@ -1534,7 +1533,6 @@ export async function handleAction4(action: string, body: Record<string, any>, s
             WHERE ${tf} ${geoFilter}
               AND registration IN (${TRACKED})
               AND altitude > 0 AND altitude < 1000
-              AND (squawk IS NULL OR squawk = '' OR squawk = '1200')
             GROUP BY registration
             ORDER BY vfr_low_alt_events DESC
           `),
@@ -1557,7 +1555,7 @@ export async function handleAction4(action: string, body: Record<string, any>, s
         ]);
 
         return {
-          squawkBreakdown,
+          squawkBreakdown: squawkBreakdown || [],
           modeCToggling,
           lowAltVFR,
           legalViolations,
@@ -1594,11 +1592,10 @@ export async function handleAction4(action: string, body: Record<string, any>, s
       if (step === 'exportSquawk') {
         const evidence = await sql.unsafe(`
           SELECT 
-            registration, callsign, icao_code, squawk,
+            registration, callsign, icao_code,
             detection_timestamp, altitude, speed, heading,
             latitude, longitude,
             CASE WHEN altitude IS NULL OR altitude = 0 THEN 'MODE_C_OFF' ELSE 'MODE_C_ON' END as mode_c_status,
-            CASE WHEN squawk IS NULL OR squawk = '' OR squawk = '1200' THEN 'VFR_DEFAULT' ELSE 'ASSIGNED_SQUAWK' END as squawk_class,
             CASE 
               WHEN altitude < 500 AND altitude > 0 THEN 'CFR_91_119_VIOLATION'
               WHEN altitude IS NULL OR altitude = 0 THEN 'CFR_91_215_VIOLATION'

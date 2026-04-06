@@ -1882,6 +1882,17 @@ export async function handleAction4(action: string, body: Record<string, any>, s
       };
     }
 
+    case 'addSquawkColumn': {
+      try {
+        await sql.unsafe(`ALTER TABLE live_flight_detections_rows ADD COLUMN IF NOT EXISTS squawk TEXT`);
+        // Also create an index for squawk-based queries
+        await sql.unsafe(`CREATE INDEX IF NOT EXISTS idx_lfd_squawk ON live_flight_detections_rows (squawk) WHERE squawk IS NOT NULL`).catch(() => {});
+        return { success: true, message: 'squawk column added to live_flight_detections_rows' };
+      } catch (e) {
+        return { success: false, error: String(e) };
+      }
+    }
+
     default:
       return null;
   }

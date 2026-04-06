@@ -84,6 +84,7 @@ const HANDLER4_ACTIONS = new Set([
   'icaoIdentityCleanup',
   'ghostAircraftForensics',
   'squawkDeceptionAnalysis',
+  'addSquawkColumn',
   'mlAnomalyScore',
   'tulareCountyScan',
 ]);

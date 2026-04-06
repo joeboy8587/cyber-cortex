@@ -5,6 +5,7 @@ let _handleAction2: ((action: string, body: Record<string, any>, sql: any) => Pr
 let _handleAction3: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
 let _handleAction4: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
 let _handleAction5: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
+let _handleAction6: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
 
 const HANDLER1_ACTIONS = new Set([
   'getBehavioralAlignment',
@@ -83,11 +84,6 @@ const HANDLER4_ACTIONS = new Set([
   'ifrSurveillanceDetection',
   'icaoIdentityCleanup',
   'ghostAircraftForensics',
-  'squawkDeceptionAnalysis',
-  'addSquawkColumn',
-  'backfillSquawk',
-  'mlAnomalyScore',
-  'tulareCountyScan',
 ]);
 
 const HANDLER5_ACTIONS = new Set([
@@ -101,6 +97,14 @@ const HANDLER5_ACTIONS = new Set([
   'ghostToDroneCorrelation',
   'denverLogisticsScan',
   'launchRecoveryPoints',
+]);
+
+const HANDLER6_ACTIONS = new Set([
+  'squawkDeceptionAnalysis',
+  'addSquawkColumn',
+  'backfillSquawk',
+  'mlAnomalyScore',
+  'tulareCountyScan',
 ]);
 
 async function getHandler1() {
@@ -141,6 +145,14 @@ async function getHandler5() {
     _handleAction5 = mod.handleAction5;
   }
   return _handleAction5;
+}
+
+async function getHandler6() {
+  if (!_handleAction6) {
+    const mod = await import("./handlers6.ts");
+    _handleAction6 = mod.handleAction6;
+  }
+  return _handleAction6;
 }
 
 
@@ -490,6 +502,12 @@ Deno.serve(async (req) => {
           if (HANDLER5_ACTIONS.has(action)) {
             const h5 = await getHandler5();
             result = await h5(action, body, sql);
+            break;
+          }
+
+          if (HANDLER6_ACTIONS.has(action)) {
+            const h6 = await getHandler6();
+            result = await h6(action, body, sql);
             break;
           }
 

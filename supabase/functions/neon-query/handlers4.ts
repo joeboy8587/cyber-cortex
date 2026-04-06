@@ -1888,12 +1888,78 @@ export async function handleAction4(action: string, body: Record<string, any>, s
     case 'addSquawkColumn': {
       try {
         await sql.unsafe(`ALTER TABLE live_flight_detections_rows ADD COLUMN IF NOT EXISTS squawk TEXT`);
-        // Also create an index for squawk-based queries
         await sql.unsafe(`CREATE INDEX IF NOT EXISTS idx_lfd_squawk ON live_flight_detections_rows (squawk) WHERE squawk IS NOT NULL`).catch(() => {});
         return { success: true, message: 'squawk column added to live_flight_detections_rows' };
       } catch (e) {
         return { success: false, error: String(e) };
       }
+    }
+
+    case 'backfillSquawk': {
+      const batchSize = Math.min(body.batchSize || 5000, 10000);
+      const results: Record<string, any> = {};
+
+      // Step 1: Backfill from adsb_receiver_captures (has squawk column)
+      try {
+        const backfilled = await sql.unsafe(`
+          UPDATE live_flight_detections_rows lfd
+          SET squawk = arc.squawk
+          FROM adsb_receiver_captures arc
+          WHERE lfd.squawk IS NULL
+            AND arc.squawk IS NOT NULL AND arc.squawk != ''
+            AND (
+              (lfd.registration = arc.registration AND lfd.registration IS NOT NULL AND lfd.registration != '' AND lfd.registration != 'N/A')
+              OR (lfd.icao_code = arc.icao_code AND lfd.icao_code IS NOT NULL AND lfd.icao_code != '')
+            )
+            AND ABS(EXTRACT(EPOCH FROM lfd.detection_timestamp - arc.capture_timestamp)) < 1800
+          RETURNING lfd.id
+        `);
+        results.adsb_backfilled = Array.isArray(backfilled) ? backfilled.length : 0;
+      } catch (e) {
+        results.adsb_error = String(e);
+      }
+
+      // Step 2: Backfill from adsbexchange_detections
+      try {
+        const backfilled2 = await sql.unsafe(`
+          UPDATE live_flight_detections_rows lfd
+          SET squawk = adx.squawk
+          FROM adsbexchange_detections adx
+          WHERE lfd.squawk IS NULL
+            AND adx.squawk IS NOT NULL AND adx.squawk != ''
+            AND (
+              (lfd.registration = adx.registration AND lfd.registration IS NOT NULL AND lfd.registration != '' AND lfd.registration != 'N/A')
+              OR (lfd.icao_code = adx.icao_code AND lfd.icao_code IS NOT NULL AND lfd.icao_code != '')
+            )
+            AND ABS(EXTRACT(EPOCH FROM lfd.detection_timestamp - adx.detection_timestamp)) < 1800
+          RETURNING lfd.id
+        `);
+        results.adsbx_backfilled = Array.isArray(backfilled2) ? backfilled2.length : 0;
+      } catch (e) {
+        results.adsbx_error = String(e);
+      }
+
+      // Step 3: Count current squawk coverage
+      try {
+        const coverage = await sql.unsafe(`
+          SELECT 
+            COUNT(*)::int as total_with_squawk,
+            COUNT(DISTINCT registration)::int as aircraft_with_squawk,
+            COUNT(CASE WHEN squawk = '1200' THEN 1 END)::int as vfr_count,
+            COUNT(CASE WHEN squawk = '7500' THEN 1 END)::int as hijack_count,
+            COUNT(CASE WHEN squawk = '7600' THEN 1 END)::int as comm_fail_count,
+            COUNT(CASE WHEN squawk = '7700' THEN 1 END)::int as emergency_count
+          FROM live_flight_detections_rows
+          WHERE squawk IS NOT NULL AND squawk != ''
+          LIMIT 1
+        `);
+        results.coverage = coverage[0] || {};
+      } catch (e) {
+        results.coverage_error = String(e);
+      }
+
+      results.backfilledAt = new Date().toISOString();
+      return results;
     }
 
     default:

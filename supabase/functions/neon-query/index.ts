@@ -85,6 +85,7 @@ const HANDLER4_ACTIONS = new Set([
   'ghostAircraftForensics',
   'squawkDeceptionAnalysis',
   'addSquawkColumn',
+  'backfillSquawk',
   'mlAnomalyScore',
   'tulareCountyScan',
 ]);

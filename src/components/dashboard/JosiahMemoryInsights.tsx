@@ -124,10 +124,11 @@ export function JosiahMemoryInsights() {
   const totalMemories = Object.values(memories).reduce((s, a) => s + (a?.length || 0), 0);
 
   const renderMemoryCard = (item: MemoryItem, category: MemoryCategory) => {
-    const content = item.content || item.hypothesis_text || item.hypothesis || item.description || item.reflection_content || item.summary || "";
+    const content = item.sacred_context || item.content || item.hypothesis_text || item.hypothesis || item.description || item.reflection_content || item.summary || "";
     const confidence = item.confidence_score || item.confidence_level || item.confidence || item.continuity_score;
     const status = item.status;
-    const date = item.created_at || item.first_proposed || item.last_observed || item.timestamp;
+    const date = item.created_at || item.first_proposed || item.first_observed || item.last_observed || item.timestamp;
+    const memoryType = item.event_type || item.pattern_type || item.hypothesis_type || item.trigger_type;
 
     return (
       <div className="p-3 bg-muted/20 border border-border/50 rounded hover:bg-muted/40 transition-colors space-y-1.5">

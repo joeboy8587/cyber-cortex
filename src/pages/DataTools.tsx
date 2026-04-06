@@ -1,4 +1,5 @@
 import { DashboardLayout } from "@/components/DashboardLayout";
+import { SchemaFragmentationPanel } from "@/components/dashboard/SchemaFragmentationPanel";
 import { TableExplorer } from "@/components/dashboard/TableExplorer";
 import { SqlConsole } from "@/components/dashboard/SqlConsole";
 import { DatabaseStats } from "@/components/dashboard/DatabaseStats";
@@ -45,6 +46,11 @@ export default function DataTools() {
             </p>
           </div>
         </div>
+
+        {/* Schema Fragmentation Analysis - top priority */}
+        <section>
+          <SchemaFragmentationPanel />
+        </section>
 
         {/* Chronological Timeline Rebuilder - cross-table timeline */}
         <section>

@@ -16,7 +16,7 @@ interface MemoryItem {
   [key: string]: any;
 }
 
-type MemoryCategory = "sacred" | "beliefs" | "patterns" | "learned" | "hypotheses" | "reflections" | "recent_chats";
+type MemoryCategory = "sacred" | "beliefs" | "patterns" | "learned" | "hypotheses" | "intel_hypotheses" | "discoveries" | "reflections" | "recent_chats";
 
 const categoryMeta: Record<MemoryCategory, { label: string; icon: React.ReactNode; color: string }> = {
   sacred: { label: "Sacred Memories", icon: <Eye className="w-3.5 h-3.5" />, color: "text-purple-400" },
@@ -24,6 +24,8 @@ const categoryMeta: Record<MemoryCategory, { label: string; icon: React.ReactNod
   patterns: { label: "Established Patterns", icon: <TrendingUp className="w-3.5 h-3.5" />, color: "text-cyan-400" },
   learned: { label: "Learned Patterns", icon: <Brain className="w-3.5 h-3.5" />, color: "text-green-400" },
   hypotheses: { label: "Hypotheses", icon: <Zap className="w-3.5 h-3.5" />, color: "text-orange-400" },
+  intel_hypotheses: { label: "Intel Hypotheses", icon: <Shield className="w-3.5 h-3.5" />, color: "text-red-400" },
+  discoveries: { label: "Pattern Discoveries", icon: <Sparkles className="w-3.5 h-3.5" />, color: "text-pink-400" },
   reflections: { label: "Reflections", icon: <BookOpen className="w-3.5 h-3.5" />, color: "text-blue-400" },
   recent_chats: { label: "Recent Conversations", icon: <Activity className="w-3.5 h-3.5" />, color: "text-emerald-400" },
 };

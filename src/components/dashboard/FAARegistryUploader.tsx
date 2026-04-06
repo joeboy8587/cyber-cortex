@@ -102,9 +102,11 @@ async function extractTextFromPdfBytes(bytes: Uint8Array): Promise<string> {
 function parseFAAText(text: string, filename: string): ParsedRecord[] {
   const records: ParsedRecord[] = [];
 
-  // Try to find N-number
-  const nMatch = text.match(/N-Number\s*:?\s*(N?\d+[A-Z]*)/i) ||
-    text.match(/\b(N\d{1,5}[A-Z]{0,2})\b/);
+  // Try to find N-number from various FAA PDF formats
+  const nMatch = text.match(/N-NUMBER\s*(?:ENTERED)?:?\s*(N?\d+[A-Z]*)/i) ||
+    text.match(/N-Number\s*:?\s*(N?\d+[A-Z]*)/i) ||
+    text.match(/\b(N\d{1,5}[A-Z]{0,2})\b/) ||
+    text.match(/N-NUMBER\s*(?:ENTERED)?:?\s*([A-Z0-9]+)/i);
   if (!nMatch) return records;
 
   const nNumber = nMatch[1].startsWith("N") ? nMatch[1] : `N${nMatch[1]}`;

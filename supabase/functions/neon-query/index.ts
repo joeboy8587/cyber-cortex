@@ -98,6 +98,14 @@ const HANDLER5_ACTIONS = new Set([
   'launchRecoveryPoints',
 ]);
 
+const HANDLER6_ACTIONS = new Set([
+  'squawkDeceptionAnalysis',
+  'addSquawkColumn',
+  'backfillSquawk',
+  'mlAnomalyScore',
+  'tulareCountyScan',
+]);
+
 async function getHandler1() {
   if (!_handleAction) {
     const mod = await import("./handlers.ts");

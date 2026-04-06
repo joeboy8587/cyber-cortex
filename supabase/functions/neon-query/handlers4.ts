@@ -1481,10 +1481,11 @@ export async function handleAction4(action: string, body: Record<string, any>, s
 
       if (step === 'overview') {
         const [squawkBreakdown, modeCToggling, lowAltVFR, legalViolations] = await Promise.all([
-          // Altitude distribution for tracked operators
+          // Altitude & squawk distribution for tracked operators
           sql.unsafe(`
             SELECT 
               registration,
+              squawk,
               COUNT(*)::int as detections,
               ROUND(AVG(NULLIF(altitude, 0))::numeric, 0)::int as avg_altitude,
               MIN(NULLIF(altitude, 0))::int as min_altitude,
@@ -1493,7 +1494,7 @@ export async function handleAction4(action: string, body: Record<string, any>, s
             FROM live_flight_detections_rows
             WHERE ${tf} ${geoFilter}
               AND registration IN (${TRACKED})
-            GROUP BY registration
+            GROUP BY registration, squawk
             ORDER BY detections DESC
             LIMIT 100
           `),

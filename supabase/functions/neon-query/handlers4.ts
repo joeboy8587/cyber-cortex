@@ -1525,6 +1525,7 @@ export async function handleAction4(action: string, body: Record<string, any>, s
           sql.unsafe(`
             SELECT 
               registration,
+              squawk,
               COUNT(*)::int as vfr_low_alt_events,
               ROUND(AVG(altitude)::numeric, 0)::int as avg_alt,
               MIN(altitude)::int as min_alt,
@@ -1535,7 +1536,7 @@ export async function handleAction4(action: string, body: Record<string, any>, s
             WHERE ${tf} ${geoFilter}
               AND registration IN (${TRACKED})
               AND altitude > 0 AND altitude < 1000
-            GROUP BY registration
+            GROUP BY registration, squawk
             ORDER BY vfr_low_alt_events DESC
           `),
           // Legal violation count per aircraft

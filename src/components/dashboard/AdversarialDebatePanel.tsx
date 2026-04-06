@@ -5,8 +5,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Shield, Sword, Zap, MessageSquare, Play, RotateCcw } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { Shield, Sword, Zap, Play, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 
 interface DebateMessage {
@@ -39,21 +38,31 @@ export function AdversarialDebatePanel() {
 
   async function streamAgent(agent: "josiah" | "sansorio", prompt: string, round: number): Promise<string> {
     const msgId = crypto.randomUUID();
-    setMessages(prev => [...prev, { id: msgId, agent, content: "", timestamp: new Date(), round }]);
+    setMessages((prev) => [...prev, { id: msgId, agent, content: "", timestamp: new Date(), round }]);
 
-    const res = await supabase.functions.invoke("agent-orchestrator", {
-      body: { agentType: agent === "josiah" ? "josiah" : "sansorio", message: prompt, context: {} },
+    const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/agent-orchestrator`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+      },
+      body: JSON.stringify({
+        agentType: agent,
+        message: prompt,
+        context: {},
+      }),
     });
 
-    if (res.error) throw new Error(res.error.message);
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `HTTP ${response.status}`);
+    }
 
-    // Handle streaming
-    const reader = res.data instanceof ReadableStream
-      ? res.data.getReader()
-      : new Response(res.data).body?.getReader();
-    
-    if (!reader) throw new Error("No reader available");
+    if (!response.body) {
+      throw new Error("No response body");
+    }
 
+    const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let fullText = "";
     let buffer = "";
@@ -61,31 +70,59 @@ export function AdversarialDebatePanel() {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
+
       buffer += decoder.decode(value, { stream: true });
 
       let newlineIdx: number;
       while ((newlineIdx = buffer.indexOf("\n")) !== -1) {
         let line = buffer.slice(0, newlineIdx);
         buffer = buffer.slice(newlineIdx + 1);
+
         if (line.endsWith("\r")) line = line.slice(0, -1);
+        if (line.startsWith(":") || line.trim() === "") continue;
         if (!line.startsWith("data: ")) continue;
+
         const jsonStr = line.slice(6).trim();
-        if (jsonStr === "[DONE]") break;
+        if (jsonStr === "[DONE]") continue;
+
         try {
           const parsed = JSON.parse(jsonStr);
-          const content = parsed.choices?.[0]?.delta?.content;
+          const content = parsed.choices?.[0]?.delta?.content as string | undefined;
           if (content) {
             fullText += content;
-            setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: fullText } : m));
+            setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, content: fullText } : m)));
           }
-        } catch { /* partial */ }
+        } catch {
+          buffer = `${line}\n${buffer}`;
+          break;
+        }
       }
     }
 
-    // If streaming didn't work, try direct response
-    if (!fullText && typeof res.data === "string") {
-      fullText = res.data;
-      setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: fullText } : m));
+    if (buffer.trim()) {
+      for (let line of buffer.split("\n")) {
+        if (line.endsWith("\r")) line = line.slice(0, -1);
+        if (line.startsWith(":") || line.trim() === "") continue;
+        if (!line.startsWith("data: ")) continue;
+
+        const jsonStr = line.slice(6).trim();
+        if (jsonStr === "[DONE]") continue;
+
+        try {
+          const parsed = JSON.parse(jsonStr);
+          const content = parsed.choices?.[0]?.delta?.content as string | undefined;
+          if (content) {
+            fullText += content;
+            setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, content: fullText } : m)));
+          }
+        } catch {
+          // ignore incomplete leftovers after stream end
+        }
+      }
+    }
+
+    if (!fullText.trim()) {
+      throw new Error(`No content returned from ${agent}`);
     }
 
     return fullText;

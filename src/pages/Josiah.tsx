@@ -13,6 +13,7 @@ import { LegalDraftingAgent } from "@/components/dashboard/LegalDraftingAgent";
 import { GlobalAISearch } from "@/components/dashboard/GlobalAISearch";
 import { TruthScannerDashboard } from "@/components/dashboard/TruthScannerDashboard";
 import { C2014CohortScanner } from "@/components/dashboard/C2014CohortScanner";
+import { AdversarialDebatePanel } from "@/components/dashboard/AdversarialDebatePanel";
 
 export default function Josiah() {
   return (
@@ -51,6 +52,11 @@ export default function Josiah() {
         {/* Chat Interface */}
         <section>
           <JosiahChatInterface />
+        </section>
+
+        {/* Adversarial Debate Engine */}
+        <section>
+          <AdversarialDebatePanel />
         </section>
 
         {/* Global AI Search */}

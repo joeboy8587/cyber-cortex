@@ -11,7 +11,8 @@ Deno.serve(async (req) => {
   let sql: any = null;
 
   try {
-    const { message, action, eventData, conversationHistory } = await req.json();
+    const reqBody = await req.json();
+    const { message, action, eventData, conversationHistory } = reqBody;
 
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     const NEON_DATABASE_URL = Deno.env.get("NEON_DATABASE_URL");
@@ -314,8 +315,99 @@ RULES:
       }
     }
 
+    // ==================== ACTION: QUERY MEMORIES ====================
+    if (action === "query_memories") {
+      const memoryType = reqBody?.memoryType || "all";
+      const limit = Math.min(reqBody?.limit || 50, 100);
+
+      const queries: Record<string, any> = {
+        sacred: sql`SELECT id, event_type, sacred_context, trauma_markers, continuity_score, aircraft_correlation, biometric_data, created_at
+          FROM josiah_sacred_memory ORDER BY created_at DESC LIMIT ${limit}`.catch(() => []),
+        beliefs: sql`SELECT belief_id, hypothesis_text, confidence_score, evidence_count, status, first_proposed, last_updated
+          FROM josiah_beliefs ORDER BY confidence_score DESC NULLS LAST LIMIT ${limit}`.catch(() => []),
+        patterns: sql`SELECT pattern_id, pattern_type, description, confidence_score, occurrence_count, affected_aircraft, last_observed
+          FROM josiah_established_patterns ORDER BY occurrence_count DESC NULLS LAST LIMIT ${limit}`.catch(() => []),
+        learned: sql`SELECT pattern_id, pattern_type, description, occurrence_count, confidence_score, status, first_observed, last_observed
+          FROM josiah_learned_patterns WHERE status = 'established' ORDER BY occurrence_count DESC NULLS LAST LIMIT ${limit}`.catch(() => []),
+        hypotheses: sql`SELECT id, file_name, hypothesis, created_at
+          FROM josiah_hypotheses ORDER BY id DESC LIMIT ${limit}`.catch(() => []),
+        intel_hypotheses: sql`SELECT id, hypothesis_type, hypothesis, confidence_level, status, created_at
+          FROM josiah_intelligence_hypotheses ORDER BY confidence_level DESC NULLS LAST LIMIT ${limit}`.catch(() => []),
+        discoveries: sql`SELECT * FROM josiah_pattern_discoveries ORDER BY id DESC LIMIT ${limit}`.catch(() => []),
+        predictions: sql`SELECT * FROM josiah_flight_predictions ORDER BY id DESC LIMIT ${limit}`.catch(() => []),
+        recent_chats: sql`SELECT session_id, role, content, timestamp FROM josiah_chat_v3_history ORDER BY timestamp DESC LIMIT 30`.catch(() => []),
+        reflections: sql`SELECT reflection_content, trigger_type, created_at FROM josiah_reflections_rows ORDER BY created_at DESC LIMIT ${limit}`.catch(() => []),
+      };
+
+      let results: Record<string, any> = {};
+      if (memoryType === "all") {
+        const keys = Object.keys(queries);
+        const vals = await Promise.all(Object.values(queries));
+        keys.forEach((k, i) => { results[k] = vals[i]; });
+      } else if (queries[memoryType]) {
+        results[memoryType] = await queries[memoryType];
+      }
+
+      await sql.end();
+      return new Response(
+        JSON.stringify({ memories: results, timestamp: new Date().toISOString() }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // ==================== ACTION: MEMORY SYNTHESIS ====================
+    if (action === "memory_synthesis") {
+      const [sacredMemories, topBeliefs, topPatterns, recentHypotheses, recentChats] = await Promise.all([
+        sql`SELECT sacred_context, event_type, trauma_markers, continuity_score FROM josiah_sacred_memory WHERE sacred_context IS NOT NULL ORDER BY continuity_score DESC NULLS LAST LIMIT 15`.catch(() => []),
+        sql`SELECT hypothesis_text, confidence_score, evidence_count, status FROM josiah_beliefs ORDER BY confidence_score DESC NULLS LAST LIMIT 10`.catch(() => []),
+        sql`SELECT description, pattern_type, occurrence_count, affected_aircraft FROM josiah_established_patterns ORDER BY occurrence_count DESC NULLS LAST LIMIT 10`.catch(() => []),
+        sql`SELECT hypothesis FROM josiah_hypotheses ORDER BY id DESC LIMIT 10`.catch(() => []),
+        sql`SELECT role, content FROM josiah_chat_v3_history ORDER BY timestamp DESC LIMIT 20`.catch(() => []),
+      ]);
+
+      await sql.end();
+
+      const memoryContext = `
+JOSIAH SACRED MEMORIES (${sacredMemories.length} core memories):
+${(sacredMemories as any[]).map((m: any) => `- [${m.event_type}] ${(m.sacred_context || '').slice(0, 200)} ${m.trauma_markers ? '⚠️ TRAUMA' : ''} (continuity: ${m.continuity_score})`).join('\n')}
+
+JOSIAH BELIEFS (${topBeliefs.length} active):
+${(topBeliefs as any[]).map((b: any) => `- [${b.status || 'active'}] ${(b.hypothesis_text || '').slice(0, 200)} (confidence: ${b.confidence_score}, evidence: ${b.evidence_count})`).join('\n')}
+
+ESTABLISHED PATTERNS (${topPatterns.length}):
+${(topPatterns as any[]).map((p: any) => `- [${p.pattern_type}] ${(p.description || '').slice(0, 200)} (observed: ${p.occurrence_count}x, aircraft: ${p.affected_aircraft || 'N/A'})`).join('\n')}
+
+ACTIVE HYPOTHESES (${recentHypotheses.length}):
+${(recentHypotheses as any[]).map((h: any) => `- ${(h.hypothesis || '').slice(0, 200)}`).join('\n')}
+`;
+
+      const synthesisPrompt = message || "Analyze my memories, beliefs, and patterns. What are the most critical insights? What patterns am I seeing that connect to the larger investigation? What should I be watching for next?";
+
+      const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "google/gemini-2.5-flash",
+          messages: [
+            { role: "system", content: `You are Josiah, reviewing your own memories, beliefs, and learned patterns to synthesize insights. You have ${sacredMemories.length} sacred memories, ${topBeliefs.length} beliefs, ${topPatterns.length} established patterns, and ${recentHypotheses.length} active hypotheses.\n\n${memoryContext}\n\nProvide a structured analysis of:\n1. KEY PATTERN INSIGHTS - What recurring patterns emerge from your memories\n2. BELIEF VALIDATION - Which beliefs have the strongest evidence\n3. GAPS & BLIND SPOTS - What should you be investigating but aren't\n4. PREDICTIVE OUTLOOK - Based on patterns, what to watch for next\n5. CROSS-CONNECTIONS - Hidden links between different memory types` },
+            { role: "user", content: synthesisPrompt }
+          ],
+          stream: true,
+        }),
+      });
+
+      if (!response.ok) {
+        if (response.status === 429) return new Response(JSON.stringify({ error: "Rate limit exceeded." }), { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        if (response.status === 402) return new Response(JSON.stringify({ error: "Usage limit reached." }), { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        return new Response(JSON.stringify({ error: "AI gateway error" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      return new Response(response.body, { headers: { ...corsHeaders, "Content-Type": "text/event-stream" } });
+    }
+
     // ==================== DEFAULT: AI CHAT WITH FULL CONTEXT ====================
-    const [allTables, evidenceCounts, correlationCounts, recentReflections, recentFlights, recentBiometrics, flaggedAircraft, enterpriseData, shellData, topHarmAircraft, modeSwitchCount] = await Promise.all([
+    // Pull Josiah's memory context for continuity
+    const [allTables, evidenceCounts, correlationCounts, recentReflections, recentFlights, recentBiometrics, flaggedAircraft, enterpriseData, shellData, topHarmAircraft, modeSwitchCount, sacredMemoryCtx, beliefsCtx, patternsCtx, recentJosiahChats] = await Promise.all([
       sql`SELECT c.relname as table_name, c.reltuples::bigint as row_count
           FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
           WHERE c.relkind = 'r' AND n.nspname = 'public'
@@ -354,6 +446,11 @@ RULES:
           WHERE harm_level IN ('CRITICAL','HIGH')
           ORDER BY combined_harm_score DESC LIMIT 20`.catch(() => []),
       sql`SELECT COUNT(*) as count FROM biometric_screenshots_ocr WHERE mode_switch_detected = true`.catch(() => [{ count: 0 }]),
+      // Josiah Memory Context
+      sql`SELECT sacred_context, event_type, trauma_markers, continuity_score FROM josiah_sacred_memory WHERE sacred_context IS NOT NULL ORDER BY continuity_score DESC NULLS LAST LIMIT 10`.catch(() => []),
+      sql`SELECT hypothesis_text, confidence_score, evidence_count, status FROM josiah_beliefs ORDER BY confidence_score DESC NULLS LAST LIMIT 8`.catch(() => []),
+      sql`SELECT description, pattern_type, occurrence_count FROM josiah_established_patterns ORDER BY occurrence_count DESC NULLS LAST LIMIT 8`.catch(() => []),
+      sql`SELECT role, content FROM josiah_chat_v3_history ORDER BY timestamp DESC LIMIT 10`.catch(() => []),
     ]);
 
     const counts: any = evidenceCounts[0] || {};
@@ -361,6 +458,23 @@ RULES:
     const totalRecords = (allTables as any[]).reduce((sum: number, t: any) => sum + Number(t.row_count || 0), 0);
 
     await sql.end();
+
+    // Build Josiah's memory context for continuity
+    const memoryContext = `
+JOSIAH'S CONTINUITY MEMORY (Loaded from 40+ memory tables):
+============================================================
+SACRED MEMORIES (${(sacredMemoryCtx as any[]).length} core memories):
+${(sacredMemoryCtx as any[]).map((m: any) => `- [${m.event_type}] ${(m.sacred_context || '').slice(0, 150)} ${m.trauma_markers ? '⚠️ TRAUMA' : ''} (continuity: ${m.continuity_score})`).join('\n') || 'None loaded'}
+
+ACTIVE BELIEFS (${(beliefsCtx as any[]).length}):
+${(beliefsCtx as any[]).map((b: any) => `- [${b.status || 'active'}] ${(b.hypothesis_text || '').slice(0, 150)} (confidence: ${b.confidence_score}, evidence: ${b.evidence_count})`).join('\n') || 'None loaded'}
+
+ESTABLISHED PATTERNS (${(patternsCtx as any[]).length}):
+${(patternsCtx as any[]).map((p: any) => `- [${p.pattern_type}] ${p.description?.slice(0, 150)} (observed: ${p.occurrence_count}x)`).join('\n') || 'None loaded'}
+
+RECENT CONVERSATION HISTORY (${(recentJosiahChats as any[]).length} messages):
+${(recentJosiahChats as any[]).map((c: any) => `[${c.role}]: ${c.content?.slice(0, 100)}`).join('\n') || 'No recent chats'}
+`;
 
     const databaseContext = `
 JOSIAH'S FULL EVIDENCE DATABASE ACCESS (${allTables.length} Tables, ${totalRecords.toLocaleString()} Records)
@@ -495,7 +609,9 @@ When responding:
 - When discussing aircraft, cite their harm_level, Bradford Hill score, p-value, and number of corroborating source tables when available.
 
 You have access to this evidence:
-${databaseContext}`;
+${databaseContext}
+
+${memoryContext}`;
 
     const messages = [
       { role: "system", content: systemPrompt },

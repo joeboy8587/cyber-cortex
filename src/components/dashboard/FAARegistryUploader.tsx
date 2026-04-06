@@ -42,22 +42,58 @@ interface UploadResult {
   crossRefs?: Array<{ registration: string; detection_count: number }>;
 }
 
-function extractTextFromPdfBytes(bytes: Uint8Array): string {
-  // Simple PDF text extractor — handles most FAA inquiry PDFs
+async function extractTextFromPdfBytes(bytes: Uint8Array): Promise<string> {
   const text: string[] = [];
-  const decoder = new TextDecoder("latin1");
-  const raw = decoder.decode(bytes);
+  const raw = new TextDecoder("latin1").decode(bytes);
 
-  // Extract text between BT...ET blocks
-  const btBlocks = raw.matchAll(/BT\s([\s\S]*?)ET/g);
-  for (const block of btBlocks) {
-    const tjMatches = block[1].matchAll(/\(([^)]*)\)\s*Tj/g);
-    for (const m of tjMatches) text.push(m[1]);
-    const tjArrayMatches = block[1].matchAll(/\[(.*?)\]\s*TJ/gi);
-    for (const m of tjArrayMatches) {
-      const parts = m[1].matchAll(/\(([^)]*)\)/g);
-      for (const p of parts) text.push(p[1]);
+  // 1) Try BT...ET blocks on uncompressed content
+  for (const block of raw.matchAll(/BT\s([\s\S]*?)ET/g)) {
+    for (const m of block[1].matchAll(/\(([^)]*)\)\s*Tj/g)) text.push(m[1]);
+    for (const m of block[1].matchAll(/\[(.*?)\]\s*TJ/gi)) {
+      for (const p of m[1].matchAll(/\(([^)]*)\)/g)) text.push(p[1]);
     }
+  }
+
+  // 2) Decompress FlateDecode streams and extract text from those too
+  const streamOffsets = [...raw.matchAll(/stream\r?\n/g)];
+  for (const sMatch of streamOffsets) {
+    const startIdx = (sMatch.index ?? 0) + sMatch[0].length;
+    const endIdx = raw.indexOf("endstream", startIdx);
+    if (endIdx === -1 || endIdx - startIdx > 500_000) continue;
+    // Check if the owning object uses FlateDecode
+    const preamble = raw.slice(Math.max(0, startIdx - 300), startIdx);
+    if (!preamble.includes("FlateDecode")) continue;
+    try {
+      const compressed = bytes.slice(startIdx, endIdx);
+      const ds = new DecompressionStream("deflate");
+      const writer = ds.writable.getWriter();
+      writer.write(compressed);
+      writer.close();
+      const reader = ds.readable.getReader();
+      const chunks: Uint8Array[] = [];
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+      const decompressed = new TextDecoder("latin1").decode(
+        chunks.reduce((acc, c) => { const merged = new Uint8Array(acc.length + c.length); merged.set(acc); merged.set(c, acc.length); return merged; }, new Uint8Array())
+      );
+      // Extract text from decompressed BT/ET blocks
+      for (const block of decompressed.matchAll(/BT\s([\s\S]*?)ET/g)) {
+        for (const m of block[1].matchAll(/\(([^)]*)\)\s*Tj/g)) text.push(m[1]);
+        for (const m of block[1].matchAll(/\[(.*?)\]\s*TJ/gi)) {
+          for (const p of m[1].matchAll(/\(([^)]*)\)/g)) text.push(p[1]);
+        }
+      }
+    } catch { /* decompression failed, skip */ }
+  }
+
+  // 3) Fallback: scan raw bytes for recognizable FAA patterns
+  const rawScan = raw.replace(/[^\x20-\x7E\n]/g, " ").replace(/\s+/g, " ");
+  const nNumFallback = rawScan.match(/N-NUMBER\s*(?:ENTERED)?:?\s*(\d+[A-Z]*)/i);
+  if (nNumFallback && !text.join(" ").includes(nNumFallback[1])) {
+    text.push(`N-NUMBER ENTERED: ${nNumFallback[1]}`);
   }
 
   return text.join(" ").replace(/\s+/g, " ");

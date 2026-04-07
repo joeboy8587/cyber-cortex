@@ -35,10 +35,16 @@ export function EnterpriseProfiles() {
           action: "customQuery",
           query: `
             SELECT registration, total_detections as detection_count, 
-                   repeat_offender_score as avg_threat_score, threat_tier,
+                   max_threat_score as avg_threat_score,
+                   CASE 
+                     WHEN max_threat_score >= 80 THEN 'TIER_1'
+                     WHEN max_threat_score >= 50 THEN 'TIER_2'
+                     WHEN max_threat_score >= 20 THEN 'TIER_3'
+                     ELSE 'TIER_4'
+                   END as threat_tier,
                    first_detection as first_seen, last_detection as last_seen,
-                   operator_name, operator_type, flagged_count,
-                   low_altitude_count, avg_altitude_feet, masking_detected
+                   registered_owner as operator_name, owner_type as operator_type,
+                   is_shell_company, avg_altitude
             FROM aircraft_profiles_enriched
             WHERE total_detections > 5
             ORDER BY total_detections DESC

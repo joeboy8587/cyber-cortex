@@ -56,32 +56,44 @@ export function KCSOEvidenceMatrix() {
   const loadKCSOData = useCallback(async () => {
     setLoading(true);
     try {
-      // Load all KCSO data sources in parallel with retry logic for BOOT_ERROR
-      const [factResult, injuryResult, fleetResult, clusterResult, supabaseFleet] = await Promise.all([
+      // Load from all available sources in parallel
+      const [
+        factResult, injuryResult, fleetResult, clusterResult,
+        supabaseFleet, forensicEvents, watchtowerFlags
+      ] = await Promise.all([
         neonQuery({
           action: 'customQuery',
           query: `SELECT serial_id, "Event__Claim", "Date__Year", "Category", "Source", "URL", "Amount__Outcome" FROM "KCSO_Fact_Matrix_v1" ORDER BY serial_id LIMIT 50`
-        }),
+        }).catch(() => ({ data: null })),
         neonQuery({
           action: 'customQuery',
           query: `SELECT serial_id, "Date", "Time", "AircraftTail", "Operator", "ActivityConduct", "BiometricMedical_Impact", "Location", "Primary_Source" FROM "KCSO_Personal_Injury_Timeline" ORDER BY serial_id LIMIT 50`
-        }),
+        }).catch(() => ({ data: null })),
         neonQuery({
           action: 'customQuery',
           query: `SELECT * FROM kcso_fleet_modernization_ledger ORDER BY tail_number LIMIT 50`
-        }),
+        }).catch(() => ({ data: null })),
         neonQuery({
           action: 'customQuery',
           query: `SELECT serial_id, cluster, content, kcso_score, tails, places FROM "KCSO_clusters" ORDER BY kcso_score DESC LIMIT 50`
-        }),
-        supabase.from('kcso_fleet').select('*')
+        }).catch(() => ({ data: null })),
+        supabase.from('kcso_fleet').select('*'),
+        supabase.from('master_forensic_events')
+          .select('*')
+          .or('primary_entity_id.ilike.%KC%,summary.ilike.%KCSO%,summary.ilike.%kern%')
+          .order('event_timestamp', { ascending: false })
+          .limit(50),
+        supabase.from('watchtower_autonomous_flags')
+          .select('*')
+          .or('registration.ilike.%KC%,description.ilike.%KCSO%,description.ilike.%kern%')
+          .order('created_at', { ascending: false })
+          .limit(50)
       ]);
 
-      console.log('KCSO Data Results:', { factResult, injuryResult, fleetResult, clusterResult });
-
-      // Process fact matrix - using actual column names from KCSO_Fact_Matrix_v1
-      if (factResult.data && Array.isArray(factResult.data)) {
-        setFactMatrix(factResult.data.map((f: any) => ({
+      // Process fact matrix - use Neon if available, else build from forensic events + watchtower flags
+      const neonFacts = factResult?.data && Array.isArray(factResult.data) ? factResult.data : [];
+      if (neonFacts.length > 0) {
+        setFactMatrix(neonFacts.map((f: any) => ({
           id: String(f.serial_id || Math.random()),
           fact_description: f['Event__Claim'] || f.event_claim || 'No description',
           evidence_type: f['Category'] || 'Document',
@@ -89,11 +101,37 @@ export function KCSOEvidenceMatrix() {
           source: f['Source'] || 'Primary',
           severity: f['Amount__Outcome']?.includes('verdict') || f['Amount__Outcome']?.includes('M') ? 'Critical' : 'High'
         })));
+      } else {
+        // Build fact matrix from Supabase forensic events and watchtower flags
+        const facts: FactMatrixEntry[] = [];
+        (forensicEvents.data || []).forEach((e: any) => {
+          facts.push({
+            id: e.forensic_event_id,
+            fact_description: e.summary || `${e.event_type} event involving ${e.primary_entity_id}`,
+            evidence_type: e.event_type || 'forensic',
+            date_documented: e.event_timestamp ? new Date(e.event_timestamp).toLocaleDateString() : 'Unknown',
+            source: 'Forensic Events Database',
+            severity: (e.bradford_hill_score && e.bradford_hill_score >= 7) ? 'Critical' 
+              : (e.confidence_score && e.confidence_score >= 80) ? 'High' : 'Medium'
+          });
+        });
+        (watchtowerFlags.data || []).forEach((f: any) => {
+          facts.push({
+            id: f.id,
+            fact_description: f.description,
+            evidence_type: f.flag_type || 'watchtower',
+            date_documented: f.created_at ? new Date(f.created_at).toLocaleDateString() : 'Unknown',
+            source: 'Watchtower Autonomous System',
+            severity: f.severity === 'critical' ? 'Critical' : f.severity === 'high' ? 'High' : 'Medium'
+          });
+        });
+        setFactMatrix(facts.slice(0, 50));
       }
 
-      // Process injury timeline - using actual column names from KCSO_Personal_Injury_Timeline
-      if (injuryResult.data && Array.isArray(injuryResult.data)) {
-        setInjuryTimeline(injuryResult.data.map((e: any) => ({
+      // Process injury timeline - use Neon if available, else build from biometric forensic events
+      const neonInjuries = injuryResult?.data && Array.isArray(injuryResult.data) ? injuryResult.data : [];
+      if (neonInjuries.length > 0) {
+        setInjuryTimeline(neonInjuries.map((e: any) => ({
           id: String(e.serial_id || Math.random()),
           event_date: e['Date'] || 'Unknown',
           event_description: e['ActivityConduct'] || 'No description',
@@ -101,10 +139,23 @@ export function KCSOEvidenceMatrix() {
           medical_documentation: e['Primary_Source'] || 'Pending',
           witnesses: e['AircraftTail'] || 'None documented'
         })));
+      } else {
+        // Build from biometric forensic events
+        const bioEvents = (forensicEvents.data || []).filter((e: any) => 
+          e.event_type === 'biometric' || e.event_type === 'multi_factor'
+        );
+        setInjuryTimeline(bioEvents.map((e: any) => ({
+          id: e.forensic_event_id,
+          event_date: e.event_timestamp ? new Date(e.event_timestamp).toLocaleDateString() : 'Unknown',
+          event_description: e.summary || 'Biometric event correlated with KCSO aircraft',
+          injury_type: e.event_type === 'multi_factor' ? 'Multi-Factor Correlation' : 'Biometric Impact',
+          medical_documentation: `Bradford Hill Score: ${e.bradford_hill_score || 'N/A'}`,
+          witnesses: e.primary_entity_id || 'None documented'
+        })));
       }
 
       // Process fleet records - merge Neon and Supabase data
-      const neonFleet = Array.isArray(fleetResult.data) ? fleetResult.data : [];
+      const neonFleet = Array.isArray(fleetResult?.data) ? fleetResult.data : [];
       const supaFleet = Array.isArray(supabaseFleet.data) ? supabaseFleet.data : [];
       
       const allFleet = [...neonFleet, ...supaFleet].reduce((acc: FleetRecord[], f: any) => {
@@ -124,14 +175,30 @@ export function KCSOEvidenceMatrix() {
       
       setFleetRecords(allFleet);
 
-      // Process clusters - using actual column names from KCSO_clusters
-      if (clusterResult.data && Array.isArray(clusterResult.data)) {
-        setClusters(clusterResult.data.map((c: any) => ({
+      // Process clusters - use Neon if available
+      const neonClusters = clusterResult?.data && Array.isArray(clusterResult.data) ? clusterResult.data : [];
+      if (neonClusters.length > 0) {
+        setClusters(neonClusters.map((c: any) => ({
           cluster_id: c.cluster || String(c.serial_id || Math.random()),
           aircraft_count: 1,
           detection_count: Math.round((c.kcso_score || 0) * 100),
           time_range: c.content || 'Unknown',
           location: c.places && c.places !== '[]' ? c.places : 'Oildale'
+        })));
+      } else {
+        // Build cluster-like data from watchtower flags grouped by flag_type
+        const flagTypes = new Map<string, any[]>();
+        (watchtowerFlags.data || []).forEach((f: any) => {
+          const type = f.flag_type || 'unknown';
+          if (!flagTypes.has(type)) flagTypes.set(type, []);
+          flagTypes.get(type)!.push(f);
+        });
+        setClusters(Array.from(flagTypes.entries()).map(([type, flags]) => ({
+          cluster_id: type,
+          aircraft_count: new Set(flags.map(f => f.registration).filter(Boolean)).size,
+          detection_count: flags.length,
+          time_range: `${flags.length} flags`,
+          location: 'Kern County'
         })));
       }
 
@@ -144,7 +211,6 @@ export function KCSOEvidenceMatrix() {
 
   useEffect(() => {
     loadKCSOData();
-    // Auto-refresh every 5 minutes so data stays current
     const interval = setInterval(() => loadKCSOData(), 5 * 60 * 1000);
     return () => clearInterval(interval);
   }, [loadKCSOData]);
@@ -216,7 +282,6 @@ export function KCSOEvidenceMatrix() {
                 <TabsTrigger value="clusters">Clusters</TabsTrigger>
               </TabsList>
               
-              {/* Fact Matrix Tab */}
               <TabsContent value="facts">
                 <ScrollArea className="h-[350px]">
                   <div className="space-y-2 pr-4">
@@ -224,7 +289,6 @@ export function KCSOEvidenceMatrix() {
                       <div className="text-center py-8 text-muted-foreground">
                         <FileText className="w-8 h-8 mx-auto mb-2 opacity-50" />
                         <p>No fact matrix entries found</p>
-                        <p className="text-xs">Check KCSO_Fact_Matrix_v1 table</p>
                       </div>
                     ) : (
                       factMatrix.map((fact) => (
@@ -259,7 +323,6 @@ export function KCSOEvidenceMatrix() {
                 </ScrollArea>
               </TabsContent>
 
-              {/* Injuries Tab */}
               <TabsContent value="injuries">
                 <ScrollArea className="h-[350px]">
                   <div className="space-y-2 pr-4">
@@ -267,7 +330,6 @@ export function KCSOEvidenceMatrix() {
                       <div className="text-center py-8 text-muted-foreground">
                         <AlertTriangle className="w-8 h-8 mx-auto mb-2 opacity-50" />
                         <p>No injury timeline entries found</p>
-                        <p className="text-xs">Check KCSO_Personal_Injury_Timeline table</p>
                       </div>
                     ) : (
                       injuryTimeline.map((injury) => (
@@ -294,7 +356,6 @@ export function KCSOEvidenceMatrix() {
                 </ScrollArea>
               </TabsContent>
 
-              {/* Fleet Tab */}
               <TabsContent value="fleet">
                 <ScrollArea className="h-[350px]">
                   <div className="space-y-2 pr-4">
@@ -344,7 +405,6 @@ export function KCSOEvidenceMatrix() {
                 </ScrollArea>
               </TabsContent>
 
-              {/* Clusters Tab */}
               <TabsContent value="clusters">
                 <ScrollArea className="h-[350px]">
                   <div className="space-y-2 pr-4">
@@ -352,7 +412,6 @@ export function KCSOEvidenceMatrix() {
                       <div className="text-center py-8 text-muted-foreground">
                         <MapPin className="w-8 h-8 mx-auto mb-2 opacity-50" />
                         <p>No cluster data found</p>
-                        <p className="text-xs">Check KCSO_clusters table</p>
                       </div>
                     ) : (
                       clusters.map((cluster) => (
@@ -362,7 +421,7 @@ export function KCSOEvidenceMatrix() {
                         >
                           <div>
                             <p className="font-mono font-bold text-purple-400">
-                              Cluster {cluster.cluster_id}
+                              {cluster.cluster_id}
                             </p>
                             <div className="flex items-center gap-3 text-xs text-muted-foreground mt-1">
                               <span>{cluster.aircraft_count} aircraft</span>

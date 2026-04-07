@@ -36,13 +36,14 @@ export const KCSOFleetRegistry: React.FC = () => {
   const fetchFleet = async () => {
     setLoading(true);
     try {
-      const { data, error } = await neonQuery({
-        action: 'customQuery',
-        query: `SELECT * FROM kcso_fleet ORDER BY tail_number`
-      });
+      // Use Supabase kcso_fleet table (verified populated)
+      const { data, error } = await supabase
+        .from('kcso_fleet')
+        .select('*')
+        .order('tail_number');
 
       if (error) throw error;
-      setFleet(data?.data || []);
+      setFleet(data || []);
     } catch (err) {
       console.error('Failed to fetch KCSO fleet:', err);
       toast.error('Failed to load fleet data');

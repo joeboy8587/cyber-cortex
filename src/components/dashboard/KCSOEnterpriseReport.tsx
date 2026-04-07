@@ -31,7 +31,7 @@ export const KCSOEnterpriseReport = () => {
   const [events, setEvents] = useState<KCSOEvent[]>([]);
   const [stats, setStats] = useState<KCSOStats | null>(null);
   const [loading, setLoading] = useState(true);
-  const [selectedAircraft, setSelectedAircraft] = useState<'N913KC' | 'N912KC' | 'all'>('all');
+  const [selectedAircraft, setSelectedAircraft] = useState<'N913KC' | 'N912KC' | 'N597E' | 'all'>('all');
 
   const fetchKCSOData = useCallback(async () => {
     setLoading(true);
@@ -40,9 +40,8 @@ export const KCSOEnterpriseReport = () => {
       let registrationFilter: string;
       if (selectedAircraft === 'all') {
         registrationFilter = `(
-          registration IN ('N912KC', 'N913KC')
-          OR registration LIKE 'N91%KC'
-          OR registration LIKE 'N%KC'
+          registration IN ('N912KC', 'N913KC', 'N597E')
+          OR registration LIKE 'N91_KC'
           OR taxonomy_tag IN ('xxb_kcso', 'xxb_tier1_priority')
           OR callsign ILIKE '%KCSO%'
           OR callsign ILIKE '%KERN%'
@@ -141,7 +140,7 @@ export const KCSOEnterpriseReport = () => {
           <span className="font-bold text-yellow-400">COORDINATED ENTERPRISE ACTIVITY PATTERN DETECTED</span>
         </div>
         <p className="text-sm text-foreground/80">
-          Kern County Sheriff aircraft (N913KC, N912KC) identified as participants in coordinated enterprise 
+          Kern County Sheriff aircraft (N913KC, N912KC, N597E) identified as participants in coordinated enterprise 
           activity correlated with documented harm events. Evidence indicates multi-actor organized operation.
         </p>
       </div>
@@ -192,6 +191,14 @@ export const KCSOEnterpriseReport = () => {
           className="font-mono"
         >
           N912KC
+        </Button>
+        <Button 
+          variant={selectedAircraft === 'N597E' ? 'default' : 'outline'} 
+          size="sm"
+          onClick={() => setSelectedAircraft('N597E')}
+          className="font-mono"
+        >
+          N597E
         </Button>
         <div className="flex-1" />
         <Button variant="outline" size="sm" onClick={fetchKCSOData} disabled={loading}>

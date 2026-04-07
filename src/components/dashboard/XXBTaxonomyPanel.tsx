@@ -123,28 +123,47 @@ export function XXBTaxonomyPanel() {
   const loadTaxonomy = useCallback(async () => {
     setIsLoading(true);
     try {
+      // First try the dedicated action
       const { data, error } = await supabase.functions.invoke('neon-query', {
         body: { action: 'getTaxonomy' }
       });
       
-      if (error) throw error;
-      if (data?.error) {
-        if (data.error.includes('does not exist')) {
-          setTableInitialized(false);
-          return;
-        }
-        throw new Error(data.error);
-      }
-      
-      if (data?.data?.notInitialized) {
-        setTableInitialized(false);
+      if (!error && data?.data && !data?.data?.notInitialized && !data?.error?.includes('does not exist')) {
+        setTaxonomy(data?.data || []);
+        setTableInitialized(true);
         return;
       }
       
-      setTaxonomy(data?.data || []);
-      setTableInitialized(true);
+      // Fallback: query id_taxonomy directly (8 rows exist)
+      const { data: directData } = await supabase.functions.invoke('neon-query', {
+        body: {
+          action: 'customQuery',
+          query: `SELECT tag, domain, description, detection_pattern, priority, created_at, throttle_window FROM id_taxonomy ORDER BY priority DESC`
+        }
+      });
+      
+      if (directData && Array.isArray(directData) && directData.length > 0) {
+        setTaxonomy(directData);
+        setTableInitialized(true);
+      } else {
+        setTableInitialized(false);
+      }
     } catch (err) {
       console.error('Load taxonomy error:', err);
+      // Last resort fallback
+      try {
+        const { data: fallback } = await supabase.functions.invoke('neon-query', {
+          body: { action: 'customQuery', query: `SELECT * FROM id_taxonomy ORDER BY priority DESC` }
+        });
+        if (fallback && Array.isArray(fallback) && fallback.length > 0) {
+          setTaxonomy(fallback);
+          setTableInitialized(true);
+        } else {
+          setTableInitialized(false);
+        }
+      } catch {
+        setTableInitialized(false);
+      }
     } finally {
       setIsLoading(false);
     }

@@ -146,7 +146,9 @@ export const KCSODeepDiveReport = () => {
         totalDays: totalDays,
         avgAltitude: Math.round(avgAlt),
         lowestAltitude: lowestAlt === 9999 ? 0 : lowestAlt,
-        biometricCorrelations: parseInt(bioRes.data?.data?.[0]?.bio_count || '0')
+        biometricCorrelations: parseInt(
+          (Array.isArray(bioRes.data) ? bioRes.data : bioRes.data?.data)?.[0]?.bio_count || '0'
+        )
       });
 
     } catch (err) {

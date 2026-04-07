@@ -41,127 +41,132 @@ export const ShellCompanyMatrix = () => {
   const fetchShellData = useCallback(async () => {
     setLoading(true);
     try {
-      // Get aircraft grouped by operator/callsign patterns
-      const [operatorRes, flaggedRes] = await Promise.all([
+      // Pull from actual shell company tables in Neon
+      const [shellRes, correlRes, alignRes] = await Promise.all([
         supabase.functions.invoke('neon-query', {
           body: {
             action: 'customQuery',
             query: `
-              SELECT 
-                COALESCE(callsign, 'Unknown') as operator,
-                registration,
-                COUNT(*) as detections,
-                ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as avg_altitude,
-                MIN(detection_timestamp) as first_seen,
-                MAX(detection_timestamp) as last_seen
-              FROM live_flight_detections_rows
-              WHERE registration IS NOT NULL AND registration != ''
-              GROUP BY callsign, registration
-              ORDER BY detections DESC
-              LIMIT 200
+              SELECT sc.company_name, sc.risk_level, sc.red_flags, sc.aircraft_list, sc.jurisdiction, sc.formation_date,
+                     sca.tail_number, sca.operator_name, sca.threat_classification, sca.violation_count, sca.evidence_notes,
+                     sca.altitude_range
+              FROM shell_companies sc
+              LEFT JOIN shell_company_aircraft sca ON sca.operator_name = sc.company_name
+              ORDER BY sc.risk_level DESC, sca.violation_count DESC NULLS LAST
             `
           }
         }),
-        // Get flagged aircraft with shell company connections
         supabase.functions.invoke('neon-query', {
           body: {
             action: 'customQuery',
             query: `
-              SELECT registration, taxonomy_tag, threat_score, flagged_reasons, created_at,
-                     altitude, callsign
-              FROM live_flight_detections_rows
-              WHERE flagged = true OR taxonomy_tag LIKE 'tier%' OR taxonomy_tag LIKE 'xxb_tier%'
-              ORDER BY created_at DESC NULLS LAST
-              LIMIT 100
+              SELECT kcso_aircraft, shell_aircraft, shell_operator, shell_violations, kcso_violations,
+                     event_count, evidence_strength, rico_relevance, legal_significance,
+                     first_seen, last_seen
+              FROM kcso_shell_correlations
+              ORDER BY event_count DESC
+            `
+          }
+        }),
+        supabase.functions.invoke('neon-query', {
+          body: {
+            action: 'customQuery',
+            query: `
+              SELECT entity_name, entity_type, aircraft_tail, detection_count, avg_altitude_ft,
+                     low_altitude_pct, match_score_to_kcso, legal_exposure, behavior_type,
+                     risk_tier, first_detection, last_detection
+              FROM shell_entity_behavioral_alignment
+              ORDER BY match_score_to_kcso DESC NULLS LAST
             `
           }
         })
       ]);
 
-      const operatorData = operatorRes.data?.data || [];
-      const flaggedData = flaggedRes.data?.data || [];
+      const shellData = shellRes.data || [];
+      const correlData = correlRes.data || [];
+      const alignData = alignRes.data || [];
 
-      // Process operator data
-      setOperatorAircraft(operatorData.map((o: Record<string, unknown>) => ({
-        operator: o.operator as string || 'Unknown',
-        registration: o.registration as string,
-        detections: parseInt(o.detections as string || '0'),
-        avg_altitude: parseFloat(o.avg_altitude as string || '0'),
-        first_seen: o.first_seen as string,
-        last_seen: o.last_seen as string
+      // Group shell company data by company name
+      const companyMap = new Map<string, ShellCompanyData>();
+      
+      for (const row of shellData) {
+        const name = row.company_name || row.operator_name || 'Unknown';
+        if (!companyMap.has(name)) {
+          companyMap.set(name, {
+            company_name: name,
+            aircraft: [],
+            total_detections: 0,
+            first_seen: '',
+            last_seen: '',
+            threat_level: (row.risk_level === 'CRITICAL' || row.threat_classification === 'CRITICAL') ? 'critical' 
+              : (row.risk_level === 'EXTREME' || row.risk_level === 'HIGH') ? 'high' : 'medium',
+            connection_notes: row.red_flags || row.evidence_notes || ''
+          });
+        }
+        const entry = companyMap.get(name)!;
+        if (row.tail_number && !entry.aircraft.includes(row.tail_number)) {
+          entry.aircraft.push(row.tail_number);
+        }
+        if (row.aircraft_list) {
+          const listed = row.aircraft_list.split(',').map((a: string) => a.trim());
+          for (const a of listed) {
+            if (a && !entry.aircraft.includes(a)) entry.aircraft.push(a);
+          }
+        }
+        entry.total_detections += Number(row.violation_count) || 0;
+      }
+
+      // Enrich with correlation data
+      for (const corr of correlData) {
+        const name = corr.shell_operator;
+        if (name && !companyMap.has(name)) {
+          companyMap.set(name, {
+            company_name: name,
+            aircraft: [corr.shell_aircraft],
+            total_detections: Number(corr.shell_violations) || 0,
+            first_seen: corr.first_seen || '',
+            last_seen: corr.last_seen || '',
+            threat_level: corr.rico_relevance?.includes('HIGH') ? 'critical' : 'high',
+            connection_notes: corr.legal_significance || ''
+          });
+        } else if (name && companyMap.has(name)) {
+          const entry = companyMap.get(name)!;
+          if (corr.shell_aircraft && !entry.aircraft.includes(corr.shell_aircraft)) {
+            entry.aircraft.push(corr.shell_aircraft);
+          }
+          if (!entry.first_seen || (corr.first_seen && corr.first_seen < entry.first_seen)) {
+            entry.first_seen = corr.first_seen;
+          }
+          if (!entry.last_seen || (corr.last_seen && corr.last_seen > entry.last_seen)) {
+            entry.last_seen = corr.last_seen;
+          }
+        }
+      }
+
+      // Enrich with behavioral alignment data
+      for (const align of alignData) {
+        const name = align.entity_name;
+        if (name && companyMap.has(name)) {
+          const entry = companyMap.get(name)!;
+          entry.total_detections = Math.max(entry.total_detections, Number(align.detection_count) || 0);
+          if (!entry.first_seen && align.first_detection) entry.first_seen = align.first_detection;
+          if (!entry.last_seen && align.last_detection) entry.last_seen = align.last_detection;
+        }
+      }
+
+      // Set operator aircraft from alignment data for the table
+      setOperatorAircraft(alignData.map((a: any) => ({
+        operator: a.entity_name || 'Unknown',
+        registration: a.aircraft_tail || '',
+        detections: Number(a.detection_count) || 0,
+        avg_altitude: parseFloat(a.avg_altitude_ft) || 0,
+        first_seen: a.first_detection || '',
+        last_seen: a.last_detection || ''
       })));
 
-      // Define known shell company patterns
-      const shellPatterns: ShellCompanyData[] = [
-        {
-          company_name: 'ALF IX LLC',
-          aircraft: ['N788FA', 'N790FA', 'N791FA'],
-          total_detections: 0,
-          first_seen: '',
-          last_seen: '',
-          threat_level: 'critical',
-          connection_notes: 'Connected to AE Industrial Partners ($6.4B AUM). Linked to Redwire Corporation national security infrastructure.'
-        },
-        {
-          company_name: 'AERO EQUITIES LLC',
-          aircraft: ['N997SE', 'N2464D'],
-          total_detections: 0,
-          first_seen: '',
-          last_seen: '',
-          threat_level: 'critical',
-          connection_notes: 'IP infrastructure cross-linked with ALF IX. Same organizational cluster.'
-        },
-        {
-          company_name: 'CHRISTIANSEN AVIATION LLC',
-          aircraft: [],
-          total_detections: 0,
-          first_seen: '',
-          last_seen: '',
-          threat_level: 'high',
-          connection_notes: 'Part of shell company network. Flight patterns synchronized with other network aircraft.'
-        },
-        {
-          company_name: 'Air Methods / Mercy Air',
-          aircraft: ['N229AM', 'N743AM', 'N766ME'],
-          total_detections: 0,
-          first_seen: '',
-          last_seen: '',
-          threat_level: 'high',
-          connection_notes: 'Medical aviation assets operating surveillance patterns. Night operations without emergency calls.'
-        }
-      ];
-
-      // Enrich shell companies with detection counts
-      const enrichedShells = shellPatterns.map(shell => {
-        const aircraftList = Array.isArray(shell.aircraft) ? shell.aircraft : [];
-        const matchingAircraft = operatorData.filter((o: { registration: string }) => 
-          aircraftList.some(a => o.registration?.includes(a.substring(0, 4)))
-        );
-        
-        const detections = matchingAircraft.reduce((sum: number, o: { detections: string }) => 
-          sum + parseInt(o.detections || '0'), 0
-        );
-        
-        const dates = matchingAircraft
-          .filter((o: { first_seen: string }) => o.first_seen)
-          .map((o: { first_seen: string; last_seen: string }) => ({
-            first: new Date(o.first_seen),
-            last: new Date(o.last_seen)
-          }));
-        
-        return {
-          ...shell,
-          total_detections: detections,
-          first_seen: dates.length > 0 ? 
-            dates.reduce((min, d) => d.first < min ? d.first : min, dates[0].first).toISOString() : '',
-          last_seen: dates.length > 0 ?
-            dates.reduce((max, d) => d.last > max ? d.last : max, dates[0].last).toISOString() : ''
-        };
-      });
-
+      const enrichedShells = Array.from(companyMap.values());
       setShellCompanies(enrichedShells);
 
-      // Calculate totals
       setTotals({
         companies: enrichedShells.length,
         aircraft: enrichedShells.reduce((sum, s) => sum + s.aircraft.length, 0),

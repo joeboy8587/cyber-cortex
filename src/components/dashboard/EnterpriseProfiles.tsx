@@ -29,22 +29,32 @@ export function EnterpriseProfiles() {
 
   const fetchEnterpriseData = async () => {
     try {
-      // Use dedicated action for enterprise profiles
-      const { data: enterpriseData, error } = await supabase.functions.invoke("neon-query", {
-        body: { action: "getEnterpriseProfiles" }
+      // Pull from aircraft_profiles_enriched (35K records) - the richest enterprise data source
+      const { data: profileData } = await supabase.functions.invoke("neon-query", {
+        body: {
+          action: "customQuery",
+          query: `
+            SELECT registration, total_detections as detection_count, 
+                   repeat_offender_score as avg_threat_score, threat_tier,
+                   first_detection as first_seen, last_detection as last_seen,
+                   operator_name, operator_type, flagged_count,
+                   low_altitude_count, avg_altitude_feet, masking_detected
+            FROM aircraft_profiles_enriched
+            WHERE total_detections > 5
+            ORDER BY total_detections DESC
+            LIMIT 30
+          `
+        }
       });
 
-      if (error) {
-        console.warn("Enterprise profiles query failed:", error);
-      }
-
-      if (enterpriseData?.profiles && Array.isArray(enterpriseData.profiles)) {
-        const processedProfiles: AircraftProfile[] = enterpriseData.profiles.map((p: any) => {
+      if (profileData && Array.isArray(profileData)) {
+        const processedProfiles: AircraftProfile[] = profileData.map((p: any) => {
           const threatScore = Number(p.avg_threat_score) || 0;
           const count = Number(p.detection_count) || 0;
+          const tier = p.threat_tier || '';
           let threatLevel: "high" | "medium" | "low" = "low";
-          if (threatScore > 70 || count > 100) threatLevel = "high";
-          else if (threatScore > 40 || count > 30) threatLevel = "medium";
+          if (tier.includes('TIER_1') || tier.includes('TIER_2') || threatScore > 50 || count > 500) threatLevel = "high";
+          else if (tier.includes('TIER_3') || threatScore > 20 || count > 50) threatLevel = "medium";
 
           return {
             hex: p.registration || "Unknown",
@@ -58,70 +68,11 @@ export function EnterpriseProfiles() {
         });
 
         setProfiles(processedProfiles.slice(0, 20));
-        
-        if (enterpriseData.stats) {
-          setStats({
-            totalAircraft: Number(enterpriseData.stats.totalAircraft) || 0,
-            totalDetections: Number(enterpriseData.stats.totalDetections) || 0,
-            totalFlagged: Number(enterpriseData.stats.totalFlagged) || 0
-          });
-        }
-      } else {
-        // Fallback to customQuery if dedicated action fails
-        const { data: fallbackData } = await supabase.functions.invoke("neon-query", {
-          body: {
-            action: "customQuery",
-            query: `
-              SELECT 
-                COALESCE(registration, hex) as registration,
-                COUNT(*) as detection_count,
-                COALESCE(AVG(threat_score), 0) as avg_threat_score,
-                MIN(detection_timestamp) as first_seen,
-                MAX(detection_timestamp) as last_seen
-              FROM live_flight_detections_rows
-              WHERE registration IS NOT NULL OR hex IS NOT NULL
-              GROUP BY COALESCE(registration, hex)
-              HAVING COUNT(*) > 5
-              ORDER BY COUNT(*) DESC
-              LIMIT 25
-            `
-          }
+        setStats({
+          totalAircraft: processedProfiles.length,
+          totalDetections: processedProfiles.reduce((sum, p) => sum + p.detectionCount, 0),
+          totalFlagged: processedProfiles.filter(p => p.threatLevel === "high").length
         });
-
-        if (fallbackData && Array.isArray(fallbackData)) {
-          const processedProfiles: AircraftProfile[] = fallbackData.map((p: any) => {
-            const threatScore = Number(p.avg_threat_score) || 0;
-            const count = Number(p.detection_count) || 0;
-            let threatLevel: "high" | "medium" | "low" = "low";
-            if (threatScore > 70 || count > 100) threatLevel = "high";
-            else if (threatScore > 40 || count > 30) threatLevel = "medium";
-
-            return {
-              hex: p.registration || "Unknown",
-              registration: p.registration || "Unknown",
-              detectionCount: count,
-              avgThreatScore: threatScore,
-              firstSeen: p.first_seen || "",
-              lastSeen: p.last_seen || "",
-              threatLevel
-            };
-          });
-
-          setProfiles(processedProfiles.slice(0, 20));
-        }
-
-        // Get stats separately
-        const { data: statsData } = await supabase.functions.invoke("neon-query", {
-          body: { action: "getDashboardCounts" }
-        });
-
-        if (statsData) {
-          setStats({
-            totalAircraft: Number(statsData.total_flights) || 0,
-            totalDetections: Number(statsData.total_flights) || 0,
-            totalFlagged: Number(statsData.flagged_flights) || 0
-          });
-        }
       }
     } catch (error) {
       console.error("Error fetching enterprise data:", error);

@@ -1,8 +1,8 @@
-# 🚨 EYEWITNESS SIGHTING REPORT
+# 🚨 EYEWITNESS SIGHTING REPORT — CORRECTED
 ## Descending Contrail + Formation Aircraft — Oildale, CA
 
-**Date:** April 6, 2026 (evening, local PDT) / April 7, 2026 UTC  
-**Location:** Oildale, Kern County, California  
+**Date:** April 6, 2026, 7:50 PM PDT (April 7, 2026 02:50 UTC)  
+**Location:** Oildale, Kern County, California
 **Observer:** Joseph Nipper  
 **Classification:** Witness Evidence Document  
 **Photo Evidence:** `witness_sighting_20260407_contrail_oildale.jpeg`

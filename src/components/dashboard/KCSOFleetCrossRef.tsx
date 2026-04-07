@@ -3,17 +3,9 @@ import { CyberPanel } from '@/components/ui/cyber-panel';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Progress } from '@/components/ui/progress';
 import { 
-  Shield, 
-  RefreshCw, 
-  Database,
-  Activity,
-  AlertTriangle,
-  Target,
-  Heart,
-  ExternalLink,
-  TrendingUp
+  Shield, RefreshCw, Database, Activity, AlertTriangle,
+  Heart, ExternalLink
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { neonQuery } from '@/lib/neonQueryRetry';
@@ -38,18 +30,11 @@ interface NeonDetection {
   active_days: string;
 }
 
-interface BiometricCorrelation {
-  registration: string;
-  correlations: string;
-  hr_spikes: string;
-  stress_events: string;
-  avg_strength: string;
-}
-
 interface CrossRefData {
   aircraft: FleetAircraft;
   neonData: NeonDetection | null;
-  biometricData: BiometricCorrelation | null;
+  forensicEvents: number;
+  watchtowerFlags: number;
 }
 
 export const KCSOFleetCrossRef: React.FC = () => {
@@ -57,8 +42,8 @@ export const KCSOFleetCrossRef: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [totals, setTotals] = useState({
     totalDetections: 0,
-    totalCorrelations: 0,
-    totalHrSpikes: 0,
+    totalForensicEvents: 0,
+    totalWatchtowerFlags: 0,
     activeDays: 0
   });
 
@@ -73,59 +58,70 @@ export const KCSOFleetCrossRef: React.FC = () => {
 
       if (fleetError) throw fleetError;
 
-      // Get tail numbers for Neon query
       const tailNumbers = fleet?.map(a => a.tail_number) || [];
       const tailNumbersStr = tailNumbers.map(t => `'${t}'`).join(',');
 
-      // Fetch detections from Neon
-      const { data: neonResponse } = await neonQuery({
-        action: 'customQuery',
-        query: `SELECT registration, COUNT(*) as detections, 
-                MIN(event_timestamp) as first_seen, MAX(event_timestamp) as last_seen, 
-                AVG(altitude_ft) as avg_altitude,
-                COUNT(DISTINCT DATE(event_timestamp)) as active_days 
-                FROM watchtower_unified_master 
-                WHERE registration IN (${tailNumbersStr}) GROUP BY registration`
+      // Fetch from live_flight_detections_rows (known to have data) and Supabase tables in parallel
+      const [neonResponse, forensicResponse, watchtowerResponse] = await Promise.all([
+        neonQuery({
+          action: 'customQuery',
+          query: `SELECT registration, COUNT(*)::text as detections, 
+                  MIN(detection_timestamp)::text as first_seen, MAX(detection_timestamp)::text as last_seen, 
+                  ROUND(AVG(COALESCE(altitude, 0))::numeric, 0)::text as avg_altitude,
+                  COUNT(DISTINCT DATE(detection_timestamp))::text as active_days 
+                  FROM live_flight_detections_rows 
+                  WHERE registration IN (${tailNumbersStr}) GROUP BY registration`
+        }).catch(() => ({ data: [] })),
+        supabase.from('master_forensic_events')
+          .select('primary_entity_id')
+          .or(tailNumbers.map(t => `primary_entity_id.eq.${t}`).join(',')),
+        supabase.from('watchtower_autonomous_flags')
+          .select('registration')
+          .or(tailNumbers.map(t => `registration.eq.${t}`).join(','))
+      ]);
+
+      const neonData: NeonDetection[] = Array.isArray(neonResponse?.data) 
+        ? neonResponse.data 
+        : neonResponse?.data?.data || [];
+
+      // Count forensic events per aircraft
+      const forensicCounts = new Map<string, number>();
+      (forensicResponse.data || []).forEach((e: any) => {
+        const id = e.primary_entity_id;
+        forensicCounts.set(id, (forensicCounts.get(id) || 0) + 1);
       });
 
-      const { data: bioResponse } = await neonQuery({
-        action: 'customQuery',
-        query: `SELECT registration, COUNT(*) as correlations, 
-                SUM(CASE WHEN hr_spike_detected THEN 1 ELSE 0 END) as hr_spikes, 
-                SUM(CASE WHEN stress_increase_detected THEN 1 ELSE 0 END) as stress_events, 
-                AVG(correlation_strength) as avg_strength 
-                FROM master_biometric_aircraft_correlations 
-                WHERE registration IN (${tailNumbersStr}) GROUP BY registration`
+      // Count watchtower flags per aircraft
+      const watchtowerCounts = new Map<string, number>();
+      (watchtowerResponse.data || []).forEach((f: any) => {
+        const reg = f.registration;
+        if (reg) watchtowerCounts.set(reg, (watchtowerCounts.get(reg) || 0) + 1);
       });
-
-      const neonData: NeonDetection[] = neonResponse?.data || [];
-      const bioData: BiometricCorrelation[] = bioResponse?.data || [];
 
       // Merge data
       const merged: CrossRefData[] = (fleet || []).map(aircraft => ({
         aircraft,
         neonData: neonData.find(n => n.registration === aircraft.tail_number) || null,
-        biometricData: bioData.find(b => b.registration === aircraft.tail_number) || null
+        forensicEvents: forensicCounts.get(aircraft.tail_number) || 0,
+        watchtowerFlags: watchtowerCounts.get(aircraft.tail_number) || 0
       }));
 
       // Sort by detection count
       merged.sort((a, b) => {
-        const aCount = parseInt(a.neonData?.detections || '0');
-        const bCount = parseInt(b.neonData?.detections || '0');
+        const aCount = parseInt(a.neonData?.detections || '0') + a.forensicEvents + a.watchtowerFlags;
+        const bCount = parseInt(b.neonData?.detections || '0') + b.forensicEvents + b.watchtowerFlags;
         return bCount - aCount;
       });
 
       setCrossRefData(merged);
 
-      // Calculate totals
       const totalDetections = neonData.reduce((sum, n) => sum + parseInt(n.detections || '0'), 0);
-      const totalCorrelations = bioData.reduce((sum, b) => sum + parseInt(b.correlations || '0'), 0);
-      const totalHrSpikes = bioData.reduce((sum, b) => sum + parseInt(b.hr_spikes || '0'), 0);
+      const totalForensicEvents = Array.from(forensicCounts.values()).reduce((a, b) => a + b, 0);
+      const totalWatchtowerFlags = Array.from(watchtowerCounts.values()).reduce((a, b) => a + b, 0);
       const activeDays = Math.max(...neonData.map(n => parseInt(n.active_days || '0')), 0);
 
-      setTotals({ totalDetections, totalCorrelations, totalHrSpikes, activeDays });
-
-      toast.success(`Cross-referenced ${fleet?.length} aircraft with Neon database`);
+      setTotals({ totalDetections, totalForensicEvents, totalWatchtowerFlags, activeDays });
+      toast.success(`Cross-referenced ${fleet?.length} aircraft across all databases`);
     } catch (err) {
       console.error('Failed to cross-reference:', err);
       toast.error('Failed to cross-reference data');
@@ -153,7 +149,7 @@ export const KCSOFleetCrossRef: React.FC = () => {
 
   return (
     <CyberPanel 
-      title="KCSO Fleet × Neon Cross-Reference" 
+      title="KCSO Fleet × Database Cross-Reference" 
       icon={<Database className="h-5 w-5" />}
     >
       <div className="space-y-4">
@@ -161,15 +157,15 @@ export const KCSOFleetCrossRef: React.FC = () => {
         <div className="grid grid-cols-4 gap-2">
           <div className="bg-destructive/10 border border-destructive/30 rounded p-2 text-center">
             <div className="text-xl font-bold text-destructive">{totals.totalDetections.toLocaleString()}</div>
-            <div className="text-xs text-muted-foreground">Total Detections</div>
+            <div className="text-xs text-muted-foreground">Flight Detections</div>
           </div>
           <div className="bg-primary/10 border border-primary/30 rounded p-2 text-center">
-            <div className="text-xl font-bold text-primary">{totals.totalCorrelations}</div>
-            <div className="text-xs text-muted-foreground">Biometric Links</div>
+            <div className="text-xl font-bold text-primary">{totals.totalForensicEvents}</div>
+            <div className="text-xs text-muted-foreground">Forensic Events</div>
           </div>
           <div className="bg-orange-500/10 border border-orange-500/30 rounded p-2 text-center">
-            <div className="text-xl font-bold text-orange-400">{totals.totalHrSpikes}</div>
-            <div className="text-xs text-muted-foreground">HR Spikes</div>
+            <div className="text-xl font-bold text-orange-400">{totals.totalWatchtowerFlags}</div>
+            <div className="text-xs text-muted-foreground">Watchtower Flags</div>
           </div>
           <div className="bg-cyan-500/10 border border-cyan-500/30 rounded p-2 text-center">
             <div className="text-xl font-bold text-cyan-400">{totals.activeDays}</div>
@@ -178,17 +174,17 @@ export const KCSOFleetCrossRef: React.FC = () => {
         </div>
 
         {/* Critical Alert */}
-        {totals.totalCorrelations > 0 && (
+        {(totals.totalForensicEvents > 0 || totals.totalWatchtowerFlags > 0) && (
           <div className="bg-destructive/10 border border-destructive/30 rounded p-3">
             <div className="flex items-center gap-2 mb-2">
               <AlertTriangle className="h-4 w-4 text-destructive animate-pulse" />
               <span className="text-sm font-bold text-destructive">
-                BIOMETRIC CORRELATION DETECTED
+                EVIDENCE CORRELATION DETECTED
               </span>
             </div>
             <p className="text-xs text-muted-foreground">
-              {totals.totalCorrelations} documented correlations between KCSO aircraft presence 
-              and biometric stress responses. {totals.totalHrSpikes} heart rate spikes logged.
+              {totals.totalForensicEvents} forensic events and {totals.totalWatchtowerFlags} watchtower 
+              flags documented across KCSO fleet aircraft.
             </p>
           </div>
         )}
@@ -206,17 +202,16 @@ export const KCSOFleetCrossRef: React.FC = () => {
           <div className="space-y-2">
             {crossRefData.map((item) => {
               const detections = parseInt(item.neonData?.detections || '0');
-              const correlations = parseInt(item.biometricData?.correlations || '0');
-              const hrSpikes = parseInt(item.biometricData?.hr_spikes || '0');
-              const level = getDetectionLevel(detections);
+              const totalEvidence = detections + item.forensicEvents + item.watchtowerFlags;
+              const level = getDetectionLevel(totalEvidence);
               const hasNeonData = item.neonData !== null;
-              const hasBioData = item.biometricData !== null;
+              const hasEvidence = item.forensicEvents > 0 || item.watchtowerFlags > 0;
 
               return (
                 <div 
                   key={item.aircraft.id}
                   className={`border rounded-lg p-3 ${
-                    hasBioData 
+                    hasEvidence 
                       ? 'border-destructive/50 bg-destructive/5' 
                       : hasNeonData
                         ? 'border-primary/50 bg-primary/5'
@@ -232,10 +227,10 @@ export const KCSOFleetCrossRef: React.FC = () => {
                           {item.aircraft.frequent_oildale_operation && (
                             <Badge variant="destructive" className="text-xs">OILDALE</Badge>
                           )}
-                          {hasBioData && (
+                          {hasEvidence && (
                             <Badge className="bg-orange-500/20 text-orange-400 text-xs">
-                              <Heart className="h-3 w-3 mr-1" />
-                              BIO-LINKED
+                              <Activity className="h-3 w-3 mr-1" />
+                              EVIDENCE
                             </Badge>
                           )}
                         </div>
@@ -247,69 +242,54 @@ export const KCSOFleetCrossRef: React.FC = () => {
                     </Badge>
                   </div>
 
-                  {hasNeonData && (
-                    <div className="grid grid-cols-4 gap-2 mt-3 pt-3 border-t border-border/30">
-                      <div className="text-center">
-                        <div className="text-lg font-bold text-primary">
-                          {detections.toLocaleString()}
-                        </div>
-                        <div className="text-xs text-muted-foreground">Detections</div>
+                  <div className="grid grid-cols-4 gap-2 mt-3 pt-3 border-t border-border/30">
+                    <div className="text-center">
+                      <div className="text-lg font-bold text-primary">
+                        {detections.toLocaleString()}
                       </div>
-                      <div className="text-center">
-                        <div className="text-lg font-bold text-cyan-400">
-                          {item.neonData?.active_days || 0}
-                        </div>
-                        <div className="text-xs text-muted-foreground">Active Days</div>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-lg font-bold text-yellow-400">
-                          {Math.round(parseFloat(item.neonData?.avg_altitude || '0'))}ft
-                        </div>
-                        <div className="text-xs text-muted-foreground">Avg Alt</div>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-sm text-muted-foreground">
-                          {formatDate(item.neonData?.first_seen || null)}
-                        </div>
-                        <div className="text-xs text-muted-foreground">First Seen</div>
-                      </div>
+                      <div className="text-xs text-muted-foreground">Flights</div>
                     </div>
-                  )}
+                    <div className="text-center">
+                      <div className="text-lg font-bold text-cyan-400">
+                        {item.neonData?.active_days || 0}
+                      </div>
+                      <div className="text-xs text-muted-foreground">Active Days</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-lg font-bold text-yellow-400">
+                        {hasNeonData ? `${Math.round(parseFloat(item.neonData?.avg_altitude || '0'))}ft` : 'N/A'}
+                      </div>
+                      <div className="text-xs text-muted-foreground">Avg Alt</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-sm text-muted-foreground">
+                        {hasNeonData ? formatDate(item.neonData?.first_seen || null) : 'N/A'}
+                      </div>
+                      <div className="text-xs text-muted-foreground">First Seen</div>
+                    </div>
+                  </div>
 
-                  {hasBioData && (
+                  {hasEvidence && (
                     <div className="mt-3 pt-3 border-t border-destructive/30">
                       <div className="flex items-center gap-2 mb-2">
-                        <Activity className="h-4 w-4 text-destructive" />
+                        <AlertTriangle className="h-4 w-4 text-destructive" />
                         <span className="text-xs font-semibold text-destructive">
-                          Biometric Correlations
+                          Evidence Cross-Reference
                         </span>
                       </div>
-                      <div className="grid grid-cols-3 gap-2">
+                      <div className="grid grid-cols-2 gap-2">
                         <div className="bg-background/50 rounded p-2 text-center">
-                          <div className="font-bold text-primary">{correlations}</div>
-                          <div className="text-xs text-muted-foreground">Correlations</div>
+                          <div className="font-bold text-primary">{item.forensicEvents}</div>
+                          <div className="text-xs text-muted-foreground">Forensic Events</div>
                         </div>
                         <div className="bg-background/50 rounded p-2 text-center">
-                          <div className="font-bold text-orange-400">{hrSpikes}</div>
-                          <div className="text-xs text-muted-foreground">HR Spikes</div>
-                        </div>
-                        <div className="bg-background/50 rounded p-2 text-center">
-                          <div className="font-bold text-green-400">
-                            {(parseFloat(item.biometricData?.avg_strength || '0') * 100).toFixed(0)}%
-                          </div>
-                          <div className="text-xs text-muted-foreground">Avg Strength</div>
+                          <div className="font-bold text-orange-400">{item.watchtowerFlags}</div>
+                          <div className="text-xs text-muted-foreground">Watchtower Flags</div>
                         </div>
                       </div>
                     </div>
                   )}
 
-                  {!hasNeonData && (
-                    <div className="text-xs text-muted-foreground text-center py-2">
-                      No detections in Neon database
-                    </div>
-                  )}
-
-                  {/* Citation Links */}
                   {item.aircraft.surveillance_citation && (
                     <div className="mt-2 pt-2 border-t border-border/20">
                       <a 
@@ -329,9 +309,8 @@ export const KCSOFleetCrossRef: React.FC = () => {
           </div>
         </ScrollArea>
 
-        {/* Footer */}
         <div className="text-xs text-muted-foreground text-center pt-2 border-t border-border/30">
-          Cross-referencing KCSO fleet registry with Neon flight detections & biometric correlations
+          Cross-referencing KCSO fleet across Neon flights, forensic events & watchtower flags
         </div>
       </div>
     </CyberPanel>

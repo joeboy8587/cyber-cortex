@@ -40,9 +40,8 @@ export const KCSOEnterpriseReport = () => {
       let registrationFilter: string;
       if (selectedAircraft === 'all') {
         registrationFilter = `(
-          registration IN ('N912KC', 'N913KC')
-          OR registration LIKE 'N91%KC'
-          OR registration LIKE 'N%KC'
+          registration IN ('N912KC', 'N913KC', 'N597E')
+          OR registration LIKE 'N91_KC'
           OR taxonomy_tag IN ('xxb_kcso', 'xxb_tier1_priority')
           OR callsign ILIKE '%KCSO%'
           OR callsign ILIKE '%KERN%'

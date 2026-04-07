@@ -64,7 +64,7 @@ export const KCSODeepDiveReport = () => {
               MIN(detection_timestamp) as first_detection, MAX(detection_timestamp) as last_detection,
               COUNT(*) FILTER (WHERE altitude < 1500 AND altitude > 0) as low_altitude_count
             FROM live_flight_detections_rows
-            WHERE (registration IN ('N912KC', 'N913KC') OR registration LIKE 'N91%KC' OR registration LIKE 'N%KC'
+            WHERE (registration IN ('N912KC', 'N913KC', 'N597E') OR registration LIKE 'N91_KC'
               OR taxonomy_tag IN ('xxb_kcso', 'xxb_tier1_priority') OR callsign ILIKE '%KCSO%' OR callsign ILIKE '%KERN%')
               AND registration IS NOT NULL
             GROUP BY registration ORDER BY total_detections DESC
@@ -77,7 +77,7 @@ export const KCSODeepDiveReport = () => {
               WHEN altitude < 1500 THEN '1000-1500ft' WHEN altitude < 2000 THEN '1500-2000ft'
               WHEN altitude < 3000 THEN '2000-3000ft' ELSE '3000ft+' END as altitude_range, COUNT(*) as count
             FROM live_flight_detections_rows
-            WHERE (registration IN ('N912KC', 'N913KC') OR registration LIKE 'N91%KC' OR registration LIKE 'N%KC'
+            WHERE (registration IN ('N912KC', 'N913KC', 'N597E') OR registration LIKE 'N91_KC'
               OR taxonomy_tag IN ('xxb_kcso', 'xxb_tier1_priority') OR callsign ILIKE '%KCSO%' OR callsign ILIKE '%KERN%')
               AND altitude IS NOT NULL AND altitude > 0
             GROUP BY altitude_range ORDER BY MIN(altitude)
@@ -89,7 +89,7 @@ export const KCSODeepDiveReport = () => {
             SELECT DATE(detection_timestamp) as date, COUNT(*) as detections,
               ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as avg_altitude
             FROM live_flight_detections_rows
-            WHERE (registration IN ('N912KC', 'N913KC') OR registration LIKE 'N91%KC' OR registration LIKE 'N%KC'
+            WHERE (registration IN ('N912KC', 'N913KC', 'N597E') OR registration LIKE 'N91_KC'
               OR taxonomy_tag IN ('xxb_kcso', 'xxb_tier1_priority') OR callsign ILIKE '%KCSO%' OR callsign ILIKE '%KERN%')
             GROUP BY DATE(detection_timestamp) ORDER BY date DESC LIMIT 60
           `

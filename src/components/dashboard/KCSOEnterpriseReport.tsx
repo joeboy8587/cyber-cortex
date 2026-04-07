@@ -140,7 +140,7 @@ export const KCSOEnterpriseReport = () => {
           <span className="font-bold text-yellow-400">COORDINATED ENTERPRISE ACTIVITY PATTERN DETECTED</span>
         </div>
         <p className="text-sm text-foreground/80">
-          Kern County Sheriff aircraft (N913KC, N912KC) identified as participants in coordinated enterprise 
+          Kern County Sheriff aircraft (N913KC, N912KC, N597E) identified as participants in coordinated enterprise 
           activity correlated with documented harm events. Evidence indicates multi-actor organized operation.
         </p>
       </div>

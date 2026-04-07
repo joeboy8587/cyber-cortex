@@ -31,7 +31,7 @@ export const KCSOEnterpriseReport = () => {
   const [events, setEvents] = useState<KCSOEvent[]>([]);
   const [stats, setStats] = useState<KCSOStats | null>(null);
   const [loading, setLoading] = useState(true);
-  const [selectedAircraft, setSelectedAircraft] = useState<'N913KC' | 'N912KC' | 'all'>('all');
+  const [selectedAircraft, setSelectedAircraft] = useState<'N913KC' | 'N912KC' | 'N597E' | 'all'>('all');
 
   const fetchKCSOData = useCallback(async () => {
     setLoading(true);

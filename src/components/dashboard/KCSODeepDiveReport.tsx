@@ -100,9 +100,10 @@ export const KCSODeepDiveReport = () => {
         })
       ]);
 
-      const stats = statsRes.data?.data || [];
-      const altData = altRes.data?.data || [];
-      const dailyData = dailyRes.data?.data || [];
+      // neonQuery returns { data, error } where data IS the array directly
+      const stats = Array.isArray(statsRes.data) ? statsRes.data : (statsRes.data?.data || []);
+      const altData = Array.isArray(altRes.data) ? altRes.data : (altRes.data?.data || []);
+      const dailyData = Array.isArray(dailyRes.data) ? dailyRes.data : (dailyRes.data?.data || []);
 
       // Calculate altitude distribution percentages
       const totalAltCount = altData.reduce((sum: number, a: { count: string }) => sum + parseInt(a.count || '0'), 0);

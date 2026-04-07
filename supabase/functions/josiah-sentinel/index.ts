@@ -568,12 +568,14 @@ Provide 2-3 sentence PROACTIVE assessment: 1) Most likely threat scenario 2) Wha
         if (entry.reg === 'UNKNOWN' || entry.reg.includes(',') || entry.reg.includes(' aircraft')) continue;
         const avgAlt = entry.altitudes.length > 0 ? entry.altitudes.reduce((a, b) => a + b, 0) / entry.altitudes.length : null;
         try {
+          const safeAvgAlt = avgAlt ?? 0;
+          const hasAlt = avgAlt !== null;
           const upsertResult = await withTimeout(
             sbSql`INSERT INTO sentinel_learned_threats (registration, threat_type, total_violations, avg_altitude, last_seen, updated_at)
-              VALUES (${entry.reg}, ${entry.type}, ${entry.count}, ${avgAlt}, NOW(), NOW())
+              VALUES (${entry.reg}, ${entry.type}, ${entry.count}, ${hasAlt ? safeAvgAlt : null}::double precision, NOW(), NOW())
               ON CONFLICT (registration, threat_type) DO UPDATE SET
                 total_violations = sentinel_learned_threats.total_violations + ${entry.count},
-                avg_altitude = CASE WHEN ${avgAlt} IS NOT NULL THEN COALESCE((sentinel_learned_threats.avg_altitude + ${avgAlt}) / 2, ${avgAlt}) ELSE sentinel_learned_threats.avg_altitude END,
+                avg_altitude = CASE WHEN ${hasAlt} THEN COALESCE((sentinel_learned_threats.avg_altitude + ${safeAvgAlt}::double precision) / 2, ${safeAvgAlt}::double precision) ELSE sentinel_learned_threats.avg_altitude END,
                 last_seen = NOW(), updated_at = NOW()
               RETURNING total_violations, escalation_level`,
             5000, "upsert_threat"

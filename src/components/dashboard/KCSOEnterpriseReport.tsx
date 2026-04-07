@@ -192,6 +192,14 @@ export const KCSOEnterpriseReport = () => {
         >
           N912KC
         </Button>
+        <Button 
+          variant={selectedAircraft === 'N597E' ? 'default' : 'outline'} 
+          size="sm"
+          onClick={() => setSelectedAircraft('N597E')}
+          className="font-mono"
+        >
+          N597E
+        </Button>
         <div className="flex-1" />
         <Button variant="outline" size="sm" onClick={fetchKCSOData} disabled={loading}>
           <RefreshCw className={`h-3 w-3 mr-1 ${loading ? 'animate-spin' : ''}`} />

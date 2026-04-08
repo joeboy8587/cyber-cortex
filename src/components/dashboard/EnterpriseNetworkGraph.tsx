@@ -77,7 +77,7 @@ export function EnterpriseNetworkGraph() {
           query: `
             SELECT 
               id, company_name, jurisdiction, formation_date,
-              risk_level, aircraft_controlled, red_flags
+              risk_level, red_flags
             FROM shell_companies
             ORDER BY risk_level DESC
           `

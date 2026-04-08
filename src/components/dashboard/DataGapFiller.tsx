@@ -135,11 +135,11 @@ export const DataGapFiller = () => {
             ),
             daily_josiah AS (
               SELECT 
-                DATE(created_at) as date,
+                DATE(COALESCE(reflection_timestamp, inserted_at)) as date,
                 COUNT(*) as josiah_count
               FROM josiah_reflections_rows
-              WHERE created_at IS NOT NULL
-              GROUP BY DATE(created_at)
+              WHERE COALESCE(reflection_timestamp, inserted_at) IS NOT NULL
+              GROUP BY DATE(COALESCE(reflection_timestamp, inserted_at))
             )
             SELECT 
               ds.date,
@@ -314,12 +314,12 @@ export const DataGapFiller = () => {
               body: {
                 action: 'customQuery',
                 query: `
-                  SELECT 
+                   SELECT 
                     reflection_content,
-                    created_at,
+                    COALESCE(reflection_timestamp, inserted_at) as created_at,
                     aircraft_correlation
                   FROM josiah_reflections_rows
-                  WHERE DATE(created_at) = '${gap.date}'
+                  WHERE DATE(COALESCE(reflection_timestamp, inserted_at)) = '${gap.date}'
                     AND (aircraft_correlation IS NOT NULL 
                          OR reflection_content ILIKE '%N9%'
                          OR reflection_content ILIKE '%aircraft%'

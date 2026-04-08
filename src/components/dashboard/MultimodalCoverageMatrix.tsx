@@ -76,10 +76,10 @@ export function MultimodalCoverageMatrix() {
             josiah_stats AS (
               SELECT 
                 COUNT(*) as record_count,
-                MIN(created_at) as earliest,
-                MAX(created_at) as latest
+                MIN(COALESCE(reflection_timestamp, inserted_at)) as earliest,
+                MAX(COALESCE(reflection_timestamp, inserted_at)) as latest
               FROM josiah_reflections_rows
-              WHERE created_at IS NOT NULL
+              WHERE COALESCE(reflection_timestamp, inserted_at) IS NOT NULL
             ),
             ocr_stats AS (
               SELECT 

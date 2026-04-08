@@ -77,7 +77,7 @@ export function EnterpriseNetworkGraph() {
           query: `
             SELECT 
               id, company_name, jurisdiction, formation_date,
-              risk_level, aircraft_controlled, red_flags
+              risk_level, red_flags
             FROM shell_companies
             ORDER BY risk_level DESC
           `
@@ -145,7 +145,7 @@ export function EnterpriseNetworkGraph() {
       if (shellList.length > 0) {
         setShells(shellList.map((s: any) => ({
           ...s,
-          aircraft_controlled: parseArray(s.aircraft_controlled),
+          aircraft_controlled: [],
           red_flags: parseArray(s.red_flags)
         })));
       }

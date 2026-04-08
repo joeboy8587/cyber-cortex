@@ -17,7 +17,7 @@ function ensureWarmup() {
  * Simple concurrency limiter to prevent thundering-herd on page load.
  * At most MAX_CONCURRENT requests fly at the same time; extras queue.
  */
-const MAX_CONCURRENT = 4;
+const MAX_CONCURRENT = 2;
 let _inflight = 0;
 const _queue: Array<() => void> = [];
 

@@ -62,7 +62,7 @@ export function RICOEnterpriseVisualization() {
             SELECT 
               id, entity_name, entity_type, role, tier,
               prosecution_priority, legal_exposure, assets_controlled,
-              notes, parent_entity_id, financial_exposure
+              notes, parent_entity_id
             FROM criminal_enterprise_command_structure
             ORDER BY tier ASC, prosecution_priority DESC
           `
@@ -101,7 +101,7 @@ export function RICOEnterpriseVisualization() {
           connections: [],
           prosecutionPriority: e.prosecution_priority || 'MEDIUM',
           ricoPredicates: extractPredicates(e.legal_exposure),
-          financialExposure: e.financial_exposure || 'Unknown'
+          financialExposure: 'Unknown'
         });
 
         // Build parent connections

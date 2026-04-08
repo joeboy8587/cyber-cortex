@@ -59,11 +59,11 @@ export function LegalBriefDashboard() {
     try {
       // Fetch prosecution metrics
       const [flightStats, biometricStats, enterpriseStats, ecgStats, correlationStats] = await Promise.all([
-        customQuery(`SELECT COUNT(*) as total FROM live_flight_detections_rows`).catch(() => [{ total: 0 }]),
+        customQuery(`SELECT GREATEST(reltuples, 0)::bigint as total FROM pg_class WHERE oid = 'public.live_flight_detections_rows'::regclass`).catch(() => [{ total: 0 }]),
         customQuery(`SELECT COUNT(*) as total FROM biometric_monitoring`).catch(() => [{ total: 0 }]),
         customQuery(`SELECT COUNT(*) as total FROM criminal_enterprise_command_structure`).catch(() => [{ total: 0 }]),
         customQuery(`SELECT COUNT(*) as total FROM physician_verified_ecgs`).catch(() => [{ total: 0 }]),
-        customQuery(`SELECT COUNT(*) as total FROM multi_factor_correlations`).catch(() => [{ total: 0 }])
+        customQuery(`SELECT GREATEST(reltuples, 0)::bigint as total FROM pg_class WHERE oid = 'public.biometric_flight_correlations'::regclass`).catch(() => [{ total: 0 }])
       ]);
 
       // Fetch KCSO-specific data

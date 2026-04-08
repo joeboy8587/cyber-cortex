@@ -314,12 +314,12 @@ export const DataGapFiller = () => {
               body: {
                 action: 'customQuery',
                 query: `
-                  SELECT 
+                   SELECT 
                     reflection_content,
-                    created_at,
+                    COALESCE(reflection_timestamp, inserted_at) as created_at,
                     aircraft_correlation
                   FROM josiah_reflections_rows
-                  WHERE DATE(created_at) = '${gap.date}'
+                  WHERE DATE(COALESCE(reflection_timestamp, inserted_at)) = '${gap.date}'
                     AND (aircraft_correlation IS NOT NULL 
                          OR reflection_content ILIKE '%N9%'
                          OR reflection_content ILIKE '%aircraft%'

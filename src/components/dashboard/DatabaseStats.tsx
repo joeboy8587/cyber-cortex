@@ -33,7 +33,7 @@ export function DatabaseStats() {
           SELECT
             (SELECT COUNT(*)::int FROM evidence_chain_links) as correlation_events,
             (SELECT COUNT(*)::int FROM live_flight_detections_rows) as flight_detections,
-            (SELECT COUNT(*)::int FROM evidence_documents) as evidence_files
+            (SELECT COUNT(*)::int FROM master_unified_evidence) as evidence_files
         `);
         const row = Array.isArray(data) ? data[0] : {};
         setLiveCounts({

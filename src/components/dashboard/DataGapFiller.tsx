@@ -135,11 +135,11 @@ export const DataGapFiller = () => {
             ),
             daily_josiah AS (
               SELECT 
-                DATE(created_at) as date,
+                DATE(COALESCE(reflection_timestamp, inserted_at)) as date,
                 COUNT(*) as josiah_count
               FROM josiah_reflections_rows
-              WHERE created_at IS NOT NULL
-              GROUP BY DATE(created_at)
+              WHERE COALESCE(reflection_timestamp, inserted_at) IS NOT NULL
+              GROUP BY DATE(COALESCE(reflection_timestamp, inserted_at))
             )
             SELECT 
               ds.date,

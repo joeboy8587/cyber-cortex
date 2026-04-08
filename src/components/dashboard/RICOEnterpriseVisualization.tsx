@@ -101,7 +101,7 @@ export function RICOEnterpriseVisualization() {
           connections: [],
           prosecutionPriority: e.prosecution_priority || 'MEDIUM',
           ricoPredicates: extractPredicates(e.legal_exposure),
-          financialExposure: e.financial_exposure || 'Unknown'
+          financialExposure: 'Unknown'
         });
 
         // Build parent connections

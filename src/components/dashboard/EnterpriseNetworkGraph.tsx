@@ -145,7 +145,7 @@ export function EnterpriseNetworkGraph() {
       if (shellList.length > 0) {
         setShells(shellList.map((s: any) => ({
           ...s,
-          aircraft_controlled: parseArray(s.aircraft_controlled),
+          aircraft_controlled: [],
           red_flags: parseArray(s.red_flags)
         })));
       }

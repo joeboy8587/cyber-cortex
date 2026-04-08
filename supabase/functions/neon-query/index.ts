@@ -436,37 +436,102 @@ Deno.serve(async (req) => {
         }
 
         case 'getIngestionStats': {
-          const [coordStats, taxonomyStats, flagStats, uniqueStats] = await Promise.all([
-            sql`SELECT COUNT(*) as total_records,
-              COUNT(CASE WHEN latitude IS NOT NULL AND longitude IS NOT NULL AND latitude != 0 AND longitude != 0 THEN 1 END) as valid_coordinates,
-              COUNT(CASE WHEN latitude IS NULL OR longitude IS NULL THEN 1 END) as null_coordinates,
-              COUNT(CASE WHEN (latitude = 0 AND longitude = 0) THEN 1 END) as zero_coordinates,
-              COUNT(CASE WHEN latitude BETWEEN 35.20 AND 35.60 AND longitude BETWEEN -119.25 AND -118.75 THEN 1 END) as kern_county_flights
-            FROM live_flight_detections_rows`,
-            sql`SELECT COALESCE(taxonomy_tag,'untagged') as taxonomy_tag, COUNT(*) as count,
-              COUNT(CASE WHEN latitude IS NOT NULL AND longitude IS NOT NULL AND latitude != 0 AND longitude != 0 THEN 1 END) as with_coords
-            FROM live_flight_detections_rows GROUP BY taxonomy_tag ORDER BY count DESC LIMIT 15`,
-            sql`SELECT
-              COUNT(CASE WHEN flagged=true THEN 1 END) as flagged,
-              COUNT(CASE WHEN flagged=false OR flagged IS NULL THEN 1 END) as unflagged,
-              COUNT(CASE WHEN taxonomy_tag IN ('tier0_kcso','xxb_tier0_kcso','xxb_kcso','xxb_kcso_shell','tier1_priority','xxb_tier1_priority') THEN 1 END) as tier1,
-              COUNT(CASE WHEN taxonomy_tag IN ('tier2_shell','xxb_tier2_shell','xxb_shell') THEN 1 END) as tier2,
-              COUNT(CASE WHEN taxonomy_tag IN ('low_alt_suspicious','xxb_low_alt_suspicious','military_asset','xxb_military') THEN 1 END) as tier3,
-              COUNT(CASE WHEN taxonomy_tag NOT IN ('tier0_kcso','xxb_tier0_kcso','xxb_kcso','xxb_kcso_shell','tier1_priority','xxb_tier1_priority','tier2_shell','xxb_tier2_shell','xxb_shell','low_alt_suspicious','xxb_low_alt_suspicious','military_asset','xxb_military') OR taxonomy_tag IS NULL THEN 1 END) as tier4plus
-            FROM live_flight_detections_rows WHERE flagged = true`,
-            sql`SELECT COUNT(DISTINCT registration) as unique_registrations, COUNT(DISTINCT icao_code) as unique_icao_codes, COUNT(DISTINCT callsign) as unique_callsigns FROM live_flight_detections_rows WHERE registration IS NOT NULL AND registration != '' AND registration != 'N/A'`,
-          ]);
-          const cs = (coordStats[0] as any) || {};
-          const totalRecords = parseInt(cs.total_records) || 0;
-          const validCoords = parseInt(cs.valid_coordinates) || 0;
-          const nullCoords = parseInt(cs.null_coordinates) || 0;
-          const zeroCoords = parseInt(cs.zero_coordinates) || 0;
-          const fs = (flagStats[0] as any) || {};
+          const totalEstimateRows = await sql`
+            SELECT GREATEST(reltuples, 0)::bigint as total_records
+            FROM pg_class
+            WHERE oid = 'public.live_flight_detections_rows'::regclass
+          `;
+
+          const totalRecords = parseInt((totalEstimateRows[0] as any)?.total_records || '0');
+
+          const sampleStats = await sql.unsafe(`
+            WITH sample AS (
+              SELECT latitude, longitude, flagged, taxonomy_tag
+              FROM live_flight_detections_rows TABLESAMPLE SYSTEM (0.25)
+            ),
+            sample_totals AS (
+              SELECT GREATEST(COUNT(*), 1)::numeric AS sampled_rows FROM sample
+            ),
+            counts AS (
+              SELECT
+                COUNT(*) FILTER (WHERE latitude IS NOT NULL AND longitude IS NOT NULL AND latitude != 0 AND longitude != 0)::numeric AS valid_coordinates,
+                COUNT(*) FILTER (WHERE latitude IS NULL OR longitude IS NULL)::numeric AS null_coordinates,
+                COUNT(*) FILTER (WHERE latitude = 0 AND longitude = 0)::numeric AS zero_coordinates,
+                COUNT(*) FILTER (WHERE latitude BETWEEN 35.20 AND 35.60 AND longitude BETWEEN -119.25 AND -118.75)::numeric AS kern_county_flights,
+                COUNT(*) FILTER (WHERE flagged = true)::numeric AS flagged,
+                COUNT(*) FILTER (WHERE flagged IS DISTINCT FROM true)::numeric AS unflagged,
+                COUNT(*) FILTER (WHERE taxonomy_tag IN ('tier0_kcso','xxb_tier0_kcso','xxb_kcso','xxb_kcso_shell','tier1_priority','xxb_tier1_priority'))::numeric AS tier1,
+                COUNT(*) FILTER (WHERE taxonomy_tag IN ('tier2_shell','xxb_tier2_shell','xxb_shell'))::numeric AS tier2,
+                COUNT(*) FILTER (WHERE taxonomy_tag IN ('low_alt_suspicious','xxb_low_alt_suspicious','military_asset','xxb_military'))::numeric AS tier3
+              FROM sample
+            )
+            SELECT *
+            FROM sample_totals
+            CROSS JOIN counts
+          `);
+
+          const scaleRow = (sampleStats[0] as any) || {};
+          const sampledRows = Math.max(Number(scaleRow.sampled_rows) || 1, 1);
+          const scale = totalRecords > 0 ? totalRecords / sampledRows : 0;
+          const scaled = (value: unknown) => Math.round((Number(value) || 0) * scale);
+
+          const taxonomySample = await sql.unsafe(`
+            WITH sample AS (
+              SELECT COALESCE(taxonomy_tag, 'untagged') AS taxonomy_tag
+              FROM live_flight_detections_rows TABLESAMPLE SYSTEM (0.25)
+            ),
+            sample_totals AS (
+              SELECT GREATEST(COUNT(*), 1)::numeric AS sampled_rows FROM sample
+            )
+            SELECT taxonomy_tag, COUNT(*)::numeric AS sample_count, (SELECT sampled_rows FROM sample_totals) AS sampled_rows
+            FROM sample
+            GROUP BY taxonomy_tag
+            ORDER BY sample_count DESC
+            LIMIT 15
+          `);
+
+          const distinctStats = await sql`
+            SELECT attname, n_distinct
+            FROM pg_stats
+            WHERE schemaname = 'public'
+              AND tablename = 'live_flight_detections_rows'
+              AND attname IN ('registration', 'icao_code', 'callsign')
+          `;
+
+          const estimateDistinct = (column: string) => {
+            const row = distinctStats.find((entry: any) => entry.attname === column) as any;
+            const raw = Number(row?.n_distinct) || 0;
+            return raw < 0 ? Math.round(Math.abs(raw) * totalRecords) : Math.round(raw);
+          };
+
           result = {
-            coordinateStats: { totalRecords, validCoordinates: validCoords, nullCoordinates: nullCoords, zeroCoordinates: zeroCoords, kernCountyFlights: parseInt(cs.kern_county_flights)||0, validationRate: totalRecords > 0 ? parseFloat(((validCoords/totalRecords)*100).toFixed(1)) : 0 },
-            taxonomyDistribution: taxonomyStats.map((t: any) => ({ tag: t.taxonomy_tag, count: parseInt(t.count), withCoords: parseInt(t.with_coords) || 0 })),
-            flagStats: { flagged: parseInt(fs.flagged)||0, unflagged: parseInt(fs.unflagged)||0, tier1: parseInt(fs.tier1)||0, tier2: parseInt(fs.tier2)||0, tier3: parseInt(fs.tier3)||0, tier4plus: parseInt(fs.tier4plus)||0 },
-            uniqueIdentifiers: { registrations: parseInt((uniqueStats[0] as any)?.unique_registrations)||0, icaoCodes: parseInt((uniqueStats[0] as any)?.unique_icao_codes)||0, callsigns: parseInt((uniqueStats[0] as any)?.unique_callsigns)||0 },
+            coordinateStats: {
+              totalRecords,
+              validCoordinates: scaled(scaleRow.valid_coordinates),
+              nullCoordinates: scaled(scaleRow.null_coordinates),
+              zeroCoordinates: scaled(scaleRow.zero_coordinates),
+              kernCountyFlights: scaled(scaleRow.kern_county_flights),
+              validationRate: totalRecords > 0 ? Number(((scaled(scaleRow.valid_coordinates) / totalRecords) * 100).toFixed(1)) : 0,
+            },
+            taxonomyDistribution: taxonomySample.map((t: any) => ({
+              tag: t.taxonomy_tag,
+              count: scaled(t.sample_count),
+              withCoords: 0,
+            })),
+            recentActivity: [],
+            flagStats: {
+              flagged: scaled(scaleRow.flagged),
+              unflagged: scaled(scaleRow.unflagged),
+              tier1: scaled(scaleRow.tier1),
+              tier2: scaled(scaleRow.tier2),
+              tier3: scaled(scaleRow.tier3),
+              tier4plus: Math.max(0, scaled(scaleRow.flagged) - scaled(scaleRow.tier1) - scaled(scaleRow.tier2) - scaled(scaleRow.tier3)),
+            },
+            uniqueIdentifiers: {
+              registrations: estimateDistinct('registration'),
+              icaoCodes: estimateDistinct('icao_code'),
+              callsigns: estimateDistinct('callsign'),
+            },
             timestamp: new Date().toISOString()
           };
           break;

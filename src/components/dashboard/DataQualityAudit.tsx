@@ -87,29 +87,33 @@ export default function DataQualityAudit() {
   const runAudit = async () => {
     setLoading(true);
     try {
-      // Run all audits in parallel including ingestion stats
-      const [summaryRes, ocrRes, domainsRes, timelineRes, ingestionRes] = await Promise.all([
+      const [summaryRes, ocrRes, domainsRes, timelineRes] = await Promise.all([
         supabase.functions.invoke('data-quality-audit', { body: { action: 'getAuditSummary' } }),
         supabase.functions.invoke('data-quality-audit', { body: { action: 'auditOcrTables' } }),
         supabase.functions.invoke('data-quality-audit', { body: { action: 'getEvidenceDomains' } }),
         supabase.functions.invoke('data-quality-audit', { body: { action: 'getTimelineRange' } }),
-        supabase.functions.invoke('neon-query', { body: { action: 'getIngestionStats' } })
       ]);
 
       if (summaryRes.data?.data) setSummary(summaryRes.data.data);
       if (ocrRes.data?.data) setOcrAudit(Array.isArray(ocrRes.data.data) ? ocrRes.data.data : []);
       if (domainsRes.data?.data) setDomains(domainsRes.data.data);
       if (timelineRes.data?.data) setTimeline(Array.isArray(timelineRes.data.data) ? timelineRes.data.data : []);
-      if (ingestionRes.data) {
-        const raw = ingestionRes.data?.data || ingestionRes.data;
-        setIngestionStats({
-          coordinateStats: raw.coordinateStats || { totalRecords: 0, validCoordinates: 0, nullCoordinates: 0, zeroCoordinates: 0, kernCountyFlights: 0, validationRate: 0 },
-          taxonomyDistribution: Array.isArray(raw.taxonomyDistribution) ? raw.taxonomyDistribution : [],
-          recentActivity: Array.isArray(raw.recentActivity) ? raw.recentActivity : [],
-          flagStats: raw.flagStats || { flagged: 0, unflagged: 0, tier1: 0, tier2: 0, tier3: 0, tier4plus: 0 },
-          uniqueIdentifiers: raw.uniqueIdentifiers || { registrations: 0, icaoCodes: 0, callsigns: 0 },
-          timestamp: raw.timestamp || new Date().toISOString(),
-        });
+
+      try {
+        const ingestionRes = await supabase.functions.invoke('neon-query', { body: { action: 'getIngestionStats' } });
+        if (ingestionRes.data) {
+          const raw = ingestionRes.data?.data || ingestionRes.data;
+          setIngestionStats({
+            coordinateStats: raw.coordinateStats || { totalRecords: 0, validCoordinates: 0, nullCoordinates: 0, zeroCoordinates: 0, kernCountyFlights: 0, validationRate: 0 },
+            taxonomyDistribution: Array.isArray(raw.taxonomyDistribution) ? raw.taxonomyDistribution : [],
+            recentActivity: Array.isArray(raw.recentActivity) ? raw.recentActivity : [],
+            flagStats: raw.flagStats || { flagged: 0, unflagged: 0, tier1: 0, tier2: 0, tier3: 0, tier4plus: 0 },
+            uniqueIdentifiers: raw.uniqueIdentifiers || { registrations: 0, icaoCodes: 0, callsigns: 0 },
+            timestamp: raw.timestamp || new Date().toISOString(),
+          });
+        }
+      } catch (ingestionErr) {
+        console.warn('Ingestion stats unavailable:', ingestionErr);
       }
 
       toast.success('Audit complete');

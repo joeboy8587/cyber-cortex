@@ -31,9 +31,9 @@ export function DatabaseStats() {
       try {
         const data = await customQuery(`
           SELECT
-            (SELECT COUNT(*)::int FROM evidence_chain_links) as correlation_events,
-            (SELECT COUNT(*)::int FROM live_flight_detections_rows) as flight_detections,
-            (SELECT COUNT(*)::int FROM master_unified_evidence) as evidence_files
+            (SELECT GREATEST(reltuples, 0)::bigint FROM pg_class WHERE oid = 'public.evidence_chain_links'::regclass) as correlation_events,
+            (SELECT GREATEST(reltuples, 0)::bigint FROM pg_class WHERE oid = 'public.live_flight_detections_rows'::regclass) as flight_detections,
+            (SELECT GREATEST(reltuples, 0)::bigint FROM pg_class WHERE oid = 'public.master_unified_evidence'::regclass) as evidence_files
         `);
         const row = Array.isArray(data) ? data[0] : {};
         setLiveCounts({

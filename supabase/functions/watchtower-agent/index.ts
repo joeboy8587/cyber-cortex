@@ -42,7 +42,7 @@ serve(async (req) => {
     }
 
     const sql = postgres(NEON_DATABASE_URL, { ssl: "require", max: 1, connect_timeout: 10, idle_timeout: 10 });
-    await sql`SET statement_timeout = '15s'`;
+    await sql`SET statement_timeout = '8s'`;
     const anomalies: PatternAnomaly[] = [];
     const leads: InvestigativeLead[] = [];
     

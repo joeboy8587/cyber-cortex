@@ -219,6 +219,45 @@ export type Database = {
         }
         Relationships: []
       }
+      cases: {
+        Row: {
+          case_code: string
+          case_id: string
+          case_name: string
+          created_at: string | null
+          description: string | null
+          legal_theory: string
+          priority: number | null
+          status: string | null
+          statute_cited: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          case_code: string
+          case_id?: string
+          case_name: string
+          created_at?: string | null
+          description?: string | null
+          legal_theory: string
+          priority?: number | null
+          status?: string | null
+          statute_cited?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          case_code?: string
+          case_id?: string
+          case_name?: string
+          created_at?: string | null
+          description?: string | null
+          legal_theory?: string
+          priority?: number | null
+          status?: string | null
+          statute_cited?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       correlation_job_status: {
         Row: {
           completed_at: string | null
@@ -428,6 +467,128 @@ export type Database = {
         }
         Relationships: []
       }
+      exhibit_audit_trail: {
+        Row: {
+          action: string
+          audit_id: string
+          case_id: string | null
+          exhibit_id: string | null
+          metadata: Json | null
+          performed_at: string | null
+          performed_by: string | null
+          records_evaluated: number | null
+          records_promoted: number | null
+          result_hash: string | null
+          rule_applied: string | null
+          source_hash: string | null
+        }
+        Insert: {
+          action: string
+          audit_id?: string
+          case_id?: string | null
+          exhibit_id?: string | null
+          metadata?: Json | null
+          performed_at?: string | null
+          performed_by?: string | null
+          records_evaluated?: number | null
+          records_promoted?: number | null
+          result_hash?: string | null
+          rule_applied?: string | null
+          source_hash?: string | null
+        }
+        Update: {
+          action?: string
+          audit_id?: string
+          case_id?: string | null
+          exhibit_id?: string | null
+          metadata?: Json | null
+          performed_at?: string | null
+          performed_by?: string | null
+          records_evaluated?: number | null
+          records_promoted?: number | null
+          result_hash?: string | null
+          rule_applied?: string | null
+          source_hash?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "exhibit_audit_trail_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "cases"
+            referencedColumns: ["case_id"]
+          },
+          {
+            foreignKeyName: "exhibit_audit_trail_exhibit_id_fkey"
+            columns: ["exhibit_id"]
+            isOneToOne: false
+            referencedRelation: "exhibits"
+            referencedColumns: ["exhibit_id"]
+          },
+        ]
+      }
+      exhibits: {
+        Row: {
+          case_id: string
+          chain_of_custody: Json | null
+          created_at: string | null
+          description: string | null
+          evidence_type: string | null
+          exhibit_code: string
+          exhibit_id: string
+          exhibit_name: string
+          file_count: number | null
+          legal_significance: string | null
+          promotion_rule: string | null
+          sha256_hash: string | null
+          status: string | null
+          tier: number
+          updated_at: string | null
+        }
+        Insert: {
+          case_id: string
+          chain_of_custody?: Json | null
+          created_at?: string | null
+          description?: string | null
+          evidence_type?: string | null
+          exhibit_code: string
+          exhibit_id?: string
+          exhibit_name: string
+          file_count?: number | null
+          legal_significance?: string | null
+          promotion_rule?: string | null
+          sha256_hash?: string | null
+          status?: string | null
+          tier: number
+          updated_at?: string | null
+        }
+        Update: {
+          case_id?: string
+          chain_of_custody?: Json | null
+          created_at?: string | null
+          description?: string | null
+          evidence_type?: string | null
+          exhibit_code?: string
+          exhibit_id?: string
+          exhibit_name?: string
+          file_count?: number | null
+          legal_significance?: string | null
+          promotion_rule?: string | null
+          sha256_hash?: string | null
+          status?: string | null
+          tier?: number
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "exhibits_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "cases"
+            referencedColumns: ["case_id"]
+          },
+        ]
+      }
       kcso_fleet: {
         Row: {
           created_at: string
@@ -557,6 +718,50 @@ export type Database = {
           updated_at?: string | null
         }
         Relationships: []
+      }
+      promotion_rules: {
+        Row: {
+          case_id: string | null
+          created_at: string | null
+          description: string | null
+          is_active: boolean | null
+          priority: number | null
+          rule_category: string
+          rule_id: string
+          rule_name: string
+          sql_condition: string
+        }
+        Insert: {
+          case_id?: string | null
+          created_at?: string | null
+          description?: string | null
+          is_active?: boolean | null
+          priority?: number | null
+          rule_category: string
+          rule_id?: string
+          rule_name: string
+          sql_condition: string
+        }
+        Update: {
+          case_id?: string | null
+          created_at?: string | null
+          description?: string | null
+          is_active?: boolean | null
+          priority?: number | null
+          rule_category?: string
+          rule_id?: string
+          rule_name?: string
+          sql_condition?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "promotion_rules_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "cases"
+            referencedColumns: ["case_id"]
+          },
+        ]
       }
       sentinel_learned_threats: {
         Row: {

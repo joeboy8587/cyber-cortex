@@ -15,7 +15,8 @@ import {
   GraduationCap,
   MapPin,
   Network,
-  Ghost
+  Ghost,
+  FolderOpen
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useAuth } from "@/hooks/useAuth";
@@ -100,6 +101,12 @@ const navigationItems = [
     url: "/drones", 
     icon: Ghost,
     description: "RF & Drone Intel"
+  },
+  { 
+    title: "Case Files", 
+    url: "/case-files", 
+    icon: FolderOpen,
+    description: "Universe → Exhibits"
   },
 ];
 

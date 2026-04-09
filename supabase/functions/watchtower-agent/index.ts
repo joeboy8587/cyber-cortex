@@ -42,175 +42,138 @@ serve(async (req) => {
     }
 
     const sql = postgres(NEON_DATABASE_URL, { ssl: "require", max: 1, connect_timeout: 10, idle_timeout: 10 });
-    await sql`SET statement_timeout = '8s'`;
+    await sql`SET statement_timeout = '6s'`;
     const anomalies: PatternAnomaly[] = [];
     const leads: InvestigativeLead[] = [];
+    const skipped: string[] = [];
     
     try {
-      // 1. KCSO invisible fleet — lightweight check
+      // Use fast row estimate instead of COUNT(*)
+      let totalFlightEstimate = 0;
       try {
-        const maskedAircraft = await sql`
-          SELECT kf.tail_number as registration, kf.model
-          FROM kcso_fleet kf
-          WHERE NOT EXISTS (
-            SELECT 1 FROM live_flight_detections_rows lf
-            WHERE lf.registration = kf.tail_number
-              AND lf.detection_timestamp > NOW() - INTERVAL '30 days'
-            LIMIT 1
-          )
+        const est = await sql`
+          SELECT reltuples::bigint as estimate
+          FROM pg_class WHERE relname = 'live_flight_detections_rows'
         `;
-        if (maskedAircraft.length > 0) {
+        totalFlightEstimate = parseInt(est[0]?.estimate || '0');
+      } catch (e: any) { skipped.push("row_estimate"); }
+
+      // 1. Use aircraft_profiles_enriched (35K rows) for threat analysis — FAST
+      try {
+        const threatAircraft = await sql`
+          SELECT registration, threat_tier, repeat_offender_score, total_detections,
+                 avg_altitude, operator_name
+          FROM aircraft_profiles_enriched
+          WHERE threat_tier IN ('CRITICAL', 'HIGH')
+          ORDER BY repeat_offender_score DESC NULLS LAST
+          LIMIT 30
+        `;
+        if (threatAircraft.length > 0) {
+          const critical = threatAircraft.filter((a: any) => a.threat_tier === 'CRITICAL');
           anomalies.push({
-            type: "INVISIBLE_FLEET", severity: "critical",
-            description: `${maskedAircraft.length} KCSO aircraft with zero ADS-B visibility in 30+ days`,
-            aircraft: maskedAircraft.map((a: any) => a.registration),
-            count: maskedAircraft.length, timestamp: new Date().toISOString()
+            type: "HIGH_THREAT_AIRCRAFT", severity: "critical",
+            description: `${critical.length} CRITICAL + ${threatAircraft.length - critical.length} HIGH threat aircraft baselined from ${totalFlightEstimate.toLocaleString()}+ flight records`,
+            aircraft: threatAircraft.slice(0, 10).map((a: any) => a.registration),
+            count: threatAircraft.length, timestamp: new Date().toISOString()
           });
           leads.push({
-            id: `lead-masked-${Date.now()}`, priority: "critical",
-            question: `Why have ${maskedAircraft.length} KCSO aircraft NEVER appeared on ADS-B?`,
-            data_needed: "FAA N-Number inquiry, Mode-S hex verification",
-            potential_finding: "Deliberate transponder manipulation or registration fraud"
+            id: `lead-threat-${Date.now()}`, priority: "critical",
+            question: `Are the ${critical.length} CRITICAL-tier aircraft coordinating operations?`,
+            data_needed: "Temporal overlap analysis, operator cross-reference",
+            potential_finding: "Coordinated multi-aircraft surveillance campaign"
           });
         }
-      } catch (e: any) { console.warn("kcso_fleet query skipped:", e.message); }
+      } catch (e: any) { skipped.push("threat_profiles"); }
 
-      // 2. Phantom biometric events — simplified, no correlated subqueries
-      try {
-        const bioStats = await sql`
-          SELECT COUNT(*)::int as spike_count
-          FROM biometric_monitoring
-          WHERE (heart_rate > 100 OR hrv < 40 OR stress_level > 70)
-            AND measurement_timestamp > NOW() - INTERVAL '7 days'
-        `;
-        const flightDays = await sql`
-          SELECT COUNT(DISTINCT DATE(detection_timestamp))::int as days
-          FROM live_flight_detections_rows
-          WHERE detection_timestamp > NOW() - INTERVAL '7 days'
-        `;
-        const spikeCount = bioStats[0]?.spike_count || 0;
-        const activeDays = flightDays[0]?.days || 0;
-        if (spikeCount > 0) {
-          anomalies.push({
-            type: "BIOMETRIC_STRESS_DETECTED", severity: spikeCount > 50 ? "critical" : "high",
-            description: `${spikeCount} biometric stress events in past 7 days across ${activeDays} flight-monitored days`,
-            count: spikeCount, timestamp: new Date().toISOString()
-          });
-        }
-      } catch (e: any) { console.warn("Biometric check skipped:", e.message); }
-
-      // 3. ICAO Recycling — 7-day window
-      try {
-        const recyclingCheck = await sql`
-          SELECT icao_code, COUNT(DISTINCT registration)::int as reg_count
-          FROM live_flight_detections_rows
-          WHERE icao_code IS NOT NULL AND icao_code != ''
-            AND registration IS NOT NULL AND registration != '' AND registration != 'N/A'
-            AND detection_timestamp > NOW() - INTERVAL '7 days'
-          GROUP BY icao_code
-          HAVING COUNT(DISTINCT registration) >= 10
-          ORDER BY COUNT(DISTINCT registration) DESC
-          LIMIT 10
-        `;
-        if (recyclingCheck.length > 0) {
-          const worst = recyclingCheck[0];
-          anomalies.push({
-            type: "ICAO_RECYCLING_CATASTROPHIC", severity: "critical",
-            description: `${recyclingCheck.length} ICAO hex codes recycled across 10+ registrations — worst: ${worst.icao_code} with ${worst.reg_count} registrations`,
-            count: recyclingCheck.reduce((s: number, r: any) => s + r.reg_count, 0),
-            timestamp: new Date().toISOString()
-          });
-          leads.push({
-            id: `lead-recycling-${Date.now()}`, priority: "critical",
-            question: `Is ${worst.icao_code} (${worst.reg_count} registrations) an identity manufacturing system?`,
-            data_needed: "FAA Mode-S hex assignment records",
-            potential_finding: "Industrial-scale identity laundering or automated hex rotation"
-          });
-        }
-      } catch (e: any) { console.warn("ICAO recycling check:", e.message); }
-
-      // 4. Military Dual-Hex — 7-day window
-      try {
-        const dualHex = await sql`
-          SELECT icao_code, registration, COUNT(*)::int as det
-          FROM live_flight_detections_rows
-          WHERE (icao_code LIKE 'AE%' OR icao_code LIKE 'AF%')
-            AND registration IS NOT NULL AND registration != '' AND registration != 'N/A'
-            AND registration NOT LIKE '%-%'
-            AND detection_timestamp > NOW() - INTERVAL '7 days'
-          GROUP BY icao_code, registration
-          ORDER BY det DESC
-          LIMIT 20
-        `;
-        if (dualHex.length > 0) {
-          anomalies.push({
-            type: "MILITARY_DUAL_HEX", severity: "critical",
-            description: `${dualHex.length} military-to-civilian identity spoofs detected (AE/AF hex → civilian N-number)`,
-            aircraft: dualHex.map((r: any) => r.registration),
-            count: dualHex.length, timestamp: new Date().toISOString()
-          });
-          leads.push({
-            id: `lead-dualhex-${Date.now()}`, priority: "critical",
-            question: `Are ${dualHex.length} military hex spoofs coordinated Posse Comitatus violations?`,
-            data_needed: "Military flight plan records, DoD airframe registry",
-            potential_finding: "Military conducting domestic law enforcement under civilian cover"
-          });
-        }
-      } catch (e: any) { console.warn("Dual-hex check:", e.message); }
-
-      // 5. Fleet convergence — 3-day window, sampled
-      try {
-        const convergenceEvents = await sql`
-          SELECT DATE_TRUNC('hour', detection_timestamp) as hour,
-                 COUNT(DISTINCT registration)::int as unique_aircraft
-          FROM live_flight_detections_rows
-          WHERE detection_timestamp > NOW() - INTERVAL '3 days'
-            AND registration IS NOT NULL AND registration != ''
-          GROUP BY DATE_TRUNC('hour', detection_timestamp)
-          HAVING COUNT(DISTINCT registration) >= 4
-          ORDER BY unique_aircraft DESC
-          LIMIT 10
-        `;
-        if (convergenceEvents.length > 0) {
-          anomalies.push({
-            type: "FLEET_CONVERGENCE", severity: "high",
-            description: `${convergenceEvents.length} hours with 4+ aircraft simultaneously over target in past 3 days`,
-            count: convergenceEvents.length, timestamp: new Date().toISOString()
-          });
-        }
-      } catch (e: any) { console.warn("Convergence check:", e.message); }
-
-      // 6. Low altitude — 3-day window
+      // 2. Low altitude from profiles — no scan needed
       try {
         const lowAlt = await sql`
-          SELECT registration, COUNT(*)::int as detection_count,
-                 AVG(altitude::numeric)::int as avg_altitude
-          FROM live_flight_detections_rows
-          WHERE detection_timestamp > NOW() - INTERVAL '3 days'
-            AND registration IS NOT NULL AND registration != ''
-            AND altitude IS NOT NULL AND altitude::numeric > 0
-          GROUP BY registration
-          HAVING AVG(altitude::numeric) < 2000 AND COUNT(*) >= 3
-          ORDER BY AVG(altitude::numeric) ASC
+          SELECT registration, avg_altitude::int, total_detections, operator_name
+          FROM aircraft_profiles_enriched
+          WHERE avg_altitude IS NOT NULL AND avg_altitude < 2000 AND avg_altitude > 0
+            AND total_detections >= 3
+          ORDER BY avg_altitude ASC
           LIMIT 30
         `;
         if (lowAlt.length > 0) {
           anomalies.push({
             type: "LOW_ALTITUDE_PATTERN", severity: "critical",
-            description: `${lowAlt.length} aircraft operating at <2000ft avg in past 3 days`,
+            description: `${lowAlt.length} aircraft with avg altitude <2000ft (universe: all baselined aircraft)`,
             aircraft: lowAlt.map((a: any) => a.registration),
             count: lowAlt.length, timestamp: new Date().toISOString()
           });
+        }
+      } catch (e: any) { skipped.push("low_altitude"); }
+
+      // 3. ICAO recycling from id_taxonomy — pre-computed, fast
+      try {
+        const recycling = await sql`
+          SELECT icao_hex, COUNT(DISTINCT registration)::int as reg_count
+          FROM id_taxonomy
+          WHERE icao_hex IS NOT NULL AND icao_hex != ''
+            AND registration IS NOT NULL AND registration != ''
+          GROUP BY icao_hex
+          HAVING COUNT(DISTINCT registration) >= 5
+          ORDER BY reg_count DESC
+          LIMIT 10
+        `;
+        if (recycling.length > 0) {
+          anomalies.push({
+            type: "ICAO_RECYCLING", severity: "critical",
+            description: `${recycling.length} ICAO hex codes shared across 5+ registrations — worst: ${recycling[0].icao_hex} with ${recycling[0].reg_count}`,
+            count: recycling.reduce((s: number, r: any) => s + r.reg_count, 0),
+            timestamp: new Date().toISOString()
+          });
           leads.push({
-            id: `lead-lowalt-${Date.now()}`, priority: "high",
-            question: `Which of the ${lowAlt.length} low-altitude aircraft correlate with biometric stress?`,
-            data_needed: "Cross-reference low-altitude windows with biometric stress spikes",
-            potential_finding: "Data-driven identification of harassment aircraft"
+            id: `lead-recycling-${Date.now()}`, priority: "critical",
+            question: `Is ${recycling[0].icao_hex} (${recycling[0].reg_count} registrations) identity laundering?`,
+            data_needed: "FAA Mode-S hex assignment records",
+            potential_finding: "Industrial-scale identity manufacturing"
           });
         }
-      } catch (e: any) { console.warn("Low altitude check:", e.message); }
+      } catch (e: any) { skipped.push("icao_recycling"); }
 
-      // Always generate baseline leads
+      // 4. Ghost aircraft from id_taxonomy
+      try {
+        const ghosts = await sql`
+          SELECT registration, classification, icao_hex
+          FROM id_taxonomy
+          WHERE classification IN ('ghost', 'phantom', 'suspicious')
+          LIMIT 20
+        `;
+        if (ghosts.length > 0) {
+          anomalies.push({
+            type: "GHOST_AIRCRAFT", severity: "high",
+            description: `${ghosts.length} ghost/phantom aircraft classified in identity taxonomy`,
+            aircraft: ghosts.map((g: any) => g.registration),
+            count: ghosts.length, timestamp: new Date().toISOString()
+          });
+        }
+      } catch (e: any) { skipped.push("ghost_aircraft"); }
+
+      // 5. Biometric stress — small table, fast
+      try {
+        const bioStats = await sql`
+          SELECT COUNT(*)::int as spike_count,
+                 COUNT(CASE WHEN heart_rate > 120 THEN 1 END)::int as severe_count
+          FROM biometric_monitoring
+          WHERE (heart_rate > 100 OR hrv < 40 OR stress_level > 70)
+            AND measurement_timestamp > NOW() - INTERVAL '7 days'
+        `;
+        const spikeCount = bioStats[0]?.spike_count || 0;
+        if (spikeCount > 0) {
+          anomalies.push({
+            type: "BIOMETRIC_STRESS", severity: spikeCount > 50 ? "critical" : "high",
+            description: `${spikeCount} biometric stress events in 7 days (${bioStats[0]?.severe_count || 0} severe HR>120)`,
+            count: spikeCount, timestamp: new Date().toISOString()
+          });
+        }
+      } catch (e: any) { skipped.push("biometric"); }
+
+      // 6. Recent sentinel threats from Supabase (already indexed)
+      // Skip — this is in Supabase not Neon
+
+      // Always add baseline leads
       leads.push({
         id: `lead-timing-${Date.now()}`, priority: "high",
         question: "Are there specific time patterns when surveillance intensifies?",
@@ -218,29 +181,27 @@ serve(async (req) => {
         potential_finding: "Operational schedule of harassment campaign"
       });
 
-      // AI hypothesis
+      // AI hypothesis — use lightweight model
       let aiHypothesis = null;
       if (LOVABLE_API_KEY && anomalies.length > 0) {
         try {
-          const analysisPrompt = `Analyze these surveillance anomalies and generate a prosecutable hypothesis:\n\n${anomalies.map(a => `- ${a.type}: ${a.description}`).join('\n')}\n\nGenerate 2-3 sentences connecting anomalies to coordinated surveillance, referencing RICO/42 USC 1983.`;
+          const prompt = `Analyze these anomalies and generate a 2-sentence prosecutable hypothesis:\n${anomalies.map(a => `- ${a.type}: ${a.description}`).join('\n')}`;
           const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
             method: "POST",
             headers: { "Authorization": `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
             body: JSON.stringify({
               model: "google/gemini-2.5-flash-lite",
               messages: [
-                { role: "system", content: "You are JOSIAH, an investigative AI. Be concise." },
-                { role: "user", content: analysisPrompt }
+                { role: "system", content: "You are JOSIAH, an investigative AI. Be concise and analytical." },
+                { role: "user", content: prompt }
               ],
-              max_tokens: 300,
+              max_tokens: 200,
             }),
           });
           if (aiResponse.ok) {
             const data = await aiResponse.json();
             aiHypothesis = data.choices?.[0]?.message?.content || null;
-          } else {
-            await aiResponse.text();
-          }
+          } else { await aiResponse.text(); }
         } catch (aiErr) { console.error("AI hypothesis error:", aiErr); }
       }
 
@@ -249,10 +210,11 @@ serve(async (req) => {
       return new Response(
         JSON.stringify({
           success: true, timestamp: new Date().toISOString(),
-          anomalies, leads, aiHypothesis,
+          anomalies, leads, aiHypothesis, skipped,
           summary: {
             anomalyCount: anomalies.length, leadCount: leads.length,
-            criticalCount: anomalies.filter(a => a.severity === 'critical').length
+            criticalCount: anomalies.filter(a => a.severity === 'critical').length,
+            universeEstimate: totalFlightEstimate
           }
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }

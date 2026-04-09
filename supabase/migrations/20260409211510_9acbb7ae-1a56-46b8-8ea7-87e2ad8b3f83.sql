@@ -1,0 +1,1 @@
+ALTER TABLE public.evidence_documents ADD CONSTRAINT evidence_documents_sha256_hash_unique UNIQUE (sha256_hash);

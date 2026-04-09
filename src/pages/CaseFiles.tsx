@@ -3,6 +3,7 @@ import { CaseOverview } from "@/components/case-files/CaseOverview";
 import { ExhibitRegistry } from "@/components/case-files/ExhibitRegistry";
 import { PromotionRulesPanel } from "@/components/case-files/PromotionRulesPanel";
 import { AuditTrailViewer } from "@/components/case-files/AuditTrailViewer";
+import { AutonomousCaseFileBuilder } from "@/components/case-files/AutonomousCaseFileBuilder";
 
 export default function CaseFiles() {
   return (
@@ -22,6 +23,7 @@ export default function CaseFiles() {
           </div>
         </div>
 
+        <AutonomousCaseFileBuilder />
         <CaseOverview />
         <ExhibitRegistry />
         <PromotionRulesPanel />

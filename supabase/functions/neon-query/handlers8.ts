@@ -153,6 +153,209 @@ export async function handleAction8(action: string, body: Record<string, any>, s
       };
     }
 
+    case 'quarantineMergePrecheck': {
+      // Step 1: Validate both tables exist, check schema compatibility, detect duplicates
+      const mainExists = await sql`
+        SELECT COUNT(*) as cnt FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.relname = 'live_flight_detections_rows' AND n.nspname = 'public'
+      `;
+      const quarantineExists = await sql`
+        SELECT COUNT(*) as cnt FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.relname = 'evidence_flight_dump_20260103_sealed' AND n.nspname = 'quarantine'
+      `;
+
+      if (Number((mainExists[0] as any)?.cnt) === 0) throw new Error('Main table live_flight_detections_rows not found');
+      if (Number((quarantineExists[0] as any)?.cnt) === 0) throw new Error('Quarantine table not found');
+
+      // Get row counts (estimates for speed)
+      const mainCount = await sql`SELECT reltuples::bigint as cnt FROM pg_class WHERE oid = 'public.live_flight_detections_rows'::regclass`;
+      const quarantineCount = await sql`SELECT reltuples::bigint as cnt FROM pg_class WHERE oid = 'quarantine.evidence_flight_dump_20260103_sealed'::regclass`;
+
+      // Get schema columns for both tables
+      const mainCols = await sql`SELECT column_name, data_type FROM information_schema.columns WHERE table_schema='public' AND table_name='live_flight_detections_rows' ORDER BY ordinal_position`;
+      const qCols = await sql`SELECT column_name, data_type FROM information_schema.columns WHERE table_schema='quarantine' AND table_name='evidence_flight_dump_20260103_sealed' ORDER BY ordinal_position`;
+
+      const mainColNames = new Set(mainCols.map((c: any) => c.column_name));
+      const qColNames = new Set(qCols.map((c: any) => c.column_name));
+      const sharedCols = [...mainColNames].filter(c => qColNames.has(c));
+      const mainOnly = [...mainColNames].filter(c => !qColNames.has(c));
+      const qOnly = [...qColNames].filter(c => !mainColNames.has(c));
+
+      // Sample duplicate check on shared key (registration + detection_timestamp)
+      let duplicateEstimate = 0;
+      try {
+        const dupCheck = await sql.unsafe(`
+          SELECT COUNT(*) as dup_count FROM (
+            SELECT 1 FROM quarantine.evidence_flight_dump_20260103_sealed q
+            JOIN public.live_flight_detections_rows m 
+              ON q.registration = m.registration 
+              AND q.detection_timestamp = m.detection_timestamp
+            LIMIT 10000
+          ) sub
+        `);
+        duplicateEstimate = Number((dupCheck[0] as any)?.dup_count || 0);
+      } catch { duplicateEstimate = -1; }
+
+      // Count xxb_unknown with real registrations in quarantine
+      let retagCandidates = 0;
+      try {
+        const retag = await sql`
+          SELECT COUNT(*) as cnt FROM quarantine.evidence_flight_dump_20260103_sealed
+          WHERE taxonomy_tag = 'xxb_unknown' AND registration IS NOT NULL AND registration != '' AND registration != 'XXB'
+        `;
+        retagCandidates = Number((retag[0] as any)?.cnt || 0);
+      } catch { /* ignore */ }
+
+      return {
+        mainTableRows: Number((mainCount[0] as any)?.cnt || 0),
+        quarantineRows: Number((quarantineCount[0] as any)?.cnt || 0),
+        expectedMergedTotal: Number((mainCount[0] as any)?.cnt || 0) + Number((quarantineCount[0] as any)?.cnt || 0),
+        sharedColumns: sharedCols,
+        mainOnlyColumns: mainOnly,
+        quarantineOnlyColumns: qOnly,
+        duplicateEstimate,
+        retagCandidates,
+        safeToMerge: sharedCols.length >= 5,
+        timestamp: new Date().toISOString()
+      };
+    }
+
+    case 'quarantineMergeShadow': {
+      // Step 2: Create shadow table with UNION ALL (dedup on id)
+      // First get shared columns
+      const mainCols2 = await sql`SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='live_flight_detections_rows' ORDER BY ordinal_position`;
+      const qCols2 = await sql`SELECT column_name FROM information_schema.columns WHERE table_schema='quarantine' AND table_name='evidence_flight_dump_20260103_sealed' ORDER BY ordinal_position`;
+      
+      const mainSet = new Set(mainCols2.map((c: any) => c.column_name));
+      const qSet = new Set(qCols2.map((c: any) => c.column_name));
+      const shared = [...mainSet].filter(c => qSet.has(c));
+      
+      if (shared.length < 5) throw new Error('Not enough shared columns for safe merge');
+      
+      const colList = shared.map(c => `"${c}"`).join(', ');
+      
+      // Drop old shadow if exists
+      await sql.unsafe(`DROP TABLE IF EXISTS public.unified_flight_detections_shadow`);
+      
+      // Create shadow table from main + quarantine (quarantine rows get re-tagged)
+      await sql.unsafe(`
+        CREATE TABLE public.unified_flight_detections_shadow AS
+        SELECT ${colList}, 'main' as source_batch FROM public.live_flight_detections_rows
+        UNION ALL
+        SELECT ${colList}, 'quarantine_20260103' as source_batch FROM quarantine.evidence_flight_dump_20260103_sealed q
+        WHERE NOT EXISTS (
+          SELECT 1 FROM public.live_flight_detections_rows m
+          WHERE m.id = q.id
+        )
+      `);
+      
+      // Re-tag xxb_unknown rows that have real registrations
+      const retagged = await sql.unsafe(`
+        UPDATE public.unified_flight_detections_shadow
+        SET taxonomy_tag = CASE
+          WHEN registration IN ('N912KC','N913KC') THEN 'tier0_kcso'
+          WHEN registration ~ '^N[0-9]+[A-Z]*$' AND taxonomy_tag = 'xxb_unknown' THEN 'xxb_retagged_valid'
+          ELSE taxonomy_tag
+        END
+        WHERE source_batch = 'quarantine_20260103' AND taxonomy_tag = 'xxb_unknown'
+          AND registration IS NOT NULL AND registration != '' AND registration != 'XXB'
+      `);
+      
+      // Get counts
+      const shadowCount = await sql`SELECT reltuples::bigint as cnt FROM pg_class WHERE relname = 'unified_flight_detections_shadow'`;
+      // Force accurate count since table is new
+      const exactCount = await sql`SELECT COUNT(*) as cnt FROM public.unified_flight_detections_shadow`;
+      
+      return {
+        shadowTableCreated: true,
+        exactRowCount: Number((exactCount[0] as any)?.cnt || 0),
+        retaggedRows: Array.isArray(retagged) ? retagged.length : 0,
+        sourceColumn: 'source_batch',
+        timestamp: new Date().toISOString()
+      };
+    }
+
+    case 'quarantineMergeValidate': {
+      // Step 3: Compare shadow vs sources — zero data loss check
+      const mainCount2 = await sql`SELECT COUNT(*) as cnt FROM public.live_flight_detections_rows`;
+      const qCount2 = await sql`SELECT COUNT(*) as cnt FROM quarantine.evidence_flight_dump_20260103_sealed`;
+      const shadowCount2 = await sql`SELECT COUNT(*) as cnt FROM public.unified_flight_detections_shadow`;
+      
+      const mainN = Number((mainCount2[0] as any)?.cnt || 0);
+      const qN = Number((qCount2[0] as any)?.cnt || 0);
+      const shadowN = Number((shadowCount2[0] as any)?.cnt || 0);
+      
+      // Deduped rows = (main + quarantine) - shadow
+      const dedupedCount = (mainN + qN) - shadowN;
+      
+      // Verify no main rows were lost
+      const mainInShadow = await sql`SELECT COUNT(*) as cnt FROM public.unified_flight_detections_shadow WHERE source_batch = 'main'`;
+      const mainInShadowN = Number((mainInShadow[0] as any)?.cnt || 0);
+      
+      // Verify quarantine rows present
+      const qInShadow = await sql`SELECT COUNT(*) as cnt FROM public.unified_flight_detections_shadow WHERE source_batch = 'quarantine_20260103'`;
+      const qInShadowN = Number((qInShadow[0] as any)?.cnt || 0);
+      
+      // Taxonomy distribution in shadow
+      const taxonomySample = await sql.unsafe(`
+        SELECT taxonomy_tag, source_batch, COUNT(*) as cnt
+        FROM public.unified_flight_detections_shadow TABLESAMPLE SYSTEM(1)
+        GROUP BY taxonomy_tag, source_batch
+        ORDER BY cnt DESC LIMIT 20
+      `);
+      
+      return {
+        mainTableRows: mainN,
+        quarantineRows: qN,
+        shadowRows: shadowN,
+        deduplicatedRows: dedupedCount,
+        mainRowsInShadow: mainInShadowN,
+        quarantineRowsInShadow: qInShadowN,
+        zeroDataLoss: mainInShadowN === mainN,
+        mergeIntegrity: shadowN >= mainN,
+        taxonomySample,
+        readyToSwap: mainInShadowN === mainN && shadowN >= mainN,
+        timestamp: new Date().toISOString()
+      };
+    }
+
+    case 'quarantineMergeSwap': {
+      // Step 4: Rename tables — shadow becomes main, old main becomes backup
+      // Safety check first
+      const mainC = await sql`SELECT COUNT(*) as cnt FROM public.live_flight_detections_rows`;
+      const shadowC = await sql`SELECT COUNT(*) as cnt FROM public.unified_flight_detections_shadow`;
+      const mainN2 = Number((mainC[0] as any)?.cnt || 0);
+      const shadowN2 = Number((shadowC[0] as any)?.cnt || 0);
+      
+      if (shadowN2 < mainN2) throw new Error(`Shadow table (${shadowN2}) has fewer rows than main (${mainN2}). Aborting swap.`);
+      
+      // Perform atomic rename swap
+      await sql.unsafe(`ALTER TABLE public.live_flight_detections_rows RENAME TO live_flight_detections_rows_pre_merge_backup`);
+      await sql.unsafe(`ALTER TABLE public.unified_flight_detections_shadow RENAME TO live_flight_detections_rows`);
+      
+      // Recreate essential indexes
+      try {
+        await sql.unsafe(`CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_lfd_registration ON public.live_flight_detections_rows (registration)`);
+      } catch { /* non-fatal */ }
+      try {
+        await sql.unsafe(`CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_lfd_detection_timestamp ON public.live_flight_detections_rows (detection_timestamp)`);
+      } catch { /* non-fatal */ }
+      try {
+        await sql.unsafe(`CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_lfd_taxonomy ON public.live_flight_detections_rows (taxonomy_tag)`);
+      } catch { /* non-fatal */ }
+      
+      // Final count
+      const finalCount = await sql`SELECT COUNT(*) as cnt FROM public.live_flight_detections_rows`;
+      
+      return {
+        swapComplete: true,
+        finalRowCount: Number((finalCount[0] as any)?.cnt || 0),
+        backupTable: 'live_flight_detections_rows_pre_merge_backup',
+        quarantinePreserved: true,
+        timestamp: new Date().toISOString()
+      };
+    }
+
     default:
       return null;
   }

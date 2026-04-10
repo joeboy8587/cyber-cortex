@@ -124,6 +124,10 @@ const HANDLER8_ACTIONS = new Set([
   'getFlaggedAircraftData',
   'cleanupNullDetections',
   'getIngestionStats',
+  'quarantineMergePrecheck',
+  'quarantineMergeShadow',
+  'quarantineMergeValidate',
+  'quarantineMergeSwap',
 ]);
 
 async function getHandler1() {

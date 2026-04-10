@@ -36,12 +36,17 @@ function fail(message: string, status = 400, details?: Json) {
   });
 }
 
-async function getNeonClient(timeoutMs = 15000) {
+async function getNeonClient(timeoutMs = 8000) {
   const neonUrl = Deno.env.get("NEON_DATABASE_URL");
   if (!neonUrl) throw new Error("NEON_DATABASE_URL not configured");
   
   const client = new Client(neonUrl);
-  await client.connect();
+  
+  // Race against a connection timeout to prevent hanging
+  const connectTimeout = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error("Neon connection timeout")), timeoutMs)
+  );
+  await Promise.race([client.connect(), connectTimeout]);
   await client.queryObject(`SET statement_timeout = '${timeoutMs}ms'`);
   return client;
 }
@@ -86,7 +91,7 @@ serve(async (req) => {
       let totalBiometrics = 0;
       
       try {
-        const neon = await getNeonClient(10000);
+        const neon = await getNeonClient(6000);
         
         // Use reltuples estimate for large tables to avoid timeout
         const flightCount = await neon.queryObject<{ count: string }>(
@@ -99,9 +104,10 @@ serve(async (req) => {
         );
         totalBiometrics = parseInt(bioCount.rows[0]?.count || "0", 10);
         
-        await neon.end();
+        await neon.end().catch(() => {});
       } catch (e) {
-        console.log("[forensic-linker] Neon query error:", e);
+        console.warn("[forensic-linker] Neon stats skipped (non-fatal):", (e as Error)?.message);
+        // Continue with zeros — Neon stats are supplementary
       }
 
       // Count linked records from chain_links
@@ -942,7 +948,8 @@ serve(async (req) => {
 
     return fail(`Unknown action '${action}'`, 400);
   } catch (err) {
-    console.error("[forensic-linker] Unhandled error", err);
-    return fail("Unhandled error", 500, { message: (err as Error)?.message });
+    const msg = (err as Error)?.message || String(err) || "Unknown server error";
+    console.error("[forensic-linker] Unhandled error:", msg);
+    return fail(msg, 500);
   }
 });

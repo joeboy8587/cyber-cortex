@@ -128,6 +128,8 @@ const HANDLER8_ACTIONS = new Set([
   'quarantineMergeShadow',
   'quarantineMergeValidate',
   'quarantineMergeSwap',
+  'getMilitaryAircraft',
+  'getCanadianCorridor',
 ]);
 
 async function getHandler1() {

@@ -161,6 +161,9 @@ export default function Surveillance() {
 
           <TabsContent value="watchtower" className="space-y-6">
             <section>
+              <DailyFlightIntelligenceReport />
+            </section>
+            <section>
               <AutonomousWatchtower />
             </section>
             <section>

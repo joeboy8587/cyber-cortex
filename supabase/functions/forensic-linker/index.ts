@@ -36,12 +36,17 @@ function fail(message: string, status = 400, details?: Json) {
   });
 }
 
-async function getNeonClient(timeoutMs = 15000) {
+async function getNeonClient(timeoutMs = 8000) {
   const neonUrl = Deno.env.get("NEON_DATABASE_URL");
   if (!neonUrl) throw new Error("NEON_DATABASE_URL not configured");
   
   const client = new Client(neonUrl);
-  await client.connect();
+  
+  // Race against a connection timeout to prevent hanging
+  const connectTimeout = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error("Neon connection timeout")), timeoutMs)
+  );
+  await Promise.race([client.connect(), connectTimeout]);
   await client.queryObject(`SET statement_timeout = '${timeoutMs}ms'`);
   return client;
 }
@@ -942,7 +947,8 @@ serve(async (req) => {
 
     return fail(`Unknown action '${action}'`, 400);
   } catch (err) {
-    console.error("[forensic-linker] Unhandled error", err);
-    return fail("Unhandled error", 500, { message: (err as Error)?.message });
+    const msg = (err as Error)?.message || String(err) || "Unknown server error";
+    console.error("[forensic-linker] Unhandled error:", msg);
+    return fail(msg, 500);
   }
 });

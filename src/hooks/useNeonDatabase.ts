@@ -267,7 +267,7 @@ export function useNeonDatabase() {
     try {
       const data = await customQuery(`
         SELECT registration, threat_type, total_violations, avg_altitude, escalation_level
-        FROM sentinel_learned_threats_rows
+        FROM sentinel_learned_threats
         ORDER BY escalation_level DESC, total_violations DESC
         LIMIT 10
       `);

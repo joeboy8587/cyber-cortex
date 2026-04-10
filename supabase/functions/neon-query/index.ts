@@ -6,6 +6,7 @@ let _handleAction3: ((action: string, body: Record<string, any>, sql: any) => Pr
 let _handleAction4: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
 let _handleAction5: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
 let _handleAction6: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
+let _handleAction7: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
 
 const HANDLER1_ACTIONS = new Set([
   'getBehavioralAlignment',
@@ -108,6 +109,9 @@ const HANDLER6_ACTIONS = new Set([
   'tulareCountyScan',
   'kcsoHexCrossRef',
   'airMethodsISRAnalysis',
+]);
+
+const HANDLER7_ACTIONS = new Set([
   'fullArchiveCensus',
   'crossDomainQuery',
 ]);
@@ -160,6 +164,13 @@ async function getHandler6() {
   return _handleAction6;
 }
 
+async function getHandler7() {
+  if (!_handleAction7) {
+    const mod = await import("./handlers7.ts");
+    _handleAction7 = mod.handleAction7;
+  }
+  return _handleAction7;
+}
 
 const VERSION = "2.12.3";
 console.log(`neon-query v${VERSION} booting...`);
@@ -578,6 +589,12 @@ Deno.serve(async (req) => {
           if (HANDLER6_ACTIONS.has(action)) {
             const h6 = await getHandler6();
             result = await h6(action, body, sql);
+            break;
+          }
+
+          if (HANDLER7_ACTIONS.has(action)) {
+            const h7 = await getHandler7();
+            result = await h7(action, body, sql);
             break;
           }
 

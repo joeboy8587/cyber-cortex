@@ -7,7 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { 
   Shield, AlertTriangle, Eye, Brain, Radio, 
   Play, Pause, RefreshCw, Zap, Clock, Plane,
-  Target, TrendingUp, Activity, Swords, CheckCircle, FileText
+  Target, TrendingUp, Activity, Swords, CheckCircle, FileText, Download
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";

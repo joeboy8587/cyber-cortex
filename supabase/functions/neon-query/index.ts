@@ -164,6 +164,13 @@ async function getHandler6() {
   return _handleAction6;
 }
 
+async function getHandler7() {
+  if (!_handleAction7) {
+    const mod = await import("./handlers7.ts");
+    _handleAction7 = mod.handleAction7;
+  }
+  return _handleAction7;
+}
 
 const VERSION = "2.12.3";
 console.log(`neon-query v${VERSION} booting...`);

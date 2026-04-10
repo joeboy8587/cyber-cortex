@@ -338,9 +338,10 @@ ${report.ai_synthesis ? `
                 {isScanning ? <RefreshCw className="h-4 w-4 mr-1 animate-spin" /> : <Zap className="h-4 w-4 mr-1" />}
                 Scan Now
               </Button>
-            </div>
-          </div>
-        </CardHeader>
+              <Button variant="outline" size="sm" onClick={exportToPDF} disabled={!report}>
+                <Download className="h-4 w-4 mr-1" />
+                Export PDF
+              </Button>
       </Card>
 
       {/* Threat Level Banner */}

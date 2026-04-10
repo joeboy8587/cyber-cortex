@@ -6,6 +6,7 @@ let _handleAction3: ((action: string, body: Record<string, any>, sql: any) => Pr
 let _handleAction4: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
 let _handleAction5: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
 let _handleAction6: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
+let _handleAction7: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
 
 const HANDLER1_ACTIONS = new Set([
   'getBehavioralAlignment',
@@ -108,6 +109,9 @@ const HANDLER6_ACTIONS = new Set([
   'tulareCountyScan',
   'kcsoHexCrossRef',
   'airMethodsISRAnalysis',
+]);
+
+const HANDLER7_ACTIONS = new Set([
   'fullArchiveCensus',
   'crossDomainQuery',
 ]);

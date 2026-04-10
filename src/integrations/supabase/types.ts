@@ -940,6 +940,66 @@ export type Database = {
         }
         Relationships: []
       }
+      watchtower_daily_reports: {
+        Row: {
+          active_aircraft: Json
+          active_aircraft_count: number
+          ai_synthesis: string | null
+          confirmed_threats: number
+          created_at: string
+          id: string
+          monitored_count: number
+          pattern_summary: Json
+          report_date: string
+          report_html: string | null
+          report_id_code: string
+          sha256_hash: string | null
+          suspicious_count: number
+          threat_database: Json
+          threat_level: string
+          updated_at: string
+          violations: Json
+        }
+        Insert: {
+          active_aircraft?: Json
+          active_aircraft_count?: number
+          ai_synthesis?: string | null
+          confirmed_threats?: number
+          created_at?: string
+          id?: string
+          monitored_count?: number
+          pattern_summary?: Json
+          report_date: string
+          report_html?: string | null
+          report_id_code: string
+          sha256_hash?: string | null
+          suspicious_count?: number
+          threat_database?: Json
+          threat_level?: string
+          updated_at?: string
+          violations?: Json
+        }
+        Update: {
+          active_aircraft?: Json
+          active_aircraft_count?: number
+          ai_synthesis?: string | null
+          confirmed_threats?: number
+          created_at?: string
+          id?: string
+          monitored_count?: number
+          pattern_summary?: Json
+          report_date?: string
+          report_html?: string | null
+          report_id_code?: string
+          sha256_hash?: string | null
+          suspicious_count?: number
+          threat_database?: Json
+          threat_level?: string
+          updated_at?: string
+          violations?: Json
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never

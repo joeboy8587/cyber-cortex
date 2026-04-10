@@ -342,6 +342,9 @@ ${report.ai_synthesis ? `
                 <Download className="h-4 w-4 mr-1" />
                 Export PDF
               </Button>
+            </div>
+          </div>
+        </CardHeader>
       </Card>
 
       {/* Threat Level Banner */}

@@ -560,6 +560,183 @@ export async function handleAction6(action: string, body: Record<string, any>, s
       };
     }
 
+    // ==================== AIR METHODS ISR ANALYSIS ====================
+    case 'airMethodsISRAnalysis': {
+      const geoFilter = `AND latitude BETWEEN 35.25 AND 35.55 AND longitude BETWEEN -119.25 AND -118.85`;
+      await sql.unsafe(`SET statement_timeout = '25s'`);
+
+      const airMethodsRegs = ['N528AM','N229AM','N224AM','N184AM','N743AM','N528AM'];
+      const kcsoRegs = ['N912KC','N913KC','N597E'];
+
+      const [n528Profile, allAirMethodsProfile, kcsoCoOccurrence, nightOps, altitudeDistribution, medicalComparison, militaryCoOccurrence] = await Promise.all([
+        // N528AM full profile in Oildale grid
+        sql.unsafe(`
+          SELECT 
+            COUNT(*)::int as total_detections,
+            COUNT(*) FILTER (WHERE altitude < 200 AND altitude > 0)::int as below_200ft,
+            COUNT(*) FILTER (WHERE altitude < 500 AND altitude > 0)::int as below_500ft,
+            COUNT(*) FILTER (WHERE altitude < 1000 AND altitude > 0)::int as below_1000ft,
+            COUNT(*) FILTER (WHERE altitude > 5000)::int as above_5000ft,
+            ROUND(AVG(NULLIF(altitude, 0))::numeric, 0)::int as avg_alt,
+            MIN(NULLIF(altitude, 0))::int as min_alt,
+            MAX(altitude)::int as max_alt,
+            ROUND(AVG(NULLIF(speed, 0))::numeric, 1) as avg_speed,
+            MIN(NULLIF(speed, 0))::numeric as min_speed,
+            COUNT(DISTINCT DATE(detection_timestamp))::int as unique_days,
+            MIN(detection_timestamp) as first_seen,
+            MAX(detection_timestamp) as last_seen,
+            COUNT(*) FILTER (WHERE EXTRACT(HOUR FROM detection_timestamp) >= 22 OR EXTRACT(HOUR FROM detection_timestamp) < 5)::int as night_ops,
+            COUNT(*) FILTER (WHERE speed < 30 AND altitude < 500 AND altitude > 0)::int as loiter_events
+          FROM live_flight_detections_rows
+          WHERE registration = 'N528AM' ${geoFilter}
+        `),
+
+        // All Air Methods aircraft in the grid
+        sql.unsafe(`
+          SELECT 
+            registration,
+            COUNT(*)::int as detections,
+            ROUND(AVG(NULLIF(altitude, 0))::numeric, 0)::int as avg_alt,
+            MIN(NULLIF(altitude, 0))::int as min_alt,
+            COUNT(*) FILTER (WHERE altitude < 500 AND altitude > 0)::int as below_500ft,
+            COUNT(*) FILTER (WHERE EXTRACT(HOUR FROM detection_timestamp) >= 22 OR EXTRACT(HOUR FROM detection_timestamp) < 5)::int as night_ops,
+            COUNT(DISTINCT DATE(detection_timestamp))::int as active_days,
+            MIN(detection_timestamp) as first_seen,
+            MAX(detection_timestamp) as last_seen
+          FROM live_flight_detections_rows
+          WHERE registration IN ('N528AM','N229AM','N224AM','N184AM','N743AM')
+            ${geoFilter}
+          GROUP BY registration
+          ORDER BY detections DESC
+        `),
+
+        // KCSO + Air Methods temporal co-occurrence (within 5 min)
+        sql.unsafe(`
+          WITH am_times AS (
+            SELECT detection_timestamp, registration as am_reg, altitude as am_alt, latitude as am_lat, longitude as am_lng
+            FROM live_flight_detections_rows
+            WHERE registration IN ('N528AM','N229AM','N224AM','N184AM','N743AM')
+              ${geoFilter}
+          ),
+          kcso_times AS (
+            SELECT detection_timestamp, registration as kcso_reg, altitude as kcso_alt, latitude as kcso_lat, longitude as kcso_lng
+            FROM live_flight_detections_rows
+            WHERE registration IN ('N912KC','N913KC','N597E')
+              ${geoFilter}
+          )
+          SELECT 
+            a.am_reg, k.kcso_reg,
+            a.detection_timestamp as am_time,
+            k.detection_timestamp as kcso_time,
+            a.am_alt, k.kcso_alt,
+            ROUND(ABS(EXTRACT(EPOCH FROM (a.detection_timestamp - k.detection_timestamp)))::numeric, 0)::int as delta_seconds,
+            ROUND((|/ ((a.am_lat - k.kcso_lat)^2 + (a.am_lng - k.kcso_lng)^2) * 111000)::numeric, 0)::int as distance_meters
+          FROM am_times a
+          JOIN kcso_times k ON ABS(EXTRACT(EPOCH FROM (a.detection_timestamp - k.detection_timestamp))) < 300
+          ORDER BY delta_seconds ASC
+          LIMIT 100
+        `),
+
+        // N528AM night operations detail
+        sql.unsafe(`
+          SELECT 
+            detection_timestamp, altitude, speed, latitude, longitude, callsign
+          FROM live_flight_detections_rows
+          WHERE registration = 'N528AM' ${geoFilter}
+            AND (EXTRACT(HOUR FROM detection_timestamp) >= 22 OR EXTRACT(HOUR FROM detection_timestamp) < 5)
+          ORDER BY detection_timestamp DESC
+          LIMIT 50
+        `),
+
+        // Altitude distribution buckets for N528AM
+        sql.unsafe(`
+          SELECT 
+            CASE 
+              WHEN altitude <= 0 THEN '0_ground'
+              WHEN altitude < 200 THEN '1_sub200'
+              WHEN altitude < 500 THEN '2_200_500'
+              WHEN altitude < 1000 THEN '3_500_1000'
+              WHEN altitude < 2000 THEN '4_1000_2000'
+              WHEN altitude < 5000 THEN '5_2000_5000'
+              ELSE '6_above_5000'
+            END as alt_bucket,
+            COUNT(*)::int as count,
+            ROUND(AVG(speed)::numeric, 1) as avg_speed_in_bucket
+          FROM live_flight_detections_rows
+          WHERE registration = 'N528AM' ${geoFilter}
+          GROUP BY 1
+          ORDER BY 1
+        `),
+
+        // Compare N528AM to KNOWN medical transport patterns
+        sql.unsafe(`
+          SELECT 
+            registration,
+            COUNT(*)::int as total,
+            ROUND(AVG(NULLIF(altitude, 0))::numeric, 0)::int as avg_alt,
+            MIN(NULLIF(altitude, 0))::int as min_alt,
+            COUNT(*) FILTER (WHERE altitude < 500 AND altitude > 0)::int as below_500,
+            ROUND((COUNT(*) FILTER (WHERE altitude < 500 AND altitude > 0)::float / GREATEST(COUNT(*), 1) * 100)::numeric, 1) as pct_below_500,
+            COUNT(*) FILTER (WHERE speed < 30 AND altitude < 500 AND altitude > 0)::int as loiter_low,
+            ROUND((COUNT(*) FILTER (WHERE speed < 30 AND altitude < 500 AND altitude > 0)::float / GREATEST(COUNT(*), 1) * 100)::numeric, 1) as pct_loiter_low
+          FROM live_flight_detections_rows
+          WHERE registration IN ('N528AM','N229AM','N224AM','N184AM','N743AM','N912KC','N913KC')
+            ${geoFilter}
+          GROUP BY registration
+          ORDER BY pct_below_500 DESC
+        `),
+
+        // Military co-occurrence with Air Methods
+        sql.unsafe(`
+          WITH am_times AS (
+            SELECT detection_timestamp, registration as am_reg, altitude as am_alt
+            FROM live_flight_detections_rows
+            WHERE registration IN ('N528AM','N229AM','N224AM','N184AM','N743AM')
+              ${geoFilter}
+          ),
+          mil_times AS (
+            SELECT detection_timestamp, registration as mil_reg, callsign as mil_call, altitude as mil_alt
+            FROM live_flight_detections_rows
+            WHERE (callsign LIKE 'KNIFE%' OR callsign LIKE 'COBRA%' OR callsign LIKE 'JOLLY%' 
+                   OR callsign LIKE 'GHOST%' OR callsign LIKE 'STMPD%' OR callsign LIKE 'REY%'
+                   OR registration = 'N160XP')
+              ${geoFilter}
+          )
+          SELECT 
+            a.am_reg, m.mil_reg, m.mil_call,
+            COUNT(*)::int as co_occurrences,
+            MIN(ABS(EXTRACT(EPOCH FROM (a.detection_timestamp - m.detection_timestamp))))::int as min_delta_sec,
+            ROUND(AVG(a.am_alt)::numeric, 0)::int as avg_am_alt,
+            ROUND(AVG(m.mil_alt)::numeric, 0)::int as avg_mil_alt
+          FROM am_times a
+          JOIN mil_times m ON ABS(EXTRACT(EPOCH FROM (a.detection_timestamp - m.detection_timestamp))) < 300
+          GROUP BY a.am_reg, m.mil_reg, m.mil_call
+          ORDER BY co_occurrences DESC
+          LIMIT 30
+        `)
+      ]);
+
+      return {
+        n528Profile: n528Profile[0] || {},
+        allAirMethodsInGrid: allAirMethodsProfile,
+        kcsoCoOccurrences: kcsoCoOccurrence,
+        nightOperations: nightOps,
+        altitudeDistribution: altitudeDistribution,
+        medicalComparison: medicalComparison,
+        militaryCoOccurrence: militaryCoOccurrence,
+        summary: {
+          n528TotalInGrid: n528Profile[0]?.total_detections || 0,
+          kcsoCoOccurrenceCount: kcsoCoOccurrence.length,
+          nightOpsCount: n528Profile[0]?.night_ops || 0,
+          loiterEvents: n528Profile[0]?.loiter_events || 0,
+          militaryCoOccurrenceCount: militaryCoOccurrence.length,
+          conclusion: kcsoCoOccurrence.length > 10
+            ? `N528AM has ${kcsoCoOccurrence.length} temporal co-occurrences with KCSO within 5 minutes — this is NOT normal medical transport behavior. Medical helicopters do not synchronize with law enforcement unless coordinating ISR.`
+            : `Found ${kcsoCoOccurrence.length} KCSO co-occurrences. Insufficient to prove coordination.`
+        }
+      };
+    }
+
     default:
       return null;
   }

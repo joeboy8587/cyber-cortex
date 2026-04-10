@@ -107,6 +107,7 @@ const HANDLER6_ACTIONS = new Set([
   'mlAnomalyScore',
   'tulareCountyScan',
   'kcsoHexCrossRef',
+  'airMethodsISRAnalysis',
 ]);
 
 async function getHandler1() {

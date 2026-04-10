@@ -1,4 +1,5 @@
 import { DashboardLayout } from "@/components/DashboardLayout";
+import { DailyFlightIntelligenceReport } from "@/components/dashboard/DailyFlightIntelligenceReport";
 import TaxonomyBridgePanel from "@/components/dashboard/TaxonomyBridgePanel";
 import AnonymousAnomalyAuditor from "@/components/dashboard/AnonymousAnomalyAuditor";
 import AircraftMapVisualization from "@/components/dashboard/AircraftMapVisualization";
@@ -159,6 +160,9 @@ export default function Surveillance() {
           </TabsContent>
 
           <TabsContent value="watchtower" className="space-y-6">
+            <section>
+              <DailyFlightIntelligenceReport />
+            </section>
             <section>
               <AutonomousWatchtower />
             </section>

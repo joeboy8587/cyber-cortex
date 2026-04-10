@@ -357,7 +357,7 @@ export async function handleAction8(action: string, body: Record<string, any>, s
     }
 
     case 'getMilitaryAircraft': {
-      await sql`SET statement_timeout = '15s'`;
+      await sql`SET statement_timeout = '12s'`;
       
       // Use taxonomy_tag index + known registration patterns for speed
       const militaryFlights = await sql`
@@ -367,8 +367,7 @@ export async function handleAction8(action: string, body: Record<string, any>, s
           COUNT(*) as detection_count,
           ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as avg_altitude,
           MIN(detection_timestamp) as first_seen,
-          MAX(detection_timestamp) as last_seen,
-          ROUND(AVG(COALESCE(speed, 0))::numeric, 1) as avg_speed
+          MAX(detection_timestamp) as last_seen
         FROM live_flight_detections_rows
         WHERE (
           taxonomy_tag IN ('military_asset', 'xxb_military')
@@ -382,42 +381,8 @@ export async function handleAction8(action: string, body: Record<string, any>, s
         LIMIT 50
       `;
 
-      // Government callsign flights  
-      const govFlights = await sql`
-        SELECT 
-          registration, callsign, COUNT(*) as detection_count
-        FROM live_flight_detections_rows 
-        WHERE callsign ~ '^(KNIFE|STMPD|JOLLY|COBRA|GHOST|SHADO|RAIDR|GRZLY|LOST|CNV|LBRTY|REACH|FORGE|TOPCT)[0-9]'
-        GROUP BY registration, callsign
-        ORDER BY detection_count DESC
-        LIMIT 30
-      `;
-
-      // KCSO co-occurrence counts
-      const kcsoCoOccurrence = await sql`
-        SELECT 
-          m.registration as military_reg,
-          m.callsign as military_callsign,
-          COUNT(*) as co_occurrences
-        FROM live_flight_detections_rows m
-        JOIN live_flight_detections_rows k 
-          ON k.registration IN ('N912KC', 'N913KC')
-          AND ABS(EXTRACT(EPOCH FROM m.detection_timestamp - k.detection_timestamp)) < 1800
-        WHERE (
-          m.taxonomy_tag IN ('military_asset', 'xxb_military')
-          OR m.callsign ~ '^(KNIFE|STMPD|JOLLY|COBRA|GHOST|SHADO)[0-9]'
-        )
-        AND m.registration NOT IN ('N912KC', 'N913KC')
-        GROUP BY m.registration, m.callsign
-        HAVING COUNT(*) >= 5
-        ORDER BY co_occurrences DESC
-        LIMIT 20
-      `;
-
       return {
         militaryFlights,
-        govFlights,
-        kcsoCoOccurrence,
         timestamp: new Date().toISOString()
       };
     }

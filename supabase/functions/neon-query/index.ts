@@ -114,6 +114,7 @@ const HANDLER6_ACTIONS = new Set([
 const HANDLER7_ACTIONS = new Set([
   'fullArchiveCensus',
   'crossDomainQuery',
+  'dropVectorTables',
 ]);
 
 async function getHandler1() {

@@ -172,6 +172,138 @@ export function JosiahSentinelMonitor() {
     }
   };
 
+  const exportToPDF = useCallback(async () => {
+    if (!report) {
+      toast.error('No scan data to export. Run a scan first.');
+      return;
+    }
+    toast.info('Generating PDF report...');
+    try {
+      const printWindow = window.open('', '_blank');
+      if (!printWindow) {
+        toast.error('Pop-up blocked. Please allow pop-ups for this site.');
+        return;
+      }
+
+      const severityIcon = (s: string) => s === 'critical' ? '🔴' : s === 'high' ? '🟠' : '🟡';
+      const now = new Date().toISOString();
+      const scanTime = new Date(report.scan_timestamp).toLocaleString();
+
+      const violationsHTML = report.violations.map((v, i) => `
+        <tr>
+          <td>${i + 1}</td>
+          <td><strong>${v.registration}</strong></td>
+          <td>${severityIcon(v.severity)} ${v.severity.toUpperCase()}</td>
+          <td>${v.type.replace(/_/g, ' ')}</td>
+          <td>${v.altitude ? v.altitude + ' ft' : '—'}</td>
+          <td>${v.details}</td>
+          <td>${new Date(v.timestamp).toLocaleString()}</td>
+        </tr>
+      `).join('');
+
+      const countermeasuresHTML = (report.countermeasures || []).map((cm, i) => `
+        <tr>
+          <td>${i + 1}</td>
+          <td><strong>${cm.registration}</strong></td>
+          <td>${cm.priority.toUpperCase()}</td>
+          <td>Level ${cm.escalation_level}/5</td>
+          <td>${cm.total_violations}</td>
+          <td>${cm.action}</td>
+          <td>${cm.status}</td>
+        </tr>
+      `).join('');
+
+      const patternsHTML = (report.learned_patterns || []).map((p, i) => `
+        <tr>
+          <td>${i + 1}</td>
+          <td>${p.pattern_type.replace(/_/g, ' ').toUpperCase()}</td>
+          <td>${Number(p.confidence).toFixed(0)}%</td>
+          <td>${p.evidence_count}</td>
+          <td>${p.description}</td>
+        </tr>
+      `).join('');
+
+      const threatColor = report.threat_level === 'CRITICAL' ? '#dc2626' :
+        report.threat_level === 'HIGH' ? '#ea580c' :
+        report.threat_level === 'ELEVATED' ? '#ca8a04' : '#16a34a';
+
+      const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>SENTINEL REPORT — ${scanTime}</title>
+<style>
+  @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+  body { font-family: 'Courier New', monospace; margin: 40px; color: #111; font-size: 11px; }
+  h1 { font-size: 20px; border-bottom: 3px solid #111; padding-bottom: 8px; }
+  h2 { font-size: 14px; margin-top: 24px; border-bottom: 1px solid #999; padding-bottom: 4px; }
+  .threat-banner { background: ${threatColor}; color: white; padding: 16px; font-size: 18px; font-weight: bold; text-align: center; margin: 16px 0; }
+  table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 10px; }
+  th, td { border: 1px solid #ccc; padding: 4px 6px; text-align: left; }
+  th { background: #f0f0f0; font-weight: bold; }
+  .meta { color: #666; font-size: 10px; }
+  .synthesis { background: #f8f8f8; border-left: 4px solid ${threatColor}; padding: 12px; margin: 12px 0; white-space: pre-wrap; font-size: 11px; }
+  .footer { margin-top: 32px; border-top: 2px solid #111; padding-top: 8px; font-size: 9px; color: #666; }
+  .stats { display: flex; gap: 24px; margin: 8px 0; }
+  .stat { text-align: center; }
+  .stat-value { font-size: 24px; font-weight: bold; }
+  .stat-label { font-size: 9px; color: #666; }
+</style></head><body>
+<h1>🛡️ JOSIAH SENTINEL — THREAT ASSESSMENT REPORT</h1>
+<p class="meta">Generated: ${now} | Scan Window: ${report.window_minutes} minutes | Classification: CONFIDENTIAL — ATTORNEY WORK PRODUCT</p>
+
+<div class="threat-banner">⚠️ THREAT LEVEL: ${report.threat_level} — ${report.violations.filter(v => v.severity === 'critical').length} CRITICAL VIOLATIONS</div>
+
+<div class="stats">
+  <div class="stat"><div class="stat-value">${report.detections_analyzed}</div><div class="stat-label">Detections Analyzed</div></div>
+  <div class="stat"><div class="stat-value">${report.violations.length}</div><div class="stat-label">Violations</div></div>
+  <div class="stat"><div class="stat-value">${report.violations.filter(v => v.severity === 'critical').length}</div><div class="stat-label">Critical</div></div>
+  <div class="stat"><div class="stat-value">${(report.countermeasures || []).length}</div><div class="stat-label">Countermeasures</div></div>
+  <div class="stat"><div class="stat-value">${(report.learned_patterns || []).length}</div><div class="stat-label">Patterns</div></div>
+</div>
+
+<h2>1. ACTIVE VIOLATIONS (${report.violations.length})</h2>
+<table>
+  <tr><th>#</th><th>Registration</th><th>Severity</th><th>Type</th><th>Altitude</th><th>Details</th><th>Timestamp</th></tr>
+  ${violationsHTML || '<tr><td colspan="7">No violations detected</td></tr>'}
+</table>
+
+${report.proactive_alerts && report.proactive_alerts.length > 0 ? `
+<h2>2. PROACTIVE ALERTS</h2>
+<ul>${report.proactive_alerts.map(a => `<li>${a}</li>`).join('')}</ul>
+` : ''}
+
+<h2>3. AI COUNTERMEASURE RECOMMENDATIONS (${(report.countermeasures || []).length})</h2>
+<table>
+  <tr><th>#</th><th>Registration</th><th>Priority</th><th>Escalation</th><th>Total Violations</th><th>Recommended Action</th><th>Status</th></tr>
+  ${countermeasuresHTML || '<tr><td colspan="7">No countermeasures generated</td></tr>'}
+</table>
+
+<h2>4. LEARNED PATTERNS (90-DAY ANALYSIS)</h2>
+<table>
+  <tr><th>#</th><th>Pattern Type</th><th>Confidence</th><th>Evidence Count</th><th>Description</th></tr>
+  ${patternsHTML || '<tr><td colspan="5">No patterns detected</td></tr>'}
+</table>
+
+${report.ai_synthesis ? `
+<h2>5. AI THREAT SYNTHESIS</h2>
+<div class="synthesis">${report.ai_synthesis}</div>
+` : ''}
+
+<div class="footer">
+  <p>JOSIAH SENTINEL AUTONOMOUS THREAT ASSESSMENT | Scan ID: ${report.scan_timestamp}</p>
+  <p>This report is generated from live telemetry analysis and constitutes evidentiary documentation.</p>
+  <p>Chain of custody: Auto-generated by AI sentinel system — no human modification post-generation.</p>
+</div>
+</body></html>`;
+
+      printWindow.document.write(html);
+      printWindow.document.close();
+      setTimeout(() => { printWindow.print(); }, 500);
+      toast.success('PDF report ready — use Print > Save as PDF');
+    } catch (err) {
+      toast.error('Export failed');
+      console.error(err);
+    }
+  }, [report]);
+
   return (
     <div className="space-y-4">
       {/* Header Controls */}

@@ -106,6 +106,7 @@ const HANDLER6_ACTIONS = new Set([
   'backfillSquawk',
   'mlAnomalyScore',
   'tulareCountyScan',
+  'kcsoHexCrossRef',
 ]);
 
 async function getHandler1() {

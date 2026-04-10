@@ -473,6 +473,93 @@ export async function handleAction6(action: string, body: Record<string, any>, s
       };
     }
 
+    // ==================== KCSO HEX CROSS-REFERENCE ====================
+    case 'kcsoHexCrossRef': {
+      // Computed FAA Mode-S hex codes for KCSO fleet
+      const kcsoHexCodes: Record<string, string> = {
+        'N197E': 'A17DE4',  // MD 500E
+        'N397E': 'A49882',  // Bell OH-58A
+        'N497E': 'A625D1',  // Bell OH-58A
+        'N912KC': 'AC69D8', // Known KCSO
+        'N913KC': 'AC6D3B', // Known KCSO
+      };
+
+      const targetHexes = Object.values(kcsoHexCodes);
+      const targetRegs = Object.keys(kcsoHexCodes);
+
+      // Search for these hex codes appearing under ANY registration
+      const [hexMatches, regMatches, profileMatches, bellDetections] = await Promise.all([
+        sql`SELECT 
+              icao_code, registration, callsign,
+              COUNT(*)::int as detections,
+              MIN(altitude)::int as min_alt,
+              ROUND(AVG(NULLIF(altitude,0))::numeric,0)::int as avg_alt,
+              MIN(detection_timestamp) as first_seen,
+              MAX(detection_timestamp) as last_seen
+            FROM live_flight_detections_rows
+            WHERE icao_code IN ${sql(targetHexes)}
+            GROUP BY icao_code, registration, callsign
+            ORDER BY detections DESC
+            LIMIT 100`.catch(() => []),
+
+        sql`SELECT 
+              icao_code, registration, callsign,
+              COUNT(*)::int as detections,
+              MIN(altitude)::int as min_alt,
+              ROUND(AVG(NULLIF(altitude,0))::numeric,0)::int as avg_alt,
+              MIN(detection_timestamp) as first_seen,
+              MAX(detection_timestamp) as last_seen
+            FROM live_flight_detections_rows
+            WHERE registration IN ${sql(targetRegs)}
+            GROUP BY icao_code, registration, callsign
+            ORDER BY detections DESC
+            LIMIT 100`.catch(() => []),
+
+        sql`SELECT registration, icao24, threat_tier, operator, aircraft_type, taxonomy_tag, total_detections
+            FROM aircraft_profiles_enriched
+            WHERE registration IN ${sql(targetRegs)}
+               OR icao24 IN ${sql(targetHexes)}
+            LIMIT 50`.catch(() => []),
+
+        // Search for Bell 407/OH-58 type aircraft with no registration (ghost helicopters)
+        sql`SELECT 
+              icao_code, registration, callsign,
+              COUNT(*)::int as detections,
+              MIN(altitude)::int as min_alt,
+              ROUND(AVG(NULLIF(altitude,0))::numeric,0)::int as avg_alt,
+              MIN(detection_timestamp) as first_seen,
+              MAX(detection_timestamp) as last_seen
+            FROM live_flight_detections_rows
+            WHERE (registration IS NULL OR registration = '' OR registration LIKE '~%')
+              AND altitude BETWEEN 100 AND 10000
+              AND speed BETWEEN 50 AND 150
+              AND latitude BETWEEN 35.0 AND 36.0
+              AND longitude BETWEEN -119.5 AND -118.0
+              AND detection_timestamp > NOW() - INTERVAL '30 days'
+            GROUP BY icao_code, registration, callsign
+            HAVING COUNT(*) > 2
+            ORDER BY detections DESC
+            LIMIT 50`.catch(() => []),
+      ]);
+
+      return {
+        kcsoHexCodes,
+        hexMatches,
+        regMatches,
+        profileMatches,
+        ghostHelicopters: bellDetections,
+        summary: {
+          hexMatchCount: hexMatches.length,
+          regMatchCount: regMatches.length,
+          profileCount: profileMatches.length,
+          ghostHelicopterCount: bellDetections.length,
+          conclusion: hexMatches.length === 0 && regMatches.length === 0
+            ? 'ZERO detections for KCSO hex codes OR registrations across 23M+ records. Confirms transponder-off or identity-masked operations.'
+            : `Found ${hexMatches.length} hex matches and ${regMatches.length} registration matches.`,
+        },
+      };
+    }
+
     default:
       return null;
   }

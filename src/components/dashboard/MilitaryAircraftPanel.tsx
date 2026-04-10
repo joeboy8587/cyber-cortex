@@ -58,82 +58,22 @@ export function MilitaryAircraftPanel() {
   useEffect(() => {
     const fetchMilitaryData = async () => {
       try {
-        // Query for military-pattern registrations
-        const { data: militaryData } = await supabase.functions.invoke("neon-query", {
-          body: {
-            action: "customQuery",
-            query: `
-              SELECT 
-                registration,
-                COUNT(*) as detection_count,
-                AVG(altitude) as avg_altitude
-              FROM live_flight_detections_rows 
-              WHERE 
-                registration ~ '^[0-9]{2}-[0-9]{5}$'
-                OR registration ~ '^[0-9]{6}$'
-                OR registration LIKE 'RAIDR%'
-                OR registration LIKE 'NAVY%'
-                OR registration LIKE 'USAF%'
-                OR registration LIKE 'ARMY%'
-                OR registration LIKE 'CGTR%'
-                OR callsign ILIKE '%military%'
-                OR callsign ILIKE '%navy%'
-                OR callsign ILIKE '%air force%'
-                OR callsign ILIKE '%coast guard%'
-                OR callsign ILIKE '%army%'
-              GROUP BY registration
-              ORDER BY detection_count DESC
-              LIMIT 25
-            `
-          }
+        const { data, error } = await supabase.functions.invoke("neon-query", {
+          body: { action: "getMilitaryAircraft" }
         });
 
-        // Query for government callsign flights
-        const { data: govData } = await supabase.functions.invoke("neon-query", {
-          body: {
-            action: "customQuery",
-            query: `
-              SELECT 
-                registration,
-                callsign,
-                COUNT(*) as detection_count
-              FROM live_flight_detections_rows 
-              WHERE 
-                callsign ILIKE '%government%'
-                OR callsign ILIKE '%federal%'
-                OR callsign ILIKE '%state of%'
-                OR callsign ILIKE '%sheriff%'
-              GROUP BY registration, callsign
-              ORDER BY detection_count DESC
-              LIMIT 15
-            `
-          }
-        });
+        if (error) throw error;
 
-        // Count total military events
-        const { data: totalCount } = await supabase.functions.invoke("neon-query", {
-          body: {
-            action: "customQuery",
-            query: `
-              SELECT COUNT(*) as count FROM live_flight_detections_rows 
-              WHERE 
-                registration ~ '^[0-9]{2}-[0-9]{5}$'
-                OR registration ~ '^[0-9]{6}$'
-                OR registration LIKE 'RAIDR%'
-                OR callsign ILIKE '%military%'
-                OR callsign ILIKE '%navy%'
-                OR callsign ILIKE '%air force%'
-            `
-          }
-        });
+        const militaryEvents = Array.isArray(data?.militaryFlights) ? data.militaryFlights : [];
+        const kcsoCoOcc = Array.isArray(data?.kcsoCoOccurrence) ? data.kcsoCoOccurrence : [];
 
-        const militaryEvents = Array.isArray(militaryData) ? militaryData : (militaryData?.data || []);
-        const totalCountArr = Array.isArray(totalCount) ? totalCount : (totalCount?.data || []);
-        const totalEvents = parseInt(totalCountArr[0]?.count || "0");
+        // Total detections across all military flights
+        const totalEvents = militaryEvents.reduce((sum: number, e: any) => sum + parseInt(e.detection_count || "0"), 0);
 
         // Assign agencies to registrations
-        const topMilitaryAircraft: MilitaryEvent[] = militaryEvents.slice(0, 15).map((event: { registration: string; callsign: string; detection_count: string; avg_altitude: string }) => {
+        const topMilitaryAircraft: MilitaryEvent[] = militaryEvents.slice(0, 15).map((event: any) => {
           const known = knownMilitaryRegistrations.find(k => event.registration === k.reg);
+          const coOcc = kcsoCoOcc.find((c: any) => c.military_reg === event.registration);
           return {
             registration: event.registration,
             detectionCount: parseInt(event.detection_count || "0"),
@@ -146,7 +86,7 @@ export function MilitaryAircraftPanel() {
         setStats({
           totalMilitaryEvents: totalEvents,
           uniqueRegistrations: militaryEvents.length,
-          agenciesIdentified: ["USAF", "US Navy", "Point Mugu Naval Base", "DOD Contractors", "US Coast Guard"],
+          agenciesIdentified: ["USAF", "US Navy", "US Army", "Point Mugu Naval Base", "DOD Contractors"],
           topMilitaryAircraft
         });
       } catch (error) {

@@ -91,7 +91,7 @@ serve(async (req) => {
       let totalBiometrics = 0;
       
       try {
-        const neon = await getNeonClient(10000);
+        const neon = await getNeonClient(6000);
         
         // Use reltuples estimate for large tables to avoid timeout
         const flightCount = await neon.queryObject<{ count: string }>(
@@ -104,9 +104,10 @@ serve(async (req) => {
         );
         totalBiometrics = parseInt(bioCount.rows[0]?.count || "0", 10);
         
-        await neon.end();
+        await neon.end().catch(() => {});
       } catch (e) {
-        console.log("[forensic-linker] Neon query error:", e);
+        console.warn("[forensic-linker] Neon stats skipped (non-fatal):", (e as Error)?.message);
+        // Continue with zeros — Neon stats are supplementary
       }
 
       // Count linked records from chain_links

@@ -108,6 +108,8 @@ const HANDLER6_ACTIONS = new Set([
   'tulareCountyScan',
   'kcsoHexCrossRef',
   'airMethodsISRAnalysis',
+  'fullArchiveCensus',
+  'crossDomainQuery',
 ]);
 
 async function getHandler1() {

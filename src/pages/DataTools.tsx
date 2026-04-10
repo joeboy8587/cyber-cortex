@@ -1,5 +1,6 @@
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { SchemaFragmentationPanel } from "@/components/dashboard/SchemaFragmentationPanel";
+import { ArchiveManifestDashboard } from "@/components/dashboard/ArchiveManifestDashboard";
 import { TableExplorer } from "@/components/dashboard/TableExplorer";
 import { SqlConsole } from "@/components/dashboard/SqlConsole";
 import { DatabaseStats } from "@/components/dashboard/DatabaseStats";
@@ -47,7 +48,12 @@ export default function DataTools() {
           </div>
         </div>
 
-        {/* Schema Fragmentation Analysis - top priority */}
+        {/* Archive Manifest — Full Connection Engine */}
+        <section>
+          <ArchiveManifestDashboard />
+        </section>
+
+        {/* Schema Fragmentation Analysis */}
         <section>
           <SchemaFragmentationPanel />
         </section>

@@ -76,39 +76,8 @@ export const CanadianMilitaryTracker = () => {
   const fetchCanadianAircraft = useCallback(async () => {
     setLoading(true);
     try {
-      // Query for Canadian aircraft in Bakersfield corridor
       const { data, error } = await supabase.functions.invoke('neon-query', {
-        body: {
-          action: 'customQuery',
-          query: `
-            SELECT 
-              registration,
-              callsign,
-              callsign as operator,
-              COUNT(*) as detections,
-              ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as avg_altitude,
-              MIN(detection_timestamp) as first_seen,
-              MAX(detection_timestamp) as last_seen
-            FROM live_flight_detections_rows
-            WHERE 
-              (
-                registration LIKE 'C-%' OR 
-                registration LIKE 'CF%' OR
-                callsign LIKE 'CF%' OR
-                callsign LIKE 'AC%' OR
-                callsign LIKE 'WJA%' OR
-                callsign LIKE 'TSC%' OR
-                callsign LIKE 'SKV%' OR
-                callsign LIKE 'PDG%' OR
-                callsign ~ '^C[A-Z]{3}[0-9]'
-              )
-              AND registration IS NOT NULL AND registration != ''
-            GROUP BY registration, callsign
-            HAVING COUNT(*) >= 2
-            ORDER BY detections DESC
-            LIMIT 100
-          `
-        }
+        body: { action: 'getCanadianCorridor' }
       });
 
       if (error) throw error;

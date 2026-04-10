@@ -356,6 +356,98 @@ export async function handleAction8(action: string, body: Record<string, any>, s
       };
     }
 
+    case 'getMilitaryAircraft': {
+      await sql`SET statement_timeout = '12s'`;
+      
+      // First try taxonomy_tag index (fast path)
+      let militaryFlights = await sql`
+        SELECT 
+          registration,
+          callsign,
+          COUNT(*) as detection_count,
+          ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as avg_altitude,
+          MIN(detection_timestamp) as first_seen,
+          MAX(detection_timestamp) as last_seen
+        FROM live_flight_detections_rows
+        WHERE taxonomy_tag IN ('military_asset', 'xxb_military')
+        AND registration IS NOT NULL AND registration != ''
+        GROUP BY registration, callsign
+        ORDER BY detection_count DESC
+        LIMIT 50
+      `;
+
+      // If taxonomy yielded few results, supplement with callsign pattern match on recent data only
+      if (militaryFlights.length < 10) {
+        const supplemental = await sql`
+          SELECT 
+            registration,
+            callsign,
+            COUNT(*) as detection_count,
+            ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as avg_altitude,
+            MIN(detection_timestamp) as first_seen,
+            MAX(detection_timestamp) as last_seen
+          FROM live_flight_detections_rows
+          WHERE callsign ~ '^(KNIFE|STMPD|JOLLY|COBRA|GHOST|SHADO|RAIDR|GRZLY|LOST|CNV|LBRTY|REACH|FORGE|TOPCT)[0-9]'
+            AND registration IS NOT NULL AND registration != ''
+            AND detection_timestamp > NOW() - INTERVAL '90 days'
+          GROUP BY registration, callsign
+          ORDER BY detection_count DESC
+          LIMIT 30
+        `;
+        // Merge, dedup by registration+callsign
+        const seen = new Set(militaryFlights.map((r: any) => `${r.registration}|${r.callsign}`));
+        for (const s of supplemental) {
+          if (!seen.has(`${(s as any).registration}|${(s as any).callsign}`)) {
+            militaryFlights.push(s as any);
+          }
+        }
+      }
+
+      return {
+        militaryFlights,
+        timestamp: new Date().toISOString()
+      };
+    }
+
+    case 'getCanadianCorridor': {
+      await sql`SET statement_timeout = '15s'`;
+      
+      const canadianAircraft = await sql`
+        SELECT 
+          registration,
+          callsign,
+          callsign as operator,
+          COUNT(*) as detections,
+          ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as avg_altitude,
+          MIN(detection_timestamp) as first_seen,
+          MAX(detection_timestamp) as last_seen
+        FROM live_flight_detections_rows
+        WHERE (
+          registration LIKE 'C-%' OR 
+          registration LIKE 'CF%' OR
+          callsign LIKE 'CF%' OR
+          callsign LIKE 'AC%' OR
+          callsign LIKE 'WJA%' OR
+          callsign LIKE 'TSC%' OR
+          callsign LIKE 'SKV%' OR
+          callsign LIKE 'PDG%' OR
+          callsign ~ '^C[A-Z]{3}[0-9]'
+        )
+        AND registration IS NOT NULL AND registration != ''
+        AND latitude BETWEEN 35.20 AND 35.80
+        AND longitude BETWEEN -119.40 AND -118.70
+        GROUP BY registration, callsign
+        HAVING COUNT(*) >= 2
+        ORDER BY detections DESC
+        LIMIT 100
+      `;
+
+      return {
+        data: canadianAircraft,
+        timestamp: new Date().toISOString()
+      };
+    }
+
     default:
       return null;
   }

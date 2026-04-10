@@ -7,6 +7,7 @@ let _handleAction4: ((action: string, body: Record<string, any>, sql: any) => Pr
 let _handleAction5: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
 let _handleAction6: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
 let _handleAction7: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
+let _handleAction8: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
 
 const HANDLER1_ACTIONS = new Set([
   'getBehavioralAlignment',
@@ -117,63 +118,48 @@ const HANDLER7_ACTIONS = new Set([
   'dropVectorTables',
 ]);
 
+const HANDLER8_ACTIONS = new Set([
+  'getKernCountyFlights',
+  'unifiedFlightQuery',
+  'getFlaggedAircraftData',
+  'cleanupNullDetections',
+  'getIngestionStats',
+]);
+
 async function getHandler1() {
-  if (!_handleAction) {
-    const mod = await import("./handlers.ts");
-    _handleAction = mod.handleAction;
-  }
+  if (!_handleAction) { const mod = await import("./handlers.ts"); _handleAction = mod.handleAction; }
   return _handleAction;
 }
-
 async function getHandler2() {
-  if (!_handleAction2) {
-    const mod = await import("./handlers2.ts");
-    _handleAction2 = mod.handleAction2;
-  }
+  if (!_handleAction2) { const mod = await import("./handlers2.ts"); _handleAction2 = mod.handleAction2; }
   return _handleAction2;
 }
-
 async function getHandler3() {
-  if (!_handleAction3) {
-    const mod = await import("./handlers3.ts");
-    _handleAction3 = mod.handleAction3;
-  }
+  if (!_handleAction3) { const mod = await import("./handlers3.ts"); _handleAction3 = mod.handleAction3; }
   return _handleAction3;
 }
-
 async function getHandler4() {
-  if (!_handleAction4) {
-    const mod = await import("./handlers4.ts");
-    _handleAction4 = mod.handleAction4;
-  }
+  if (!_handleAction4) { const mod = await import("./handlers4.ts"); _handleAction4 = mod.handleAction4; }
   return _handleAction4;
 }
-
 async function getHandler5() {
-  if (!_handleAction5) {
-    const mod = await import("./handlers5.ts");
-    _handleAction5 = mod.handleAction5;
-  }
+  if (!_handleAction5) { const mod = await import("./handlers5.ts"); _handleAction5 = mod.handleAction5; }
   return _handleAction5;
 }
-
 async function getHandler6() {
-  if (!_handleAction6) {
-    const mod = await import("./handlers6.ts");
-    _handleAction6 = mod.handleAction6;
-  }
+  if (!_handleAction6) { const mod = await import("./handlers6.ts"); _handleAction6 = mod.handleAction6; }
   return _handleAction6;
 }
-
 async function getHandler7() {
-  if (!_handleAction7) {
-    const mod = await import("./handlers7.ts");
-    _handleAction7 = mod.handleAction7;
-  }
+  if (!_handleAction7) { const mod = await import("./handlers7.ts"); _handleAction7 = mod.handleAction7; }
   return _handleAction7;
 }
+async function getHandler8() {
+  if (!_handleAction8) { const mod = await import("./handlers8.ts"); _handleAction8 = mod.handleAction8; }
+  return _handleAction8;
+}
 
-const VERSION = "2.12.3";
+const VERSION = "2.13.0";
 console.log(`neon-query v${VERSION} booting...`);
 
 const corsHeaders = {
@@ -182,11 +168,6 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-// ── Singleton connection pool ──────────────────────────────────────────
-// Reuse a single postgres.js instance across all requests within the same
-// isolate lifetime.  postgres.js already manages an internal pool; creating
-// a new instance per request was the root cause of "too many connection
-// attempts" errors under concurrent panel loads.
 let _sql: ReturnType<typeof postgres> | null = null;
 let _sqlReady: Promise<ReturnType<typeof postgres>> | null = null;
 
@@ -203,21 +184,20 @@ function getConnection(): Promise<ReturnType<typeof postgres>> {
 
     const sql = postgres(url.toString(), {
       ssl: { rejectUnauthorized: false },
-      max: 3,              // small pool shared across concurrent requests
-      idle_timeout: 20,     // keep alive between bursts
+      max: 3,
+      idle_timeout: 20,
       connect_timeout: 15,
       fetch_types: false,
       prepare: false,
       connection: {
         application_name: 'neon-query-edge-v' + VERSION,
-        statement_timeout: '25000',   // 25s hard limit per query
+        statement_timeout: '25000',
       },
       onnotice: () => {},
       debug: false,
       transform: { undefined: null },
     });
 
-    // Quick connectivity check with retry
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
         const testPromise = sql`SELECT 1 as connected`;
@@ -237,7 +217,6 @@ function getConnection(): Promise<ReturnType<typeof postgres>> {
     _sql = sql;
     return sql;
   })().catch((err) => {
-    // Reset so the next request can retry
     _sqlReady = null;
     _sql = null;
     throw err;
@@ -279,7 +258,6 @@ Deno.serve(async (req) => {
       }
 
       const sql = await getConnection();
-
       let result: unknown;
 
       switch (action) {
@@ -344,8 +322,8 @@ Deno.serve(async (req) => {
           const triggerTable = body.triggerTable;
           if (!triggerName || !triggerTable) throw new Error('triggerName and triggerTable are required');
           const safeTrigger = triggerName.replace(/[^a-zA-Z0-9_]/g, '');
-          const safeTable = triggerTable.replace(/[^a-zA-Z0-9_]/g, '');
-          result = await sql.unsafe(`DROP TRIGGER IF EXISTS ${safeTrigger} ON ${safeTable}`);
+          const safeTable2 = triggerTable.replace(/[^a-zA-Z0-9_]/g, '');
+          result = await sql.unsafe(`DROP TRIGGER IF EXISTS ${safeTrigger} ON ${safeTable2}`);
           break;
         }
 
@@ -391,224 +369,38 @@ Deno.serve(async (req) => {
           break;
         }
 
-        case 'getKernCountyFlights': {
-          const limitCount = body.limit || 100;
-          result = await sql.unsafe(`
-            SELECT COALESCE(icao_code,'') as hex, COALESCE(registration,'') as registration, COALESCE(callsign,'') as callsign,
-              COALESCE(altitude,0) as altitude, COALESCE(speed,0) as speed, latitude, longitude,
-              COALESCE(heading,0) as heading, COALESCE(detection_timestamp,created_at) as event_time,
-              taxonomy_tag, COALESCE(threat_score,0) as threat_score, COALESCE(flagged,false) as is_flagged,
-              flagged_reasons, 'live_detection' as data_source,
-              CASE WHEN taxonomy_tag IN ('tier1_priority','xxb_tier1_priority','tier0_kcso','xxb_tier0_kcso','xxb_kcso','xxb_kcso_shell') THEN 'critical'
-                WHEN taxonomy_tag IN ('tier2_shell','xxb_tier2_shell','xxb_shell') THEN 'high'
-                WHEN taxonomy_tag IN ('military_asset','xxb_military') THEN 'high'
-                WHEN taxonomy_tag IN ('medical_air','xxb_medical_air') THEN 'medium'
-                WHEN altitude < 1500 AND altitude > 0 THEN 'medium' ELSE 'normal' END as threat_level,
-              CASE WHEN taxonomy_tag IN ('military_asset','xxb_military') OR registration ~ '^[0-9]{2}-[0-9]{5}$' THEN true ELSE false END as is_military
-            FROM live_flight_detections_rows
-            WHERE latitude BETWEEN 35.20 AND 35.60 AND longitude BETWEEN -119.25 AND -118.75
-              AND latitude IS NOT NULL AND longitude IS NOT NULL
-            ORDER BY detection_timestamp DESC NULLS LAST LIMIT ${limitCount}
-          `);
-          break;
-        }
-
-        case 'unifiedFlightQuery': {
-          const limitCount = body.limit || 200;
-          const timeWindow = body.timeWindow || '30 days';
-          const kernCountyOnly = body.kernCountyOnly || false;
-          const geoFilter = kernCountyOnly ? `AND latitude BETWEEN 35.20 AND 35.60 AND longitude BETWEEN -119.25 AND -118.75` : '';
-          result = await sql.unsafe(`
-            SELECT COALESCE(icao_code,'') as hex, COALESCE(registration,'') as registration,
-              COALESCE(callsign,'') as callsign, COALESCE(altitude,0) as altitude, COALESCE(speed,0) as speed,
-              latitude, longitude, COALESCE(heading,0) as heading,
-              COALESCE(detection_timestamp,created_at,NOW()) as event_time, taxonomy_tag,
-              COALESCE(threat_score,0) as threat_score, COALESCE(flagged,false) as is_flagged, flagged_reasons,
-              'live_detection' as data_source,
-              CASE WHEN taxonomy_tag IN ('tier1_priority','xxb_tier1_priority','tier0_kcso','xxb_tier0_kcso','xxb_kcso','xxb_kcso_shell') THEN 'critical'
-                WHEN taxonomy_tag IN ('tier2_shell','xxb_tier2_shell','xxb_shell') THEN 'high'
-                WHEN taxonomy_tag IN ('military_asset','xxb_military') THEN 'high'
-                WHEN altitude < 1500 AND altitude > 0 THEN 'medium' ELSE 'normal' END as threat_level,
-              CASE WHEN taxonomy_tag IN ('military_asset','xxb_military') OR registration ~ '^[0-9]{2}-[0-9]{5}$' THEN true ELSE false END as is_military
-            FROM live_flight_detections_rows
-            WHERE detection_timestamp > NOW() - INTERVAL '${timeWindow}'
-              AND latitude IS NOT NULL AND longitude IS NOT NULL AND latitude != 0 AND longitude != 0 ${geoFilter}
-            ORDER BY detection_timestamp DESC LIMIT ${limitCount}
-          `);
-          break;
-        }
-
-        case 'getFlaggedAircraftData': {
-          const registrations = body.registrations || ['N912KC','N913KC','N790FA','N788FA','N791FA','N2464D','N997SE','N743AM','N229AM','N139HP','N156HP','N74FF','N8274E'];
-          const regList = registrations.map((r: string) => `'${r.replace(/[^a-zA-Z0-9]/g, '')}'`).join(',');
-          result = await sql.unsafe(`SELECT registration, COALESCE(detection_timestamp,created_at) as event_time, altitude, latitude, longitude, callsign, taxonomy_tag, threat_score, flagged, flagged_reasons FROM live_flight_detections_rows WHERE registration IN (${regList}) ORDER BY COALESCE(detection_timestamp,created_at) DESC NULLS LAST LIMIT 200`);
-          break;
-        }
-
-        case 'cleanupNullDetections': {
-          const deleted = await sql`DELETE FROM live_flight_detections_rows WHERE latitude IS NULL OR longitude IS NULL OR latitude = 0 OR longitude = 0 RETURNING id`;
-          result = { success: true, deletedCount: Array.isArray(deleted) ? deleted.length : 0 };
-          break;
-        }
-
-        case 'getIngestionStats': {
-          const totalEstimateRows = await sql`
-            SELECT GREATEST(reltuples, 0)::bigint as total_records
-            FROM pg_class
-            WHERE oid = 'public.live_flight_detections_rows'::regclass
-          `;
-
-          const totalRecords = parseInt((totalEstimateRows[0] as any)?.total_records || '0');
-
-          const sampleStats = await sql.unsafe(`
-            WITH sample AS (
-              SELECT latitude, longitude, flagged, taxonomy_tag
-              FROM live_flight_detections_rows TABLESAMPLE SYSTEM (0.25)
-            ),
-            sample_totals AS (
-              SELECT GREATEST(COUNT(*), 1)::numeric AS sampled_rows FROM sample
-            ),
-            counts AS (
-              SELECT
-                COUNT(*) FILTER (WHERE latitude IS NOT NULL AND longitude IS NOT NULL AND latitude != 0 AND longitude != 0)::numeric AS valid_coordinates,
-                COUNT(*) FILTER (WHERE latitude IS NULL OR longitude IS NULL)::numeric AS null_coordinates,
-                COUNT(*) FILTER (WHERE latitude = 0 AND longitude = 0)::numeric AS zero_coordinates,
-                COUNT(*) FILTER (WHERE latitude BETWEEN 35.20 AND 35.60 AND longitude BETWEEN -119.25 AND -118.75)::numeric AS kern_county_flights,
-                COUNT(*) FILTER (WHERE flagged = true)::numeric AS flagged,
-                COUNT(*) FILTER (WHERE flagged IS DISTINCT FROM true)::numeric AS unflagged,
-                COUNT(*) FILTER (WHERE taxonomy_tag IN ('tier0_kcso','xxb_tier0_kcso','xxb_kcso','xxb_kcso_shell','tier1_priority','xxb_tier1_priority'))::numeric AS tier1,
-                COUNT(*) FILTER (WHERE taxonomy_tag IN ('tier2_shell','xxb_tier2_shell','xxb_shell'))::numeric AS tier2,
-                COUNT(*) FILTER (WHERE taxonomy_tag IN ('low_alt_suspicious','xxb_low_alt_suspicious','military_asset','xxb_military'))::numeric AS tier3
-              FROM sample
-            )
-            SELECT *
-            FROM sample_totals
-            CROSS JOIN counts
-          `);
-
-          const scaleRow = (sampleStats[0] as any) || {};
-          const sampledRows = Math.max(Number(scaleRow.sampled_rows) || 1, 1);
-          const scale = totalRecords > 0 ? totalRecords / sampledRows : 0;
-          const scaled = (value: unknown) => Math.round((Number(value) || 0) * scale);
-
-          const taxonomySample = await sql.unsafe(`
-            WITH sample AS (
-              SELECT COALESCE(taxonomy_tag, 'untagged') AS taxonomy_tag
-              FROM live_flight_detections_rows TABLESAMPLE SYSTEM (0.25)
-            ),
-            sample_totals AS (
-              SELECT GREATEST(COUNT(*), 1)::numeric AS sampled_rows FROM sample
-            )
-            SELECT taxonomy_tag, COUNT(*)::numeric AS sample_count, (SELECT sampled_rows FROM sample_totals) AS sampled_rows
-            FROM sample
-            GROUP BY taxonomy_tag
-            ORDER BY sample_count DESC
-            LIMIT 15
-          `);
-
-          const distinctStats = await sql`
-            SELECT attname, n_distinct
-            FROM pg_stats
-            WHERE schemaname = 'public'
-              AND tablename = 'live_flight_detections_rows'
-              AND attname IN ('registration', 'icao_code', 'callsign')
-          `;
-
-          const estimateDistinct = (column: string) => {
-            const row = distinctStats.find((entry: any) => entry.attname === column) as any;
-            const raw = Number(row?.n_distinct) || 0;
-            return raw < 0 ? Math.round(Math.abs(raw) * totalRecords) : Math.round(raw);
-          };
-
-          result = {
-            coordinateStats: {
-              totalRecords,
-              validCoordinates: scaled(scaleRow.valid_coordinates),
-              nullCoordinates: scaled(scaleRow.null_coordinates),
-              zeroCoordinates: scaled(scaleRow.zero_coordinates),
-              kernCountyFlights: scaled(scaleRow.kern_county_flights),
-              validationRate: totalRecords > 0 ? Number(((scaled(scaleRow.valid_coordinates) / totalRecords) * 100).toFixed(1)) : 0,
-            },
-            taxonomyDistribution: taxonomySample.map((t: any) => ({
-              tag: t.taxonomy_tag,
-              count: scaled(t.sample_count),
-              withCoords: 0,
-            })),
-            recentActivity: [],
-            flagStats: {
-              flagged: scaled(scaleRow.flagged),
-              unflagged: scaled(scaleRow.unflagged),
-              tier1: scaled(scaleRow.tier1),
-              tier2: scaled(scaleRow.tier2),
-              tier3: scaled(scaleRow.tier3),
-              tier4plus: Math.max(0, scaled(scaleRow.flagged) - scaled(scaleRow.tier1) - scaled(scaleRow.tier2) - scaled(scaleRow.tier3)),
-            },
-            uniqueIdentifiers: {
-              registrations: estimateDistinct('registration'),
-              icaoCodes: estimateDistinct('icao_code'),
-              callsigns: estimateDistinct('callsign'),
-            },
-            timestamp: new Date().toISOString()
-          };
-          break;
-        }
-
-        // getDashboardCounts, getDataSourceStatus, getLegalAnalysisStats, 
-        // getFederalCaseConvergence, backfillIcaoCodes → moved to handlers2.ts
-
         default: {
-          if (HANDLER1_ACTIONS.has(action)) {
-            const h1 = await getHandler1();
-            result = await h1(action, body, sql);
-            break;
+          // Route to lazy-loaded handlers
+          const handlerMap: [Set<string>, () => Promise<(action: string, body: Record<string, any>, sql: any) => Promise<unknown>>][] = [
+            [HANDLER1_ACTIONS, getHandler1],
+            [HANDLER2_ACTIONS, getHandler2],
+            [HANDLER3_ACTIONS, getHandler3],
+            [HANDLER4_ACTIONS, getHandler4],
+            [HANDLER5_ACTIONS, getHandler5],
+            [HANDLER6_ACTIONS, getHandler6],
+            [HANDLER7_ACTIONS, getHandler7],
+            [HANDLER8_ACTIONS, getHandler8],
+          ];
+
+          let handled = false;
+          for (const [actionSet, getHandler] of handlerMap) {
+            if (actionSet.has(action)) {
+              const handler = await getHandler();
+              result = await handler(action, body, sql);
+              handled = true;
+              break;
+            }
           }
 
-          if (HANDLER2_ACTIONS.has(action)) {
-            const h2 = await getHandler2();
-            result = await h2(action, body, sql);
-            break;
-          }
-
-          if (HANDLER3_ACTIONS.has(action)) {
-            const h3 = await getHandler3();
-            result = await h3(action, body, sql);
-            break;
-          }
-
-          if (HANDLER4_ACTIONS.has(action)) {
-            const h4 = await getHandler4();
-            result = await h4(action, body, sql);
-            break;
-          }
-
-          if (HANDLER5_ACTIONS.has(action)) {
-            const h5 = await getHandler5();
-            result = await h5(action, body, sql);
-            break;
-          }
-
-          if (HANDLER6_ACTIONS.has(action)) {
-            const h6 = await getHandler6();
-            result = await h6(action, body, sql);
-            break;
-          }
-
-          if (HANDLER7_ACTIONS.has(action)) {
-            const h7 = await getHandler7();
-            result = await h7(action, body, sql);
-            break;
-          }
-
-          throw new Error(`Unknown action: ${action}`);
+          if (!handled) throw new Error(`Unknown action: ${action}`);
+          break;
         }
       }
 
-      // Singleton connection stays open — no close needed
       return new Response(JSON.stringify(result), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
     } catch (error) {
       console.error('Neon query error:', error);
-      // If the connection itself failed, reset singleton so next request retries
       if (error instanceof Error && (error.message.includes('Connection') || error.message.includes('timeout') || error.message.includes('FATAL'))) {
         _sql = null;
         _sqlReady = null;

@@ -234,6 +234,63 @@ export async function handleAction7(action: string, body: Record<string, any>, s
       };
     }
 
+    // ==================== DROP VECTOR TABLES ====================
+    case 'dropVectorTables': {
+      await sql.unsafe(`SET statement_timeout = '120s'`);
+
+      const batchOffset = body.batchOffset || 0;
+      const batchSize = Math.min(body.batchSize || 50, 80);
+
+      // Get _vectors tables in batches
+      const vectorTables = await sql.unsafe(`
+        SELECT c.relname as table_name, GREATEST(c.reltuples, 0)::bigint as row_count,
+               pg_total_relation_size(c.oid)::bigint as size_bytes
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname LIKE '%_vectors'
+        ORDER BY c.relname
+        LIMIT ${batchSize} OFFSET ${batchOffset}
+      `);
+
+      const dryRun = body.dryRun !== false;
+      const results: { table: string; rows: number; size: number; status: string }[] = [];
+
+      for (const t of vectorTables) {
+        const name = t.table_name.replace(/[^a-zA-Z0-9_]/g, '');
+        if (dryRun) {
+          results.push({ table: name, rows: Number(t.row_count), size: Number(t.size_bytes), status: 'would_drop' });
+        } else {
+          try {
+            await sql.unsafe(`DROP TABLE IF EXISTS "${name}" CASCADE`);
+            results.push({ table: name, rows: Number(t.row_count), size: Number(t.size_bytes), status: 'dropped' });
+          } catch (e: any) {
+            results.push({ table: name, rows: Number(t.row_count), size: Number(t.size_bytes), status: `error: ${e.message}` });
+          }
+        }
+      }
+
+      const totalRows = results.reduce((s, r) => s + r.rows, 0);
+      const totalSize = results.reduce((s, r) => s + r.size, 0);
+
+      // Check if more remain
+      const remaining = await sql.unsafe(`
+        SELECT COUNT(*)::int as cnt FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname LIKE '%_vectors'
+      `);
+
+      return {
+        dryRun,
+        batchOffset,
+        batchSize,
+        tablesProcessed: results.length,
+        totalRowsFreed: totalRows,
+        totalSizeBytesFreed: totalSize,
+        remainingVectorTables: Number(remaining[0]?.cnt || 0),
+        results,
+      };
+    }
+
     default:
       return null;
   }

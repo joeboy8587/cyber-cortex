@@ -26,7 +26,7 @@ serve(async (req) => {
       const { imageBase64, filename, timestamp } = body;
       if (!imageBase64) throw new Error("imageBase64 required");
 
-      const aiResp = await fetch("https://ai.lovable.dev/v1/chat/completions", {
+      const aiResp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${LOVABLE_API_KEY}`,
@@ -88,7 +88,7 @@ Do NOT guess values. Only extract what is clearly visible.`
       const results = [];
       for (const img of images.slice(0, 5)) { // Max 5 per batch to stay within timeout
         try {
-          const aiResp = await fetch("https://ai.lovable.dev/v1/chat/completions", {
+          const aiResp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
             method: "POST",
             headers: {
               "Authorization": `Bearer ${LOVABLE_API_KEY}`,

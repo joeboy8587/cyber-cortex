@@ -448,6 +448,152 @@ export async function handleAction8(action: string, body: Record<string, any>, s
       };
     }
 
+    case 'biometricOCRAudit': {
+      // Audit all biometric/OCR tables for missing HR/HRV
+      const audit = await sql`
+        SELECT 'biometric_screenshots_ocr' as table_name,
+          COUNT(*)::int as total,
+          COUNT(CASE WHEN heart_rate IS NULL THEN 1 END)::int as hr_null,
+          COUNT(CASE WHEN hrv IS NULL THEN 1 END)::int as hrv_null,
+          COUNT(CASE WHEN ocr_text ILIKE '%heart rate%' OR ocr_text ILIKE '%bpm%' OR ocr_text ILIKE '%hrv%' OR ocr_text ILIKE '%recovery%' THEN 1 END)::int as has_bio_keywords
+        FROM biometric_screenshots_ocr
+        UNION ALL
+        SELECT 'whoop_biometrics',
+          COUNT(*)::int, COUNT(CASE WHEN resting_hr IS NULL THEN 1 END)::int,
+          COUNT(CASE WHEN hrv_score IS NULL THEN 1 END)::int, 0
+        FROM whoop_biometrics
+        UNION ALL
+        SELECT 'screenshot_ocr_data',
+          COUNT(*)::int, 0, 0,
+          COUNT(CASE WHEN extracted_text ILIKE '%heart%' OR extracted_text ILIKE '%hrv%' OR extracted_text ILIKE '%bpm%' OR extracted_text ILIKE '%stress%' THEN 1 END)::int
+        FROM screenshot_ocr_data
+        UNION ALL
+        SELECT 'biometric_evidence',
+          COUNT(*)::int, 0, 0, 0
+        FROM biometric_evidence
+        UNION ALL
+        SELECT 'biometrics_unified',
+          COUNT(*)::int, 0, 0, 0
+        FROM biometrics_unified
+        UNION ALL
+        SELECT 'biometric_monitoring',
+          COUNT(*)::int, 0, 0, 0
+        FROM biometric_monitoring
+      `;
+
+      // Get sample OCR text that contains bio keywords but has null HR/HRV
+      const extractable = await sql`
+        SELECT id, file_path, best_timestamp,
+          substring(ocr_text from 1 for 500) as ocr_preview,
+          source_app
+        FROM biometric_screenshots_ocr
+        WHERE heart_rate IS NULL
+          AND (ocr_text ILIKE '%heart rate%' OR ocr_text ILIKE '%bpm%' OR ocr_text ILIKE '%hrv%'
+            OR ocr_text ILIKE '%recovery%' OR ocr_text ILIKE '%stress%'
+            OR ocr_text ILIKE '%resting%' OR ocr_text ILIKE '%strain%')
+        ORDER BY best_timestamp ASC NULLS LAST
+        LIMIT 20
+      `;
+
+      return { audit, extractable, timestamp: new Date().toISOString() };
+    }
+
+    case 'reprocessBiometricOCR': {
+      // Re-extract HR/HRV/stress from existing OCR text using regex patterns
+      const batchSize = body.batchSize || 100;
+      const offset = body.offset || 0;
+
+      // Get records with bio keywords in OCR but null structured fields
+      const records = await sql`
+        SELECT id, ocr_text, source_app, best_timestamp
+        FROM biometric_screenshots_ocr
+        WHERE heart_rate IS NULL
+          AND ocr_text IS NOT NULL AND ocr_text != ''
+          AND (ocr_text ILIKE '%heart rate%' OR ocr_text ILIKE '%bpm%' OR ocr_text ILIKE '%hrv%'
+            OR ocr_text ILIKE '%recovery%' OR ocr_text ILIKE '%stress%'
+            OR ocr_text ILIKE '%resting%' OR ocr_text ILIKE '%strain%')
+        ORDER BY id
+        LIMIT ${batchSize} OFFSET ${offset}
+      `;
+
+      let updated = 0;
+      let skipped = 0;
+
+      for (const rec of records) {
+        const text = rec.ocr_text || '';
+
+        // Extract heart rate - multiple patterns
+        let hr: number | null = null;
+        const hrPatterns = [
+          /(?:heart\s*rate|resting\s*hr|hr)\s*[:\s]*(\d{2,3})\s*(?:bpm)?/i,
+          /(\d{2,3})\s*bpm/i,
+          /(?:bpm|beats)\s*[:\s]*(\d{2,3})/i,
+          /resting\s+(\d{2,3})/i,
+        ];
+        for (const pat of hrPatterns) {
+          const m = text.match(pat);
+          if (m) { const v = parseInt(m[1]); if (v >= 40 && v <= 220) { hr = v; break; } }
+        }
+
+        // Extract HRV
+        let hrv: number | null = null;
+        const hrvPatterns = [
+          /(?:hrv)\s*[:\s]*(\d{1,3})\s*(?:ms)?/i,
+          /(?:heart\s*rate\s*variability)\s*[:\s]*(\d{1,3})/i,
+        ];
+        for (const pat of hrvPatterns) {
+          const m = text.match(pat);
+          if (m) { const v = parseInt(m[1]); if (v >= 1 && v <= 300) { hrv = v; break; } }
+        }
+
+        // Extract stress level
+        let stress: number | null = null;
+        const stressPatterns = [
+          /(?:stress)\s*[:\s]*(\d{1,3})\s*%?/i,
+          /(?:stress\s*(?:level|score))\s*[:\s]*(\d{1,3})/i,
+        ];
+        for (const pat of stressPatterns) {
+          const m = text.match(pat);
+          if (m) { const v = parseInt(m[1]); if (v >= 0 && v <= 100) { stress = v; break; } }
+        }
+
+        // Extract recovery
+        let energy: number | null = null;
+        const recoveryPatterns = [
+          /(?:recovery)\s*[:\s]*(\d{1,3})\s*%/i,
+          /(\d{1,3})\s*%\s*recovery/i,
+        ];
+        for (const pat of recoveryPatterns) {
+          const m = text.match(pat);
+          if (m) { const v = parseInt(m[1]); if (v >= 0 && v <= 100) { energy = v; break; } }
+        }
+
+        if (hr !== null || hrv !== null || stress !== null || energy !== null) {
+          await sql`
+            UPDATE biometric_screenshots_ocr SET
+              heart_rate = COALESCE(${hr}, heart_rate),
+              hrv = COALESCE(${hrv}, hrv),
+              stress_level = COALESCE(${stress}, stress_level),
+              energy = COALESCE(${energy}, energy)
+            WHERE id = ${rec.id}
+          `;
+          updated++;
+        } else {
+          skipped++;
+        }
+      }
+
+      return {
+        processed: records.length,
+        updated,
+        skipped,
+        offset,
+        nextOffset: offset + batchSize,
+        hasMore: records.length === batchSize,
+        timestamp: new Date().toISOString()
+      };
+    }
+
     default:
       return null;
   }

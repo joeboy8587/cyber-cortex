@@ -130,6 +130,8 @@ const HANDLER8_ACTIONS = new Set([
   'quarantineMergeSwap',
   'getMilitaryAircraft',
   'getCanadianCorridor',
+  'biometricOCRAudit',
+  'reprocessBiometricOCR',
 ]);
 
 async function getHandler1() {

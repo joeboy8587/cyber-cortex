@@ -442,9 +442,10 @@ serve(async (req) => {
       }
     }
 
-    // ========== STEP 8: LEARNED PATTERNS (monitor=in-memory, deep=90-day SQL) ==========
+    // ========== STEP 8: LEARNED PATTERNS (monitor=in-memory + sentinel DB, deep=90-day SQL) ==========
     let historicalPatterns: any[] = [];
     if (isMonitorMode) {
+      // Build in-memory patterns from current window (lowered thresholds for small windows)
       const profileMap = new Map<string, { count: number; lowAlt: number; totalAlt: number; lastSeen: string }>();
       for (const d of recentDetections) {
         const reg = d.registration || d.callsign;
@@ -460,12 +461,40 @@ serve(async (req) => {
       historicalPatterns = Array.from(profileMap.entries())
         .flatMap(([registration, profile]) => {
           const rows: any[] = [];
-          if (profile.count >= 3) rows.push({ pattern_type: 'repeat_offender', registration, count: profile.count, avg_altitude: profile.count > 0 ? profile.totalAlt / profile.count : 0, last_seen: profile.lastSeen });
-          if (profile.lowAlt >= 2) rows.push({ pattern_type: 'low_altitude_pattern', registration, count: profile.lowAlt, avg_altitude: profile.totalAlt / profile.count, last_seen: profile.lastSeen });
+          // Threshold 1 = any aircraft seen in current window counts as active
+          if (profile.count >= 1) rows.push({ pattern_type: 'repeat_offender', registration, count: profile.count, avg_altitude: profile.count > 0 ? profile.totalAlt / profile.count : 0, last_seen: profile.lastSeen });
+          if (profile.lowAlt >= 1) rows.push({ pattern_type: 'low_altitude_pattern', registration, count: profile.lowAlt, avg_altitude: profile.totalAlt / profile.count, last_seen: profile.lastSeen });
           return rows;
         })
         .sort((a, b) => Number(b.count) - Number(a.count))
         .slice(0, 20);
+
+      // Supplement with persistent learned threats from Supabase sentinel_learned_threats
+      if (sbSql) {
+        try {
+          const persistentPatterns = await withTimeout(
+            sbSql`SELECT registration, threat_type, total_violations, avg_altitude, last_seen, escalation_level
+             FROM sentinel_learned_threats ORDER BY total_violations DESC LIMIT 30`,
+            5000, "persistent_patterns_query"
+          );
+          const existingRegs = new Set(historicalPatterns.map(p => p.registration));
+          for (const p of persistentPatterns) {
+            if (!existingRegs.has(p.registration)) {
+              historicalPatterns.push({
+                pattern_type: p.threat_type === 'low_altitude' ? 'low_altitude_pattern' : 'repeat_offender',
+                registration: p.registration,
+                count: Number(p.total_violations || 1),
+                avg_altitude: Number(p.avg_altitude || 0),
+                last_seen: p.last_seen || new Date().toISOString()
+              });
+              existingRegs.add(p.registration);
+            }
+          }
+          historicalPatterns.sort((a, b) => Number(b.count) - Number(a.count));
+        } catch (e) {
+          console.warn("Persistent patterns query failed:", e instanceof Error ? e.message : e);
+        }
+      }
     } else {
       try {
         historicalPatterns = await withTimeout(

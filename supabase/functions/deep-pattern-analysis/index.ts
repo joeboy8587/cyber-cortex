@@ -17,7 +17,7 @@ serve(async (req) => {
     if (!NEON_DATABASE_URL) throw new Error("NEON_DATABASE_URL not configured");
 
     const sql = postgres(NEON_DATABASE_URL, { ssl: "require", max: 1, connect_timeout: 15, idle_timeout: 15 });
-    await sql`SET statement_timeout = '25s'`;
+    await sql`SET statement_timeout = '55s'`;
 
     const results: Record<string, unknown> = {};
     const errors: string[] = [];

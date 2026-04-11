@@ -529,6 +529,7 @@ export async function handleAction8(action: string, body: Record<string, any>, s
           /(\d{2,3})\s*bpm/i,
           /(?:bpm|beats)\s*[:\s]*(\d{2,3})/i,
           /resting\s+(\d{2,3})/i,
+          /HEART\s*RATE\s*[^\d]*(\d{2,3})/i,
         ];
         for (const pat of hrPatterns) {
           const m = text.match(pat);
@@ -540,32 +541,53 @@ export async function handleAction8(action: string, body: Record<string, any>, s
         const hrvPatterns = [
           /(?:hrv)\s*[:\s]*(\d{1,3})\s*(?:ms)?/i,
           /(?:heart\s*rate\s*variability)\s*[:\s]*(\d{1,3})/i,
+          /(\d{1,3})\s*ms\b/i,
         ];
         for (const pat of hrvPatterns) {
           const m = text.match(pat);
           if (m) { const v = parseInt(m[1]); if (v >= 1 && v <= 300) { hrv = v; break; } }
         }
 
-        // Extract stress level
+        // Extract stress level - Welltory uses "STRESS 67 %" or "97% Stress"
         let stress: number | null = null;
         const stressPatterns = [
+          /STRESS\s+(\d{1,3})\s*%/i,
+          /(\d{1,3})\s*%\s*(?:\n|\s)*(?:Stress|stress)/i,
           /(?:stress)\s*[:\s]*(\d{1,3})\s*%?/i,
           /(?:stress\s*(?:level|score))\s*[:\s]*(\d{1,3})/i,
+          /Very\s+high.*?(\d{1,3})%/i,
         ];
         for (const pat of stressPatterns) {
           const m = text.match(pat);
           if (m) { const v = parseInt(m[1]); if (v >= 0 && v <= 100) { stress = v; break; } }
         }
 
-        // Extract recovery
+        // Extract energy/recovery - Welltory uses "ENERGY 45 %" or "17% Energy"
         let energy: number | null = null;
         const recoveryPatterns = [
+          /ENERGY\s+(\d{1,3})\s*%/i,
+          /(\d{1,3})\s*%\s*(?:\n|\s)*(?:Energy|energy)/i,
           /(?:recovery)\s*[:\s]*(\d{1,3})\s*%/i,
           /(\d{1,3})\s*%\s*recovery/i,
+          /(?:Shortage|Limited|Vulnerable|Energized).*?(\d{1,3})%/i,
         ];
         for (const pat of recoveryPatterns) {
           const m = text.match(pat);
           if (m) { const v = parseInt(m[1]); if (v >= 0 && v <= 100) { energy = v; break; } }
+        }
+
+        // Welltory triple-metric pattern: "82% 27% 80%" (Stress/Energy/Health)
+        if (stress === null && energy === null) {
+          const tripleMatch = text.match(/(\d{1,3})%\s+(\d{1,3})%\s+(?:\.?<?\w*>?\s*)?(\d{1,3})%/);
+          if (tripleMatch) {
+            const v1 = parseInt(tripleMatch[1]);
+            const v2 = parseInt(tripleMatch[2]);
+            const v3 = parseInt(tripleMatch[3]);
+            if (v1 <= 100 && v2 <= 100 && v3 <= 100) {
+              stress = v1;
+              energy = v2;
+            }
+          }
         }
 
         if (hr !== null || hrv !== null || stress !== null || energy !== null) {

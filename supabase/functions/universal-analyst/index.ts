@@ -120,7 +120,7 @@ async function universalSurface(sql: any, hours: number) {
       COALESCE(threat_score::int, 0) as threat_score
     FROM live_flight_detections_rows
     ORDER BY COALESCE(detection_timestamp, created_at) DESC
-    LIMIT 2000
+    LIMIT 500
   `;
 
   if (contacts.length === 0) {

@@ -110,7 +110,7 @@ async function universalSurface(sql: any, hours: number) {
     SELECT 
       COALESCE(icao_code, icao24, '') as hex_code,
       COALESCE(registration, '') as tail_number,
-      COALESCE(operator, callsign, 'UNKNOWN') as operator,
+      COALESCE(callsign, 'UNKNOWN') as operator,
       COALESCE(altitude::float, 0) as altitude_ft,
       COALESCE(speed::float, 0) as speed_kts,
       COALESCE(detection_timestamp, created_at) as timestamp,

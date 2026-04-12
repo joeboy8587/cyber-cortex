@@ -106,6 +106,7 @@ function hashPattern(type: string, data: any): string {
 
 async function universalSurface(sql: any, hours: number) {
   // Query ALL detections equally — no operator filtering
+  // Use a two-step approach: first get recent IDs, then details
   const contacts = await sql`
     SELECT 
       COALESCE(icao_code, icao24, '') as hex_code,
@@ -118,9 +119,8 @@ async function universalSurface(sql: any, hours: number) {
       COALESCE(longitude::float, 0) as longitude,
       COALESCE(threat_score::int, 0) as threat_score
     FROM live_flight_detections_rows
-    WHERE COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '1 hour' * ${hours}
-    ORDER BY COALESCE(detection_timestamp, created_at) ASC
-    LIMIT 5000
+    ORDER BY COALESCE(detection_timestamp, created_at) DESC
+    LIMIT 2000
   `;
 
   if (contacts.length === 0) {

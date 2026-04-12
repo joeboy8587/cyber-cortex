@@ -108,18 +108,18 @@ async function universalSurface(sql: any, hours: number) {
   // Query ALL detections equally — no operator filtering
   const contacts = await sql`
     SELECT 
-      COALESCE(aircraft_hex, hex_code, '') as hex_code,
-      COALESCE(registration, tail_number, '') as tail_number,
-      COALESCE(operator, 'UNKNOWN') as operator,
-      COALESCE(altitude_ft::float, altitude_baro::float, 0) as altitude_ft,
-      COALESCE(speed_kts::float, ground_speed::float, 0) as speed_kts,
-      timestamp,
-      COALESCE(latitude::float, lat::float, 0) as latitude,
-      COALESCE(longitude::float, lon::float, lng::float, 0) as longitude,
-      COALESCE(data_source, 'UNKNOWN') as data_source
+      COALESCE(icao_code, icao24, '') as hex_code,
+      COALESCE(registration, '') as tail_number,
+      COALESCE(operator, callsign, 'UNKNOWN') as operator,
+      COALESCE(altitude::float, 0) as altitude_ft,
+      COALESCE(speed::float, 0) as speed_kts,
+      COALESCE(detection_timestamp, created_at) as timestamp,
+      COALESCE(latitude::float, 0) as latitude,
+      COALESCE(longitude::float, 0) as longitude,
+      COALESCE(threat_score::int, 0) as threat_score
     FROM live_flight_detections_rows
-    WHERE timestamp > NOW() - INTERVAL '1 hour' * ${hours}
-    ORDER BY timestamp ASC
+    WHERE COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '1 hour' * ${hours}
+    ORDER BY COALESCE(detection_timestamp, created_at) ASC
     LIMIT 5000
   `;
 
@@ -291,17 +291,23 @@ async function deepDive(sql: any, identifier: string, days: number) {
   let contacts;
   if (isHex) {
     contacts = await sql`
-      SELECT * FROM live_flight_detections_rows
-      WHERE (aircraft_hex = ${identifier} OR hex_code = ${identifier})
-      AND timestamp > NOW() - INTERVAL '1 day' * ${days}
-      ORDER BY timestamp ASC LIMIT 2000
+      SELECT *, COALESCE(icao_code, icao24, '') as hex_code, COALESCE(registration, '') as tail_number,
+        COALESCE(operator, callsign, 'UNKNOWN') as op, COALESCE(altitude::float, 0) as altitude_ft,
+        COALESCE(speed::float, 0) as speed_kts
+      FROM live_flight_detections_rows
+      WHERE (icao_code = ${identifier} OR icao24 = ${identifier})
+      AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '1 day' * ${days}
+      ORDER BY COALESCE(detection_timestamp, created_at) ASC LIMIT 2000
     `;
   } else if (isTail) {
     contacts = await sql`
-      SELECT * FROM live_flight_detections_rows
-      WHERE (registration = ${identifier} OR tail_number = ${identifier})
-      AND timestamp > NOW() - INTERVAL '1 day' * ${days}
-      ORDER BY timestamp ASC LIMIT 2000
+      SELECT *, COALESCE(icao_code, icao24, '') as hex_code, COALESCE(registration, '') as tail_number,
+        COALESCE(operator, callsign, 'UNKNOWN') as op, COALESCE(altitude::float, 0) as altitude_ft,
+        COALESCE(speed::float, 0) as speed_kts
+      FROM live_flight_detections_rows
+      WHERE registration = ${identifier}
+      AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '1 day' * ${days}
+      ORDER BY COALESCE(detection_timestamp, created_at) ASC LIMIT 2000
     `;
   } else {
     return { status: 'INVALID_IDENTIFIER', message: 'Provide a hex code or N-number' };

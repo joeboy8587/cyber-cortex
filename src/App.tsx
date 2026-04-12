@@ -22,6 +22,7 @@ import Tulare from "./pages/Tulare";
 import KnowledgeEngine from "./pages/KnowledgeEngine";
 import DroneDetection from "./pages/DroneDetection";
 import CaseFiles from "./pages/CaseFiles";
+import UniversalAnalyst from "./pages/UniversalAnalyst";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 2, staleTime: 5000 } },
@@ -126,6 +127,11 @@ const App = () => (
             <Route path="/case-files" element={
               <ProtectedRoute>
                 <CaseFiles />
+              </ProtectedRoute>
+            } />
+            <Route path="/analyst" element={
+              <ProtectedRoute>
+                <UniversalAnalyst />
               </ProtectedRoute>
             } />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}

@@ -16,7 +16,8 @@ import {
   MapPin,
   Network,
   Ghost,
-  FolderOpen
+  FolderOpen,
+  ScanEye
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useAuth } from "@/hooks/useAuth";
@@ -107,6 +108,12 @@ const navigationItems = [
     url: "/case-files", 
     icon: FolderOpen,
     description: "Universe → Exhibits"
+  },
+  { 
+    title: "Universal Analyst", 
+    url: "/analyst", 
+    icon: ScanEye,
+    description: "Equal Analysis Engine"
   },
 ];
 

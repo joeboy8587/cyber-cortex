@@ -1,4 +1,5 @@
 import { DashboardLayout } from "@/components/DashboardLayout";
+import { RelationshipExplorer } from "@/components/dashboard/RelationshipExplorer";
 import { SchemaFragmentationPanel } from "@/components/dashboard/SchemaFragmentationPanel";
 import { ArchiveManifestDashboard } from "@/components/dashboard/ArchiveManifestDashboard";
 import { TableExplorer } from "@/components/dashboard/TableExplorer";
@@ -47,6 +48,11 @@ export default function DataTools() {
             </p>
           </div>
         </div>
+
+        {/* Table Relationship Explorer */}
+        <section>
+          <RelationshipExplorer />
+        </section>
 
         {/* Archive Manifest — Full Connection Engine */}
         <section>

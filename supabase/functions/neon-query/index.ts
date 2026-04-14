@@ -315,6 +315,83 @@ Deno.serve(async (req) => {
           break;
         }
 
+        case 'buildRelationships': {
+          // Create registry table if not exists
+          await sql.unsafe(`CREATE TABLE IF NOT EXISTS table_relationships (
+            id SERIAL PRIMARY KEY, source_table TEXT NOT NULL, source_column TEXT NOT NULL,
+            target_table TEXT NOT NULL, target_column TEXT NOT NULL,
+            relationship_type TEXT DEFAULT 'inferred', join_key_type TEXT DEFAULT 'registration',
+            confidence TEXT DEFAULT 'high', domain TEXT, created_at TIMESTAMPTZ DEFAULT NOW(),
+            UNIQUE(source_table, source_column, target_table, target_column)
+          )`);
+          // Clear and rebuild
+          await sql.unsafe(`DELETE FROM table_relationships WHERE 1=1`);
+
+          const joinKeys = [
+            { col: 'registration', master: 'live_flight_detections_rows', masterCol: 'registration', key: 'registration', domain: 'flight' },
+            { col: 'aircraft_registration', master: 'live_flight_detections_rows', masterCol: 'registration', key: 'registration', domain: 'biometric_flight' },
+            { col: 'callsign', master: 'live_flight_detections_rows', masterCol: 'callsign', key: 'callsign', domain: 'flight' },
+            { col: 'hex', master: 'live_flight_detections_rows', masterCol: 'hex', key: 'hex_icao', domain: 'flight' },
+            { col: 'icao_hex', master: 'live_flight_detections_rows', masterCol: 'icao_code', key: 'hex_icao', domain: 'flight' },
+            { col: 'icao24', master: 'live_flight_detections_rows', masterCol: 'icao24', key: 'hex_icao', domain: 'flight' },
+            { col: 'icao_code', master: 'live_flight_detections_rows', masterCol: 'icao_code', key: 'hex_icao', domain: 'flight' },
+            { col: 'n_number', master: 'aircraft_registry', masterCol: 'n_number', key: 'n_number', domain: 'registry' },
+            { col: 'tail_number', master: 'kcso_fleet', masterCol: 'tail_number', key: 'tail_number', domain: 'kcso' },
+            { col: 'case_id', master: 'cases', masterCol: 'id', key: 'case_id', domain: 'legal' },
+            { col: 'exhibit_id', master: 'exhibits', masterCol: 'id', key: 'exhibit_id', domain: 'legal' },
+            { col: 'entity_id', master: 'entity_registry', masterCol: 'entity_id', key: 'entity_id', domain: 'entity' },
+            { col: 'forensic_event_id', master: 'master_forensic_events', masterCol: 'forensic_event_id', key: 'forensic_event', domain: 'forensic' },
+          ];
+
+          let totalLinks = 0;
+          for (const jk of joinKeys) {
+            try {
+              const tables = await sql.unsafe(`SELECT table_name FROM information_schema.columns WHERE column_name = '${jk.col}' AND table_schema = 'public' ORDER BY table_name`);
+              const filtered = (tables as any[]).filter((t: any) => t.table_name !== jk.master);
+              for (let i = 0; i < filtered.length; i += 30) {
+                const batch = filtered.slice(i, i + 30);
+                const values = batch.map((t: any) =>
+                  `('${t.table_name}','${jk.col}','${jk.master}','${jk.masterCol}','inferred','${jk.key}','high','${jk.domain}')`
+                ).join(',');
+                if (values) {
+                  await sql.unsafe(`INSERT INTO table_relationships (source_table,source_column,target_table,target_column,relationship_type,join_key_type,confidence,domain) VALUES ${values} ON CONFLICT DO NOTHING`);
+                }
+                totalLinks += batch.length;
+              }
+            } catch (e) { console.warn(`Failed mapping ${jk.col}:`, e); }
+          }
+
+          const countResult = await sql.unsafe(`SELECT COUNT(*)::int as cnt FROM table_relationships`);
+          const domainSummary = await sql.unsafe(`SELECT domain, COUNT(*)::int as cnt FROM table_relationships GROUP BY domain ORDER BY cnt DESC`);
+          const keySummary = await sql.unsafe(`SELECT join_key_type, COUNT(*)::int as cnt FROM table_relationships GROUP BY join_key_type ORDER BY cnt DESC`);
+
+          result = {
+            totalLinks: (countResult as any[])[0]?.cnt || totalLinks,
+            byDomain: domainSummary,
+            byJoinKey: keySummary,
+            message: `Successfully mapped ${totalLinks} relationships`
+          };
+          break;
+        }
+
+        case 'getRelationships': {
+          const domainFilter = body.domain;
+          const keyFilter = body.joinKeyType;
+          let whereClause = 'WHERE 1=1';
+          if (domainFilter) whereClause += ` AND domain = '${String(domainFilter).replace(/'/g,'')}'`;
+          if (keyFilter) whereClause += ` AND join_key_type = '${String(keyFilter).replace(/'/g,'')}'`;
+
+          try {
+            const relationships = await sql.unsafe(`SELECT * FROM table_relationships ${whereClause} ORDER BY domain, join_key_type, source_table LIMIT 500`);
+            const summary = await sql.unsafe(`SELECT domain, join_key_type, COUNT(*)::int as cnt FROM table_relationships GROUP BY domain, join_key_type ORDER BY cnt DESC`);
+            const total = await sql.unsafe(`SELECT COUNT(*)::int as cnt FROM table_relationships`);
+            result = { relationships, summary, total: (total as any[])[0]?.cnt || 0 };
+          } catch (e) {
+            result = { relationships: [], summary: [], total: 0, error: 'Table not built yet - run Build Relationships first' };
+          }
+          break;
+        }
+
         case 'createIndex': {
           if (!query) throw new Error('Index DDL is required');
           const normalizedDDL = query.trim().toUpperCase();

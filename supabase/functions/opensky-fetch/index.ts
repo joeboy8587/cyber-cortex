@@ -531,10 +531,11 @@ serve(async (req) => {
               icao_code as hex, registration, callsign, altitude, speed,
               latitude, longitude, heading, vertical_rate,
               detection_timestamp as detected_at, taxonomy_tag,
-              threat_score, tier_level, flagged, flagged_reasons
+              threat_score, tier_level, flagged, flagged_reasons,
+              owner_operator, aircraft_type, is_military, data_source
             FROM live_flight_detections_rows
             WHERE latitude IS NOT NULL AND longitude IS NOT NULL
-              AND detection_timestamp > NOW() - INTERVAL '2 hours'
+              AND detection_timestamp > NOW() - INTERVAL '24 hours'
             ORDER BY registration, detection_timestamp DESC
             LIMIT 200
           `;

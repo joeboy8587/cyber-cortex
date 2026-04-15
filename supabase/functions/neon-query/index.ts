@@ -392,6 +392,101 @@ Deno.serve(async (req) => {
           break;
         }
 
+        case 'applyForeignKey': {
+          const { sourceTable, sourceColumn, targetTable, targetColumn } = body;
+          if (!sourceTable || !sourceColumn || !targetTable || !targetColumn) {
+            throw new Error('sourceTable, sourceColumn, targetTable, targetColumn are required');
+          }
+          const safe = (s: string) => s.replace(/[^a-zA-Z0-9_]/g, '');
+          const st = safe(sourceTable), sc = safe(sourceColumn), tt = safe(targetTable), tc = safe(targetColumn);
+          const fkName = `fk_${st}_${sc}_${tt}`.substring(0, 63);
+
+          // Validate both tables/columns exist
+          const srcCheck = await sql.unsafe(`SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='${st}' AND column_name='${sc}' LIMIT 1`);
+          const tgtCheck = await sql.unsafe(`SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='${tt}' AND column_name='${tc}' LIMIT 1`);
+          if ((srcCheck as any[]).length === 0) throw new Error(`Column ${sc} not found in ${st}`);
+          if ((tgtCheck as any[]).length === 0) throw new Error(`Column ${tc} not found in ${tt}`);
+
+          // Check if target column has a unique constraint (required for FK target)
+          const uniqueCheck = await sql.unsafe(`
+            SELECT 1 FROM pg_indexes WHERE tablename='${tt}' 
+            AND indexdef LIKE '%UNIQUE%' AND indexdef LIKE '%${tc}%' LIMIT 1
+          `);
+          const pkCheck = await sql.unsafe(`
+            SELECT 1 FROM information_schema.table_constraints tc
+            JOIN information_schema.constraint_column_usage ccu ON tc.constraint_name = ccu.constraint_name
+            WHERE tc.table_name='${tt}' AND ccu.column_name='${tc}' AND tc.constraint_type IN ('PRIMARY KEY','UNIQUE')
+          `);
+
+          if ((uniqueCheck as any[]).length === 0 && (pkCheck as any[]).length === 0) {
+            // Create unique index on target column first
+            try {
+              await sql.unsafe(`CREATE UNIQUE INDEX IF NOT EXISTS idx_${tt}_${tc}_uniq ON ${tt} (${tc})`);
+            } catch (ixErr) {
+              throw new Error(`Cannot create FK: target column ${tt}.${tc} has duplicate values and cannot be made unique`);
+            }
+          }
+
+          // Clean orphaned rows (set to null where source value doesn't exist in target)
+          const orphanCount = await sql.unsafe(`
+            SELECT COUNT(*)::int as cnt FROM ${st} s 
+            WHERE s.${sc} IS NOT NULL AND NOT EXISTS (SELECT 1 FROM ${tt} t WHERE t.${tc} = s.${sc})
+          `);
+          const orphans = (orphanCount as any[])[0]?.cnt || 0;
+          if (orphans > 0) {
+            await sql.unsafe(`UPDATE ${st} SET ${sc} = NULL WHERE ${sc} IS NOT NULL AND NOT EXISTS (SELECT 1 FROM ${tt} t WHERE t.${tc} = ${st}.${sc})`);
+          }
+
+          // Create the FK constraint
+          await sql.unsafe(`ALTER TABLE ${st} ADD CONSTRAINT ${fkName} FOREIGN KEY (${sc}) REFERENCES ${tt}(${tc}) ON DELETE SET NULL ON UPDATE CASCADE`);
+
+          // Update the registry
+          await sql.unsafe(`UPDATE table_relationships SET relationship_type='foreign_key' WHERE source_table='${st}' AND source_column='${sc}' AND target_table='${tt}' AND target_column='${tc}'`);
+
+          result = { success: true, fkName, orphansCleaned: orphans, message: `FK ${fkName} created: ${st}.${sc} → ${tt}.${tc}` };
+          break;
+        }
+
+        case 'getExistingFKs': {
+          result = await sql.unsafe(`
+            SELECT tc.constraint_name, kcu.table_name as source_table, kcu.column_name as source_column,
+                   ccu.table_name as target_table, ccu.column_name as target_column
+            FROM information_schema.table_constraints tc
+            JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name
+            JOIN information_schema.constraint_column_usage ccu ON tc.constraint_name = ccu.constraint_name
+            WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = 'public'
+            ORDER BY tc.constraint_name
+          `);
+          break;
+        }
+
+        case 'removeForeignKey': {
+          const { constraintName, tableName } = body;
+          if (!constraintName || !tableName) throw new Error('constraintName and tableName required');
+          const safeCn = constraintName.replace(/[^a-zA-Z0-9_]/g, '');
+          const safeTn = tableName.replace(/[^a-zA-Z0-9_]/g, '');
+          await sql.unsafe(`ALTER TABLE ${safeTn} DROP CONSTRAINT IF EXISTS ${safeCn}`);
+          result = { success: true, message: `Removed FK ${safeCn} from ${safeTn}` };
+          break;
+        }
+
+        case 'previewForeignKey': {
+          const { sourceTable: pSrc, sourceColumn: pSrcCol, targetTable: pTgt, targetColumn: pTgtCol } = body;
+          if (!pSrc || !pSrcCol || !pTgt || !pTgtCol) throw new Error('All params required');
+          const s = (v: string) => v.replace(/[^a-zA-Z0-9_]/g, '');
+          const srcTotal = await sql.unsafe(`SELECT COUNT(*)::int as cnt FROM ${s(pSrc)} WHERE ${s(pSrcCol)} IS NOT NULL`);
+          const orphanPreview = await sql.unsafe(`SELECT COUNT(*)::int as cnt FROM ${s(pSrc)} s WHERE s.${s(pSrcCol)} IS NOT NULL AND NOT EXISTS (SELECT 1 FROM ${s(pTgt)} t WHERE t.${s(pTgtCol)} = s.${s(pSrcCol)})`);
+          const tgtUnique = await sql.unsafe(`SELECT COUNT(DISTINCT ${s(pTgtCol)})::int as uniq, COUNT(*)::int as total FROM ${s(pTgt)} WHERE ${s(pTgtCol)} IS NOT NULL`);
+          result = {
+            sourceRows: (srcTotal as any[])[0]?.cnt || 0,
+            orphanRows: (orphanPreview as any[])[0]?.cnt || 0,
+            targetUnique: (tgtUnique as any[])[0]?.uniq || 0,
+            targetTotal: (tgtUnique as any[])[0]?.total || 0,
+            isTargetUnique: (tgtUnique as any[])[0]?.uniq === (tgtUnique as any[])[0]?.total,
+          };
+          break;
+        }
+
         case 'createIndex': {
           if (!query) throw new Error('Index DDL is required');
           const normalizedDDL = query.trim().toUpperCase();

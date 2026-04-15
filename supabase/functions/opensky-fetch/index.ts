@@ -294,11 +294,11 @@ function msToKnots(ms: number | null): number {
   return Math.round(ms * 1.94384);
 }
 
-async function fetchWithRetry(url: string, options: RequestInit, maxRetries = 3): Promise<Response | null> {
+async function fetchWithRetry(url: string, options: RequestInit, maxRetries = 2, timeoutMs = 8000): Promise<Response | null> {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000);
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
       const response = await fetch(url, { ...options, signal: controller.signal });
       clearTimeout(timeoutId);
       return response;
@@ -306,7 +306,7 @@ async function fetchWithRetry(url: string, options: RequestInit, maxRetries = 3)
       const errorMsg = err instanceof Error ? err.message : 'Unknown error';
       console.warn(`Fetch attempt ${attempt}/${maxRetries} failed: ${errorMsg}`);
       if (attempt < maxRetries) {
-        await new Promise(resolve => setTimeout(resolve, Math.min(1000 * Math.pow(2, attempt - 1), 5000)));
+        await new Promise(resolve => setTimeout(resolve, 1500));
       }
     }
   }
@@ -476,7 +476,7 @@ serve(async (req) => {
         
         const response = await fetchWithRetry(url, {
           headers: { 'Accept': 'application/json', 'User-Agent': 'LovableFlightTracker/1.0' }
-        }, 2);
+        }, 1, 6000);
         
         if (response?.ok) {
           try {
@@ -531,10 +531,11 @@ serve(async (req) => {
               icao_code as hex, registration, callsign, altitude, speed,
               latitude, longitude, heading, vertical_rate,
               detection_timestamp as detected_at, taxonomy_tag,
-              threat_score, tier_level, flagged, flagged_reasons
+              threat_score, tier_level, flagged, flagged_reasons,
+              owner_operator, aircraft_type, is_military, data_source
             FROM live_flight_detections_rows
             WHERE latitude IS NOT NULL AND longitude IS NOT NULL
-              AND detection_timestamp > NOW() - INTERVAL '2 hours'
+              AND detection_timestamp > NOW() - INTERVAL '24 hours'
             ORDER BY registration, detection_timestamp DESC
             LIMIT 200
           `;

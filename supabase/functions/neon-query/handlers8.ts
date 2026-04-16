@@ -616,6 +616,87 @@ export async function handleAction8(action: string, body: Record<string, any>, s
       };
     }
 
+    case 'flightAnomalyScan': {
+      const aoi_lat = body.lat || 35.437649;
+      const aoi_lon = body.lon || -119.022639;
+      const radius_nm = body.radius || 10;
+      const deg = radius_nm * 0.0166; // ~1 NM per 0.0166 deg
+
+      // 1) Loiter candidates: repeated presence in same ~2km grid cell
+      const loiterSql = `
+        SELECT registration, 
+          ROUND(latitude::numeric, 2) as grid_lat, ROUND(longitude::numeric, 2) as grid_lon,
+          COUNT(*) as n_points,
+          COUNT(DISTINCT DATE(detection_timestamp)) as distinct_days,
+          MIN(detection_timestamp) as first_seen, MAX(detection_timestamp) as last_seen,
+          ROUND(AVG(speed)::numeric,1) as avg_speed, ROUND(AVG(altitude)::numeric,0) as avg_alt,
+          ROUND(MIN(altitude)::numeric,0) as min_alt
+        FROM live_flight_detections_rows
+        WHERE latitude BETWEEN ${aoi_lat - deg} AND ${aoi_lat + deg}
+          AND longitude BETWEEN ${aoi_lon - deg} AND ${aoi_lon + deg}
+          AND registration IS NOT NULL AND registration != ''
+          AND detection_timestamp IS NOT NULL
+        GROUP BY registration, ROUND(latitude::numeric, 2), ROUND(longitude::numeric, 2)
+        HAVING COUNT(*) >= 10 AND COUNT(DISTINCT DATE(detection_timestamp)) >= 2
+        ORDER BY COUNT(DISTINCT DATE(detection_timestamp)) DESC, COUNT(*) DESC
+        LIMIT 50
+      `;
+
+      // 2) Callsign switching: aircraft with many distinct callsigns
+      const switchingSql = `
+        SELECT registration, COUNT(*) as n_points,
+          COUNT(DISTINCT callsign) as n_callsigns,
+          ARRAY_AGG(DISTINCT callsign ORDER BY callsign) as callsigns,
+          ROUND(AVG(altitude)::numeric,0) as avg_alt
+        FROM live_flight_detections_rows
+        WHERE latitude BETWEEN ${aoi_lat - deg} AND ${aoi_lat + deg}
+          AND longitude BETWEEN ${aoi_lon - deg} AND ${aoi_lon + deg}
+          AND registration IS NOT NULL AND registration != ''
+          AND detection_timestamp IS NOT NULL
+        GROUP BY registration
+        HAVING COUNT(*) >= 20 AND COUNT(DISTINCT callsign) >= 3
+        ORDER BY COUNT(DISTINCT callsign) DESC
+        LIMIT 30
+      `;
+
+      // 3) Most flagged aircraft in AOI
+      const flaggedSql = `
+        SELECT registration, COUNT(*) as total_detections,
+          SUM(CASE WHEN flagged THEN 1 ELSE 0 END) as flagged_count,
+          MAX(threat_score) as max_threat,
+          ROUND(AVG(altitude)::numeric,0) as avg_alt,
+          ROUND(AVG(speed)::numeric,0) as avg_speed,
+          MAX(taxonomy_tag) as taxonomy,
+          MAX(owner_operator) as operator
+        FROM live_flight_detections_rows
+        WHERE latitude BETWEEN ${aoi_lat - deg} AND ${aoi_lat + deg}
+          AND longitude BETWEEN ${aoi_lon - deg} AND ${aoi_lon + deg}
+          AND registration IS NOT NULL AND registration != ''
+        GROUP BY registration
+        HAVING SUM(CASE WHEN flagged THEN 1 ELSE 0 END) > 0
+        ORDER BY MAX(threat_score) DESC, SUM(CASE WHEN flagged THEN 1 ELSE 0 END) DESC
+        LIMIT 30
+      `;
+
+      const [loiter, switching, flagged] = await Promise.all([
+        sql.unsafe(loiterSql),
+        sql.unsafe(switchingSql),
+        sql.unsafe(flaggedSql),
+      ]);
+
+      return {
+        aoi: { lat: aoi_lat, lon: aoi_lon, radius_nm },
+        loiterCandidates: loiter,
+        callsignSwitching: switching,
+        topFlagged: flagged,
+        summary: {
+          loiterCount: (loiter as any[]).length,
+          switchingCount: (switching as any[]).length,
+          flaggedCount: (flagged as any[]).length,
+        }
+      };
+    }
+
     default:
       return null;
   }

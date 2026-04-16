@@ -132,6 +132,7 @@ const HANDLER8_ACTIONS = new Set([
   'getCanadianCorridor',
   'biometricOCRAudit',
   'reprocessBiometricOCR',
+  'flightAnomalyScan',
 ]);
 
 async function getHandler1() {

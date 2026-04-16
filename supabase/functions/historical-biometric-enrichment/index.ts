@@ -215,18 +215,18 @@ serve(async (req) => {
               repeatOccurrences: parseInt((repeatCount.rows[0] as any)?.count || '1')
             });
 
-            // Insert correlation WITHOUT flight_id column (doesn't exist in table)
+            // Insert correlation - include biometric_source to avoid NOT NULL constraint
             await client.queryObject`
               INSERT INTO master_biometric_aircraft_correlations (
                 biometric_id, registration,
                 correlation_timestamp, biometric_timestamp, flight_timestamp,
                 time_gap_minutes, heart_rate, stress_level, altitude_feet,
-                bradford_hill_score
+                bradford_hill_score, biometric_source
               ) VALUES (
                 ${bio.id}::text, ${flight.registration},
                 ${bio.measurement_timestamp}, ${bio.measurement_timestamp}, ${flight.detection_timestamp},
                 ${timeGapMinutes}, ${bio.heart_rate}, ${bio.stress_level}, ${flight.altitude},
-                ${bhScore}
+                ${bhScore}, 'whoop'
               )
               ON CONFLICT DO NOTHING
             `;

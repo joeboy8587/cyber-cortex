@@ -397,132 +397,148 @@ serve(async (req) => {
       let apiError: string | null = null;
       let dataSource = 'none';
 
-      // ============ PRIMARY: RapidAPI ADS-B Exchange v2 ============
-      // Promoted to primary for richer data (ownOp, type, mil, category)
-      const rapidApiKey = Deno.env.get('RAPIDAPI_KEY');
-      if (rapidApiKey) {
-        console.log('PRIMARY: Fetching from RapidAPI ADS-B Exchange v2...');
-        try {
-          const lat = (KERN_BOUNDS.lamin + KERN_BOUNDS.lamax) / 2;
-          const lon = (KERN_BOUNDS.lomin + KERN_BOUNDS.lomax) / 2;
-          const dist = 50;
-          
-          const rapidResp = await fetchWithRetry(
-            `https://adsbexchange-com1.p.rapidapi.com/v2/lat/${lat}/lon/${lon}/dist/${dist}/`,
-            {
-              headers: {
-                'X-RapidAPI-Key': rapidApiKey,
-                'X-RapidAPI-Host': 'adsbexchange-com1.p.rapidapi.com',
-                'Accept': 'application/json'
-              }
-            }, 2
-          );
+      // ============ PRIMARY: adsb.lol (FREE, ADS-B Exchange v2 format) ============
+      console.log('PRIMARY: Fetching from adsb.lol...');
+      try {
+        const lat = (KERN_BOUNDS.lamin + KERN_BOUNDS.lamax) / 2;
+        const lon = (KERN_BOUNDS.lomin + KERN_BOUNDS.lomax) / 2;
+        const dist = 50; // nautical miles
 
-          if (rapidResp && rapidResp.ok) {
-            const rapidData = await rapidResp.json();
-            const ac = rapidData.ac || rapidData.aircraft || [];
-            console.log(`RapidAPI returned ${ac.length} aircraft`);
-            
-            if (ac.length > 0) {
-              flights = ac
-                .filter((a: any) => a.lat && a.lon && !a.gnd)
-                .map((a: any) => ({
-                  icao24: (a.hex || a.icao || '').toLowerCase(),
-                  callsign: (a.flight || a.call || '').trim(),
-                  origin_country: 'United States',
-                  longitude: a.lon,
-                  latitude: a.lat,
-                  altitude: a.alt_baro !== 'ground' ? (a.alt_baro || a.alt_geom || 0) : 0,
-                  geo_altitude: a.alt_geom || 0,
-                  on_ground: a.gnd || false,
-                  velocity: (a.gs || 0) * 0.514444,
-                  heading: a.track || a.true_heading || 0,
-                  vertical_rate: (a.baro_rate || a.geom_rate || 0) * 0.00508,
-                  squawk: a.squawk || '',
-                  time_position: null,
-                  last_contact: null,
-                  // ============ RICH ADS-B EXCHANGE FIELDS ============
-                  _registration: a.r || a.reg || '',
-                  _ownOp: a.ownOp || '',           // Owner/Operator name
-                  _aircraftType: a.t || '',          // Aircraft type code (H125, B738)
-                  _aircraftDesc: a.desc || '',       // Full type description
-                  _isMilitary: a.mil === true || a.mil === 1,  // Military flag
-                  _category: a.category || '',       // ADS-B category A1-A7
-                  _emergency: a.emergency || '',     // Emergency status
-                  _spi: a.spi || false,              // Special Purpose Indicator
-                  _navAltitude: a.nav_altitude_mcp || null, // Selected altitude
-                  _seenPos: a.seen_pos || null,      // Seconds since last position
-                  _rssi: a.rssi || null,             // Signal strength (dBm)
-                  _year: a.year || null,             // Year manufactured
-                }));
-              apiSuccess = true;
-              dataSource = 'rapidapi_adsb';
-              console.log(`✅ PRIMARY RapidAPI: ${flights.length} aircraft with rich data`);
-            }
-          } else {
-            apiError = `RapidAPI returned ${rapidResp?.status || 'no response'}`;
-            console.warn(apiError);
+        const adsbResp = await fetchWithRetry(
+          `https://api.adsb.lol/v2/lat/${lat}/lon/${lon}/dist/${dist}`,
+          { headers: { 'Accept': 'application/json' } },
+          2, 8000
+        );
+
+        if (adsbResp && adsbResp.ok) {
+          const adsbData = await adsbResp.json();
+          const ac = adsbData.ac || adsbData.aircraft || [];
+          console.log(`adsb.lol returned ${ac.length} aircraft`);
+
+          if (ac.length > 0) {
+            flights = ac
+              .filter((a: any) => a.lat && a.lon && !a.gnd)
+              .map((a: any) => ({
+                icao24: (a.hex || a.icao || '').toLowerCase(),
+                callsign: (a.flight || a.call || '').trim(),
+                origin_country: 'United States',
+                longitude: a.lon,
+                latitude: a.lat,
+                altitude: a.alt_baro !== 'ground' ? (a.alt_baro || a.alt_geom || 0) : 0,
+                geo_altitude: a.alt_geom || 0,
+                on_ground: a.gnd || false,
+                velocity: (a.gs || 0) * 0.514444, // gs in knots -> m/s
+                heading: a.track || a.true_heading || 0,
+                vertical_rate: (a.baro_rate || a.geom_rate || 0) * 0.00508,
+                squawk: a.squawk || '',
+                time_position: null,
+                last_contact: null,
+                _registration: a.r || a.reg || '',
+                _ownOp: a.ownOp || a.own_op || '',
+                _aircraftType: a.t || a.type || '',
+                _aircraftDesc: a.desc || '',
+                _isMilitary: a.mil === true || a.mil === 1 || a.dbFlags === 1,
+                _category: a.category || '',
+                _emergency: a.emergency || '',
+                _spi: a.spi || false,
+                _navAltitude: a.nav_altitude_mcp || null,
+                _seenPos: a.seen_pos || null,
+                _rssi: a.rssi || null,
+                _year: a.year || null,
+              }));
+            apiSuccess = true;
+            dataSource = 'adsb_lol';
+            console.log(`✅ PRIMARY adsb.lol: ${flights.length} aircraft with rich data`);
           }
-        } catch (rapidErr) {
-          apiError = `RapidAPI error: ${rapidErr instanceof Error ? rapidErr.message : rapidErr}`;
-          console.error(apiError);
+        } else {
+          apiError = `adsb.lol returned ${adsbResp?.status || 'no response'}`;
+          console.warn(apiError);
+        }
+      } catch (adsbErr) {
+        apiError = `adsb.lol error: ${adsbErr instanceof Error ? adsbErr.message : adsbErr}`;
+        console.error(apiError);
+      }
+
+      // ============ FALLBACK 1: RapidAPI ADS-B Exchange v2 ============
+      if (!apiSuccess) {
+        const rapidApiKey = Deno.env.get('RAPIDAPI_KEY');
+        if (rapidApiKey) {
+          console.log('FALLBACK 1: Trying RapidAPI ADS-B Exchange v2...');
+          try {
+            const lat = (KERN_BOUNDS.lamin + KERN_BOUNDS.lamax) / 2;
+            const lon = (KERN_BOUNDS.lomin + KERN_BOUNDS.lomax) / 2;
+            const rapidResp = await fetchWithRetry(
+              `https://adsbexchange-com1.p.rapidapi.com/v2/lat/${lat}/lon/${lon}/dist/50/`,
+              {
+                headers: {
+                  'X-RapidAPI-Key': rapidApiKey,
+                  'X-RapidAPI-Host': 'adsbexchange-com1.p.rapidapi.com',
+                  'Accept': 'application/json'
+                }
+              }, 1, 8000
+            );
+            if (rapidResp && rapidResp.ok) {
+              const rapidData = await rapidResp.json();
+              const ac = rapidData.ac || rapidData.aircraft || [];
+              if (ac.length > 0) {
+                flights = ac.filter((a: any) => a.lat && a.lon && !a.gnd).map((a: any) => ({
+                  icao24: (a.hex || '').toLowerCase(),
+                  callsign: (a.flight || '').trim(),
+                  origin_country: 'United States',
+                  longitude: a.lon, latitude: a.lat,
+                  altitude: a.alt_baro !== 'ground' ? (a.alt_baro || a.alt_geom || 0) : 0,
+                  geo_altitude: a.alt_geom || 0, on_ground: a.gnd || false,
+                  velocity: (a.gs || 0) * 0.514444, heading: a.track || 0,
+                  vertical_rate: (a.baro_rate || 0) * 0.00508, squawk: a.squawk || '',
+                  time_position: null, last_contact: null,
+                  _registration: a.r || '', _ownOp: a.ownOp || '',
+                  _aircraftType: a.t || '', _aircraftDesc: a.desc || '',
+                  _isMilitary: a.mil === true || a.mil === 1,
+                  _category: a.category || '', _emergency: a.emergency || '',
+                  _spi: a.spi || false, _navAltitude: a.nav_altitude_mcp || null,
+                  _seenPos: a.seen_pos || null, _rssi: a.rssi || null, _year: a.year || null,
+                }));
+                apiSuccess = true;
+                dataSource = 'rapidapi_adsb';
+                console.log(`✅ FALLBACK RapidAPI: ${flights.length} aircraft`);
+              }
+            } else {
+              console.warn(`RapidAPI returned ${rapidResp?.status || 'no response'}`);
+            }
+          } catch (e) { console.warn('RapidAPI fallback failed:', e instanceof Error ? e.message : e); }
         }
       }
 
-      // ============ FALLBACK: OpenSky Network ============
+      // ============ FALLBACK 2: OpenSky Network ============
       if (!apiSuccess) {
-        console.log('FALLBACK: Trying OpenSky Network...');
+        console.log('FALLBACK 2: Trying OpenSky Network...');
         const url = `https://opensky-network.org/api/states/all?lamin=${KERN_BOUNDS.lamin}&lamax=${KERN_BOUNDS.lamax}&lomin=${KERN_BOUNDS.lomin}&lomax=${KERN_BOUNDS.lomax}`;
-        
         const response = await fetchWithRetry(url, {
           headers: { 'Accept': 'application/json', 'User-Agent': 'LovableFlightTracker/1.0' }
         }, 1, 6000);
-        
         if (response?.ok) {
           try {
             const data = await response.json();
             if (data.states && Array.isArray(data.states)) {
               flights = data.states.map((state: any[]) => ({
-                icao24: state[0],
-                callsign: (state[1] || '').trim(),
-                origin_country: state[2],
-                longitude: state[5],
-                latitude: state[6],
-                altitude: state[7],
-                geo_altitude: state[13],
-                on_ground: state[8],
-                velocity: state[9],
-                heading: state[10],
-                vertical_rate: state[11],
-                squawk: state[14],
-                time_position: state[3],
-                last_contact: state[4],
-                _registration: '',
-                _ownOp: '',
-                _aircraftType: '',
-                _aircraftDesc: '',
-                _isMilitary: false,
-                _category: '',
-                _emergency: '',
-                _spi: false,
-                _navAltitude: null,
-                _seenPos: null,
-                _rssi: null,
-                _year: null,
+                icao24: state[0], callsign: (state[1] || '').trim(),
+                origin_country: state[2], longitude: state[5], latitude: state[6],
+                altitude: state[7], geo_altitude: state[13], on_ground: state[8],
+                velocity: state[9], heading: state[10], vertical_rate: state[11],
+                squawk: state[14], time_position: state[3], last_contact: state[4],
+                _registration: '', _ownOp: '', _aircraftType: '', _aircraftDesc: '',
+                _isMilitary: false, _category: '', _emergency: '', _spi: false,
+                _navAltitude: null, _seenPos: null, _rssi: null, _year: null,
               }));
               apiSuccess = true;
               dataSource = 'opensky';
-              console.log(`Parsed ${flights.length} aircraft from OpenSky (basic fields only)`);
+              console.log(`Parsed ${flights.length} aircraft from OpenSky`);
             }
-          } catch (parseErr) {
-            apiError = 'Failed to parse OpenSky response';
-          }
-        } else {
-          apiError = response ? `OpenSky ${response.status}` : 'OpenSky unreachable';
+          } catch { apiError = 'Failed to parse OpenSky response'; }
         }
       }
 
-      // ============ FALLBACK 2: Cached DB data ============
+      // ============ FALLBACK 3: Cached DB data ============
       if (!apiSuccess && neonUrl) {
         console.log('API unavailable, fetching cached flights from database...');
         const cachedFlights = await safeDbQuery(neonUrl, async (sql) => {
@@ -580,10 +596,10 @@ serve(async (req) => {
         .filter(f => f.latitude && f.longitude && !f.on_ground)
         .map((f: any) => {
           const callsign = f.callsign || '';
-          const altitudeFeet = dataSource === 'rapidapi_adsb' 
+          const altitudeFeet = (dataSource === 'rapidapi_adsb' || dataSource === 'adsb_lol')
             ? Math.round(f.altitude || 0)  // ADS-B already in feet
             : metersToFeet(f.altitude || f.geo_altitude);
-          const speedKnots = dataSource === 'rapidapi_adsb'
+          const speedKnots = (dataSource === 'rapidapi_adsb' || dataSource === 'adsb_lol')
             ? Math.round((f.velocity || 0) / 0.514444) // convert back from m/s
             : msToKnots(f.velocity);
           
@@ -842,7 +858,7 @@ serve(async (req) => {
         stats,
         source: dataSource,
         apiError,
-        richDataAvailable: dataSource === 'rapidapi_adsb',
+        richDataAvailable: dataSource === 'rapidapi_adsb' || dataSource === 'adsb_lol',
         timestamp: new Date().toISOString()
       }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }

@@ -858,7 +858,7 @@ serve(async (req) => {
         stats,
         source: dataSource,
         apiError,
-        richDataAvailable: dataSource === 'rapidapi_adsb',
+        richDataAvailable: dataSource === 'rapidapi_adsb' || dataSource === 'adsb_lol',
         timestamp: new Date().toISOString()
       }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }

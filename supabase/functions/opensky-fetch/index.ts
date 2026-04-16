@@ -596,10 +596,10 @@ serve(async (req) => {
         .filter(f => f.latitude && f.longitude && !f.on_ground)
         .map((f: any) => {
           const callsign = f.callsign || '';
-          const altitudeFeet = dataSource === 'rapidapi_adsb' 
+          const altitudeFeet = (dataSource === 'rapidapi_adsb' || dataSource === 'adsb_lol')
             ? Math.round(f.altitude || 0)  // ADS-B already in feet
             : metersToFeet(f.altitude || f.geo_altitude);
-          const speedKnots = dataSource === 'rapidapi_adsb'
+          const speedKnots = (dataSource === 'rapidapi_adsb' || dataSource === 'adsb_lol')
             ? Math.round((f.velocity || 0) / 0.514444) // convert back from m/s
             : msToKnots(f.velocity);
           

@@ -37,6 +37,7 @@ import IFRSurveillanceDetector from "@/components/dashboard/IFRSurveillanceDetec
 import IcaoIdentityCleanup from "@/components/dashboard/IcaoIdentityCleanup";
 import GhostAircraftForensics from "@/components/dashboard/GhostAircraftForensics";
 import SquawkDeceptionDashboard from "@/components/dashboard/SquawkDeceptionDashboard";
+import { ObfuscationDetectionMatrix } from "@/components/dashboard/ObfuscationDetectionMatrix";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export default function Surveillance() {
@@ -93,6 +94,9 @@ export default function Surveillance() {
           </TabsContent>
 
           <TabsContent value="identity" className="space-y-6">
+            <section>
+              <ObfuscationDetectionMatrix />
+            </section>
             <section>
               <GhostAircraftForensics />
             </section>

@@ -698,15 +698,22 @@ export async function handleAction8(action: string, body: Record<string, any>, s
     }
 
     case 'obfuscationDetectionMatrix': {
-      // Detects: blocked tail numbers, masked ICAOs, repeated N/A o/d,
-      // ID cloning, time-randomized loops, registration switching
+      // Detects: blocked tail numbers, masked ICAOs, ID cloning,
+      // time-randomized loops, registration switching — all bounded to AOI.
       const aoi_lat = body.aoi_lat ?? 35.437649;
       const aoi_lon = body.aoi_lon ?? -119.022639;
       const radius_nm = body.radius_nm ?? 25;
-      const days = body.days ?? 14;
+      const days = Math.min(body.days ?? 7, 30);
       const deg = radius_nm / 60.0;
+      const latMin = aoi_lat - deg, latMax = aoi_lat + deg;
+      const lonMin = aoi_lon - deg, lonMax = aoi_lon + deg;
 
-      // 1. Blocked / masked identity broadcasts
+      // Cap each subquery to keep total under the 150s idle budget
+      await sql.unsafe(`SET LOCAL statement_timeout = '25s'`).catch(() => {});
+
+      const geoFilter = `latitude BETWEEN ${latMin} AND ${latMax} AND longitude BETWEEN ${lonMin} AND ${lonMax}`;
+      const timeFilter = `detection_timestamp > NOW() - INTERVAL '${days} days'`;
+
       const blockedIdentitySql = `
         SELECT
           COALESCE(NULLIF(registration,''),'<BLOCKED>') as registration,
@@ -719,9 +726,7 @@ export async function handleAction8(action: string, body: Record<string, any>, s
           MAX(altitude)::int as max_alt,
           AVG(altitude)::int as avg_alt
         FROM live_flight_detections_rows
-        WHERE detection_timestamp > NOW() - INTERVAL '${days} days'
-          AND latitude BETWEEN ${aoi_lat - deg} AND ${aoi_lat + deg}
-          AND longitude BETWEEN ${aoi_lon - deg} AND ${aoi_lon + deg}
+        WHERE ${timeFilter} AND ${geoFilter}
           AND (
             registration IS NULL OR registration = '' OR registration ILIKE '%BLOCK%' OR registration ILIKE '%N/A%'
             OR callsign IS NULL OR callsign = '' OR callsign ILIKE '%BLOCK%' OR callsign ILIKE '%N/A%'
@@ -733,34 +738,34 @@ export async function handleAction8(action: string, body: Record<string, any>, s
         LIMIT 50
       `;
 
-      // 2. ICAO/registration cloning (one ICAO claimed by many regs, or vice versa)
+      // Cloning — now scoped to AOI (was unscoped → 150s timeout)
       const cloningSql = `
         WITH icao_regs AS (
-          SELECT icao_code, COUNT(DISTINCT registration) FILTER (WHERE registration IS NOT NULL AND registration != '') as reg_count,
+          SELECT icao_code,
+                 COUNT(DISTINCT registration) FILTER (WHERE registration IS NOT NULL AND registration != '') as reg_count,
                  array_agg(DISTINCT registration) FILTER (WHERE registration IS NOT NULL AND registration != '') as regs,
                  COUNT(*)::int as detections
           FROM live_flight_detections_rows
-          WHERE detection_timestamp > NOW() - INTERVAL '${days} days'
+          WHERE ${timeFilter} AND ${geoFilter}
             AND icao_code IS NOT NULL AND icao_code != ''
           GROUP BY icao_code
           HAVING COUNT(DISTINCT registration) FILTER (WHERE registration IS NOT NULL AND registration != '') >= 2
         )
-        SELECT icao_code, reg_count, regs[1:5] as sample_regs, detections
+        SELECT icao_code, reg_count::int, regs[1:5] as sample_regs, detections
         FROM icao_regs
         ORDER BY reg_count DESC, detections DESC
         LIMIT 30
       `;
 
-      // 3. Callsign rotation (same registration, many callsigns — cybersecurity-style ID rotation)
       const callsignRotationSql = `
         SELECT registration,
                COUNT(DISTINCT callsign) FILTER (WHERE callsign IS NOT NULL AND callsign != '')::int as unique_callsigns,
-               array_agg(DISTINCT callsign) FILTER (WHERE callsign IS NOT NULL AND callsign != '') as callsigns,
+               (array_agg(DISTINCT callsign) FILTER (WHERE callsign IS NOT NULL AND callsign != ''))[1:10] as callsigns,
                COUNT(*)::int as detections,
                MIN(detection_timestamp) as first_seen,
                MAX(detection_timestamp) as last_seen
         FROM live_flight_detections_rows
-        WHERE detection_timestamp > NOW() - INTERVAL '${days} days'
+        WHERE ${timeFilter} AND ${geoFilter}
           AND registration IS NOT NULL AND registration != ''
         GROUP BY registration
         HAVING COUNT(DISTINCT callsign) FILTER (WHERE callsign IS NOT NULL AND callsign != '') >= 3
@@ -768,7 +773,6 @@ export async function handleAction8(action: string, body: Record<string, any>, s
         LIMIT 30
       `;
 
-      // 4. Time-randomized loops — aircraft returning to same ~2km cell across many random hours
       const timeRandomizedSql = `
         WITH grid AS (
           SELECT registration,
@@ -777,10 +781,8 @@ export async function handleAction8(action: string, body: Record<string, any>, s
                  EXTRACT(HOUR FROM detection_timestamp)::int as hr,
                  detection_timestamp::date as d
           FROM live_flight_detections_rows
-          WHERE detection_timestamp > NOW() - INTERVAL '${days} days'
+          WHERE ${timeFilter} AND ${geoFilter}
             AND registration IS NOT NULL AND registration != ''
-            AND latitude BETWEEN ${aoi_lat - deg} AND ${aoi_lat + deg}
-            AND longitude BETWEEN ${aoi_lon - deg} AND ${aoi_lon + deg}
         )
         SELECT registration, lat_bin::float8 as lat, lon_bin::float8 as lon,
                COUNT(DISTINCT d)::int as days_seen,
@@ -793,14 +795,15 @@ export async function handleAction8(action: string, body: Record<string, any>, s
         LIMIT 30
       `;
 
-      const [blocked, cloning, rotation, randomized] = await Promise.all([
-        sql.unsafe(blockedIdentitySql).catch(() => []),
-        sql.unsafe(cloningSql).catch(() => []),
-        sql.unsafe(callsignRotationSql).catch(() => []),
-        sql.unsafe(timeRandomizedSql).catch(() => []),
-      ]);
+      const safeRun = async (q: string) => {
+        try { return await sql.unsafe(q); }
+        catch (e) { console.error('obfuscation subquery failed:', (e as Error).message); return []; }
+      };
+      const blocked = await safeRun(blockedIdentitySql);
+      const cloning = await safeRun(cloningSql);
+      const rotation = await safeRun(callsignRotationSql);
+      const randomized = await safeRun(timeRandomizedSql);
 
-      // Threat scoring per registration
       const scores = new Map<string, { score: number; tactics: string[] }>();
       const bump = (reg: string, pts: number, tactic: string) => {
         if (!reg || reg === '<BLOCKED>') return;
@@ -812,7 +815,10 @@ export async function handleAction8(action: string, body: Record<string, any>, s
       (blocked as any[]).forEach(r => bump(r.registration, 30, 'BLOCKED_IDENTITY'));
       (rotation as any[]).forEach(r => bump(r.registration, Math.min(40, r.unique_callsigns * 5), 'CALLSIGN_ROTATION'));
       (randomized as any[]).forEach(r => bump(r.registration, Math.min(35, r.unique_hours * 2), 'TIME_RANDOMIZED_LOOP'));
-      (cloning as any[]).forEach(r => (r.sample_regs || []).forEach((reg: string) => bump(reg, 25, 'ICAO_CLONING')));
+      (cloning as any[]).forEach(r => {
+        const regs = Array.isArray(r.sample_regs) ? r.sample_regs : (r.regs || []);
+        (Array.isArray(regs) ? regs : []).forEach((reg: string) => bump(reg, 25, 'ICAO_CLONING'));
+      });
 
       const topSuspects = Array.from(scores.entries())
         .map(([registration, v]) => ({ registration, score: v.score, tactics: v.tactics }))

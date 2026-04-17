@@ -24,6 +24,15 @@ interface MatrixResult {
   };
 }
 
+// Postgres arrays may arrive as JS arrays OR as strings like "{a,b,c}". Normalize.
+const toArray = (v: any): string[] => {
+  if (Array.isArray(v)) return v;
+  if (typeof v === 'string' && v.startsWith('{') && v.endsWith('}')) {
+    return v.slice(1, -1).split(',').map(s => s.replace(/^"|"$/g, '').trim()).filter(Boolean);
+  }
+  return [];
+};
+
 const tacticColor = (t: string) => {
   if (t === 'BLOCKED_IDENTITY') return 'destructive';
   if (t === 'ICAO_CLONING') return 'destructive';

@@ -697,6 +697,145 @@ export async function handleAction8(action: string, body: Record<string, any>, s
       };
     }
 
+    case 'obfuscationDetectionMatrix': {
+      // Detects: blocked tail numbers, masked ICAOs, repeated N/A o/d,
+      // ID cloning, time-randomized loops, registration switching
+      const aoi_lat = body.aoi_lat ?? 35.437649;
+      const aoi_lon = body.aoi_lon ?? -119.022639;
+      const radius_nm = body.radius_nm ?? 25;
+      const days = body.days ?? 14;
+      const deg = radius_nm / 60.0;
+
+      // 1. Blocked / masked identity broadcasts
+      const blockedIdentitySql = `
+        SELECT
+          COALESCE(NULLIF(registration,''),'<BLOCKED>') as registration,
+          COALESCE(NULLIF(callsign,''),'<BLOCKED>') as callsign,
+          COALESCE(NULLIF(icao_code,''),'<BLOCKED>') as icao_code,
+          COUNT(*)::int as detections,
+          MIN(detection_timestamp) as first_seen,
+          MAX(detection_timestamp) as last_seen,
+          MIN(altitude)::int as min_alt,
+          MAX(altitude)::int as max_alt,
+          AVG(altitude)::int as avg_alt
+        FROM live_flight_detections_rows
+        WHERE detection_timestamp > NOW() - INTERVAL '${days} days'
+          AND latitude BETWEEN ${aoi_lat - deg} AND ${aoi_lat + deg}
+          AND longitude BETWEEN ${aoi_lon - deg} AND ${aoi_lon + deg}
+          AND (
+            registration IS NULL OR registration = '' OR registration ILIKE '%BLOCK%' OR registration ILIKE '%N/A%'
+            OR callsign IS NULL OR callsign = '' OR callsign ILIKE '%BLOCK%' OR callsign ILIKE '%N/A%'
+            OR icao_code IS NULL OR icao_code = '' OR icao_code = '000000' OR icao_code ILIKE 'XXB%'
+          )
+        GROUP BY 1,2,3
+        HAVING COUNT(*) >= 3
+        ORDER BY detections DESC
+        LIMIT 50
+      `;
+
+      // 2. ICAO/registration cloning (one ICAO claimed by many regs, or vice versa)
+      const cloningSql = `
+        WITH icao_regs AS (
+          SELECT icao_code, COUNT(DISTINCT registration) FILTER (WHERE registration IS NOT NULL AND registration != '') as reg_count,
+                 array_agg(DISTINCT registration) FILTER (WHERE registration IS NOT NULL AND registration != '') as regs,
+                 COUNT(*)::int as detections
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() - INTERVAL '${days} days'
+            AND icao_code IS NOT NULL AND icao_code != ''
+          GROUP BY icao_code
+          HAVING COUNT(DISTINCT registration) FILTER (WHERE registration IS NOT NULL AND registration != '') >= 2
+        )
+        SELECT icao_code, reg_count, regs[1:5] as sample_regs, detections
+        FROM icao_regs
+        ORDER BY reg_count DESC, detections DESC
+        LIMIT 30
+      `;
+
+      // 3. Callsign rotation (same registration, many callsigns — cybersecurity-style ID rotation)
+      const callsignRotationSql = `
+        SELECT registration,
+               COUNT(DISTINCT callsign) FILTER (WHERE callsign IS NOT NULL AND callsign != '')::int as unique_callsigns,
+               array_agg(DISTINCT callsign) FILTER (WHERE callsign IS NOT NULL AND callsign != '') as callsigns,
+               COUNT(*)::int as detections,
+               MIN(detection_timestamp) as first_seen,
+               MAX(detection_timestamp) as last_seen
+        FROM live_flight_detections_rows
+        WHERE detection_timestamp > NOW() - INTERVAL '${days} days'
+          AND registration IS NOT NULL AND registration != ''
+        GROUP BY registration
+        HAVING COUNT(DISTINCT callsign) FILTER (WHERE callsign IS NOT NULL AND callsign != '') >= 3
+        ORDER BY unique_callsigns DESC
+        LIMIT 30
+      `;
+
+      // 4. Time-randomized loops — aircraft returning to same ~2km cell across many random hours
+      const timeRandomizedSql = `
+        WITH grid AS (
+          SELECT registration,
+                 ROUND(latitude::numeric, 2) as lat_bin,
+                 ROUND(longitude::numeric, 2) as lon_bin,
+                 EXTRACT(HOUR FROM detection_timestamp)::int as hr,
+                 detection_timestamp::date as d
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() - INTERVAL '${days} days'
+            AND registration IS NOT NULL AND registration != ''
+            AND latitude BETWEEN ${aoi_lat - deg} AND ${aoi_lat + deg}
+            AND longitude BETWEEN ${aoi_lon - deg} AND ${aoi_lon + deg}
+        )
+        SELECT registration, lat_bin::float8 as lat, lon_bin::float8 as lon,
+               COUNT(DISTINCT d)::int as days_seen,
+               COUNT(DISTINCT hr)::int as unique_hours,
+               COUNT(*)::int as visits
+        FROM grid
+        GROUP BY registration, lat_bin, lon_bin
+        HAVING COUNT(DISTINCT d) >= 3 AND COUNT(DISTINCT hr) >= 6
+        ORDER BY unique_hours DESC, visits DESC
+        LIMIT 30
+      `;
+
+      const [blocked, cloning, rotation, randomized] = await Promise.all([
+        sql.unsafe(blockedIdentitySql).catch(() => []),
+        sql.unsafe(cloningSql).catch(() => []),
+        sql.unsafe(callsignRotationSql).catch(() => []),
+        sql.unsafe(timeRandomizedSql).catch(() => []),
+      ]);
+
+      // Threat scoring per registration
+      const scores = new Map<string, { score: number; tactics: string[] }>();
+      const bump = (reg: string, pts: number, tactic: string) => {
+        if (!reg || reg === '<BLOCKED>') return;
+        const cur = scores.get(reg) || { score: 0, tactics: [] };
+        cur.score += pts;
+        if (!cur.tactics.includes(tactic)) cur.tactics.push(tactic);
+        scores.set(reg, cur);
+      };
+      (blocked as any[]).forEach(r => bump(r.registration, 30, 'BLOCKED_IDENTITY'));
+      (rotation as any[]).forEach(r => bump(r.registration, Math.min(40, r.unique_callsigns * 5), 'CALLSIGN_ROTATION'));
+      (randomized as any[]).forEach(r => bump(r.registration, Math.min(35, r.unique_hours * 2), 'TIME_RANDOMIZED_LOOP'));
+      (cloning as any[]).forEach(r => (r.sample_regs || []).forEach((reg: string) => bump(reg, 25, 'ICAO_CLONING')));
+
+      const topSuspects = Array.from(scores.entries())
+        .map(([registration, v]) => ({ registration, score: v.score, tactics: v.tactics }))
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 25);
+
+      return {
+        aoi: { lat: aoi_lat, lon: aoi_lon, radius_nm, days },
+        blockedIdentity: blocked,
+        icaoCloning: cloning,
+        callsignRotation: rotation,
+        timeRandomizedLoops: randomized,
+        topSuspects,
+        summary: {
+          blockedCount: (blocked as any[]).length,
+          cloningCount: (cloning as any[]).length,
+          rotationCount: (rotation as any[]).length,
+          randomizedCount: (randomized as any[]).length,
+          suspectCount: topSuspects.length,
+        }
+      };
+    }
+
     default:
       return null;
   }

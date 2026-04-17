@@ -815,7 +815,10 @@ export async function handleAction8(action: string, body: Record<string, any>, s
       (blocked as any[]).forEach(r => bump(r.registration, 30, 'BLOCKED_IDENTITY'));
       (rotation as any[]).forEach(r => bump(r.registration, Math.min(40, r.unique_callsigns * 5), 'CALLSIGN_ROTATION'));
       (randomized as any[]).forEach(r => bump(r.registration, Math.min(35, r.unique_hours * 2), 'TIME_RANDOMIZED_LOOP'));
-      (cloning as any[]).forEach(r => (r.sample_regs || []).forEach((reg: string) => bump(reg, 25, 'ICAO_CLONING')));
+      (cloning as any[]).forEach(r => {
+        const regs = Array.isArray(r.sample_regs) ? r.sample_regs : (r.regs || []);
+        (Array.isArray(regs) ? regs : []).forEach((reg: string) => bump(reg, 25, 'ICAO_CLONING'));
+      });
 
       const topSuspects = Array.from(scores.entries())
         .map(([registration, v]) => ({ registration, score: v.score, tactics: v.tactics }))

@@ -24,6 +24,15 @@ interface MatrixResult {
   };
 }
 
+// Postgres arrays may arrive as JS arrays OR as strings like "{a,b,c}". Normalize.
+const toArray = (v: any): string[] => {
+  if (Array.isArray(v)) return v;
+  if (typeof v === 'string' && v.startsWith('{') && v.endsWith('}')) {
+    return v.slice(1, -1).split(',').map(s => s.replace(/^"|"$/g, '').trim()).filter(Boolean);
+  }
+  return [];
+};
+
 const tacticColor = (t: string) => {
   if (t === 'BLOCKED_IDENTITY') return 'destructive';
   if (t === 'ICAO_CLONING') return 'destructive';
@@ -146,13 +155,13 @@ export function ObfuscationDetectionMatrix() {
               </TabsContent>
               <TabsContent value="cloning">
                 <DataTable
-                  rows={data.icaoCloning.map(r => ({ ...r, sample_regs: (r.sample_regs || []).join(', ') }))}
+                  rows={data.icaoCloning.map(r => ({ ...r, sample_regs: toArray(r.sample_regs).join(', ') }))}
                   cols={['icao_code', 'reg_count', 'sample_regs', 'detections']}
                 />
               </TabsContent>
               <TabsContent value="rotation">
                 <DataTable
-                  rows={data.callsignRotation.map(r => ({ ...r, callsigns: (r.callsigns || []).slice(0, 6).join(', ') }))}
+                  rows={data.callsignRotation.map(r => ({ ...r, callsigns: toArray(r.callsigns).slice(0, 6).join(', ') }))}
                   cols={['registration', 'unique_callsigns', 'callsigns', 'detections', 'last_seen']}
                 />
               </TabsContent>

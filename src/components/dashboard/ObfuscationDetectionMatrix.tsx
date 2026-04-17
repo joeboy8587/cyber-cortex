@@ -146,13 +146,13 @@ export function ObfuscationDetectionMatrix() {
               </TabsContent>
               <TabsContent value="cloning">
                 <DataTable
-                  rows={data.icaoCloning.map(r => ({ ...r, sample_regs: (r.sample_regs || []).join(', ') }))}
+                  rows={data.icaoCloning.map(r => ({ ...r, sample_regs: toArray(r.sample_regs).join(', ') }))}
                   cols={['icao_code', 'reg_count', 'sample_regs', 'detections']}
                 />
               </TabsContent>
               <TabsContent value="rotation">
                 <DataTable
-                  rows={data.callsignRotation.map(r => ({ ...r, callsigns: (r.callsigns || []).slice(0, 6).join(', ') }))}
+                  rows={data.callsignRotation.map(r => ({ ...r, callsigns: toArray(r.callsigns).slice(0, 6).join(', ') }))}
                   cols={['registration', 'unique_callsigns', 'callsigns', 'detections', 'last_seen']}
                 />
               </TabsContent>

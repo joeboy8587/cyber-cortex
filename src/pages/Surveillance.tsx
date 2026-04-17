@@ -95,6 +95,9 @@ export default function Surveillance() {
 
           <TabsContent value="identity" className="space-y-6">
             <section>
+              <ObfuscationDetectionMatrix />
+            </section>
+            <section>
               <GhostAircraftForensics />
             </section>
             <section>

@@ -971,6 +971,151 @@ export async function handleAction8(action: string, body: Record<string, any>, s
       return { summary, detections: classified, topStagingSuspects };
     }
 
+    case 'nightOpsAnomalyScan': {
+      // Flags aircraft broadcasting >25% night ops (UTC 22:00-05:59) as suspicious training cover.
+      const days = Math.min(parseInt(String(body.days ?? 30)), 365);
+      const minTotalDetections = Math.max(parseInt(String(body.minDetections ?? 20)), 5);
+      const nightThresholdPct = Number(body.nightThresholdPct ?? 25);
+      const limit = Math.min(parseInt(String(body.limit ?? 100)), 500);
+
+      try { await sql.unsafe(`SET LOCAL statement_timeout = '45s'`); } catch (_) {}
+
+      const rows: any[] = await sql.unsafe(`
+        WITH base AS (
+          SELECT
+            registration,
+            COUNT(*)::int as total_detections,
+            SUM(CASE WHEN EXTRACT(HOUR FROM detection_timestamp) >= 22
+                     OR EXTRACT(HOUR FROM detection_timestamp) < 6
+                     THEN 1 ELSE 0 END)::int as night_count,
+            COUNT(DISTINCT DATE(detection_timestamp))::int as active_days,
+            MIN(detection_timestamp) as first_seen,
+            MAX(detection_timestamp) as last_seen,
+            AVG(NULLIF(altitude,0))::int as avg_altitude,
+            MIN(NULLIF(altitude,0))::int as min_altitude,
+            COUNT(DISTINCT callsign) FILTER (WHERE callsign IS NOT NULL AND callsign != '')::int as unique_callsigns
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() - INTERVAL '${days} days'
+            AND registration IS NOT NULL AND registration != ''
+            AND registration NOT IN ('<BLOCKED>','BLOCKED','UNKNOWN','')
+          GROUP BY registration
+          HAVING COUNT(*) >= ${minTotalDetections}
+        )
+        SELECT *,
+          ROUND((night_count::numeric / NULLIF(total_detections,0)) * 100, 1) as night_pct
+        FROM base
+        WHERE (night_count::numeric / NULLIF(total_detections,0)) * 100 >= ${nightThresholdPct}
+        ORDER BY night_pct DESC, night_count DESC
+        LIMIT ${limit}
+      `);
+
+      const suspects = rows.map((r: any) => {
+        const nightPct = Number(r.night_pct) || 0;
+        let severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' = 'MEDIUM';
+        if (nightPct >= 60) severity = 'CRITICAL';
+        else if (nightPct >= 40) severity = 'HIGH';
+        return {
+          registration: r.registration,
+          total_detections: Number(r.total_detections) || 0,
+          night_count: Number(r.night_count) || 0,
+          night_pct: nightPct,
+          active_days: Number(r.active_days) || 0,
+          unique_callsigns: Number(r.unique_callsigns) || 0,
+          avg_altitude: r.avg_altitude,
+          min_altitude: r.min_altitude,
+          first_seen: r.first_seen,
+          last_seen: r.last_seen,
+          severity,
+        };
+      });
+
+      return {
+        summary: {
+          days_window: days,
+          night_threshold_pct: nightThresholdPct,
+          total_suspects: suspects.length,
+          critical_count: suspects.filter(s => s.severity === 'CRITICAL').length,
+          high_count: suspects.filter(s => s.severity === 'HIGH').length,
+          medium_count: suspects.filter(s => s.severity === 'MEDIUM').length,
+        },
+        suspects,
+      };
+    }
+
+    case 'shellOperatorUnmask': {
+      // Cross-references registrations against faa_aircraft_registry to expose owner/operator.
+      const regs: string[] = Array.isArray(body.registrations) ? body.registrations.filter((r: any) => typeof r === 'string' && r.length > 0) : [];
+      if (regs.length === 0) return { matches: [], unmatched: [] };
+
+      try { await sql.unsafe(`SET LOCAL statement_timeout = '20s'`); } catch (_) {}
+
+      // Try common FAA registry tables; fall back gracefully.
+      const candidates = ['faa_aircraft_registry', 'faa_registry', 'aircraft_registry'];
+      let matches: any[] = [];
+      let usedTable = '';
+      for (const t of candidates) {
+        try {
+          const result: any[] = await sql.unsafe(`
+            SELECT
+              UPPER(n_number) as registration,
+              registrant_name as owner,
+              registrant_street as street,
+              registrant_city as city,
+              registrant_state as state,
+              registrant_zip as zip,
+              aircraft_manufacturer as manufacturer,
+              aircraft_model as model,
+              year_manufactured as year,
+              registrant_type as owner_type,
+              status
+            FROM ${t}
+            WHERE UPPER(n_number) = ANY($1::text[])
+            LIMIT 500
+          `, [regs.map(r => r.toUpperCase().replace(/^N/, 'N'))]);
+          if (result.length > 0) {
+            matches = result;
+            usedTable = t;
+            break;
+          }
+          usedTable = t;
+        } catch (_) { continue; }
+      }
+
+      // Shell signature heuristics
+      const shellSignatures = (owner: string | null, type: string | null) => {
+        if (!owner) return [];
+        const flags: string[] = [];
+        const o = owner.toUpperCase();
+        if (/\bLLC\b|\bLP\b|\bTRUST\b|\bHOLDING/.test(o)) flags.push('LLC_TRUST_HOLDING');
+        if (/\bLEASING\b|\bAIR\b LLC|\bAVIATION\b LLC/.test(o)) flags.push('AVIATION_LLC_PATTERN');
+        if (/\bDELAWARE\b|NEWARK/.test(o)) flags.push('DELAWARE_REGISTRATION');
+        if (type && /CORPORATION|LLC|PARTNERSHIP/.test(type.toUpperCase())) flags.push('CORPORATE_OWNER');
+        if (o.length < 6) flags.push('SUSPICIOUSLY_SHORT_NAME');
+        return flags;
+      };
+
+      const enriched = matches.map((m: any) => ({
+        ...m,
+        shell_flags: shellSignatures(m.owner, m.owner_type),
+        is_likely_shell: shellSignatures(m.owner, m.owner_type).length >= 2,
+      }));
+
+      const matchedRegs = new Set(enriched.map(m => m.registration));
+      const unmatched = regs.filter(r => !matchedRegs.has(r.toUpperCase()));
+
+      return {
+        registry_table: usedTable,
+        matches: enriched,
+        unmatched,
+        summary: {
+          requested: regs.length,
+          matched: enriched.length,
+          unmatched: unmatched.length,
+          likely_shells: enriched.filter(e => e.is_likely_shell).length,
+        }
+      };
+    }
+
     default:
       return null;
   }

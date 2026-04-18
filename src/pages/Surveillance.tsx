@@ -39,6 +39,7 @@ import GhostAircraftForensics from "@/components/dashboard/GhostAircraftForensic
 import SquawkDeceptionDashboard from "@/components/dashboard/SquawkDeceptionDashboard";
 import { ObfuscationDetectionMatrix } from "@/components/dashboard/ObfuscationDetectionMatrix";
 import { ZeroFootClassifier } from "@/components/dashboard/ZeroFootClassifier";
+import { NightOpsDashboard } from "@/components/dashboard/NightOpsDashboard";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export default function Surveillance() {
@@ -193,6 +194,9 @@ export default function Surveillance() {
           </TabsContent>
 
           <TabsContent value="monitoring" className="space-y-6">
+            <section>
+              <NightOpsDashboard />
+            </section>
             <section>
               <ZeroFootClassifier />
             </section>

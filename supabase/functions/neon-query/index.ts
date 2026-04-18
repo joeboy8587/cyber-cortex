@@ -134,6 +134,7 @@ const HANDLER8_ACTIONS = new Set([
   'reprocessBiometricOCR',
   'flightAnomalyScan',
   'obfuscationDetectionMatrix',
+  'zeroFootClassification',
 ]);
 
 async function getHandler1() {

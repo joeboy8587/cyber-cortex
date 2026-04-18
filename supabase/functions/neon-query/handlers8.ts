@@ -842,6 +842,135 @@ export async function handleAction8(action: string, body: Record<string, any>, s
       };
     }
 
+    case 'zeroFootClassification': {
+      // Classifies altitude=0/NULL detections by airport proximity to separate
+      // ramp/taxi noise from genuine residential staging evidence.
+      const days = Math.min(parseInt(String(body.days ?? 7)), 30);
+      const radiusKm = Number(body.airportRadiusKm ?? 5); // 5km default = ~2.7nm
+      const aoiLat = Number(body.aoi_lat ?? 35.437649);
+      const aoiLon = Number(body.aoi_lon ?? -119.022639);
+      const aoiRadiusKm = Number(body.aoi_radius_km ?? 3); // residence cluster radius
+      const limit = Math.min(parseInt(String(body.limit ?? 500)), 2000);
+
+      // Airports in/near the AOI. lat, lon, ICAO, name
+      const AIRPORTS: Array<[number, number, string, string]> = [
+        [35.4336, -119.0568, 'KBFL', 'Meadows Field'],
+        [35.3249, -118.9963, 'L45',  'Bakersfield Municipal'],
+        [35.6588, -117.8294, 'KIYK', 'Inyokern'],
+        [36.0296, -119.0631, 'KPTV', 'Porterville'],
+        [35.7434, -119.2369, 'KDLO', 'Delano'],
+        [35.0594, -118.1517, 'KMHV', 'Mojave'],
+        [34.9054, -117.8838, 'KEDW', 'Edwards AFB'],
+        [35.1357, -119.4407, 'KTFT', 'Taft-Kern County'],
+        [35.5066, -119.4421, 'L73',  'Poso Kern County'],
+        [35.4347, -118.7421, 'L62',  'Tehachapi Municipal'],
+      ];
+
+      try {
+        await sql.unsafe(`SET LOCAL statement_timeout = '40s'`);
+      } catch (_) { /* ignore */ }
+
+      // Pull recent 0ft detections in / near the AOI bounding box
+      const rows: any[] = await sql.unsafe(`
+        SELECT 
+          registration, icao_code, callsign,
+          latitude, longitude, altitude, speed,
+          detection_timestamp, taxonomy_tag
+        FROM live_flight_detections_rows
+        WHERE detection_timestamp > NOW() - INTERVAL '${days} days'
+          AND (altitude IS NULL OR altitude = 0)
+          AND latitude IS NOT NULL AND longitude IS NOT NULL
+          AND latitude BETWEEN 34.5 AND 36.2
+          AND longitude BETWEEN -119.6 AND -117.5
+        ORDER BY detection_timestamp DESC
+        LIMIT ${limit}
+      `);
+
+      // Haversine in km
+      const distKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+        const R = 6371;
+        const toRad = (d: number) => d * Math.PI / 180;
+        const dLat = toRad(lat2 - lat1);
+        const dLon = toRad(lon2 - lon1);
+        const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+        return 2 * R * Math.asin(Math.sqrt(a));
+      };
+
+      const classified = rows.map((r: any) => {
+        const lat = Number(r.latitude);
+        const lon = Number(r.longitude);
+
+        // Nearest airport
+        let nearestAirport = AIRPORTS[0];
+        let nearestDist = distKm(lat, lon, AIRPORTS[0][0], AIRPORTS[0][1]);
+        for (const a of AIRPORTS) {
+          const d = distKm(lat, lon, a[0], a[1]);
+          if (d < nearestDist) { nearestDist = d; nearestAirport = a; }
+        }
+
+        const aoiDist = distKm(lat, lon, aoiLat, aoiLon);
+
+        let classification: 'AIRPORT_GROUND' | 'RESIDENTIAL_STAGING' | 'OPEN_FIELD';
+        let evidenceWeight: 'DROP' | 'KEEP_TIER1' | 'INVESTIGATE';
+
+        if (nearestDist <= radiusKm) {
+          classification = 'AIRPORT_GROUND';
+          evidenceWeight = 'DROP';
+        } else if (aoiDist <= aoiRadiusKm) {
+          classification = 'RESIDENTIAL_STAGING';
+          evidenceWeight = 'KEEP_TIER1';
+        } else {
+          classification = 'OPEN_FIELD';
+          evidenceWeight = 'INVESTIGATE';
+        }
+
+        return {
+          registration: r.registration,
+          icao_code: r.icao_code,
+          callsign: r.callsign,
+          latitude: lat,
+          longitude: lon,
+          speed: r.speed,
+          detection_timestamp: r.detection_timestamp,
+          taxonomy_tag: r.taxonomy_tag,
+          nearest_airport: nearestAirport[2],
+          nearest_airport_name: nearestAirport[3],
+          nearest_airport_km: Number(nearestDist.toFixed(2)),
+          aoi_distance_km: Number(aoiDist.toFixed(2)),
+          classification,
+          evidence_weight: evidenceWeight,
+        };
+      });
+
+      const summary = {
+        total_zero_foot: classified.length,
+        airport_ground: classified.filter(c => c.classification === 'AIRPORT_GROUND').length,
+        residential_staging: classified.filter(c => c.classification === 'RESIDENTIAL_STAGING').length,
+        open_field: classified.filter(c => c.classification === 'OPEN_FIELD').length,
+        airports_used: AIRPORTS.map(a => ({ icao: a[2], name: a[3], lat: a[0], lon: a[1] })),
+        airport_radius_km: radiusKm,
+        aoi: { lat: aoiLat, lon: aoiLon, radius_km: aoiRadiusKm },
+        days_window: days,
+      };
+
+      // Top residential staging suspects (by registration)
+      const stagingByReg = new Map<string, { count: number; last_seen: string; first_seen: string }>();
+      for (const c of classified) {
+        if (c.classification !== 'RESIDENTIAL_STAGING' || !c.registration) continue;
+        const cur = stagingByReg.get(c.registration) || { count: 0, last_seen: c.detection_timestamp, first_seen: c.detection_timestamp };
+        cur.count += 1;
+        if (new Date(c.detection_timestamp) > new Date(cur.last_seen)) cur.last_seen = c.detection_timestamp;
+        if (new Date(c.detection_timestamp) < new Date(cur.first_seen)) cur.first_seen = c.detection_timestamp;
+        stagingByReg.set(c.registration, cur);
+      }
+      const topStagingSuspects = Array.from(stagingByReg.entries())
+        .map(([registration, v]) => ({ registration, ...v }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 25);
+
+      return { summary, detections: classified, topStagingSuspects };
+    }
+
     default:
       return null;
   }

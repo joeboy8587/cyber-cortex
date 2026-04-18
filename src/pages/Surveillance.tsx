@@ -38,6 +38,7 @@ import IcaoIdentityCleanup from "@/components/dashboard/IcaoIdentityCleanup";
 import GhostAircraftForensics from "@/components/dashboard/GhostAircraftForensics";
 import SquawkDeceptionDashboard from "@/components/dashboard/SquawkDeceptionDashboard";
 import { ObfuscationDetectionMatrix } from "@/components/dashboard/ObfuscationDetectionMatrix";
+import { ZeroFootClassifier } from "@/components/dashboard/ZeroFootClassifier";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export default function Surveillance() {
@@ -192,6 +193,9 @@ export default function Surveillance() {
           </TabsContent>
 
           <TabsContent value="monitoring" className="space-y-6">
+            <section>
+              <ZeroFootClassifier />
+            </section>
             <section>
               <SpoofDetectionPanel />
             </section>

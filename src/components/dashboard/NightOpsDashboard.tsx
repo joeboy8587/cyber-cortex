@@ -90,7 +90,8 @@ export function NightOpsDashboard() {
     s === 'CRITICAL' ? 'destructive' : s === 'HIGH' ? 'default' : 'secondary';
 
   return (
-    <CyberPanel title="Night Operations Anomaly Dashboard" subtitle="Flags aircraft with >25% night ops (UTC 22:00-05:59) — training cover indicator">
+    <CyberPanel title="Night Operations Anomaly Dashboard">
+      <p className="-mt-2 mb-3 font-mono text-[10px] uppercase text-muted-foreground">Flags aircraft with &gt;25% night ops (UTC 22:00-05:59) — training cover indicator</p>
       <div className="space-y-4">
         <div className="flex flex-wrap items-end gap-3 rounded border border-border/40 bg-background/40 p-3">
           <div>

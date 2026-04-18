@@ -135,6 +135,8 @@ const HANDLER8_ACTIONS = new Set([
   'flightAnomalyScan',
   'obfuscationDetectionMatrix',
   'zeroFootClassification',
+  'nightOpsAnomalyScan',
+  'shellOperatorUnmask',
 ]);
 
 async function getHandler1() {

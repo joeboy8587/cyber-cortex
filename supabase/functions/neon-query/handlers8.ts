@@ -972,13 +972,16 @@ export async function handleAction8(action: string, body: Record<string, any>, s
     }
 
     case 'nightOpsAnomalyScan': {
-      // Flags aircraft broadcasting >25% night ops (UTC 22:00-05:59) as suspicious training cover.
+      // Flags aircraft broadcasting >X% night ops (UTC 22:00-05:59) and CLASSIFIES legitimacy
+      // (commercial scheduled / foreign carrier / domestic GA / military / unknown) so investigators
+      // can decide what to dismiss vs. escalate. Cross-checks against impossible-altitude spoofing.
       const days = Math.min(parseInt(String(body.days ?? 30)), 365);
       const minTotalDetections = Math.max(parseInt(String(body.minDetections ?? 20)), 5);
       const nightThresholdPct = Number(body.nightThresholdPct ?? 25);
       const limit = Math.min(parseInt(String(body.limit ?? 100)), 500);
+      const includeAirlines = Boolean(body.includeAirlines ?? false);
 
-      try { await sql.unsafe(`SET LOCAL statement_timeout = '45s'`); } catch (_) {}
+      try { await sql.unsafe(`SET LOCAL statement_timeout = '60s'`); } catch (_) {}
 
       const rows: any[] = await sql.unsafe(`
         WITH base AS (
@@ -993,7 +996,9 @@ export async function handleAction8(action: string, body: Record<string, any>, s
             MAX(detection_timestamp) as last_seen,
             AVG(NULLIF(altitude,0))::int as avg_altitude,
             MIN(NULLIF(altitude,0))::int as min_altitude,
-            COUNT(DISTINCT callsign) FILTER (WHERE callsign IS NOT NULL AND callsign != '')::int as unique_callsigns
+            MAX(NULLIF(altitude,0))::int as max_altitude,
+            COUNT(DISTINCT callsign) FILTER (WHERE callsign IS NOT NULL AND callsign != '')::int as unique_callsigns,
+            STRING_AGG(DISTINCT callsign, ',' ORDER BY callsign) FILTER (WHERE callsign IS NOT NULL AND callsign != '') as callsigns_csv
           FROM live_flight_detections_rows
           WHERE detection_timestamp > NOW() - INTERVAL '${days} days'
             AND registration IS NOT NULL AND registration != ''
@@ -1006,14 +1011,74 @@ export async function handleAction8(action: string, body: Record<string, any>, s
         FROM base
         WHERE (night_count::numeric / NULLIF(total_detections,0)) * 100 >= ${nightThresholdPct}
         ORDER BY night_pct DESC, night_count DESC
-        LIMIT ${limit}
+        LIMIT ${limit * 3}
       `);
 
-      const suspects = rows.map((r: any) => {
+      // Cross-check: which of these are also flagged for impossible-altitude spoofing?
+      const allRegs = rows.map(r => r.registration).filter(Boolean);
+      let spoofingRegs = new Set<string>();
+      if (allRegs.length > 0) {
+        try {
+          const spoofRows: any[] = await sql.unsafe(`
+            SELECT DISTINCT registration FROM live_flight_detections_rows
+            WHERE registration = ANY($1::text[])
+              AND altitude > 65000
+              AND detection_timestamp > NOW() - INTERVAL '${days} days'
+          `, [allRegs]);
+          spoofingRegs = new Set(spoofRows.map(s => s.registration));
+        } catch (_) {}
+      }
+
+      // Airline callsign prefix → carrier (ICAO 3-letter)
+      const AIRLINE_PREFIXES: Record<string, string> = {
+        UAL: 'United', SWA: 'Southwest', ASA: 'Alaska', AAL: 'American', DAL: 'Delta',
+        JBU: 'JetBlue', FFT: 'Frontier', NKS: 'Spirit', SKW: 'SkyWest', QXE: 'Horizon',
+        ENY: 'Envoy', RPA: 'Republic', JIA: 'PSA', EJA: 'NetJets', JAL: 'JAL', ANA: 'ANA',
+        CCA: 'Air China', CES: 'China Eastern', CSN: 'China Southern', SIA: 'Singapore',
+        ACA: 'Air Canada', WJA: 'WestJet', AMX: 'Aeromexico', VOI: 'Volaris', KAL: 'Korean',
+        EVA: 'EVA Air', CAL: 'China Airlines', THA: 'Thai', QFA: 'Qantas',
+      };
+
+      const classify = (reg: string, callsigns: string, avgAlt: number | null, minAlt: number | null) => {
+        const r = (reg || '').toUpperCase();
+        const cs = (callsigns || '').toUpperCase().split(',').filter(Boolean);
+        const isForeign = !/^N[0-9]/.test(r);
+
+        // Check airline callsign prefix
+        let airline: string | null = null;
+        for (const cs1 of cs) {
+          const prefix = cs1.slice(0, 3);
+          if (AIRLINE_PREFIXES[prefix]) { airline = AIRLINE_PREFIXES[prefix]; break; }
+        }
+        // Alaska fleet pattern (N6xxAS, N4xxAS, N9xxAK)
+        if (!airline && /^N\d+(AS|AK|WN|UA|AA|DL|JB)$/.test(r)) {
+          if (r.endsWith('AS') || r.endsWith('AK')) airline = 'Alaska';
+          else if (r.endsWith('WN')) airline = 'Southwest';
+          else if (r.endsWith('UA')) airline = 'United';
+          else if (r.endsWith('AA')) airline = 'American';
+          else if (r.endsWith('DL')) airline = 'Delta';
+          else if (r.endsWith('JB')) airline = 'JetBlue';
+        }
+
+        const cruiseAlt = (avgAlt ?? 0) > 18000;
+
+        if (airline && cruiseAlt) return { category: 'COMMERCIAL_SCHEDULED', operator_hint: airline, legitimacy: 'LIKELY_LEGITIMATE' };
+        if (airline) return { category: 'COMMERCIAL_LOW_ALT', operator_hint: airline, legitimacy: 'INVESTIGATE' };
+        if (isForeign && cruiseAlt) return { category: 'FOREIGN_CARRIER', operator_hint: r.split('-')[0], legitimacy: 'LIKELY_LEGITIMATE' };
+        if (isForeign) return { category: 'FOREIGN_UNKNOWN', operator_hint: r.split('-')[0], legitimacy: 'INVESTIGATE' };
+        if ((minAlt ?? 99999) < 2000) return { category: 'DOMESTIC_LOW_ALT', operator_hint: null, legitimacy: 'HIGH_PRIORITY' };
+        return { category: 'DOMESTIC_UNKNOWN', operator_hint: null, legitimacy: 'INVESTIGATE' };
+      };
+
+      const allSuspects = rows.map((r: any) => {
         const nightPct = Number(r.night_pct) || 0;
+        const cls = classify(r.registration, r.callsigns_csv || '', r.avg_altitude, r.min_altitude);
+        const isSpoofingFlagged = spoofingRegs.has(r.registration);
         let severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' = 'MEDIUM';
         if (nightPct >= 60) severity = 'CRITICAL';
         else if (nightPct >= 40) severity = 'HIGH';
+        // Spoofing flag overrides legitimacy
+        if (isSpoofingFlagged) severity = 'CRITICAL';
         return {
           registration: r.registration,
           total_detections: Number(r.total_detections) || 0,
@@ -1021,22 +1086,42 @@ export async function handleAction8(action: string, body: Record<string, any>, s
           night_pct: nightPct,
           active_days: Number(r.active_days) || 0,
           unique_callsigns: Number(r.unique_callsigns) || 0,
+          callsigns_sample: (r.callsigns_csv || '').split(',').slice(0, 3).join(', '),
           avg_altitude: r.avg_altitude,
           min_altitude: r.min_altitude,
+          max_altitude: r.max_altitude,
           first_seen: r.first_seen,
           last_seen: r.last_seen,
           severity,
+          category: cls.category,
+          operator_hint: cls.operator_hint,
+          legitimacy: isSpoofingFlagged ? 'SPOOFING_FLAGGED' : cls.legitimacy,
+          is_spoofing_flagged: isSpoofingFlagged,
         };
       });
+
+      // Filter: by default hide LIKELY_LEGITIMATE airlines unless user opts in
+      const suspects = allSuspects
+        .filter(s => includeAirlines || s.legitimacy !== 'LIKELY_LEGITIMATE' || s.is_spoofing_flagged)
+        .slice(0, limit);
 
       return {
         summary: {
           days_window: days,
           night_threshold_pct: nightThresholdPct,
+          include_airlines: includeAirlines,
           total_suspects: suspects.length,
+          total_before_filter: allSuspects.length,
+          filtered_out_airlines: allSuspects.length - suspects.length,
           critical_count: suspects.filter(s => s.severity === 'CRITICAL').length,
           high_count: suspects.filter(s => s.severity === 'HIGH').length,
           medium_count: suspects.filter(s => s.severity === 'MEDIUM').length,
+          spoofing_flagged_count: suspects.filter(s => s.is_spoofing_flagged).length,
+          high_priority_count: suspects.filter(s => s.legitimacy === 'HIGH_PRIORITY').length,
+          category_breakdown: suspects.reduce((acc: any, s) => {
+            acc[s.category] = (acc[s.category] || 0) + 1;
+            return acc;
+          }, {}),
         },
         suspects,
       };
@@ -1101,17 +1186,35 @@ export async function handleAction8(action: string, body: Record<string, any>, s
       }));
 
       const matchedRegs = new Set(enriched.map(m => m.registration));
-      const unmatched = regs.filter(r => !matchedRegs.has(r.toUpperCase()));
+      // Diagnostic: classify why each unmatched reg failed
+      const unmatchedDiagnostic = regs
+        .filter(r => !matchedRegs.has(r.toUpperCase()))
+        .map(r => {
+          const u = r.toUpperCase();
+          let reason = 'NOT_IN_FAA_REGISTRY';
+          if (!/^N[0-9]/.test(u)) reason = 'FOREIGN_REGISTRATION';
+          else if (/^N\d+(AS|AK|WN|UA|AA|DL|JB)$/.test(u)) reason = 'AIRLINE_FLEET_CODE';
+          return { registration: r, reason };
+        });
+
+      const reasonCounts = unmatchedDiagnostic.reduce((acc: any, u) => {
+        acc[u.reason] = (acc[u.reason] || 0) + 1;
+        return acc;
+      }, {});
 
       return {
         registry_table: usedTable,
         matches: enriched,
-        unmatched,
+        unmatched: unmatchedDiagnostic,
         summary: {
           requested: regs.length,
           matched: enriched.length,
-          unmatched: unmatched.length,
+          unmatched: unmatchedDiagnostic.length,
           likely_shells: enriched.filter(e => e.is_likely_shell).length,
+          unmatched_breakdown: reasonCounts,
+          hint: enriched.length === 0
+            ? 'Zero matches — check unmatched_breakdown. Foreign regs and airline fleet codes will not match shell patterns by design.'
+            : null,
         }
       };
     }

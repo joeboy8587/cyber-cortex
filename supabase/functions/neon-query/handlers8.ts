@@ -1140,6 +1140,9 @@ export async function handleAction8(action: string, body: Record<string, any>, s
           medium_count: suspects.filter(s => s.severity === 'MEDIUM').length,
           spoofing_flagged_count: suspects.filter(s => s.is_spoofing_flagged).length,
           high_priority_count: suspects.filter(s => s.legitimacy === 'HIGH_PRIORITY').length,
+          surveillance_profile_count: suspects.filter(s => s.tactical_flags?.includes('SURVEILLANCE_PROFILE')).length,
+          jsx_rotation_count: suspects.filter(s => s.tactical_flags?.includes('JSX_ROTATION')).length,
+          kcso_anchor_count: suspects.filter(s => s.tactical_flags?.includes('KCSO_ANCHOR')).length,
           category_breakdown: suspects.reduce((acc: any, s) => {
             acc[s.category] = (acc[s.category] || 0) + 1;
             return acc;

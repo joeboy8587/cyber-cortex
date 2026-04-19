@@ -137,6 +137,8 @@ const HANDLER8_ACTIONS = new Set([
   'zeroFootClassification',
   'nightOpsAnomalyScan',
   'shellOperatorUnmask',
+  'openFieldStaging',
+  'kcsoCoordinationCheck',
 ]);
 
 async function getHandler1() {

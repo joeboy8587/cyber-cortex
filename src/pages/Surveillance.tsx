@@ -40,6 +40,7 @@ import SquawkDeceptionDashboard from "@/components/dashboard/SquawkDeceptionDash
 import { ObfuscationDetectionMatrix } from "@/components/dashboard/ObfuscationDetectionMatrix";
 import { ZeroFootClassifier } from "@/components/dashboard/ZeroFootClassifier";
 import { NightOpsDashboard } from "@/components/dashboard/NightOpsDashboard";
+import { OpenFieldStagingPanel } from "@/components/dashboard/OpenFieldStagingPanel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export default function Surveillance() {

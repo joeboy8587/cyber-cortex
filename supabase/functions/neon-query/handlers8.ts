@@ -1074,11 +1074,29 @@ export async function handleAction8(action: string, body: Record<string, any>, s
         const nightPct = Number(r.night_pct) || 0;
         const cls = classify(r.registration, r.callsigns_csv || '', r.avg_altitude, r.min_altitude);
         const isSpoofingFlagged = spoofingRegs.has(r.registration);
+        const avgA = Number(r.avg_altitude) || 0;
+        const minA = Number(r.min_altitude) || 0;
+        const altVariance = avgA && minA ? avgA - minA : 0;
+        // Surveillance profile: high transit altitude (>5000 ft above min) AND low loiter (<2000 ft min)
+        const isSurveillanceProfile = altVariance >= 5000 && minA > 0 && minA < 2000;
+        // JSX callsign rotation flag (commercial cover hypothesis)
+        const csUpper = (r.callsigns_csv || '').toUpperCase();
+        const jsxRotation = /JSX\d/.test(csUpper) && Number(r.unique_callsigns) >= 3;
+        // KCSO coordination: N912KC anchor or similar tail prefix in low-alt cohort
+        const regU = (r.registration || '').toUpperCase();
+        const isKcsoAnchor = /^N9(12|97)KC$|^N\d{3}E$/.test(regU);
+
+        const flags: string[] = [];
+        if (isSurveillanceProfile) flags.push('SURVEILLANCE_PROFILE');
+        if (jsxRotation) flags.push('JSX_ROTATION');
+        if (isKcsoAnchor) flags.push('KCSO_ANCHOR');
+        if (isSpoofingFlagged) flags.push('IMPOSSIBLE_ALTITUDE');
+
         let severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' = 'MEDIUM';
         if (nightPct >= 60) severity = 'CRITICAL';
         else if (nightPct >= 40) severity = 'HIGH';
-        // Spoofing flag overrides legitimacy
-        if (isSpoofingFlagged) severity = 'CRITICAL';
+        if (isSpoofingFlagged || isSurveillanceProfile || isKcsoAnchor) severity = 'CRITICAL';
+
         return {
           registration: r.registration,
           total_detections: Number(r.total_detections) || 0,
@@ -1090,13 +1108,17 @@ export async function handleAction8(action: string, body: Record<string, any>, s
           avg_altitude: r.avg_altitude,
           min_altitude: r.min_altitude,
           max_altitude: r.max_altitude,
+          alt_variance: altVariance,
           first_seen: r.first_seen,
           last_seen: r.last_seen,
           severity,
           category: cls.category,
           operator_hint: cls.operator_hint,
-          legitimacy: isSpoofingFlagged ? 'SPOOFING_FLAGGED' : cls.legitimacy,
+          legitimacy: isSpoofingFlagged ? 'SPOOFING_FLAGGED'
+            : (isSurveillanceProfile || isKcsoAnchor) ? 'HIGH_PRIORITY'
+            : cls.legitimacy,
           is_spoofing_flagged: isSpoofingFlagged,
+          tactical_flags: flags,
         };
       });
 

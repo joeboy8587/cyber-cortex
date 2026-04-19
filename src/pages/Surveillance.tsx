@@ -40,6 +40,7 @@ import SquawkDeceptionDashboard from "@/components/dashboard/SquawkDeceptionDash
 import { ObfuscationDetectionMatrix } from "@/components/dashboard/ObfuscationDetectionMatrix";
 import { ZeroFootClassifier } from "@/components/dashboard/ZeroFootClassifier";
 import { NightOpsDashboard } from "@/components/dashboard/NightOpsDashboard";
+import { OpenFieldStagingPanel } from "@/components/dashboard/OpenFieldStagingPanel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export default function Surveillance() {
@@ -196,6 +197,9 @@ export default function Surveillance() {
           <TabsContent value="monitoring" className="space-y-6">
             <section>
               <NightOpsDashboard />
+            </section>
+            <section>
+              <OpenFieldStagingPanel />
             </section>
             <section>
               <ZeroFootClassifier />

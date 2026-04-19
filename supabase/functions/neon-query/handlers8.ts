@@ -1074,11 +1074,29 @@ export async function handleAction8(action: string, body: Record<string, any>, s
         const nightPct = Number(r.night_pct) || 0;
         const cls = classify(r.registration, r.callsigns_csv || '', r.avg_altitude, r.min_altitude);
         const isSpoofingFlagged = spoofingRegs.has(r.registration);
+        const avgA = Number(r.avg_altitude) || 0;
+        const minA = Number(r.min_altitude) || 0;
+        const altVariance = avgA && minA ? avgA - minA : 0;
+        // Surveillance profile: high transit altitude (>5000 ft above min) AND low loiter (<2000 ft min)
+        const isSurveillanceProfile = altVariance >= 5000 && minA > 0 && minA < 2000;
+        // JSX callsign rotation flag (commercial cover hypothesis)
+        const csUpper = (r.callsigns_csv || '').toUpperCase();
+        const jsxRotation = /JSX\d/.test(csUpper) && Number(r.unique_callsigns) >= 3;
+        // KCSO coordination: N912KC anchor or similar tail prefix in low-alt cohort
+        const regU = (r.registration || '').toUpperCase();
+        const isKcsoAnchor = /^N9(12|97)KC$|^N\d{3}E$/.test(regU);
+
+        const flags: string[] = [];
+        if (isSurveillanceProfile) flags.push('SURVEILLANCE_PROFILE');
+        if (jsxRotation) flags.push('JSX_ROTATION');
+        if (isKcsoAnchor) flags.push('KCSO_ANCHOR');
+        if (isSpoofingFlagged) flags.push('IMPOSSIBLE_ALTITUDE');
+
         let severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' = 'MEDIUM';
         if (nightPct >= 60) severity = 'CRITICAL';
         else if (nightPct >= 40) severity = 'HIGH';
-        // Spoofing flag overrides legitimacy
-        if (isSpoofingFlagged) severity = 'CRITICAL';
+        if (isSpoofingFlagged || isSurveillanceProfile || isKcsoAnchor) severity = 'CRITICAL';
+
         return {
           registration: r.registration,
           total_detections: Number(r.total_detections) || 0,
@@ -1090,13 +1108,17 @@ export async function handleAction8(action: string, body: Record<string, any>, s
           avg_altitude: r.avg_altitude,
           min_altitude: r.min_altitude,
           max_altitude: r.max_altitude,
+          alt_variance: altVariance,
           first_seen: r.first_seen,
           last_seen: r.last_seen,
           severity,
           category: cls.category,
           operator_hint: cls.operator_hint,
-          legitimacy: isSpoofingFlagged ? 'SPOOFING_FLAGGED' : cls.legitimacy,
+          legitimacy: isSpoofingFlagged ? 'SPOOFING_FLAGGED'
+            : (isSurveillanceProfile || isKcsoAnchor) ? 'HIGH_PRIORITY'
+            : cls.legitimacy,
           is_spoofing_flagged: isSpoofingFlagged,
+          tactical_flags: flags,
         };
       });
 
@@ -1118,6 +1140,9 @@ export async function handleAction8(action: string, body: Record<string, any>, s
           medium_count: suspects.filter(s => s.severity === 'MEDIUM').length,
           spoofing_flagged_count: suspects.filter(s => s.is_spoofing_flagged).length,
           high_priority_count: suspects.filter(s => s.legitimacy === 'HIGH_PRIORITY').length,
+          surveillance_profile_count: suspects.filter(s => s.tactical_flags?.includes('SURVEILLANCE_PROFILE')).length,
+          jsx_rotation_count: suspects.filter(s => s.tactical_flags?.includes('JSX_ROTATION')).length,
+          kcso_anchor_count: suspects.filter(s => s.tactical_flags?.includes('KCSO_ANCHOR')).length,
           category_breakdown: suspects.reduce((acc: any, s) => {
             acc[s.category] = (acc[s.category] || 0) + 1;
             return acc;
@@ -1216,6 +1241,198 @@ export async function handleAction8(action: string, body: Record<string, any>, s
             ? 'Zero matches — check unmatched_breakdown. Foreign regs and airline fleet codes will not match shell patterns by design.'
             : null,
         }
+      };
+    }
+
+    case 'openFieldStaging': {
+      // Geolocate altitude=0 detections OUTSIDE airport proximity (Open Field Seven hunt).
+      // Kern County major airports: KBFL (35.434, -119.057), KMHV (35.059, -118.152),
+      // KTFT (35.142, -119.441), L45 Hunt (35.342, -118.999), KIYK Inyokern (35.659, -117.829)
+      const days = Math.min(parseInt(String(body.days ?? 7)), 90);
+      const exclusionKm = Number(body.exclusionKm ?? 5);
+      const aoiLat = Number(body.aoiLat ?? 35.437649);
+      const aoiLng = Number(body.aoiLng ?? -119.022639);
+
+      try { await sql.unsafe(`SET LOCAL statement_timeout = '45s'`); } catch (_) {}
+
+      const rows: any[] = await sql.unsafe(`
+        WITH airports(name, lat, lng) AS (
+          VALUES
+            ('KBFL', 35.4336, -119.0573),
+            ('KMHV', 35.0594, -118.1524),
+            ('KTFT', 35.1419, -119.4413),
+            ('L45',  35.3424, -118.9986),
+            ('KIYK', 35.6588, -117.8294),
+            ('KEDW', 34.9054, -117.8835)
+        ),
+        candidates AS (
+          SELECT
+            registration, callsign, icao_code, latitude, longitude,
+            altitude, speed, detection_timestamp, taxonomy_tag, flagged_reasons
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() - INTERVAL '${days} days'
+            AND altitude = 0
+            AND speed < 50
+            AND latitude IS NOT NULL AND longitude IS NOT NULL
+            AND latitude BETWEEN 34.5 AND 36.0
+            AND longitude BETWEEN -120.0 AND -117.5
+        ),
+        annotated AS (
+          SELECT c.*,
+            (SELECT MIN(
+              111.045 * DEGREES(ACOS(LEAST(1.0,
+                COS(RADIANS(c.latitude)) * COS(RADIANS(a.lat)) *
+                COS(RADIANS(a.lng) - RADIANS(c.longitude)) +
+                SIN(RADIANS(c.latitude)) * SIN(RADIANS(a.lat))
+              )))
+            ) FROM airports a) as nearest_airport_km,
+            (SELECT name FROM airports a ORDER BY
+              111.045 * DEGREES(ACOS(LEAST(1.0,
+                COS(RADIANS(c.latitude)) * COS(RADIANS(a.lat)) *
+                COS(RADIANS(a.lng) - RADIANS(c.longitude)) +
+                SIN(RADIANS(c.latitude)) * SIN(RADIANS(a.lat))
+              ))) ASC LIMIT 1) as nearest_airport,
+            111.045 * DEGREES(ACOS(LEAST(1.0,
+              COS(RADIANS(c.latitude)) * COS(RADIANS(${aoiLat})) *
+              COS(RADIANS(${aoiLng}) - RADIANS(c.longitude)) +
+              SIN(RADIANS(c.latitude)) * SIN(RADIANS(${aoiLat}))
+            ))) as aoi_distance_km
+          FROM candidates c
+        )
+        SELECT * FROM annotated
+        WHERE nearest_airport_km > ${exclusionKm}
+        ORDER BY aoi_distance_km ASC
+        LIMIT 100
+      `);
+
+      // Classify the staging zone heuristically
+      const classify = (lat: number, lng: number) => {
+        // Kern oilfields (rough envelope: 35.30-35.50, -119.10 to -118.85)
+        if (lat >= 35.30 && lat <= 35.50 && lng >= -119.10 && lng <= -118.85) return 'OIL_FIELD_ZONE';
+        // Mojave desert/test corridor
+        if (lat <= 35.20 && lng >= -118.40) return 'DESERT_TEST_CORRIDOR';
+        // Ag belt south/west of Bakersfield
+        if (lat >= 35.20 && lat <= 35.45 && lng <= -119.10) return 'AGRICULTURAL_BELT';
+        if (lat >= 35.50) return 'NORTH_VALLEY_RURAL';
+        return 'UNCLASSIFIED_RURAL';
+      };
+
+      const detections = rows.map((r: any) => ({
+        registration: r.registration,
+        callsign: r.callsign,
+        icao: r.icao_code,
+        latitude: Number(r.latitude),
+        longitude: Number(r.longitude),
+        altitude_ft: Number(r.altitude) || 0,
+        speed_kt: Number(r.speed) || 0,
+        timestamp: r.detection_timestamp,
+        nearest_airport: r.nearest_airport,
+        nearest_airport_km: Number(r.nearest_airport_km).toFixed(2),
+        aoi_distance_km: Number(r.aoi_distance_km).toFixed(2),
+        zone_classification: classify(Number(r.latitude), Number(r.longitude)),
+        taxonomy_tag: r.taxonomy_tag,
+      }));
+
+      const zoneBreakdown = detections.reduce((acc: any, d) => {
+        acc[d.zone_classification] = (acc[d.zone_classification] || 0) + 1;
+        return acc;
+      }, {});
+
+      return {
+        summary: {
+          days_window: days,
+          exclusion_km: exclusionKm,
+          aoi: { lat: aoiLat, lng: aoiLng },
+          total_detections: detections.length,
+          unique_aircraft: new Set(detections.map(d => d.registration).filter(Boolean)).size,
+          zone_breakdown: zoneBreakdown,
+          closest_to_aoi_km: detections[0]?.aoi_distance_km ?? null,
+        },
+        detections,
+      };
+    }
+
+    case 'kcsoCoordinationCheck': {
+      // Cross-reference KCSO anchor (default N912KC) against other low-altitude assets
+      // active in the same ±15 minute windows. Builds the coordination matrix Josiah requested.
+      const anchor = String(body.anchor ?? 'N912KC').toUpperCase();
+      const days = Math.min(parseInt(String(body.days ?? 30)), 180);
+      const windowMin = Math.min(parseInt(String(body.windowMin ?? 15)), 60);
+      const altCeiling = Number(body.altCeilingFt ?? 3000);
+
+      try { await sql.unsafe(`SET LOCAL statement_timeout = '45s'`); } catch (_) {}
+
+      const rows: any[] = await sql.unsafe(`
+        WITH anchor_pings AS (
+          SELECT detection_timestamp as t, latitude as alat, longitude as alng, altitude as aalt
+          FROM live_flight_detections_rows
+          WHERE UPPER(registration) = $1
+            AND detection_timestamp > NOW() - INTERVAL '${days} days'
+            AND altitude IS NOT NULL AND altitude < ${altCeiling}
+            AND latitude IS NOT NULL AND longitude IS NOT NULL
+        ),
+        coincident AS (
+          SELECT
+            d.registration,
+            d.callsign,
+            d.altitude,
+            d.latitude,
+            d.longitude,
+            d.detection_timestamp,
+            a.t as anchor_time,
+            a.aalt as anchor_alt,
+            EXTRACT(EPOCH FROM (d.detection_timestamp - a.t))/60 as delta_min,
+            111.045 * DEGREES(ACOS(LEAST(1.0,
+              COS(RADIANS(d.latitude)) * COS(RADIANS(a.alat)) *
+              COS(RADIANS(a.alng) - RADIANS(d.longitude)) +
+              SIN(RADIANS(d.latitude)) * SIN(RADIANS(a.alat))
+            ))) as dist_km
+          FROM live_flight_detections_rows d
+          JOIN anchor_pings a
+            ON d.detection_timestamp BETWEEN a.t - INTERVAL '${windowMin} min' AND a.t + INTERVAL '${windowMin} min'
+          WHERE UPPER(d.registration) <> $1
+            AND d.detection_timestamp > NOW() - INTERVAL '${days} days'
+            AND d.altitude IS NOT NULL AND d.altitude < ${altCeiling}
+            AND d.latitude IS NOT NULL AND d.longitude IS NOT NULL
+            AND d.registration IS NOT NULL AND d.registration != ''
+        )
+        SELECT
+          registration,
+          COUNT(*)::int as coincident_pings,
+          COUNT(DISTINCT DATE(detection_timestamp))::int as days_coincident,
+          AVG(altitude)::int as avg_alt_when_coincident,
+          MIN(altitude)::int as min_alt_when_coincident,
+          AVG(dist_km)::numeric(10,2) as avg_distance_km,
+          MIN(dist_km)::numeric(10,2) as min_distance_km
+        FROM coincident
+        WHERE dist_km < 50
+        GROUP BY registration
+        HAVING COUNT(*) >= 3
+        ORDER BY coincident_pings DESC
+        LIMIT 50
+      `, [anchor]);
+
+      const cohort = rows.map((r: any) => ({
+        registration: r.registration,
+        coincident_pings: Number(r.coincident_pings),
+        days_coincident: Number(r.days_coincident),
+        avg_alt_ft: r.avg_alt_when_coincident,
+        min_alt_ft: r.min_alt_when_coincident,
+        avg_distance_km: Number(r.avg_distance_km),
+        min_distance_km: Number(r.min_distance_km),
+        coordination_score: Math.min(100, Number(r.coincident_pings) * Number(r.days_coincident)),
+      }));
+
+      return {
+        summary: {
+          anchor,
+          days_window: days,
+          window_minutes: windowMin,
+          altitude_ceiling_ft: altCeiling,
+          coincident_aircraft: cohort.length,
+          high_coordination: cohort.filter(c => c.coordination_score >= 30).length,
+        },
+        cohort,
       };
     }
 

@@ -199,6 +199,9 @@ export default function Surveillance() {
               <NightOpsDashboard />
             </section>
             <section>
+              <OpenFieldStagingPanel />
+            </section>
+            <section>
               <ZeroFootClassifier />
             </section>
             <section>

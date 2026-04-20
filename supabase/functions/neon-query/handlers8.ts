@@ -981,16 +981,39 @@ export async function handleAction8(action: string, body: Record<string, any>, s
       const limit = Math.min(parseInt(String(body.limit ?? 100)), 500);
       const includeAirlines = Boolean(body.includeAirlines ?? false);
 
-      try { await sql.unsafe(`SET LOCAL statement_timeout = '60s'`); } catch (_) {}
+      try { await sql.unsafe(`SET LOCAL statement_timeout = '90s'`); } catch (_) {}
 
-      const rows: any[] = await sql.unsafe(`
-        WITH base AS (
+      // Two-stage scan: (1) cheap aggregate to find candidate registrations,
+      // (2) richer pull only for those candidates. Avoids STRING_AGG over millions of rows.
+      const candidates: any[] = await sql.unsafe(`
+        SELECT
+          registration,
+          COUNT(*)::int as total_detections,
+          SUM(CASE WHEN EXTRACT(HOUR FROM detection_timestamp) >= 22
+                   OR EXTRACT(HOUR FROM detection_timestamp) < 6
+                   THEN 1 ELSE 0 END)::int as night_count
+        FROM live_flight_detections_rows
+        WHERE detection_timestamp > NOW() - INTERVAL '${days} days'
+          AND registration IS NOT NULL AND registration != ''
+          AND registration NOT IN ('<BLOCKED>','BLOCKED','UNKNOWN','')
+        GROUP BY registration
+        HAVING COUNT(*) >= ${minTotalDetections}
+          AND (SUM(CASE WHEN EXTRACT(HOUR FROM detection_timestamp) >= 22
+                        OR EXTRACT(HOUR FROM detection_timestamp) < 6
+                        THEN 1 ELSE 0 END)::numeric / COUNT(*)) * 100 >= ${nightThresholdPct}
+        ORDER BY (SUM(CASE WHEN EXTRACT(HOUR FROM detection_timestamp) >= 22
+                           OR EXTRACT(HOUR FROM detection_timestamp) < 6
+                           THEN 1 ELSE 0 END)::numeric / COUNT(*)) DESC,
+                 COUNT(*) DESC
+        LIMIT ${limit * 3}
+      `);
+
+      const candRegs = candidates.map((c: any) => c.registration).filter(Boolean);
+      let enriched: any[] = [];
+      if (candRegs.length > 0) {
+        enriched = await sql.unsafe(`
           SELECT
             registration,
-            COUNT(*)::int as total_detections,
-            SUM(CASE WHEN EXTRACT(HOUR FROM detection_timestamp) >= 22
-                     OR EXTRACT(HOUR FROM detection_timestamp) < 6
-                     THEN 1 ELSE 0 END)::int as night_count,
             COUNT(DISTINCT DATE(detection_timestamp))::int as active_days,
             MIN(detection_timestamp) as first_seen,
             MAX(detection_timestamp) as last_seen,
@@ -998,21 +1021,33 @@ export async function handleAction8(action: string, body: Record<string, any>, s
             MIN(NULLIF(altitude,0))::int as min_altitude,
             MAX(NULLIF(altitude,0))::int as max_altitude,
             COUNT(DISTINCT callsign) FILTER (WHERE callsign IS NOT NULL AND callsign != '')::int as unique_callsigns,
-            STRING_AGG(DISTINCT callsign, ',' ORDER BY callsign) FILTER (WHERE callsign IS NOT NULL AND callsign != '') as callsigns_csv
-          FROM live_flight_detections_rows
-          WHERE detection_timestamp > NOW() - INTERVAL '${days} days'
-            AND registration IS NOT NULL AND registration != ''
-            AND registration NOT IN ('<BLOCKED>','BLOCKED','UNKNOWN','')
+            (SELECT STRING_AGG(cs, ',') FROM (
+                SELECT DISTINCT callsign as cs FROM live_flight_detections_rows d2
+                WHERE d2.registration = d.registration
+                  AND d2.detection_timestamp > NOW() - INTERVAL '${days} days'
+                  AND callsign IS NOT NULL AND callsign != ''
+                LIMIT 10
+            ) sub) as callsigns_csv
+          FROM live_flight_detections_rows d
+          WHERE registration = ANY($1::text[])
+            AND detection_timestamp > NOW() - INTERVAL '${days} days'
           GROUP BY registration
-          HAVING COUNT(*) >= ${minTotalDetections}
-        )
-        SELECT *,
-          ROUND((night_count::numeric / NULLIF(total_detections,0)) * 100, 1) as night_pct
-        FROM base
-        WHERE (night_count::numeric / NULLIF(total_detections,0)) * 100 >= ${nightThresholdPct}
-        ORDER BY night_pct DESC, night_count DESC
-        LIMIT ${limit * 3}
-      `);
+        `, [candRegs]);
+      }
+
+      const enrichMap = new Map(enriched.map((e: any) => [e.registration, e]));
+      const rows: any[] = candidates.map((c: any) => {
+        const e = enrichMap.get(c.registration) || {};
+        const total = Number(c.total_detections) || 0;
+        const night = Number(c.night_count) || 0;
+        return {
+          ...e,
+          registration: c.registration,
+          total_detections: total,
+          night_count: night,
+          night_pct: total ? Math.round((night / total) * 1000) / 10 : 0,
+        };
+      });
 
       // Cross-check: which of these are also flagged for impossible-altitude spoofing?
       const allRegs = rows.map(r => r.registration).filter(Boolean);
@@ -1360,38 +1395,52 @@ export async function handleAction8(action: string, body: Record<string, any>, s
       const windowMin = Math.min(parseInt(String(body.windowMin ?? 15)), 60);
       const altCeiling = Number(body.altCeilingFt ?? 3000);
 
-      try { await sql.unsafe(`SET LOCAL statement_timeout = '45s'`); } catch (_) {}
+      try { await sql.unsafe(`SET LOCAL statement_timeout = '90s'`); } catch (_) {}
+
+      // Stage 1: pull anchor pings (typically dozens to a few thousand). Cap at 5000.
+      const anchorPings: any[] = await sql.unsafe(`
+        SELECT detection_timestamp as t
+        FROM live_flight_detections_rows
+        WHERE UPPER(registration) = $1
+          AND detection_timestamp > NOW() - INTERVAL '${days} days'
+          AND altitude IS NOT NULL AND altitude < ${altCeiling}
+          AND latitude IS NOT NULL AND longitude IS NOT NULL
+        ORDER BY detection_timestamp DESC
+        LIMIT 5000
+      `, [anchor]);
+
+      if (anchorPings.length === 0) {
+        return {
+          summary: {
+            anchor, days_window: days, window_minutes: windowMin,
+            altitude_ceiling_ft: altCeiling,
+            coincident_aircraft: 0, high_coordination: 0,
+            note: `No anchor pings found for ${anchor} in last ${days} days.`,
+          },
+          cohort: [],
+        };
+      }
+
+      // Stage 2: bounded by anchor time-range (tMin..tMax) instead of full days window.
+      const anchorTimes = anchorPings.map((p: any) => p.t);
+      const tMin = anchorTimes.reduce((m: any, t: any) => t < m ? t : m, anchorTimes[0]);
+      const tMax = anchorTimes.reduce((m: any, t: any) => t > m ? t : m, anchorTimes[0]);
 
       const rows: any[] = await sql.unsafe(`
-        WITH anchor_pings AS (
-          SELECT detection_timestamp as t, latitude as alat, longitude as alng, altitude as aalt
-          FROM live_flight_detections_rows
-          WHERE UPPER(registration) = $1
-            AND detection_timestamp > NOW() - INTERVAL '${days} days'
-            AND altitude IS NOT NULL AND altitude < ${altCeiling}
-            AND latitude IS NOT NULL AND longitude IS NOT NULL
-        ),
-        coincident AS (
+        WITH coincident AS (
           SELECT
             d.registration,
-            d.callsign,
             d.altitude,
-            d.latitude,
-            d.longitude,
             d.detection_timestamp,
-            a.t as anchor_time,
-            a.aalt as anchor_alt,
-            EXTRACT(EPOCH FROM (d.detection_timestamp - a.t))/60 as delta_min,
-            111.045 * DEGREES(ACOS(LEAST(1.0,
-              COS(RADIANS(d.latitude)) * COS(RADIANS(a.alat)) *
-              COS(RADIANS(a.alng) - RADIANS(d.longitude)) +
-              SIN(RADIANS(d.latitude)) * SIN(RADIANS(a.alat))
-            ))) as dist_km
+            EXISTS (
+              SELECT 1 FROM UNNEST($2::timestamptz[]) at(t)
+              WHERE at.t BETWEEN d.detection_timestamp - INTERVAL '${windowMin} min'
+                              AND d.detection_timestamp + INTERVAL '${windowMin} min'
+            ) as is_coincident
           FROM live_flight_detections_rows d
-          JOIN anchor_pings a
-            ON d.detection_timestamp BETWEEN a.t - INTERVAL '${windowMin} min' AND a.t + INTERVAL '${windowMin} min'
-          WHERE UPPER(d.registration) <> $1
-            AND d.detection_timestamp > NOW() - INTERVAL '${days} days'
+          WHERE d.detection_timestamp BETWEEN ($3::timestamptz - INTERVAL '${windowMin} min')
+                                          AND ($4::timestamptz + INTERVAL '${windowMin} min')
+            AND UPPER(d.registration) <> $1
             AND d.altitude IS NOT NULL AND d.altitude < ${altCeiling}
             AND d.latitude IS NOT NULL AND d.longitude IS NOT NULL
             AND d.registration IS NOT NULL AND d.registration != ''
@@ -1402,15 +1451,15 @@ export async function handleAction8(action: string, body: Record<string, any>, s
           COUNT(DISTINCT DATE(detection_timestamp))::int as days_coincident,
           AVG(altitude)::int as avg_alt_when_coincident,
           MIN(altitude)::int as min_alt_when_coincident,
-          AVG(dist_km)::numeric(10,2) as avg_distance_km,
-          MIN(dist_km)::numeric(10,2) as min_distance_km
+          0::numeric as avg_distance_km,
+          0::numeric as min_distance_km
         FROM coincident
-        WHERE dist_km < 50
+        WHERE is_coincident = true
         GROUP BY registration
         HAVING COUNT(*) >= 3
         ORDER BY coincident_pings DESC
         LIMIT 50
-      `, [anchor]);
+      `, [anchor, anchorTimes, tMin, tMax]);
 
       const cohort = rows.map((r: any) => ({
         registration: r.registration,

@@ -234,7 +234,6 @@ export function OpenFieldStagingPanel() {
                     <th className="p-2">Coincident Pings</th>
                     <th className="p-2">Days</th>
                     <th className="p-2">Avg / Min Alt</th>
-                    <th className="p-2">Avg / Min Dist</th>
                     <th className="p-2">Score</th>
                   </tr>
                 </thead>
@@ -245,7 +244,6 @@ export function OpenFieldStagingPanel() {
                       <td className="p-2">{c.coincident_pings}</td>
                       <td className="p-2">{c.days_coincident}</td>
                       <td className="p-2 text-muted-foreground">{c.avg_alt_ft} / {c.min_alt_ft} ft</td>
-                      <td className="p-2 text-muted-foreground">{c.avg_distance_km} / {c.min_distance_km} km</td>
                       <td className="p-2"><Badge variant={c.coordination_score >= 30 ? 'destructive' : 'secondary'}>{c.coordination_score}</Badge></td>
                     </tr>
                   ))}

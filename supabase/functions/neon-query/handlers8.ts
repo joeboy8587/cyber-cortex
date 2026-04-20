@@ -1485,6 +1485,215 @@ export async function handleAction8(action: string, body: Record<string, any>, s
       };
     }
 
+    case 'enrichedAircraftIntelligence': {
+      // Joins live detections with aircraft_registry_enhanced to add threat_tier,
+      // shell_company_flag, historical detection profile. Returns top suspects.
+      const limit = Math.min(Number(body.limit) || 100, 300);
+      const days = Math.max(1, Math.min(Number(body.days) || 90, 730));
+      const minTier = Number(body.minTier) || 0; // 0 = all, 1 = tier1+, etc.
+      const onlyShells = !!body.onlyShells;
+
+      // Use a LATERAL aggregation per registration to avoid joining every row.
+      const sqlText = `
+        WITH recent AS (
+          SELECT
+            UPPER(COALESCE(registration, '')) AS reg,
+            UPPER(COALESCE(icao_code, '')) AS hex,
+            COUNT(*)::int AS detections_window,
+            COUNT(*) FILTER (WHERE flagged = true)::int AS flagged_window,
+            AVG(NULLIF(altitude, 0))::int AS avg_alt_window,
+            MIN(NULLIF(altitude, 0))::int AS min_alt_window,
+            MAX(detection_timestamp) AS last_seen
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() - INTERVAL '${days} days'
+            AND COALESCE(registration, '') <> ''
+          GROUP BY 1, 2
+          HAVING COUNT(*) >= 3
+        ),
+        enriched AS (
+          SELECT
+            r.reg,
+            r.hex,
+            r.detections_window,
+            r.flagged_window,
+            r.avg_alt_window,
+            r.min_alt_window,
+            r.last_seen,
+            COALESCE(a.threat_tier, 5) AS threat_tier,
+            COALESCE(a.shell_company_flag, false) AS shell_company_flag,
+            COALESCE(a.total_detections, 0)::int AS hist_total,
+            COALESCE(a.flagged_detections, 0)::int AS hist_flagged,
+            a.avg_altitude AS hist_avg_alt,
+            a.min_altitude AS hist_min_alt,
+            a.operator_inferred,
+            a.aircraft_type
+          FROM recent r
+          LEFT JOIN aircraft_registry_enhanced a
+            ON UPPER(a.registration) = r.reg
+        )
+        SELECT * FROM enriched
+        WHERE 1=1
+          ${minTier > 0 ? `AND threat_tier <= ${minTier}` : ''}
+          ${onlyShells ? `AND shell_company_flag = true` : ''}
+        ORDER BY
+          (CASE WHEN shell_company_flag THEN 1 ELSE 0 END) DESC,
+          threat_tier ASC,
+          flagged_window DESC,
+          detections_window DESC
+        LIMIT ${limit}
+      `;
+
+      try {
+        const rows = await sql.unsafe(sqlText);
+        const arr = rows as any[];
+        return {
+          summary: {
+            total: arr.length,
+            shells: arr.filter(r => r.shell_company_flag).length,
+            tier1: arr.filter(r => Number(r.threat_tier) === 1).length,
+            tier2: arr.filter(r => Number(r.threat_tier) === 2).length,
+            unregistered: arr.filter(r => Number(r.threat_tier) === 5 && !r.operator_inferred).length,
+          },
+          aircraft: arr,
+        };
+      } catch (e: any) {
+        return { summary: { total: 0 }, aircraft: [], error: String(e?.message || e) };
+      }
+    }
+
+    case 'aircraftMasterProfile': {
+      // One-row-per-aircraft profile fusing registry + recent detections + public traffic + unmasking intel.
+      const reg = String(body.registration || '').toUpperCase().trim();
+      const hex = String(body.hex || '').toLowerCase().trim();
+      if (!reg && !hex) return { error: 'registration or hex required' };
+
+      const regCond = reg ? `UPPER(registration) = '${reg.replace(/'/g, "''")}'` : 'false';
+      const hexCond = hex ? `LOWER(icao_code) = '${hex.replace(/'/g, "''")}'` : 'false';
+
+      try {
+        // 1. Registry record
+        const registry = await sql.unsafe(`
+          SELECT registration, threat_tier, shell_company_flag, total_detections,
+                 flagged_detections, avg_altitude, min_altitude, max_altitude,
+                 operator_inferred, aircraft_type, icao24
+          FROM aircraft_registry_enhanced
+          WHERE ${reg ? `UPPER(registration) = '${reg.replace(/'/g, "''")}'` : 'false'}
+          LIMIT 1
+        `).catch(() => []);
+
+        // 2. Recent detections summary
+        const detections = await sql.unsafe(`
+          SELECT
+            COUNT(*)::int AS total_detections,
+            COUNT(*) FILTER (WHERE flagged = true)::int AS flagged_count,
+            COUNT(DISTINCT DATE(detection_timestamp))::int AS days_active,
+            COUNT(DISTINCT callsign)::int AS unique_callsigns,
+            MIN(detection_timestamp) AS first_seen,
+            MAX(detection_timestamp) AS last_seen,
+            AVG(NULLIF(altitude, 0))::int AS avg_altitude,
+            MIN(NULLIF(altitude, 0))::int AS min_altitude
+          FROM live_flight_detections_rows
+          WHERE ${regCond} OR ${hexCond}
+        `).catch(() => []);
+
+        // 3. Public ADS-B presence
+        const publicPresence = await sql.unsafe(`
+          SELECT COUNT(*)::int AS public_pings, COUNT(DISTINCT flight)::int AS public_callsigns
+          FROM public_air_traffic
+          WHERE ${hex ? `LOWER(hex) = '${hex.replace(/'/g, "''")}'` : 'false'}
+        `).catch(() => [{ public_pings: 0, public_callsigns: 0 }]);
+
+        // 4. Unmasking intel
+        const unmask = await sql.unsafe(`
+          SELECT unmasked_icao, unmasking_confidence, operator_inferred, on_watchlist
+          FROM flight_detections
+          WHERE ${regCond} OR ${hexCond} OR ${hex ? `LOWER(unmasked_icao) = '${hex.replace(/'/g, "''")}'` : 'false'}
+          ORDER BY unmasking_confidence DESC NULLS LAST
+          LIMIT 1
+        `).catch(() => []);
+
+        return {
+          registration: reg || null,
+          hex: hex || null,
+          registry: (registry as any[])[0] || null,
+          detections: (detections as any[])[0] || null,
+          public_presence: (publicPresence as any[])[0] || { public_pings: 0 },
+          unmasking: (unmask as any[])[0] || null,
+          dark_ops_indicator: (() => {
+            const det = (detections as any[])[0];
+            const pub = (publicPresence as any[])[0];
+            if (det?.total_detections > 10 && (pub?.public_pings || 0) === 0) return 'DARK_OPS';
+            if (det?.total_detections > 0 && (pub?.public_pings || 0) === 0) return 'LIKELY_DARK';
+            return 'PUBLIC';
+          })(),
+        };
+      } catch (e: any) {
+        return { error: String(e?.message || e) };
+      }
+    }
+
+    case 'darkOpsComparison': {
+      // Identifies aircraft active in private detections but absent from public ADS-B.
+      const days = Math.max(1, Math.min(Number(body.days) || 60, 365));
+      const minDetections = Number(body.minDetections) || 5;
+      const limit = Math.min(Number(body.limit) || 100, 300);
+
+      try {
+        const rows = await sql.unsafe(`
+          WITH priv AS (
+            SELECT
+              LOWER(COALESCE(icao_code, '')) AS hex,
+              UPPER(COALESCE(registration, '')) AS reg,
+              COUNT(*)::int AS priv_pings,
+              COUNT(*) FILTER (WHERE flagged = true)::int AS flagged_pings,
+              MIN(NULLIF(altitude, 0))::int AS min_alt,
+              MAX(detection_timestamp) AS last_seen
+            FROM live_flight_detections_rows
+            WHERE detection_timestamp > NOW() - INTERVAL '${days} days'
+              AND COALESCE(icao_code, '') <> ''
+            GROUP BY 1, 2
+            HAVING COUNT(*) >= ${minDetections}
+          ),
+          pub AS (
+            SELECT LOWER(hex) AS hex, COUNT(*)::int AS pub_pings
+            FROM public_air_traffic
+            GROUP BY 1
+          )
+          SELECT
+            p.hex, p.reg, p.priv_pings, p.flagged_pings, p.min_alt, p.last_seen,
+            COALESCE(pub.pub_pings, 0) AS pub_pings,
+            COALESCE(a.threat_tier, 5) AS threat_tier,
+            COALESCE(a.shell_company_flag, false) AS shell_company_flag,
+            a.operator_inferred,
+            CASE
+              WHEN COALESCE(pub.pub_pings, 0) = 0 AND p.priv_pings >= 20 THEN 'DARK_OPS'
+              WHEN COALESCE(pub.pub_pings, 0) = 0 THEN 'LIKELY_DARK'
+              WHEN COALESCE(pub.pub_pings, 0) < p.priv_pings * 0.1 THEN 'MOSTLY_DARK'
+              ELSE 'PUBLIC'
+            END AS dark_status
+          FROM priv p
+          LEFT JOIN pub ON pub.hex = p.hex
+          LEFT JOIN aircraft_registry_enhanced a ON UPPER(a.registration) = p.reg
+          WHERE COALESCE(pub.pub_pings, 0) < p.priv_pings * 0.5
+          ORDER BY p.flagged_pings DESC, p.priv_pings DESC
+          LIMIT ${limit}
+        `);
+        const arr = rows as any[];
+        return {
+          summary: {
+            total: arr.length,
+            full_dark: arr.filter(r => r.dark_status === 'DARK_OPS').length,
+            likely_dark: arr.filter(r => r.dark_status === 'LIKELY_DARK').length,
+            mostly_dark: arr.filter(r => r.dark_status === 'MOSTLY_DARK').length,
+            shells_dark: arr.filter(r => r.shell_company_flag).length,
+          },
+          aircraft: arr,
+        };
+      } catch (e: any) {
+        return { summary: { total: 0 }, aircraft: [], error: String(e?.message || e) };
+      }
+    }
+
     default:
       return null;
   }

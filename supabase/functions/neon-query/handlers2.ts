@@ -589,7 +589,7 @@ export async function handleAction2(action: string, body: Record<string, any>, s
               COALESCE(altitude, 0) as altitude, COALESCE(speed, 0) as speed,
               latitude, longitude, COALESCE(heading, 0) as heading,
               COALESCE(icao_code, '') as hex, COALESCE(callsign, '') as callsign,
-              COALESCE(threat_score, 0) as threat_score, COALESCE(flagged, false) as is_flagged,
+              COALESCE(threat_score, 0) as raw_threat_score, COALESCE(flagged, false) as is_flagged,
               flagged_reasons, taxonomy_tag, 'live_flight_detections_rows' as source_table
             FROM live_flight_detections_rows
             WHERE registration = '${safeReg}'
@@ -602,7 +602,7 @@ export async function handleAction2(action: string, body: Record<string, any>, s
               COALESCE(altitude, 0) as altitude, COALESCE(speed, 0) as speed,
               latitude, longitude, COALESCE(heading, 0) as heading,
               COALESCE(icao_code, '') as hex, COALESCE(callsign, '') as callsign,
-              0 as threat_score, false as is_flagged,
+              0 as raw_threat_score, false as is_flagged,
               NULL as flagged_reasons, taxonomy_tag, 'unfilterd_detections' as source_table
             FROM unfilterd_detections
             WHERE registration = '${safeReg}'
@@ -615,20 +615,37 @@ export async function handleAction2(action: string, body: Record<string, any>, s
               COALESCE(alt, 0) as altitude, 0 as speed,
               lat as latitude, lon as longitude, 0 as heading,
               COALESCE(hex, '') as hex, COALESCE(flight, '') as callsign,
-              0 as threat_score, true as is_flagged,
+              0 as raw_threat_score, true as is_flagged,
               reason as flagged_reasons, NULL as taxonomy_tag, 'flagged_aircraft_rows_rows' as source_table
             FROM flagged_aircraft_rows_rows
             WHERE (flight = '${safeReg}' OR hex = '${safeReg}')
               AND COALESCE(flagged_at, created_at) > NOW() - INTERVAL '${timeWindow}'
               AND COALESCE(alt, 0) > 0
+          ),
+          scored AS (
+            SELECT *,
+              -- Derived physics-based threat score (ACED fallback when source = 0)
+              CASE
+                WHEN altitude > 0 AND altitude < 500 THEN 90
+                WHEN altitude >= 500 AND altitude < 1000 THEN 70
+                WHEN altitude >= 1000 AND altitude < 1500 THEN 45
+                WHEN speed > 0 AND speed < 48 AND altitude < 2000 THEN 80
+                ELSE 0
+              END as derived_threat_score
+            FROM combined
           )
-          SELECT *, CASE 
-            WHEN altitude > 0 AND altitude < 500 THEN 'CRITICAL'
-            WHEN altitude >= 500 AND altitude < 1000 THEN 'WARNING'
-            WHEN altitude >= 1000 AND altitude < 1500 THEN 'CAUTION'
-            ELSE 'NORMAL'
-          END as violation_severity
-          FROM combined
+          SELECT *,
+            GREATEST(raw_threat_score, derived_threat_score) as threat_score,
+            CASE
+              WHEN GREATEST(raw_threat_score, derived_threat_score) >= 85
+                OR (altitude > 0 AND altitude < 500) THEN 'CRITICAL'
+              WHEN GREATEST(raw_threat_score, derived_threat_score) >= 60
+                OR (altitude >= 500 AND altitude < 1000) THEN 'WARNING'
+              WHEN GREATEST(raw_threat_score, derived_threat_score) >= 35
+                OR (altitude >= 1000 AND altitude < 1500) THEN 'CAUTION'
+              ELSE 'NORMAL'
+            END as violation_severity
+          FROM scored
           ORDER BY event_time ASC
           LIMIT ${lim}
         `);
@@ -648,7 +665,7 @@ export async function handleAction2(action: string, body: Record<string, any>, s
           WITH combined AS (
             SELECT registration, COALESCE(detection_timestamp, created_at) as event_time,
               COALESCE(altitude, 0) as altitude, COALESCE(speed, 0) as speed,
-              latitude, longitude, COALESCE(threat_score, 0) as threat_score,
+              latitude, longitude, COALESCE(threat_score, 0) as raw_threat_score,
               flagged_reasons, taxonomy_tag
             FROM live_flight_detections_rows
             WHERE COALESCE(altitude, 0) > ${minAlt} AND COALESCE(altitude, 0) < ${maxAlt}
@@ -656,7 +673,7 @@ export async function handleAction2(action: string, body: Record<string, any>, s
             UNION ALL
             SELECT registration, detection_timestamp as event_time,
               COALESCE(altitude, 0) as altitude, COALESCE(speed, 0) as speed,
-              latitude, longitude, 0 as threat_score,
+              latitude, longitude, 0 as raw_threat_score,
               NULL as flagged_reasons, taxonomy_tag
             FROM unfilterd_detections
             WHERE COALESCE(altitude, 0) > ${minAlt} AND COALESCE(altitude, 0) < ${maxAlt}
@@ -664,18 +681,32 @@ export async function handleAction2(action: string, body: Record<string, any>, s
             UNION ALL
             SELECT COALESCE(flight, hex) as registration, COALESCE(flagged_at, created_at) as event_time,
               COALESCE(alt, 0) as altitude, 0 as speed,
-              lat as latitude, lon as longitude, 0 as threat_score,
+              lat as latitude, lon as longitude, 0 as raw_threat_score,
               reason as flagged_reasons, NULL as taxonomy_tag
             FROM flagged_aircraft_rows_rows
             WHERE COALESCE(alt, 0) > ${minAlt} AND COALESCE(alt, 0) < ${maxAlt}
               AND COALESCE(flagged_at, created_at) > NOW() - INTERVAL '${vioWindow}'
+          ),
+          scored AS (
+            SELECT *,
+              -- ACED physics-derived threat score (fallback when source row stored 0)
+              CASE
+                WHEN altitude > 0 AND altitude < 500 THEN 90
+                WHEN altitude >= 500 AND altitude < 1000 THEN 70
+                WHEN altitude >= 1000 AND altitude < 1500 THEN 45
+                WHEN speed > 0 AND speed < 48 AND altitude < 2000 THEN 80
+                ELSE 0
+              END as derived_threat_score
+            FROM combined
           )
-          SELECT *, CASE 
-            WHEN altitude < 500 THEN 'CRITICAL: 91.119 Violation (<500ft)'
-            WHEN altitude < 1000 THEN 'WARNING: Low Altitude (<1000ft)'
-            ELSE 'CAUTION'
-          END as violation_severity
-          FROM combined ORDER BY event_time DESC LIMIT ${lim}
+          SELECT *,
+            GREATEST(raw_threat_score, derived_threat_score) as threat_score,
+            CASE 
+              WHEN altitude < 500 THEN 'CRITICAL: 91.119 Violation (<500ft)'
+              WHEN altitude < 1000 THEN 'WARNING: Low Altitude (<1000ft)'
+              ELSE 'CAUTION'
+            END as violation_severity
+          FROM scored ORDER BY event_time DESC LIMIT ${lim}
         `);
 
         const stats = await sql.unsafe(`

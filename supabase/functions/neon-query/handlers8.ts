@@ -1395,38 +1395,52 @@ export async function handleAction8(action: string, body: Record<string, any>, s
       const windowMin = Math.min(parseInt(String(body.windowMin ?? 15)), 60);
       const altCeiling = Number(body.altCeilingFt ?? 3000);
 
-      try { await sql.unsafe(`SET LOCAL statement_timeout = '45s'`); } catch (_) {}
+      try { await sql.unsafe(`SET LOCAL statement_timeout = '90s'`); } catch (_) {}
+
+      // Stage 1: pull anchor pings (typically dozens to a few thousand). Cap at 5000.
+      const anchorPings: any[] = await sql.unsafe(`
+        SELECT detection_timestamp as t
+        FROM live_flight_detections_rows
+        WHERE UPPER(registration) = $1
+          AND detection_timestamp > NOW() - INTERVAL '${days} days'
+          AND altitude IS NOT NULL AND altitude < ${altCeiling}
+          AND latitude IS NOT NULL AND longitude IS NOT NULL
+        ORDER BY detection_timestamp DESC
+        LIMIT 5000
+      `, [anchor]);
+
+      if (anchorPings.length === 0) {
+        return {
+          summary: {
+            anchor, days_window: days, window_minutes: windowMin,
+            altitude_ceiling_ft: altCeiling,
+            coincident_aircraft: 0, high_coordination: 0,
+            note: `No anchor pings found for ${anchor} in last ${days} days.`,
+          },
+          cohort: [],
+        };
+      }
+
+      // Stage 2: bounded by anchor time-range (tMin..tMax) instead of full days window.
+      const anchorTimes = anchorPings.map((p: any) => p.t);
+      const tMin = anchorTimes.reduce((m: any, t: any) => t < m ? t : m, anchorTimes[0]);
+      const tMax = anchorTimes.reduce((m: any, t: any) => t > m ? t : m, anchorTimes[0]);
 
       const rows: any[] = await sql.unsafe(`
-        WITH anchor_pings AS (
-          SELECT detection_timestamp as t, latitude as alat, longitude as alng, altitude as aalt
-          FROM live_flight_detections_rows
-          WHERE UPPER(registration) = $1
-            AND detection_timestamp > NOW() - INTERVAL '${days} days'
-            AND altitude IS NOT NULL AND altitude < ${altCeiling}
-            AND latitude IS NOT NULL AND longitude IS NOT NULL
-        ),
-        coincident AS (
+        WITH coincident AS (
           SELECT
             d.registration,
-            d.callsign,
             d.altitude,
-            d.latitude,
-            d.longitude,
             d.detection_timestamp,
-            a.t as anchor_time,
-            a.aalt as anchor_alt,
-            EXTRACT(EPOCH FROM (d.detection_timestamp - a.t))/60 as delta_min,
-            111.045 * DEGREES(ACOS(LEAST(1.0,
-              COS(RADIANS(d.latitude)) * COS(RADIANS(a.alat)) *
-              COS(RADIANS(a.alng) - RADIANS(d.longitude)) +
-              SIN(RADIANS(d.latitude)) * SIN(RADIANS(a.alat))
-            ))) as dist_km
+            EXISTS (
+              SELECT 1 FROM UNNEST($2::timestamptz[]) at(t)
+              WHERE at.t BETWEEN d.detection_timestamp - INTERVAL '${windowMin} min'
+                              AND d.detection_timestamp + INTERVAL '${windowMin} min'
+            ) as is_coincident
           FROM live_flight_detections_rows d
-          JOIN anchor_pings a
-            ON d.detection_timestamp BETWEEN a.t - INTERVAL '${windowMin} min' AND a.t + INTERVAL '${windowMin} min'
-          WHERE UPPER(d.registration) <> $1
-            AND d.detection_timestamp > NOW() - INTERVAL '${days} days'
+          WHERE d.detection_timestamp BETWEEN ($3::timestamptz - INTERVAL '${windowMin} min')
+                                          AND ($4::timestamptz + INTERVAL '${windowMin} min')
+            AND UPPER(d.registration) <> $1
             AND d.altitude IS NOT NULL AND d.altitude < ${altCeiling}
             AND d.latitude IS NOT NULL AND d.longitude IS NOT NULL
             AND d.registration IS NOT NULL AND d.registration != ''
@@ -1437,15 +1451,15 @@ export async function handleAction8(action: string, body: Record<string, any>, s
           COUNT(DISTINCT DATE(detection_timestamp))::int as days_coincident,
           AVG(altitude)::int as avg_alt_when_coincident,
           MIN(altitude)::int as min_alt_when_coincident,
-          AVG(dist_km)::numeric(10,2) as avg_distance_km,
-          MIN(dist_km)::numeric(10,2) as min_distance_km
+          0::numeric as avg_distance_km,
+          0::numeric as min_distance_km
         FROM coincident
-        WHERE dist_km < 50
+        WHERE is_coincident = true
         GROUP BY registration
         HAVING COUNT(*) >= 3
         ORDER BY coincident_pings DESC
         LIMIT 50
-      `, [anchor]);
+      `, [anchor, anchorTimes, tMin, tMax]);
 
       const cohort = rows.map((r: any) => ({
         registration: r.registration,

@@ -41,6 +41,7 @@ import { ObfuscationDetectionMatrix } from "@/components/dashboard/ObfuscationDe
 import { ZeroFootClassifier } from "@/components/dashboard/ZeroFootClassifier";
 import { NightOpsDashboard } from "@/components/dashboard/NightOpsDashboard";
 import { OpenFieldStagingPanel } from "@/components/dashboard/OpenFieldStagingPanel";
+import { EnrichedAircraftIntelligencePanel } from "@/components/dashboard/EnrichedAircraftIntelligencePanel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export default function Surveillance() {
@@ -200,6 +201,9 @@ export default function Surveillance() {
             </section>
             <section>
               <OpenFieldStagingPanel />
+            </section>
+            <section>
+              <EnrichedAircraftIntelligencePanel />
             </section>
             <section>
               <ZeroFootClassifier />

@@ -139,6 +139,9 @@ const HANDLER8_ACTIONS = new Set([
   'shellOperatorUnmask',
   'openFieldStaging',
   'kcsoCoordinationCheck',
+  'enrichedAircraftIntelligence',
+  'aircraftMasterProfile',
+  'darkOpsComparison',
 ]);
 
 async function getHandler1() {

@@ -142,6 +142,7 @@ const HANDLER8_ACTIONS = new Set([
   'enrichedAircraftIntelligence',
   'aircraftMasterProfile',
   'darkOpsComparison',
+  'airMethodsFleet',
 ]);
 
 async function getHandler1() {

@@ -6,7 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useNeonDatabase } from "@/hooks/useNeonDatabase";
-import { Loader2, Search, Database, Eye, EyeOff } from "lucide-react";
+import { Loader2, Search, Database, Eye, EyeOff, Stethoscope } from "lucide-react";
 import { toast } from "sonner";
 
 interface EnrichedRow {
@@ -60,12 +60,42 @@ const darkColor = (s: string) => {
   return "outline";
 };
 
+interface AirMethodsRow {
+  registration: string;
+  icao24: string | null;
+  detection_count: number;
+  flagged_count: number;
+  min_alt: number | null;
+  avg_alt: number | null;
+  china_lake_visits: number;
+  china_lake_min_alt: number | null;
+  owner_name: string | null;
+  aircraft_type: string | null;
+  tactical_role: string;
+  threat_level: string;
+}
+
+const roleColor = (r: string) => {
+  if (r === "MILITARY_LIAISON") return "destructive";
+  if (r === "SURVEILLANCE_LOITER") return "destructive";
+  if (r === "STATION_KEEPING") return "default";
+  return "outline";
+};
+
+const threatColor = (t: string) => {
+  if (t === "CRITICAL") return "destructive";
+  if (t === "HIGH") return "default";
+  return "secondary";
+};
+
 export function EnrichedAircraftIntelligencePanel() {
   const { customQuery, isLoading } = useNeonDatabase();
   const [enriched, setEnriched] = useState<EnrichedRow[]>([]);
   const [enrichedSummary, setEnrichedSummary] = useState<any>(null);
   const [dark, setDark] = useState<DarkRow[]>([]);
   const [darkSummary, setDarkSummary] = useState<any>(null);
+  const [airMethods, setAirMethods] = useState<AirMethodsRow[]>([]);
+  const [airMethodsSummary, setAirMethodsSummary] = useState<any>(null);
   const [profile, setProfile] = useState<ProfileResult | null>(null);
   const [profileQuery, setProfileQuery] = useState("");
   const [busy, setBusy] = useState<string | null>(null);

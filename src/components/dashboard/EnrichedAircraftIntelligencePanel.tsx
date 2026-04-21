@@ -130,6 +130,20 @@ export function EnrichedAircraftIntelligencePanel() {
     }
   };
 
+  const runAirMethods = async () => {
+    setBusy("airmethods");
+    try {
+      const res = await callAction("airMethodsFleet", { days: 365, limit: 100 });
+      setAirMethods(res?.aircraft || []);
+      setAirMethodsSummary(res?.summary || null);
+      toast.success(`Loaded ${res?.aircraft?.length || 0} Air Methods aircraft`);
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const runDark = async () => {
     setBusy("dark");
     try {
@@ -296,6 +310,62 @@ export function EnrichedAircraftIntelligencePanel() {
                         <td className="p-2 text-muted-foreground truncate max-w-[180px]">
                           {r.operator_inferred || "—"}
                         </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="airmethods" className="space-y-4 mt-4">
+            <Button onClick={runAirMethods} disabled={busy === "airmethods" || isLoading}>
+              {busy === "airmethods" ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Stethoscope className="h-4 w-4 mr-2" />}
+              Map Air Methods Fleet (365d)
+            </Button>
+            <p className="text-xs text-muted-foreground">
+              Maps the medical-camouflage helicopter network. Detects China Lake (NAWC) penetrations,
+              low-altitude surveillance loiter, and station-keeping patterns. Targets: N###AM convention.
+            </p>
+            {airMethodsSummary && (
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+                <StatBox label="Fleet" value={airMethodsSummary.total} />
+                <StatBox label="Mil Liaison" value={airMethodsSummary.military_liaison} variant="destructive" />
+                <StatBox label="Surveillance" value={airMethodsSummary.surveillance_loiter} variant="destructive" />
+                <StatBox label="Station-Keep" value={airMethodsSummary.station_keeping} variant="default" />
+                <StatBox label="China Lake Hits" value={airMethodsSummary.total_china_lake_visits} variant="destructive" />
+              </div>
+            )}
+            {airMethods.length > 0 && (
+              <div className="overflow-auto max-h-[500px] border rounded-md">
+                <table className="w-full text-xs">
+                  <thead className="bg-muted sticky top-0">
+                    <tr>
+                      <th className="p-2 text-left">Reg</th>
+                      <th className="p-2 text-left">Tactical Role</th>
+                      <th className="p-2 text-left">Threat</th>
+                      <th className="p-2 text-right">Detections</th>
+                      <th className="p-2 text-right">Flagged</th>
+                      <th className="p-2 text-right">Min Alt</th>
+                      <th className="p-2 text-right">China Lake</th>
+                      <th className="p-2 text-left">Type</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {airMethods.map((r, i) => (
+                      <tr key={i} className="border-t hover:bg-muted/50">
+                        <td className="p-2 font-mono font-semibold">{r.registration}</td>
+                        <td className="p-2">
+                          <Badge variant={roleColor(r.tactical_role) as any}>{r.tactical_role}</Badge>
+                        </td>
+                        <td className="p-2">
+                          <Badge variant={threatColor(r.threat_level) as any}>{r.threat_level}</Badge>
+                        </td>
+                        <td className="p-2 text-right">{r.detection_count}</td>
+                        <td className="p-2 text-right text-destructive">{r.flagged_count}</td>
+                        <td className="p-2 text-right">{r.min_alt ?? "—"}</td>
+                        <td className="p-2 text-right text-destructive font-semibold">{r.china_lake_visits || "—"}</td>
+                        <td className="p-2 text-muted-foreground truncate max-w-[160px]">{r.aircraft_type || r.owner_name || "—"}</td>
                       </tr>
                     ))}
                   </tbody>

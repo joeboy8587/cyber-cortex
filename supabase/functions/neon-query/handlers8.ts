@@ -1486,19 +1486,19 @@ export async function handleAction8(action: string, body: Record<string, any>, s
     }
 
     case 'enrichedAircraftIntelligence': {
-      // Joins live detections with aircraft_registry_enhanced to add threat_tier,
-      // shell_company_flag, historical detection profile. Returns top suspects.
+      // Joins live detections with aircraft_registry_enriched to add threat_tier,
+      // shell_company_detected, historical detection profile. Returns top suspects.
       const limit = Math.min(Number(body.limit) || 100, 300);
       const days = Math.max(1, Math.min(Number(body.days) || 90, 730));
       const minTier = Number(body.minTier) || 0; // 0 = all, 1 = tier1+, etc.
       const onlyShells = !!body.onlyShells;
 
-      // Use a LATERAL aggregation per registration to avoid joining every row.
+      // Aggregate per registration to avoid joining every row.
       const sqlText = `
         WITH recent AS (
           SELECT
             UPPER(COALESCE(registration, '')) AS reg,
-            UPPER(COALESCE(icao_code, '')) AS hex,
+            LOWER(COALESCE(icao24, '')) AS hex,
             COUNT(*)::int AS detections_window,
             COUNT(*) FILTER (WHERE flagged = true)::int AS flagged_window,
             AVG(NULLIF(altitude, 0))::int AS avg_alt_window,
@@ -1519,16 +1519,28 @@ export async function handleAction8(action: string, body: Record<string, any>, s
             r.avg_alt_window,
             r.min_alt_window,
             r.last_seen,
-            COALESCE(a.threat_tier, 5) AS threat_tier,
-            COALESCE(a.shell_company_flag, false) AS shell_company_flag,
+            -- Derive a tier from threat_score when explicit tier missing
+            COALESCE(
+              NULLIF(CASE
+                WHEN a.threat_score >= 80 THEN 1
+                WHEN a.threat_score >= 60 THEN 2
+                WHEN a.threat_score >= 40 THEN 3
+                WHEN a.threat_score >= 20 THEN 4
+                ELSE NULL
+              END, 0),
+              5
+            )::int AS threat_tier,
+            COALESCE(a.shell_company_detected, false) AS shell_company_flag,
             COALESCE(a.total_detections, 0)::int AS hist_total,
-            COALESCE(a.flagged_detections, 0)::int AS hist_flagged,
+            COALESCE(a.violation_count_30_day, 0)::int AS hist_flagged,
             a.avg_altitude AS hist_avg_alt,
-            a.min_altitude AS hist_min_alt,
-            a.operator_inferred,
-            a.aircraft_type
+            NULL::numeric AS hist_min_alt,
+            a.owner_name AS operator_inferred,
+            a.aircraft_type,
+            COALESCE(a.is_surveillance, false) AS is_surveillance,
+            a.taxonomy_tag
           FROM recent r
-          LEFT JOIN aircraft_registry_enhanced a
+          LEFT JOIN aircraft_registry_enriched a
             ON UPPER(a.registration) = r.reg
         )
         SELECT * FROM enriched

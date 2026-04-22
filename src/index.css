@@ -287,3 +287,26 @@
     50% { opacity: 0.8; }
   }
 }
+
+/* Aircraft map permanent labels for critical/high threats */
+.leaflet-tooltip.aircraft-label-critical,
+.leaflet-tooltip.aircraft-label-high {
+  background: hsl(var(--background) / 0.85);
+  color: hsl(var(--foreground));
+  border: 1px solid hsl(var(--destructive));
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  box-shadow: 0 0 8px hsl(var(--destructive) / 0.5);
+  white-space: nowrap;
+}
+.leaflet-tooltip.aircraft-label-high {
+  border-color: hsl(var(--primary));
+  box-shadow: 0 0 6px hsl(var(--primary) / 0.4);
+}
+.leaflet-tooltip.aircraft-label-critical::before,
+.leaflet-tooltip.aircraft-label-high::before {
+  display: none;
+}

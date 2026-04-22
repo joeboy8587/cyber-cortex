@@ -19,7 +19,11 @@ interface MilitaryStats {
   uniqueRegistrations: number;
   agenciesIdentified: string[];
   topMilitaryAircraft: MilitaryEvent[];
+  firstSeen: string | null;
+  lastSeen: string | null;
 }
+
+const REFRESH_INTERVAL_MS = 30_000; // 30s live refresh
 
 // Known military/government registrations from ADSB data
 const knownMilitaryRegistrations = [

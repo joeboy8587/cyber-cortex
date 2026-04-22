@@ -53,62 +53,102 @@ const knownAgencies = [
 
 export function MilitaryAircraftPanel() {
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [isLive, setIsLive] = useState(true);
+  const intervalRef = useRef<number | null>(null);
   const [stats, setStats] = useState<MilitaryStats>({
     totalMilitaryEvents: 0,
     uniqueRegistrations: 0,
     agenciesIdentified: [],
-    topMilitaryAircraft: []
+    topMilitaryAircraft: [],
+    firstSeen: null,
+    lastSeen: null,
   });
 
-  useEffect(() => {
-    const fetchMilitaryData = async () => {
-      try {
-        const { data, error } = await supabase.functions.invoke("neon-query", {
-          body: { action: "getMilitaryAircraft" }
-        });
+  const fetchMilitaryData = useCallback(async (initial = false) => {
+    if (initial) setLoading(true);
+    else setRefreshing(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("neon-query", {
+        body: { action: "getMilitaryAircraft" },
+      });
 
-        if (error) throw error;
+      if (error) throw error;
 
-        const militaryEvents = Array.isArray(data?.militaryFlights) ? data.militaryFlights : [];
-        const kcsoCoOcc = Array.isArray(data?.kcsoCoOccurrence) ? data.kcsoCoOccurrence : [];
+      const militaryEvents = Array.isArray(data?.militaryFlights) ? data.militaryFlights : [];
 
-        // Total detections across all military flights
-        const totalEvents = militaryEvents.reduce((sum: number, e: any) => sum + parseInt(e.detection_count || "0"), 0);
+      const totalEvents = militaryEvents.reduce(
+        (sum: number, e: any) => sum + parseInt(e.detection_count || "0"),
+        0,
+      );
 
-        // Assign agencies to registrations
-        const topMilitaryAircraft: MilitaryEvent[] = militaryEvents.slice(0, 15).map((event: any) => {
-          const known = knownMilitaryRegistrations.find(k => event.registration === k.reg);
-          const coOcc = kcsoCoOcc.find((c: any) => c.military_reg === event.registration);
-          return {
-            registration: event.registration,
-            detectionCount: parseInt(event.detection_count || "0"),
-            agency: known?.agency || "Military/Gov",
-            aircraftType: known?.type || event.callsign || "Unidentified",
-            avgAltitude: Math.round(parseFloat(event.avg_altitude || "0"))
-          };
-        });
+      const topMilitaryAircraft: MilitaryEvent[] = militaryEvents.slice(0, 15).map((event: any) => {
+        const known = knownMilitaryRegistrations.find((k) => event.registration === k.reg);
+        return {
+          registration: event.registration,
+          detectionCount: parseInt(event.detection_count || "0"),
+          agency: known?.agency || "Military/Gov",
+          aircraftType: known?.type || event.callsign || "Unidentified",
+          avgAltitude: Math.round(parseFloat(event.avg_altitude || "0")),
+        };
+      });
 
-        setStats({
-          totalMilitaryEvents: totalEvents,
-          uniqueRegistrations: militaryEvents.length,
-          agenciesIdentified: ["USAF", "US Navy", "US Army", "Point Mugu Naval Base", "DOD Contractors"],
-          topMilitaryAircraft
-        });
-      } catch (error) {
-        console.error("Failed to fetch military data:", error);
-        setStats({
-          totalMilitaryEvents: 0,
-          uniqueRegistrations: 0,
-          agenciesIdentified: [],
-          topMilitaryAircraft: []
-        });
-      } finally {
-        setLoading(false);
-      }
-    };
+      // Derive first/last seen from any timestamp fields the backend returns
+      const timestamps = militaryEvents
+        .flatMap((e: any) => [e.first_seen, e.last_seen, e.first_detection, e.last_detection])
+        .filter(Boolean)
+        .map((t: string) => new Date(t).getTime())
+        .filter((n: number) => !Number.isNaN(n));
+      const firstSeen = timestamps.length ? new Date(Math.min(...timestamps)).toISOString() : null;
+      const lastSeen = timestamps.length ? new Date(Math.max(...timestamps)).toISOString() : null;
 
-    fetchMilitaryData();
+      // Derive agencies dynamically from known registrations actually seen
+      const seenAgencies = new Set<string>();
+      militaryEvents.forEach((e: any) => {
+        const known = knownMilitaryRegistrations.find((k) => e.registration === k.reg);
+        if (known) seenAgencies.add(known.agency);
+      });
+      const agencyList = seenAgencies.size > 0
+        ? Array.from(seenAgencies)
+        : ["USAF", "US Navy", "US Army", "Point Mugu Naval Base", "DOD Contractors"];
+
+      setStats({
+        totalMilitaryEvents: totalEvents,
+        uniqueRegistrations: militaryEvents.length,
+        agenciesIdentified: agencyList,
+        topMilitaryAircraft,
+        firstSeen,
+        lastSeen,
+      });
+      setLastUpdated(new Date());
+    } catch (error) {
+      console.error("Failed to fetch military data:", error);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
   }, []);
+
+  useEffect(() => {
+    fetchMilitaryData(true);
+  }, [fetchMilitaryData]);
+
+  useEffect(() => {
+    if (!isLive) {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+      return;
+    }
+    intervalRef.current = window.setInterval(() => {
+      fetchMilitaryData(false);
+    }, REFRESH_INTERVAL_MS);
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  }, [isLive, fetchMilitaryData]);
 
   return (
     <CyberPanel

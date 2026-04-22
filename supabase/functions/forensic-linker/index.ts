@@ -110,19 +110,26 @@ serve(async (req) => {
         // Continue with zeros — Neon stats are supplementary
       }
 
-      // Count linked records from chain_links
-      const linkedFlightsRes = await supabase
-        .from("evidence_chain_links")
-        .select("link_id", { count: "exact", head: true })
-        .eq("source_table", "live_flight_detections_rows");
-      
-      const linkedBioRes = await supabase
-        .from("evidence_chain_links")
-        .select("link_id", { count: "exact", head: true })
-        .eq("source_table", "biometric_monitoring");
-
-      const linkedFlights = linkedFlightsRes.count ?? 0;
-      const linkedBiometrics = linkedBioRes.count ?? 0;
+      // Count linked records from chain_links — use estimated count to avoid timeouts
+      // on large tables. `count: 'estimated'` uses planner stats instead of full scan.
+      let linkedFlights = 0;
+      let linkedBiometrics = 0;
+      try {
+        const [linkedFlightsRes, linkedBioRes] = await Promise.all([
+          supabase
+            .from("evidence_chain_links")
+            .select("link_id", { count: "estimated", head: true })
+            .eq("source_table", "live_flight_detections_rows"),
+          supabase
+            .from("evidence_chain_links")
+            .select("link_id", { count: "estimated", head: true })
+            .eq("source_table", "biometric_monitoring"),
+        ]);
+        linkedFlights = linkedFlightsRes.count ?? 0;
+        linkedBiometrics = linkedBioRes.count ?? 0;
+      } catch (e) {
+        console.warn("[forensic-linker] linked counts skipped (non-fatal):", (e as Error)?.message);
+      }
 
       const stats: LinkageStats = {
         forensicEvents: eventsRes.count ?? 0,

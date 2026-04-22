@@ -357,43 +357,43 @@ serve(async (req) => {
       }
 
       case 'getEmptyTables': {
-        // Find all empty tables with FK dependency info
-        const tables = await sql`
-          SELECT tablename as name
-          FROM pg_tables 
-          WHERE schemaname = 'public'
-          ORDER BY tablename
+        // Single bulk query: get planner row estimates + verify zero with a fast EXISTS
+        const candidates = await sql`
+          SELECT c.relname as name
+          FROM pg_class c
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE c.relkind = 'r' AND n.nspname = 'public'
+            AND GREATEST(c.reltuples, 0) < 1
+          ORDER BY c.relname
         `;
-        
+
+        // Bulk fetch FK dependencies once
+        const fkRows = await sql`
+          SELECT ccu.table_name as name, COUNT(*) as fk_count
+          FROM information_schema.table_constraints tc
+          JOIN information_schema.constraint_column_usage ccu 
+            ON tc.constraint_name = ccu.constraint_name
+          WHERE tc.constraint_type = 'FOREIGN KEY'
+          GROUP BY ccu.table_name
+        `;
+        const fkMap = new Map<string, number>();
+        for (const r of fkRows) fkMap.set(r.name, parseInt(r.fk_count || '0'));
+
         const emptyTables = [];
-        
-        for (const table of tables) {
+        for (const table of candidates) {
           try {
-            const countResult = await sql`
-              SELECT COUNT(*) as count FROM public.${sql(table.name)}
-            `;
-            const rowCount = parseInt(countResult[0]?.count || '0');
-            
-            if (rowCount === 0) {
-              // Check for FK dependencies
-              const fkResult = await sql`
-                SELECT COUNT(*) as fk_count
-                FROM information_schema.table_constraints tc
-                JOIN information_schema.constraint_column_usage ccu 
-                  ON tc.constraint_name = ccu.constraint_name
-                WHERE tc.constraint_type = 'FOREIGN KEY'
-                  AND ccu.table_name = ${table.name}
-              `;
-              
-              emptyTables.push({
-                name: table.name,
-                domain: categorizeTable(table.name),
-                is_protected: isProtectedTable(table.name),
-                has_fk_dependencies: parseInt(fkResult[0]?.fk_count || '0') > 0,
-                safe_to_drop: !isProtectedTable(table.name) && parseInt(fkResult[0]?.fk_count || '0') === 0
-              });
-            }
-          } catch (e) {
+            // Confirm truly empty with cheap EXISTS (LIMIT 1)
+            const exists = await sql`SELECT 1 FROM public.${sql(table.name)} LIMIT 1`;
+            if (exists.length > 0) continue;
+            const fkCount = fkMap.get(table.name) || 0;
+            emptyTables.push({
+              name: table.name,
+              domain: categorizeTable(table.name),
+              is_protected: isProtectedTable(table.name),
+              has_fk_dependencies: fkCount > 0,
+              safe_to_drop: !isProtectedTable(table.name) && fkCount === 0
+            });
+          } catch (_e) {
             // Skip tables that can't be checked
           }
         }

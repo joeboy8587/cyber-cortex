@@ -157,45 +157,28 @@ serve(async (req) => {
 
     switch (action) {
       case 'getFullCensus': {
-        // Get all tables across all schemas with counts
+        // Single bulk query using pg_class.reltuples (planner estimate) - no per-table COUNT(*)
         const tables = await sql`
           SELECT 
-            schemaname as schema,
-            tablename as name,
-            pg_total_relation_size(schemaname || '.' || quote_ident(tablename)) as size_bytes
-          FROM pg_tables 
-          WHERE schemaname IN ('public', 'quarantine', 'legacy_v1_import')
-          ORDER BY schemaname, tablename
+            n.nspname as schema,
+            c.relname as name,
+            pg_total_relation_size(c.oid) as size_bytes,
+            GREATEST(c.reltuples, 0)::bigint as row_count
+          FROM pg_class c
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE c.relkind = 'r'
+            AND n.nspname IN ('public', 'quarantine', 'legacy_v1_import')
+          ORDER BY n.nspname, c.relname
         `;
-        
-        // Get row counts for each table
-        const tableStats = [];
-        for (const table of tables) {
-          try {
-            const countResult = await sql`
-              SELECT COUNT(*) as count FROM ${sql(table.schema)}.${sql(table.name)}
-            `;
-            tableStats.push({
-              ...table,
-              size_bytes: parseInt(table.size_bytes || '0'),
-              row_count: parseInt(countResult[0]?.count || '0'),
-              domain: categorizeTable(table.name),
-              is_protected: isProtectedTable(table.name),
-              duplicate_info: detectDuplicateFamily(table.name)
-            });
-          } catch (e) {
-            const err = e as Error;
-            tableStats.push({
-              ...table,
-              size_bytes: parseInt(table.size_bytes || '0'),
-              row_count: 0,
-              domain: categorizeTable(table.name),
-              is_protected: isProtectedTable(table.name),
-              duplicate_info: detectDuplicateFamily(table.name),
-              error: err.message
-            });
-          }
-        }
+        const tableStats = tables.map((t: any) => ({
+          schema: t.schema,
+          name: t.name,
+          size_bytes: parseInt(t.size_bytes || '0'),
+          row_count: parseInt(t.row_count || '0'),
+          domain: categorizeTable(t.name),
+          is_protected: isProtectedTable(t.name),
+          duplicate_info: detectDuplicateFamily(t.name)
+        }));
         
         return new Response(JSON.stringify({
           tables: tableStats,
@@ -208,15 +191,16 @@ serve(async (req) => {
       }
 
       case 'getModalityBreakdown': {
-        // Get tables with row counts and categorize by domain
+        // Single bulk query using planner estimates - no per-table COUNT(*)
         const tables = await sql`
           SELECT 
-            schemaname as schema,
-            tablename as name,
-            pg_total_relation_size(schemaname || '.' || quote_ident(tablename)) as size_bytes
-          FROM pg_tables 
-          WHERE schemaname = 'public'
-          ORDER BY tablename
+            c.relname as name,
+            pg_total_relation_size(c.oid) as size_bytes,
+            GREATEST(c.reltuples, 0)::bigint as row_count
+          FROM pg_class c
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE c.relkind = 'r' AND n.nspname = 'public'
+          ORDER BY c.relname
         `;
         
         const domainStats: Record<string, {
@@ -227,50 +211,29 @@ serve(async (req) => {
           protected_tables: string[];
         }> = {};
         
-        // Initialize domains
         for (const [domain, config] of Object.entries(EVIDENCE_DOMAINS)) {
           domainStats[domain] = {
-            tables: [],
-            total_rows: 0,
-            total_size: 0,
-            description: config.description,
-            protected_tables: config.protected
+            tables: [], total_rows: 0, total_size: 0,
+            description: config.description, protected_tables: config.protected
           };
         }
         domainStats['OTHER'] = {
-          tables: [],
-          total_rows: 0,
-          total_size: 0,
-          description: 'Uncategorized tables',
-          protected_tables: []
+          tables: [], total_rows: 0, total_size: 0,
+          description: 'Uncategorized tables', protected_tables: []
         };
         
         for (const table of tables) {
-          try {
-            const countResult = await sql`
-              SELECT COUNT(*) as count FROM public.${sql(table.name)}
-            `;
-            const rowCount = parseInt(countResult[0]?.count || '0');
-            const domain = categorizeTable(table.name);
-            
-            domainStats[domain].tables.push({
-              name: table.name,
-              row_count: rowCount,
-              size_bytes: parseInt(table.size_bytes || 0),
-              is_protected: isProtectedTable(table.name)
-            });
-            domainStats[domain].total_rows += rowCount;
-            domainStats[domain].total_size += parseInt(table.size_bytes || 0);
-          } catch (e) {
-            const err = e as Error;
-            const domain = categorizeTable(table.name);
-            domainStats[domain].tables.push({
-              name: table.name,
-              row_count: 0,
-              size_bytes: parseInt(table.size_bytes || 0),
-              error: err.message
-            });
-          }
+          const rowCount = parseInt(table.row_count || '0');
+          const sizeBytes = parseInt(table.size_bytes || '0');
+          const domain = categorizeTable(table.name);
+          domainStats[domain].tables.push({
+            name: table.name,
+            row_count: rowCount,
+            size_bytes: sizeBytes,
+            is_protected: isProtectedTable(table.name)
+          });
+          domainStats[domain].total_rows += rowCount;
+          domainStats[domain].total_size += sizeBytes;
         }
         
         // Calculate health scores per domain
@@ -299,13 +262,16 @@ serve(async (req) => {
       }
 
       case 'getDuplicateFamilies': {
-        // Find all duplicate families based on naming patterns
+        // Single bulk query using planner estimates
         const tables = await sql`
-          SELECT tablename as name,
-                 pg_total_relation_size('public.' || quote_ident(tablename)) as size_bytes
-          FROM pg_tables 
-          WHERE schemaname = 'public'
-          ORDER BY tablename
+          SELECT 
+            c.relname as name,
+            pg_total_relation_size(c.oid) as size_bytes,
+            GREATEST(c.reltuples, 0)::bigint as row_count
+          FROM pg_class c
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE c.relkind = 'r' AND n.nspname = 'public'
+          ORDER BY c.relname
         `;
         
         const families: Record<string, {
@@ -318,57 +284,36 @@ serve(async (req) => {
         
         for (const table of tables) {
           const dupInfo = detectDuplicateFamily(table.name);
-          
-          try {
-            const countResult = await sql`
-              SELECT COUNT(*) as count FROM public.${sql(table.name)}
-            `;
-            const rowCount = parseInt(countResult[0]?.count || '0');
-            
-            if (dupInfo) {
-              // This is a duplicate/variant
-              if (!families[dupInfo.baseName]) {
-                families[dupInfo.baseName] = {
-                  primary: null,
-                  duplicates: [],
-                  total_size: 0,
-                  total_rows: 0,
-                  recommendation: ''
-                };
-              }
-              families[dupInfo.baseName].duplicates.push({
-                name: table.name,
-                suffix: dupInfo.suffix,
-                row_count: rowCount,
-                size_bytes: parseInt(table.size_bytes || 0),
-                is_backup: dupInfo.suffix.includes('backup'),
-                is_protected: isProtectedTable(table.name)
-              });
-              families[dupInfo.baseName].total_size += parseInt(table.size_bytes || 0);
-              families[dupInfo.baseName].total_rows += rowCount;
-            } else {
-              // Check if this is a base table for a family
-              const baseName = table.name.toLowerCase();
-              if (!families[baseName]) {
-                families[baseName] = {
-                  primary: null,
-                  duplicates: [],
-                  total_size: 0,
-                  total_rows: 0,
-                  recommendation: ''
-                };
-              }
-              families[baseName].primary = {
-                name: table.name,
-                row_count: rowCount,
-                size_bytes: parseInt(table.size_bytes || 0),
-                is_protected: isProtectedTable(table.name)
-              };
-              families[baseName].total_size += parseInt(table.size_bytes || 0);
-              families[baseName].total_rows += rowCount;
+          const rowCount = parseInt(table.row_count || '0');
+          const sizeBytes = parseInt(table.size_bytes || '0');
+
+          if (dupInfo) {
+            if (!families[dupInfo.baseName]) {
+              families[dupInfo.baseName] = { primary: null, duplicates: [], total_size: 0, total_rows: 0, recommendation: '' };
             }
-          } catch (e) {
-            // Skip tables that can't be counted
+            families[dupInfo.baseName].duplicates.push({
+              name: table.name,
+              suffix: dupInfo.suffix,
+              row_count: rowCount,
+              size_bytes: sizeBytes,
+              is_backup: dupInfo.suffix.includes('backup'),
+              is_protected: isProtectedTable(table.name)
+            });
+            families[dupInfo.baseName].total_size += sizeBytes;
+            families[dupInfo.baseName].total_rows += rowCount;
+          } else {
+            const baseName = table.name.toLowerCase();
+            if (!families[baseName]) {
+              families[baseName] = { primary: null, duplicates: [], total_size: 0, total_rows: 0, recommendation: '' };
+            }
+            families[baseName].primary = {
+              name: table.name,
+              row_count: rowCount,
+              size_bytes: sizeBytes,
+              is_protected: isProtectedTable(table.name)
+            };
+            families[baseName].total_size += sizeBytes;
+            families[baseName].total_rows += rowCount;
           }
         }
         
@@ -412,43 +357,43 @@ serve(async (req) => {
       }
 
       case 'getEmptyTables': {
-        // Find all empty tables with FK dependency info
-        const tables = await sql`
-          SELECT tablename as name
-          FROM pg_tables 
-          WHERE schemaname = 'public'
-          ORDER BY tablename
+        // Single bulk query: get planner row estimates + verify zero with a fast EXISTS
+        const candidates = await sql`
+          SELECT c.relname as name
+          FROM pg_class c
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE c.relkind = 'r' AND n.nspname = 'public'
+            AND GREATEST(c.reltuples, 0) < 1
+          ORDER BY c.relname
         `;
-        
+
+        // Bulk fetch FK dependencies once
+        const fkRows = await sql`
+          SELECT ccu.table_name as name, COUNT(*) as fk_count
+          FROM information_schema.table_constraints tc
+          JOIN information_schema.constraint_column_usage ccu 
+            ON tc.constraint_name = ccu.constraint_name
+          WHERE tc.constraint_type = 'FOREIGN KEY'
+          GROUP BY ccu.table_name
+        `;
+        const fkMap = new Map<string, number>();
+        for (const r of fkRows) fkMap.set(r.name, parseInt(r.fk_count || '0'));
+
         const emptyTables = [];
-        
-        for (const table of tables) {
+        for (const table of candidates) {
           try {
-            const countResult = await sql`
-              SELECT COUNT(*) as count FROM public.${sql(table.name)}
-            `;
-            const rowCount = parseInt(countResult[0]?.count || '0');
-            
-            if (rowCount === 0) {
-              // Check for FK dependencies
-              const fkResult = await sql`
-                SELECT COUNT(*) as fk_count
-                FROM information_schema.table_constraints tc
-                JOIN information_schema.constraint_column_usage ccu 
-                  ON tc.constraint_name = ccu.constraint_name
-                WHERE tc.constraint_type = 'FOREIGN KEY'
-                  AND ccu.table_name = ${table.name}
-              `;
-              
-              emptyTables.push({
-                name: table.name,
-                domain: categorizeTable(table.name),
-                is_protected: isProtectedTable(table.name),
-                has_fk_dependencies: parseInt(fkResult[0]?.fk_count || '0') > 0,
-                safe_to_drop: !isProtectedTable(table.name) && parseInt(fkResult[0]?.fk_count || '0') === 0
-              });
-            }
-          } catch (e) {
+            // Confirm truly empty with cheap EXISTS (LIMIT 1)
+            const exists = await sql`SELECT 1 FROM public.${sql(table.name)} LIMIT 1`;
+            if (exists.length > 0) continue;
+            const fkCount = fkMap.get(table.name) || 0;
+            emptyTables.push({
+              name: table.name,
+              domain: categorizeTable(table.name),
+              is_protected: isProtectedTable(table.name),
+              has_fk_dependencies: fkCount > 0,
+              safe_to_drop: !isProtectedTable(table.name) && fkCount === 0
+            });
+          } catch (_e) {
             // Skip tables that can't be checked
           }
         }

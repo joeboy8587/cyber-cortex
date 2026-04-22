@@ -157,45 +157,28 @@ serve(async (req) => {
 
     switch (action) {
       case 'getFullCensus': {
-        // Get all tables across all schemas with counts
+        // Single bulk query using pg_class.reltuples (planner estimate) - no per-table COUNT(*)
         const tables = await sql`
           SELECT 
-            schemaname as schema,
-            tablename as name,
-            pg_total_relation_size(schemaname || '.' || quote_ident(tablename)) as size_bytes
-          FROM pg_tables 
-          WHERE schemaname IN ('public', 'quarantine', 'legacy_v1_import')
-          ORDER BY schemaname, tablename
+            n.nspname as schema,
+            c.relname as name,
+            pg_total_relation_size(c.oid) as size_bytes,
+            GREATEST(c.reltuples, 0)::bigint as row_count
+          FROM pg_class c
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE c.relkind = 'r'
+            AND n.nspname IN ('public', 'quarantine', 'legacy_v1_import')
+          ORDER BY n.nspname, c.relname
         `;
-        
-        // Get row counts for each table
-        const tableStats = [];
-        for (const table of tables) {
-          try {
-            const countResult = await sql`
-              SELECT COUNT(*) as count FROM ${sql(table.schema)}.${sql(table.name)}
-            `;
-            tableStats.push({
-              ...table,
-              size_bytes: parseInt(table.size_bytes || '0'),
-              row_count: parseInt(countResult[0]?.count || '0'),
-              domain: categorizeTable(table.name),
-              is_protected: isProtectedTable(table.name),
-              duplicate_info: detectDuplicateFamily(table.name)
-            });
-          } catch (e) {
-            const err = e as Error;
-            tableStats.push({
-              ...table,
-              size_bytes: parseInt(table.size_bytes || '0'),
-              row_count: 0,
-              domain: categorizeTable(table.name),
-              is_protected: isProtectedTable(table.name),
-              duplicate_info: detectDuplicateFamily(table.name),
-              error: err.message
-            });
-          }
-        }
+        const tableStats = tables.map((t: any) => ({
+          schema: t.schema,
+          name: t.name,
+          size_bytes: parseInt(t.size_bytes || '0'),
+          row_count: parseInt(t.row_count || '0'),
+          domain: categorizeTable(t.name),
+          is_protected: isProtectedTable(t.name),
+          duplicate_info: detectDuplicateFamily(t.name)
+        }));
         
         return new Response(JSON.stringify({
           tables: tableStats,

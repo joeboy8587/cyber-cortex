@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { CyberPanel } from "@/components/ui/cyber-panel";
-import { Shield, Loader2, AlertTriangle, Target, MapPin } from "lucide-react";
+import { Shield, Loader2, AlertTriangle, Target, MapPin, Radio, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { supabase } from "@/integrations/supabase/client";
 

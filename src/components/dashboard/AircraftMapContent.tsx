@@ -101,6 +101,25 @@ const AircraftMapContent: React.FC<MapContentProps> = ({ flights, threatColors, 
       `;
 
       marker.bindPopup(popupContent);
+
+      // Permanent tail-number label for critical & high threats (and flagged)
+      const showLabel =
+        flight.threat_level === 'critical' ||
+        flight.threat_level === 'high' ||
+        flight.is_flagged;
+
+      if (showLabel) {
+        const label = flight.registration || flight.callsign || flight.hex;
+        if (label) {
+          marker.bindTooltip(label, {
+            permanent: true,
+            direction: 'top',
+            offset: [0, -radius - 2],
+            className: `aircraft-label-${flight.threat_level}`,
+          });
+        }
+      }
+
       marker.addTo(mapRef.current!);
       markersRef.current.push(marker);
     });

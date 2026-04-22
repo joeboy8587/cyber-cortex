@@ -157,6 +157,50 @@ export function MilitaryAircraftPanel() {
       variant="warning"
     >
       <div className="p-4 space-y-6">
+        {/* Live Status Bar */}
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <span
+              className={`relative inline-flex h-2.5 w-2.5 rounded-full ${
+                isLive ? "bg-success" : "bg-muted-foreground"
+              }`}
+            >
+              {isLive && (
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-75" />
+              )}
+            </span>
+            <Radio className={`w-3.5 h-3.5 ${isLive ? "text-success" : "text-muted-foreground"}`} />
+            <span className="text-xs font-mono uppercase tracking-wider text-muted-foreground">
+              {isLive ? "Live · auto-refresh 30s" : "Paused"}
+            </span>
+            {lastUpdated && (
+              <span className="text-xs text-muted-foreground">
+                · Updated {lastUpdated.toLocaleTimeString()}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => fetchMilitaryData(false)}
+              disabled={refreshing || loading}
+              className="h-7 px-2 text-xs"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 mr-1 ${refreshing ? "animate-spin" : ""}`} />
+              Refresh
+            </Button>
+            <Button
+              size="sm"
+              variant={isLive ? "outline" : "default"}
+              onClick={() => setIsLive((v) => !v)}
+              className="h-7 px-2 text-xs"
+            >
+              {isLive ? "Pause" : "Resume"}
+            </Button>
+          </div>
+        </div>
+
         {/* Header Alert */}
         <div className="p-4 bg-warning/10 border border-warning/30 rounded-lg">
           <div className="flex items-center gap-3 mb-2">
@@ -198,8 +242,13 @@ export function MilitaryAircraftPanel() {
                 <div className="text-xs text-muted-foreground">Agencies Identified</div>
               </div>
               <div className="bg-card/50 border border-success/30 rounded-lg p-4 text-center">
-                <div className="text-3xl font-mono font-bold text-success">
-                  NOV 7
+                <div className="text-2xl font-mono font-bold text-success">
+                  {stats.firstSeen
+                    ? new Date(stats.firstSeen).toLocaleDateString(undefined, {
+                        month: "short",
+                        day: "numeric",
+                      }).toUpperCase()
+                    : "NOV 7"}
                 </div>
                 <div className="text-xs text-muted-foreground">First Coordination Event</div>
               </div>

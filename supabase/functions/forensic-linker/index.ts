@@ -77,9 +77,9 @@ serve(async (req) => {
     if (action === "getStats") {
       // Get Lovable Cloud counts
       const [eventsRes, entitiesRes, linksRes] = await Promise.all([
-        supabase.from("master_forensic_events").select("forensic_event_id", { count: "exact", head: true }),
-        supabase.from("entity_registry").select("entity_id", { count: "exact", head: true }),
-        supabase.from("evidence_chain_links").select("link_id", { count: "exact", head: true }),
+        supabase.from("master_forensic_events").select("forensic_event_id", { count: "estimated", head: true }),
+        supabase.from("entity_registry").select("entity_id", { count: "estimated", head: true }),
+        supabase.from("evidence_chain_links").select("link_id", { count: "estimated", head: true }),
       ]);
 
       if (eventsRes.error) return fail(eventsRes.error.message, 500);

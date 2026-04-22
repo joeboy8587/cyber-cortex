@@ -191,15 +191,16 @@ serve(async (req) => {
       }
 
       case 'getModalityBreakdown': {
-        // Get tables with row counts and categorize by domain
+        // Single bulk query using planner estimates - no per-table COUNT(*)
         const tables = await sql`
           SELECT 
-            schemaname as schema,
-            tablename as name,
-            pg_total_relation_size(schemaname || '.' || quote_ident(tablename)) as size_bytes
-          FROM pg_tables 
-          WHERE schemaname = 'public'
-          ORDER BY tablename
+            c.relname as name,
+            pg_total_relation_size(c.oid) as size_bytes,
+            GREATEST(c.reltuples, 0)::bigint as row_count
+          FROM pg_class c
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE c.relkind = 'r' AND n.nspname = 'public'
+          ORDER BY c.relname
         `;
         
         const domainStats: Record<string, {
@@ -210,50 +211,29 @@ serve(async (req) => {
           protected_tables: string[];
         }> = {};
         
-        // Initialize domains
         for (const [domain, config] of Object.entries(EVIDENCE_DOMAINS)) {
           domainStats[domain] = {
-            tables: [],
-            total_rows: 0,
-            total_size: 0,
-            description: config.description,
-            protected_tables: config.protected
+            tables: [], total_rows: 0, total_size: 0,
+            description: config.description, protected_tables: config.protected
           };
         }
         domainStats['OTHER'] = {
-          tables: [],
-          total_rows: 0,
-          total_size: 0,
-          description: 'Uncategorized tables',
-          protected_tables: []
+          tables: [], total_rows: 0, total_size: 0,
+          description: 'Uncategorized tables', protected_tables: []
         };
         
         for (const table of tables) {
-          try {
-            const countResult = await sql`
-              SELECT COUNT(*) as count FROM public.${sql(table.name)}
-            `;
-            const rowCount = parseInt(countResult[0]?.count || '0');
-            const domain = categorizeTable(table.name);
-            
-            domainStats[domain].tables.push({
-              name: table.name,
-              row_count: rowCount,
-              size_bytes: parseInt(table.size_bytes || 0),
-              is_protected: isProtectedTable(table.name)
-            });
-            domainStats[domain].total_rows += rowCount;
-            domainStats[domain].total_size += parseInt(table.size_bytes || 0);
-          } catch (e) {
-            const err = e as Error;
-            const domain = categorizeTable(table.name);
-            domainStats[domain].tables.push({
-              name: table.name,
-              row_count: 0,
-              size_bytes: parseInt(table.size_bytes || 0),
-              error: err.message
-            });
-          }
+          const rowCount = parseInt(table.row_count || '0');
+          const sizeBytes = parseInt(table.size_bytes || '0');
+          const domain = categorizeTable(table.name);
+          domainStats[domain].tables.push({
+            name: table.name,
+            row_count: rowCount,
+            size_bytes: sizeBytes,
+            is_protected: isProtectedTable(table.name)
+          });
+          domainStats[domain].total_rows += rowCount;
+          domainStats[domain].total_size += sizeBytes;
         }
         
         // Calculate health scores per domain

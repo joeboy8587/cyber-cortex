@@ -262,13 +262,16 @@ serve(async (req) => {
       }
 
       case 'getDuplicateFamilies': {
-        // Find all duplicate families based on naming patterns
+        // Single bulk query using planner estimates
         const tables = await sql`
-          SELECT tablename as name,
-                 pg_total_relation_size('public.' || quote_ident(tablename)) as size_bytes
-          FROM pg_tables 
-          WHERE schemaname = 'public'
-          ORDER BY tablename
+          SELECT 
+            c.relname as name,
+            pg_total_relation_size(c.oid) as size_bytes,
+            GREATEST(c.reltuples, 0)::bigint as row_count
+          FROM pg_class c
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE c.relkind = 'r' AND n.nspname = 'public'
+          ORDER BY c.relname
         `;
         
         const families: Record<string, {
@@ -281,57 +284,36 @@ serve(async (req) => {
         
         for (const table of tables) {
           const dupInfo = detectDuplicateFamily(table.name);
-          
-          try {
-            const countResult = await sql`
-              SELECT COUNT(*) as count FROM public.${sql(table.name)}
-            `;
-            const rowCount = parseInt(countResult[0]?.count || '0');
-            
-            if (dupInfo) {
-              // This is a duplicate/variant
-              if (!families[dupInfo.baseName]) {
-                families[dupInfo.baseName] = {
-                  primary: null,
-                  duplicates: [],
-                  total_size: 0,
-                  total_rows: 0,
-                  recommendation: ''
-                };
-              }
-              families[dupInfo.baseName].duplicates.push({
-                name: table.name,
-                suffix: dupInfo.suffix,
-                row_count: rowCount,
-                size_bytes: parseInt(table.size_bytes || 0),
-                is_backup: dupInfo.suffix.includes('backup'),
-                is_protected: isProtectedTable(table.name)
-              });
-              families[dupInfo.baseName].total_size += parseInt(table.size_bytes || 0);
-              families[dupInfo.baseName].total_rows += rowCount;
-            } else {
-              // Check if this is a base table for a family
-              const baseName = table.name.toLowerCase();
-              if (!families[baseName]) {
-                families[baseName] = {
-                  primary: null,
-                  duplicates: [],
-                  total_size: 0,
-                  total_rows: 0,
-                  recommendation: ''
-                };
-              }
-              families[baseName].primary = {
-                name: table.name,
-                row_count: rowCount,
-                size_bytes: parseInt(table.size_bytes || 0),
-                is_protected: isProtectedTable(table.name)
-              };
-              families[baseName].total_size += parseInt(table.size_bytes || 0);
-              families[baseName].total_rows += rowCount;
+          const rowCount = parseInt(table.row_count || '0');
+          const sizeBytes = parseInt(table.size_bytes || '0');
+
+          if (dupInfo) {
+            if (!families[dupInfo.baseName]) {
+              families[dupInfo.baseName] = { primary: null, duplicates: [], total_size: 0, total_rows: 0, recommendation: '' };
             }
-          } catch (e) {
-            // Skip tables that can't be counted
+            families[dupInfo.baseName].duplicates.push({
+              name: table.name,
+              suffix: dupInfo.suffix,
+              row_count: rowCount,
+              size_bytes: sizeBytes,
+              is_backup: dupInfo.suffix.includes('backup'),
+              is_protected: isProtectedTable(table.name)
+            });
+            families[dupInfo.baseName].total_size += sizeBytes;
+            families[dupInfo.baseName].total_rows += rowCount;
+          } else {
+            const baseName = table.name.toLowerCase();
+            if (!families[baseName]) {
+              families[baseName] = { primary: null, duplicates: [], total_size: 0, total_rows: 0, recommendation: '' };
+            }
+            families[baseName].primary = {
+              name: table.name,
+              row_count: rowCount,
+              size_bytes: sizeBytes,
+              is_protected: isProtectedTable(table.name)
+            };
+            families[baseName].total_size += sizeBytes;
+            families[baseName].total_rows += rowCount;
           }
         }
         

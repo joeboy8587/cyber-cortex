@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { CyberPanel } from "@/components/ui/cyber-panel";
-import { Shield, Loader2, AlertTriangle, Target, MapPin } from "lucide-react";
+import { Shield, Loader2, AlertTriangle, Target, MapPin, Radio, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -18,7 +19,11 @@ interface MilitaryStats {
   uniqueRegistrations: number;
   agenciesIdentified: string[];
   topMilitaryAircraft: MilitaryEvent[];
+  firstSeen: string | null;
+  lastSeen: string | null;
 }
+
+const REFRESH_INTERVAL_MS = 30_000; // 30s live refresh
 
 // Known military/government registrations from ADSB data
 const knownMilitaryRegistrations = [
@@ -48,62 +53,102 @@ const knownAgencies = [
 
 export function MilitaryAircraftPanel() {
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [isLive, setIsLive] = useState(true);
+  const intervalRef = useRef<number | null>(null);
   const [stats, setStats] = useState<MilitaryStats>({
     totalMilitaryEvents: 0,
     uniqueRegistrations: 0,
     agenciesIdentified: [],
-    topMilitaryAircraft: []
+    topMilitaryAircraft: [],
+    firstSeen: null,
+    lastSeen: null,
   });
 
-  useEffect(() => {
-    const fetchMilitaryData = async () => {
-      try {
-        const { data, error } = await supabase.functions.invoke("neon-query", {
-          body: { action: "getMilitaryAircraft" }
-        });
+  const fetchMilitaryData = useCallback(async (initial = false) => {
+    if (initial) setLoading(true);
+    else setRefreshing(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("neon-query", {
+        body: { action: "getMilitaryAircraft" },
+      });
 
-        if (error) throw error;
+      if (error) throw error;
 
-        const militaryEvents = Array.isArray(data?.militaryFlights) ? data.militaryFlights : [];
-        const kcsoCoOcc = Array.isArray(data?.kcsoCoOccurrence) ? data.kcsoCoOccurrence : [];
+      const militaryEvents = Array.isArray(data?.militaryFlights) ? data.militaryFlights : [];
 
-        // Total detections across all military flights
-        const totalEvents = militaryEvents.reduce((sum: number, e: any) => sum + parseInt(e.detection_count || "0"), 0);
+      const totalEvents = militaryEvents.reduce(
+        (sum: number, e: any) => sum + parseInt(e.detection_count || "0"),
+        0,
+      );
 
-        // Assign agencies to registrations
-        const topMilitaryAircraft: MilitaryEvent[] = militaryEvents.slice(0, 15).map((event: any) => {
-          const known = knownMilitaryRegistrations.find(k => event.registration === k.reg);
-          const coOcc = kcsoCoOcc.find((c: any) => c.military_reg === event.registration);
-          return {
-            registration: event.registration,
-            detectionCount: parseInt(event.detection_count || "0"),
-            agency: known?.agency || "Military/Gov",
-            aircraftType: known?.type || event.callsign || "Unidentified",
-            avgAltitude: Math.round(parseFloat(event.avg_altitude || "0"))
-          };
-        });
+      const topMilitaryAircraft: MilitaryEvent[] = militaryEvents.slice(0, 15).map((event: any) => {
+        const known = knownMilitaryRegistrations.find((k) => event.registration === k.reg);
+        return {
+          registration: event.registration,
+          detectionCount: parseInt(event.detection_count || "0"),
+          agency: known?.agency || "Military/Gov",
+          aircraftType: known?.type || event.callsign || "Unidentified",
+          avgAltitude: Math.round(parseFloat(event.avg_altitude || "0")),
+        };
+      });
 
-        setStats({
-          totalMilitaryEvents: totalEvents,
-          uniqueRegistrations: militaryEvents.length,
-          agenciesIdentified: ["USAF", "US Navy", "US Army", "Point Mugu Naval Base", "DOD Contractors"],
-          topMilitaryAircraft
-        });
-      } catch (error) {
-        console.error("Failed to fetch military data:", error);
-        setStats({
-          totalMilitaryEvents: 0,
-          uniqueRegistrations: 0,
-          agenciesIdentified: [],
-          topMilitaryAircraft: []
-        });
-      } finally {
-        setLoading(false);
-      }
-    };
+      // Derive first/last seen from any timestamp fields the backend returns
+      const timestamps = militaryEvents
+        .flatMap((e: any) => [e.first_seen, e.last_seen, e.first_detection, e.last_detection])
+        .filter(Boolean)
+        .map((t: string) => new Date(t).getTime())
+        .filter((n: number) => !Number.isNaN(n));
+      const firstSeen = timestamps.length ? new Date(Math.min(...timestamps)).toISOString() : null;
+      const lastSeen = timestamps.length ? new Date(Math.max(...timestamps)).toISOString() : null;
 
-    fetchMilitaryData();
+      // Derive agencies dynamically from known registrations actually seen
+      const seenAgencies = new Set<string>();
+      militaryEvents.forEach((e: any) => {
+        const known = knownMilitaryRegistrations.find((k) => e.registration === k.reg);
+        if (known) seenAgencies.add(known.agency);
+      });
+      const agencyList = seenAgencies.size > 0
+        ? Array.from(seenAgencies)
+        : ["USAF", "US Navy", "US Army", "Point Mugu Naval Base", "DOD Contractors"];
+
+      setStats({
+        totalMilitaryEvents: totalEvents,
+        uniqueRegistrations: militaryEvents.length,
+        agenciesIdentified: agencyList,
+        topMilitaryAircraft,
+        firstSeen,
+        lastSeen,
+      });
+      setLastUpdated(new Date());
+    } catch (error) {
+      console.error("Failed to fetch military data:", error);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
   }, []);
+
+  useEffect(() => {
+    fetchMilitaryData(true);
+  }, [fetchMilitaryData]);
+
+  useEffect(() => {
+    if (!isLive) {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+      return;
+    }
+    intervalRef.current = window.setInterval(() => {
+      fetchMilitaryData(false);
+    }, REFRESH_INTERVAL_MS);
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  }, [isLive, fetchMilitaryData]);
 
   return (
     <CyberPanel
@@ -112,6 +157,50 @@ export function MilitaryAircraftPanel() {
       variant="warning"
     >
       <div className="p-4 space-y-6">
+        {/* Live Status Bar */}
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <span
+              className={`relative inline-flex h-2.5 w-2.5 rounded-full ${
+                isLive ? "bg-success" : "bg-muted-foreground"
+              }`}
+            >
+              {isLive && (
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-75" />
+              )}
+            </span>
+            <Radio className={`w-3.5 h-3.5 ${isLive ? "text-success" : "text-muted-foreground"}`} />
+            <span className="text-xs font-mono uppercase tracking-wider text-muted-foreground">
+              {isLive ? "Live · auto-refresh 30s" : "Paused"}
+            </span>
+            {lastUpdated && (
+              <span className="text-xs text-muted-foreground">
+                · Updated {lastUpdated.toLocaleTimeString()}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => fetchMilitaryData(false)}
+              disabled={refreshing || loading}
+              className="h-7 px-2 text-xs"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 mr-1 ${refreshing ? "animate-spin" : ""}`} />
+              Refresh
+            </Button>
+            <Button
+              size="sm"
+              variant={isLive ? "outline" : "default"}
+              onClick={() => setIsLive((v) => !v)}
+              className="h-7 px-2 text-xs"
+            >
+              {isLive ? "Pause" : "Resume"}
+            </Button>
+          </div>
+        </div>
+
         {/* Header Alert */}
         <div className="p-4 bg-warning/10 border border-warning/30 rounded-lg">
           <div className="flex items-center gap-3 mb-2">
@@ -153,8 +242,13 @@ export function MilitaryAircraftPanel() {
                 <div className="text-xs text-muted-foreground">Agencies Identified</div>
               </div>
               <div className="bg-card/50 border border-success/30 rounded-lg p-4 text-center">
-                <div className="text-3xl font-mono font-bold text-success">
-                  NOV 7
+                <div className="text-2xl font-mono font-bold text-success">
+                  {stats.firstSeen
+                    ? new Date(stats.firstSeen).toLocaleDateString(undefined, {
+                        month: "short",
+                        day: "numeric",
+                      }).toUpperCase()
+                    : "NOV 7"}
                 </div>
                 <div className="text-xs text-muted-foreground">First Coordination Event</div>
               </div>

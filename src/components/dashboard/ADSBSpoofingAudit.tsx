@@ -70,7 +70,8 @@ export const ADSBSpoofingAudit = () => {
   const fetchSpoofingData = useCallback(async () => {
     setLoading(true);
     try {
-      // Query for potential spoofed signals
+      // Query for potential spoofed signals — exclude MLAT placeholders (XXB) which are
+      // legitimate tracker artifacts, not spoofing. See public/data/XXB_EXPLANATION.md.
       const { data, error } = await supabase.functions.invoke('neon-query', {
         body: {
           action: 'customQuery',
@@ -78,23 +79,28 @@ export const ADSBSpoofingAudit = () => {
             SELECT 
               registration,
               callsign,
+              icao24,
               COUNT(*) as detection_count,
               MIN(detection_timestamp) as first_seen,
               MAX(detection_timestamp) as last_seen,
               AVG(latitude) as avg_lat,
               AVG(longitude) as avg_lon,
+              AVG(altitude) as avg_alt,
+              AVG(speed) as avg_speed,
               CASE 
-                WHEN registration IS NULL OR registration = '' THEN 'masked'
-                WHEN callsign IS NULL OR callsign = '' THEN 'malformed'
-                ELSE 'normal'
+                WHEN icao24 IS NULL OR icao24 !~ '^[0-9A-Fa-f]{6}$' THEN 'no_valid_icao'
+                WHEN registration IS NULL OR registration = '' THEN 'reg_missing'
+                WHEN registration ILIKE 'XX%' THEN 'mlat_artifact'
+                ELSE 'has_identity'
               END as signal_type
             FROM live_flight_detections_rows
             WHERE latitude BETWEEN 35.30 AND 35.70
               AND longitude BETWEEN -119.30 AND -118.80
-            GROUP BY registration, callsign
+              AND detection_timestamp > NOW() - INTERVAL '30 days'
+            GROUP BY registration, callsign, icao24
             HAVING COUNT(*) > 5
             ORDER BY detection_count DESC
-            LIMIT 100
+            LIMIT 200
           `
         }
       });
@@ -102,26 +108,39 @@ export const ADSBSpoofingAudit = () => {
       if (error) throw error;
 
       const rawData = extractNeonData(data);
-      
-      // Process signals - filter for anomalous only
+
+      // Process signals — separate true anomalies from MLAT artifacts
       const processed: SpoofedSignal[] = rawData
-        .filter((row: Record<string, unknown>) => row.signal_type !== 'normal')
+        .filter((row: Record<string, unknown>) => {
+          const t = row.signal_type as string;
+          // Only flag genuine identity gaps; exclude MLAT artifacts and normal traffic
+          return t === 'no_valid_icao' || t === 'reg_missing';
+        })
         .map((row: Record<string, unknown>) => {
           const signalType = row.signal_type as string;
-          let anomalyType: SpoofedSignal['anomaly_type'] = 'malformed_icao';
-          
-          if (signalType === 'ghost') anomalyType = 'ghost_injection';
-          else if (signalType === 'masked') anomalyType = 'identity_mask';
-          
+          const avgAlt = parseFloat(row.avg_alt as string) || 0;
+          const avgSpeed = parseFloat(row.avg_speed as string) || 0;
+          let anomalyType: SpoofedSignal['anomaly_type'] = 'identity_mask';
+          let confidence = 60;
+
+          if (signalType === 'no_valid_icao') {
+            anomalyType = 'malformed_icao';
+            // Higher confidence if the aircraft has real flight profile (not MLAT artifact)
+            confidence = avgAlt > 500 && avgSpeed > 30 ? 85 : 55;
+          } else if (signalType === 'reg_missing') {
+            anomalyType = 'identity_mask';
+            confidence = avgAlt > 1000 ? 75 : 50;
+          }
+
           return {
-            icao_hex: (row.registration as string) || 'UNKNOWN',
+            icao_hex: (row.icao24 as string) || (row.registration as string) || 'UNKNOWN',
             registration: (row.registration as string) || 'N/A',
             callsign: (row.callsign as string) || 'N/A',
             detection_count: parseInt(row.detection_count as string) || 0,
             anomaly_type: anomalyType,
             first_seen: (row.first_seen as string) || '',
             last_seen: (row.last_seen as string) || '',
-            confidence: Math.min(95, 50 + Math.random() * 45),
+            confidence,
             coordinates: {
               lat: parseFloat(row.avg_lat as string) || 35.45,
               lon: parseFloat(row.avg_lon as string) || -119.05
@@ -129,43 +148,20 @@ export const ADSBSpoofingAudit = () => {
           };
         });
 
-      // Add known spoofed aircraft from analysis
-      const knownSpoofed: SpoofedSignal[] = [
-        {
-          icao_hex: 'N72FF',
-          registration: 'N72FF',
-          callsign: 'UNKNOWN',
-          detection_count: 47,
-          anomaly_type: 'identity_mask',
-          first_seen: '2024-11-01',
-          last_seen: '2024-12-24',
-          confidence: 92,
-          coordinates: { lat: 35.42, lon: -119.02 }
-        },
-        {
-          icao_hex: 'N74FF',
-          registration: 'N74FF',
-          callsign: 'BLOCKED',
-          detection_count: 38,
-          anomaly_type: 'identity_mask',
-          first_seen: '2024-10-15',
-          last_seen: '2024-12-23',
-          confidence: 89,
-          coordinates: { lat: 35.48, lon: -118.95 }
-        }
-      ];
+      setSignals(processed);
 
-      const allSignals = [...knownSpoofed, ...processed];
-      setSignals(allSignals);
+      // Calculate stats from real data only — no fabricated entries
+      const mlatCount = rawData.filter((r: Record<string, unknown>) => r.signal_type === 'mlat_artifact').length;
+      const totalScanned = rawData.reduce((sum: number, r: Record<string, unknown>) =>
+        sum + (parseInt(r.detection_count as string) || 0), 0);
 
-      // Calculate stats
       setStats({
-        totalSignals: allSignals.length + 1000, // Include normal signals
-        spoofedCount: allSignals.length,
-        malformedICAO: allSignals.filter(s => s.anomaly_type === 'malformed_icao').length,
-        duplicateHex: allSignals.filter(s => s.anomaly_type === 'duplicate_hex').length,
-        ghostInjections: allSignals.filter(s => s.anomaly_type === 'ghost_injection').length,
-        identityMasks: allSignals.filter(s => s.anomaly_type === 'identity_mask').length
+        totalSignals: totalScanned,
+        spoofedCount: processed.length,
+        malformedICAO: processed.filter(s => s.anomaly_type === 'malformed_icao').length,
+        duplicateHex: 0,
+        ghostInjections: mlatCount, // repurposed: "MLAT artifacts (excluded from spoof count)"
+        identityMasks: processed.filter(s => s.anomaly_type === 'identity_mask').length
       });
 
     } catch (err) {
@@ -196,42 +192,42 @@ export const ADSBSpoofingAudit = () => {
       className="col-span-2"
     >
       {/* Alert Banner */}
-      <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4 mb-6">
+      <div className="bg-muted/30 border border-border rounded-lg p-4 mb-6">
         <div className="flex items-center gap-2 mb-2">
-          <AlertTriangle className="h-5 w-5 text-red-400" />
-          <span className="font-bold text-red-400">ADS-B INTEGRITY COMPROMISED</span>
+          <AlertTriangle className="h-5 w-5 text-warning" />
+          <span className="font-bold text-warning">ADS-B IDENTITY GAP AUDIT</span>
         </div>
         <p className="text-sm text-foreground/80">
-          Geospatial analysis reveals definite spoofing signatures in Bakersfield airspace. 
-          Detected patterns include malformed ICAO hex codes, ghost packet injection, and 
-          identity masking. Primary hotspot: Bakersfield CBD / Oildale corridor.
+          Scans Bakersfield/Oildale airspace for aircraft missing valid ICAO24 hex or registration.
+          XXB / MLAT-only tracks are excluded — those are legitimate tracker placeholders, not spoofing.
+          Confidence is based on flight profile (altitude + speed), not random scoring.
         </p>
       </div>
 
       {/* Stats Grid */}
       <div className="grid grid-cols-6 gap-3 mb-6">
-        <div className="bg-background/50 border border-cyan-500/30 rounded-lg p-3 text-center">
-          <div className="text-2xl font-mono text-cyan-400">{stats.totalSignals.toLocaleString()}</div>
-          <div className="text-xs text-muted-foreground">Total Signals</div>
+        <div className="bg-background/50 border border-border rounded-lg p-3 text-center">
+          <div className="text-2xl font-mono text-foreground">{stats.totalSignals.toLocaleString()}</div>
+          <div className="text-xs text-muted-foreground">Detections Scanned</div>
         </div>
-        <div className="bg-background/50 border border-red-500/30 rounded-lg p-3 text-center">
-          <div className="text-2xl font-mono text-red-400">{stats.spoofedCount}</div>
-          <div className="text-xs text-muted-foreground">Anomalous</div>
+        <div className="bg-background/50 border border-destructive/30 rounded-lg p-3 text-center">
+          <div className="text-2xl font-mono text-destructive">{stats.spoofedCount}</div>
+          <div className="text-xs text-muted-foreground">Identity Gaps</div>
         </div>
-        <div className="bg-background/50 border border-red-500/30 rounded-lg p-3 text-center">
-          <div className="text-2xl font-mono text-red-400">{stats.malformedICAO}</div>
-          <div className="text-xs text-muted-foreground">Malformed</div>
+        <div className="bg-background/50 border border-destructive/30 rounded-lg p-3 text-center">
+          <div className="text-2xl font-mono text-destructive">{stats.malformedICAO}</div>
+          <div className="text-xs text-muted-foreground">Invalid ICAO24</div>
         </div>
-        <div className="bg-background/50 border border-purple-500/30 rounded-lg p-3 text-center">
-          <div className="text-2xl font-mono text-purple-400">{stats.ghostInjections}</div>
-          <div className="text-xs text-muted-foreground">Ghost Inject</div>
+        <div className="bg-background/50 border border-muted rounded-lg p-3 text-center">
+          <div className="text-2xl font-mono text-muted-foreground">{stats.ghostInjections}</div>
+          <div className="text-xs text-muted-foreground">MLAT (excluded)</div>
         </div>
-        <div className="bg-background/50 border border-yellow-500/30 rounded-lg p-3 text-center">
-          <div className="text-2xl font-mono text-yellow-400">{stats.identityMasks}</div>
-          <div className="text-xs text-muted-foreground">ID Masked</div>
+        <div className="bg-background/50 border border-warning/30 rounded-lg p-3 text-center">
+          <div className="text-2xl font-mono text-warning">{stats.identityMasks}</div>
+          <div className="text-xs text-muted-foreground">Reg Missing</div>
         </div>
-        <div className="bg-background/50 border border-green-500/30 rounded-lg p-3 text-center">
-          <div className="text-2xl font-mono text-green-400">
+        <div className="bg-background/50 border border-success/30 rounded-lg p-3 text-center">
+          <div className="text-2xl font-mono text-success">
             {safeNumber((1 - stats.spoofedCount / Math.max(stats.totalSignals, 1)) * 100).toFixed(1)}%
           </div>
           <div className="text-xs text-muted-foreground">Integrity</div>

@@ -49,8 +49,10 @@ export function ADSBSpoofingDetector() {
 
     try {
       // Scan for null/missing data (transponder off)
+      // CRITICAL: Exclude XXB / MLAT placeholders — those are tracker artifacts, NOT spoofing.
+      // See public/data/XXB_EXPLANATION.md and src/lib/detectionClassifier.ts.
       setProgress(20);
-      
+
       const { data: nullData } = await supabase.functions.invoke("neon-query", {
         body: {
           action: "customQuery",
@@ -64,11 +66,15 @@ export function ADSBSpoofingDetector() {
               icao24
             FROM live_flight_detections_rows
             WHERE detection_timestamp > NOW() - INTERVAL '30 days'
+              -- Exclude MLAT-only placeholders (XXB, null icao24) — those are not spoofing
+              AND COALESCE(UPPER(registration), '') NOT IN ('XXB','XXA','XXC','XXD','XXX','UNKNOWN','')
+              AND icao24 IS NOT NULL
+              AND icao24 ~ '^[0-9A-Fa-f]{6}$'
               AND (
                 altitude IS NULL 
                 OR speed IS NULL 
-                OR (speed = 0 AND altitude > 100)
-                OR registration IS NULL
+                -- Real concern: valid aircraft at altitude with speed=0 (impossible mid-flight)
+                OR (speed = 0 AND altitude > 500)
               )
             ORDER BY detection_timestamp DESC
             LIMIT 100
@@ -140,24 +146,23 @@ export function ADSBSpoofingDetector() {
       // Generate incident reports
       const detectedIncidents: SpoofingIncident[] = [];
       
-      // Process null data incidents
+      // Process suppression incidents (already filtered server-side to exclude MLAT/XXB)
       const nullDataRecords = Array.isArray(nullData) ? nullData : [];
       nullDataRecords.slice(0, 20).forEach((record: any) => {
         const issues: string[] = [];
         if (record.altitude === null) issues.push("NULL_ALTITUDE");
         if (record.speed === null) issues.push("NULL_SPEED");
-        if (record.speed === 0 && record.altitude > 100) issues.push("ZERO_SPEED_IN_FLIGHT");
-        if (record.registration === null) issues.push("ANONYMOUS_MODE");
+        if (record.speed === 0 && record.altitude > 500) issues.push("ZERO_SPEED_IN_FLIGHT");
 
         detectedIncidents.push({
           id: crypto.randomUUID(),
-          registration: record.registration || "MASKED",
+          registration: record.registration || "UNKNOWN",
           callsign: record.callsign || "UNKNOWN",
           spoofType: "null_data",
           detectedAt: record.detection_timestamp,
-          evidence: `Detected: ${issues.join(", ")} at ${record.altitude || "unknown"}ft`,
-          severity: issues.includes("ANONYMOUS_MODE") ? "critical" : "high",
-          legalCitation: "14 CFR § 91.227 - ADS-B Out Equipment Required"
+          evidence: `Valid aircraft missing payload data: ${issues.join(", ")} at ${record.altitude ?? "null"}ft`,
+          severity: "high",
+          legalCitation: "14 CFR § 91.225 — ADS-B Out Altitude Required"
         });
       });
 
@@ -267,6 +272,12 @@ export function ADSBSpoofingDetector() {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* MLAT clarification banner */}
+        <div className="p-2 rounded text-xs bg-muted/40 border border-border text-muted-foreground">
+          <strong className="text-foreground">Scope:</strong> This scanner now excludes XXB / MLAT-only tracks (legitimate tracker placeholders, not spoofing).
+          It flags only valid registered aircraft missing altitude or speed data mid-flight (14 CFR § 91.225 violations).
+        </div>
+
         {isScanning && (
           <div className="space-y-2">
             <div className="flex justify-between text-sm">

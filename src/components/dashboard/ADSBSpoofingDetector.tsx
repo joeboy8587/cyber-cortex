@@ -272,6 +272,12 @@ export function ADSBSpoofingDetector() {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* MLAT clarification banner */}
+        <div className="p-2 rounded text-xs bg-muted/40 border border-border text-muted-foreground">
+          <strong className="text-foreground">Scope:</strong> This scanner now excludes XXB / MLAT-only tracks (legitimate tracker placeholders, not spoofing).
+          It flags only valid registered aircraft missing altitude or speed data mid-flight (14 CFR § 91.225 violations).
+        </div>
+
         {isScanning && (
           <div className="space-y-2">
             <div className="flex justify-between text-sm">

@@ -243,8 +243,8 @@ export function NullIcaoForensicPanel() {
         {!results && !loading && (
           <div className="text-center py-12 text-muted-foreground space-y-2">
             <Ghost className="w-12 h-12 mx-auto opacity-30" />
-            <p className="text-sm">Investigate 1.2M+ ghost detections with no ICAO transponder code</p>
-            <p className="text-xs">Analyzes altitude profiles, temporal patterns, taxonomy gaps, and top registrations</p>
+            <p className="text-sm">Investigates detections with no ICAO24 transponder hex</p>
+            <p className="text-xs">Most null-ICAO records are MLAT-only tracks (legitimate). True concealment requires valid registration + flight profile + missing hex.</p>
           </div>
         )}
 
@@ -261,7 +261,7 @@ export function NullIcaoForensicPanel() {
             <TabsContent value="overview" className="space-y-4">
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 {[
-                  { label: 'Ghost Detections', value: fmtNum(results.overview.total_null), icon: Ghost, color: 'text-destructive' },
+                  { label: 'Null-ICAO Detections', value: fmtNum(results.overview.total_null), icon: Ghost, color: 'text-muted-foreground' },
                   { label: 'Unique Registrations', value: fmtNum(results.overview.unique_regs), icon: Plane, color: 'text-primary' },
                   { label: 'Low Alt (<1000ft)', value: `${fmtNum(results.overview.low_alt)} (${pct(results.overview.low_alt, results.overview.total_null)})`, icon: Crosshair, color: 'text-warning' },
                   { label: 'High Speed (>400kt)', value: `${fmtNum(results.overview.high_speed)} (${pct(results.overview.high_speed, results.overview.total_null)})`, icon: Radio, color: 'text-destructive' },

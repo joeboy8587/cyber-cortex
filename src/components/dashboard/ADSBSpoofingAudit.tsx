@@ -192,42 +192,42 @@ export const ADSBSpoofingAudit = () => {
       className="col-span-2"
     >
       {/* Alert Banner */}
-      <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4 mb-6">
+      <div className="bg-muted/30 border border-border rounded-lg p-4 mb-6">
         <div className="flex items-center gap-2 mb-2">
-          <AlertTriangle className="h-5 w-5 text-red-400" />
-          <span className="font-bold text-red-400">ADS-B INTEGRITY COMPROMISED</span>
+          <AlertTriangle className="h-5 w-5 text-warning" />
+          <span className="font-bold text-warning">ADS-B IDENTITY GAP AUDIT</span>
         </div>
         <p className="text-sm text-foreground/80">
-          Geospatial analysis reveals definite spoofing signatures in Bakersfield airspace. 
-          Detected patterns include malformed ICAO hex codes, ghost packet injection, and 
-          identity masking. Primary hotspot: Bakersfield CBD / Oildale corridor.
+          Scans Bakersfield/Oildale airspace for aircraft missing valid ICAO24 hex or registration.
+          XXB / MLAT-only tracks are excluded — those are legitimate tracker placeholders, not spoofing.
+          Confidence is based on flight profile (altitude + speed), not random scoring.
         </p>
       </div>
 
       {/* Stats Grid */}
       <div className="grid grid-cols-6 gap-3 mb-6">
-        <div className="bg-background/50 border border-cyan-500/30 rounded-lg p-3 text-center">
-          <div className="text-2xl font-mono text-cyan-400">{stats.totalSignals.toLocaleString()}</div>
-          <div className="text-xs text-muted-foreground">Total Signals</div>
+        <div className="bg-background/50 border border-border rounded-lg p-3 text-center">
+          <div className="text-2xl font-mono text-foreground">{stats.totalSignals.toLocaleString()}</div>
+          <div className="text-xs text-muted-foreground">Detections Scanned</div>
         </div>
-        <div className="bg-background/50 border border-red-500/30 rounded-lg p-3 text-center">
-          <div className="text-2xl font-mono text-red-400">{stats.spoofedCount}</div>
-          <div className="text-xs text-muted-foreground">Anomalous</div>
+        <div className="bg-background/50 border border-destructive/30 rounded-lg p-3 text-center">
+          <div className="text-2xl font-mono text-destructive">{stats.spoofedCount}</div>
+          <div className="text-xs text-muted-foreground">Identity Gaps</div>
         </div>
-        <div className="bg-background/50 border border-red-500/30 rounded-lg p-3 text-center">
-          <div className="text-2xl font-mono text-red-400">{stats.malformedICAO}</div>
-          <div className="text-xs text-muted-foreground">Malformed</div>
+        <div className="bg-background/50 border border-destructive/30 rounded-lg p-3 text-center">
+          <div className="text-2xl font-mono text-destructive">{stats.malformedICAO}</div>
+          <div className="text-xs text-muted-foreground">Invalid ICAO24</div>
         </div>
-        <div className="bg-background/50 border border-purple-500/30 rounded-lg p-3 text-center">
-          <div className="text-2xl font-mono text-purple-400">{stats.ghostInjections}</div>
-          <div className="text-xs text-muted-foreground">Ghost Inject</div>
+        <div className="bg-background/50 border border-muted rounded-lg p-3 text-center">
+          <div className="text-2xl font-mono text-muted-foreground">{stats.ghostInjections}</div>
+          <div className="text-xs text-muted-foreground">MLAT (excluded)</div>
         </div>
-        <div className="bg-background/50 border border-yellow-500/30 rounded-lg p-3 text-center">
-          <div className="text-2xl font-mono text-yellow-400">{stats.identityMasks}</div>
-          <div className="text-xs text-muted-foreground">ID Masked</div>
+        <div className="bg-background/50 border border-warning/30 rounded-lg p-3 text-center">
+          <div className="text-2xl font-mono text-warning">{stats.identityMasks}</div>
+          <div className="text-xs text-muted-foreground">Reg Missing</div>
         </div>
-        <div className="bg-background/50 border border-green-500/30 rounded-lg p-3 text-center">
-          <div className="text-2xl font-mono text-green-400">
+        <div className="bg-background/50 border border-success/30 rounded-lg p-3 text-center">
+          <div className="text-2xl font-mono text-success">
             {safeNumber((1 - stats.spoofedCount / Math.max(stats.totalSignals, 1)) * 100).toFixed(1)}%
           </div>
           <div className="text-xs text-muted-foreground">Integrity</div>

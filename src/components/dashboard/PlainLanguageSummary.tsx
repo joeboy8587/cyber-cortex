@@ -102,9 +102,10 @@ export const PlainLanguageSummary = () => {
         });
       }
 
-      // XXB mystery
+      // MLAT-only tracks (XXB) — these are NOT spoofing, they are tracker placeholders
+      // for aircraft tracked via multilateration without ADS-B. See public/data/XXB_EXPLANATION.md
       const { data: xxbData } = await supabase.functions.invoke('neon-query', {
-        body: { 
+        body: {
           action: 'customQuery',
           query: `
             SELECT 
@@ -115,14 +116,14 @@ export const PlainLanguageSummary = () => {
           `
         }
       });
-      
+
       const xxb = xxbData?.[0];
       if (xxb && parseInt(xxb.total) > 100000) {
         newSummaries.push({
-          icon: <AlertTriangle className="h-5 w-5 text-orange-400" />,
-          title: "Mystery 'XXB' Signal",
-          statement: `An aircraft broadcasting "XXB" instead of a valid registration was detected ${parseInt(xxb.total).toLocaleString()} times at an average altitude of ${parseFloat(xxb.avg_alt).toFixed(0)} feet.`,
-          context: "XXB is not a valid aircraft registration. Aircraft are legally required to broadcast their actual registration numbers. Broadcasting a fake identifier suggests deliberate identity concealment, which is only permitted for certain military or law enforcement operations."
+          icon: <AlertTriangle className="h-5 w-5 text-muted-foreground" />,
+          title: "MLAT-Only Tracks",
+          statement: `${parseInt(xxb.total).toLocaleString()} detections came from MLAT (multilateration) tracking — aircraft picked up by ground stations but not broadcasting full ADS-B identity.`,
+          context: "These are not spoofed aircraft. 'XXB' is a placeholder used by FlightRadar24, ADS-B Exchange, and OpenSky for aircraft tracked via signal triangulation when ADS-B identity is unavailable. The legal angle is whether the underlying aircraft were required to have ADS-B Out under 14 CFR § 91.225 — operating without ADS-B in controlled airspace is the actual violation."
         });
       }
 

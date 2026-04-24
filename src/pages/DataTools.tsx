@@ -29,6 +29,7 @@ import { NotionFullSyncPanel } from "@/components/dashboard/NotionFullSyncPanel"
 import { ArchiveConsolidationPanel } from "@/components/dashboard/ArchiveConsolidationPanel";
 
 import { ChronologicalTimelineRebuilder } from "@/components/dashboard/ChronologicalTimelineRebuilder";
+import { ForensicDBInventory } from "@/components/dashboard/ForensicDBInventory";
 
 export default function DataTools() {
   return (
@@ -48,6 +49,11 @@ export default function DataTools() {
             </p>
           </div>
         </div>
+
+        {/* Phase 1: Forensic DB Inventory — safe, read-only audit */}
+        <section>
+          <ForensicDBInventory />
+        </section>
 
         {/* Table Relationship Explorer */}
         <section>

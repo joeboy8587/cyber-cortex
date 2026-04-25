@@ -210,7 +210,7 @@ function getConnection(): Promise<ReturnType<typeof postgres>> {
       prepare: false,
       connection: {
         application_name: 'neon-query-edge-v' + VERSION,
-        statement_timeout: '25000',
+        statement_timeout: 25000,
       },
       onnotice: () => {},
       debug: false,

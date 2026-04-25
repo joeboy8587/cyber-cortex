@@ -316,7 +316,7 @@ async function fetchWithRetry(url: string, options: RequestInit, maxRetries = 2,
 async function safeDbQuery<T>(neonUrl: string, queryFn: (sql: any) => Promise<T>): Promise<T | null> {
   let sql = null;
   try {
-    sql = postgres(neonUrl, { ssl: 'require', max: 1, idle_timeout: 5, connect_timeout: 10, connection: { statement_timeout: '10000' } });
+    sql = postgres(neonUrl, { ssl: 'require', max: 1, idle_timeout: 5, connect_timeout: 10, connection: { statement_timeout: 10000 } });
     return await queryFn(sql);
   } catch (err) {
     console.error('Database query error:', err instanceof Error ? err.message : err);
@@ -687,7 +687,7 @@ serve(async (req) => {
       if (neonUrl && transformedFlights.length > 0) {
         let sql = null;
         try {
-    sql = postgres(neonUrl, { ssl: 'require', max: 1, idle_timeout: 5, connect_timeout: 10, connection: { statement_timeout: '8000' } });
+    sql = postgres(neonUrl, { ssl: 'require', max: 1, idle_timeout: 5, connect_timeout: 10, connection: { statement_timeout: 8000 } });
 
           // Check/create rich columns
           let hasRichCols = richColumnsVerified;

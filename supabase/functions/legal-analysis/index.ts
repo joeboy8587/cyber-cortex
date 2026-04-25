@@ -55,7 +55,7 @@ Deno.serve(async (req) => {
 
     if (NEON_DATABASE_URL) {
       try {
-        const { default: postgres } = await import("npm:postgres@3.4.4");
+        const { default: postgres } = await import("https://deno.land/x/postgresjs@v3.4.4/mod.js");
         const sql = postgres(NEON_DATABASE_URL, { ssl: "require", max: 1, idle_timeout: 5, connect_timeout: 10, prepare: false });
         try {
           const [flightRow, bioRow, josiahRow, chainRow, watchtowerRow, ecgRow,

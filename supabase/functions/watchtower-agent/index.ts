@@ -221,7 +221,7 @@ serve(async (req) => {
   } catch (err) {
     console.error("Watchtower agent error:", err);
     return new Response(
-      JSON.stringify({ error: err.message || "Unknown error" }),
+      JSON.stringify({ error: err instanceof Error ? err.message : String(err) || "Unknown error" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }

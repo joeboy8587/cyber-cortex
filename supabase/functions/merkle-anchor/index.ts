@@ -49,7 +49,7 @@ Deno.serve(async (req) => {
     }
   } catch (err) {
     console.error("merkle error:", err);
-    return json({ error: err.message }, 500);
+    return json({ error: err instanceof Error ? err.message : String(err) }, 500);
   }
 });
 
@@ -204,8 +204,9 @@ async function handleAnchorDeep(supabase: any, neonUrl: string, body: any) {
         results.push({ table: tableName, anchored: 0, status: "up-to-date" });
       }
     } catch (err) {
-      console.error(`err ${tableName}: ${err.message}`);
-      results.push({ table: tableName, anchored: 0, status: "error", error: err.message });
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`err ${tableName}: ${msg}`);
+      results.push({ table: tableName, anchored: 0, status: "error", error: msg });
     }
   }
 

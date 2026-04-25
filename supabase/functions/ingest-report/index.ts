@@ -59,7 +59,7 @@ Deno.serve(async (req) => {
     });
   } catch (err) {
     console.error("Ingestion error:", err);
-    return new Response(JSON.stringify({ error: err.message }), {
+    return new Response(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" }
     });
   }
@@ -148,7 +148,7 @@ async function parseSpoofingReport(content: string, documentId: string, sha256: 
       `);
       result.spoofing_flags++;
     } catch (e) {
-      result.details.push(`Spoof flag skip: ${registration} ${altitude}ft - ${e.message}`);
+      result.details.push(`Spoof flag skip: ${registration} ${altitude}ft - ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -184,7 +184,7 @@ async function parseSpoofingReport(content: string, documentId: string, sha256: 
       `);
       result.threat_profiles++;
     } catch (e) {
-      result.details.push(`Threat profile skip: ${registration} - ${e.message}`);
+      result.details.push(`Threat profile skip: ${registration} - ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -201,7 +201,7 @@ async function parseSpoofingReport(content: string, documentId: string, sha256: 
       `);
       result.chain_links++;
     } catch (e) {
-      result.details.push(`Chain link skip: ${e.message}`);
+      result.details.push(`Chain link skip: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -261,7 +261,7 @@ async function parseMonitorReport(content: string, documentId: string, sha256: s
         `);
         result.forensic_events++;
       } catch (e) {
-        result.details.push(`Forensic event skip: ${registration} - ${e.message}`);
+        result.details.push(`Forensic event skip: ${registration} - ${e instanceof Error ? e.message : String(e)}`);
       }
     }
   }
@@ -304,7 +304,7 @@ async function parseMonitorReport(content: string, documentId: string, sha256: s
         `);
         result.forensic_events++;
       } catch (e) {
-        result.details.push(`Monthly event skip: ${registration} ${month} - ${e.message}`);
+        result.details.push(`Monthly event skip: ${registration} ${month} - ${e instanceof Error ? e.message : String(e)}`);
       }
     }
   }
@@ -338,7 +338,7 @@ async function parseMonitorReport(content: string, documentId: string, sha256: s
       `);
       result.forensic_events++;
     } catch (e) {
-      result.details.push(`Monitor failure event skip: ${e.message}`);
+      result.details.push(`Monitor failure event skip: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -355,7 +355,7 @@ async function parseMonitorReport(content: string, documentId: string, sha256: s
       `);
       result.chain_links++;
     } catch (e) {
-      result.details.push(`Chain link skip: ${e.message}`);
+      result.details.push(`Chain link skip: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 

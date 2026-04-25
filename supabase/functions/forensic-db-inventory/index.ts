@@ -1,7 +1,7 @@
 // Forensic DB Inventory — Phase 1 (READ-ONLY)
 // Safely audits the entire Neon database without modifying any data.
 // Detects: empty tables, duplicate-shape tables, fragment families, row counts, sizes.
-import postgres from "npm:postgres@3.4.4";
+import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",

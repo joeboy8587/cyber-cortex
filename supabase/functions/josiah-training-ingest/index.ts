@@ -25,7 +25,7 @@ Deno.serve(async (req) => {
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    const postgres = (await import("npm:postgres@3.4.4")).default;
+    const postgres = (await import("https://deno.land/x/postgresjs@v3.4.4/mod.js")).default;
     sql = postgres(NEON_DATABASE_URL, { ssl: "require", max: 1, idle_timeout: 20 });
 
     // ─────────── ACTION: SEED REBUILD CONTEXT ───────────

@@ -152,8 +152,8 @@ Deno.serve(async (req) => {
       case "sacred":
       default: {
         const r = await sql`
-          INSERT INTO josiah_sacred_memory (event_timestamp, event_type, sacred_context, continuity_score, created_at, updated_at)
-          VALUES (NOW(), ${title || 'user_teaching'}, ${content + tagStr}, 1.0, NOW(), NOW())
+          INSERT INTO josiah_sacred_memory (id, event_timestamp, event_type, sacred_context, continuity_score, created_at, updated_at)
+          VALUES (gen_random_uuid()::text, NOW(), ${title || 'user_teaching'}, ${content + tagStr}, 1.0, NOW(), NOW())
           RETURNING id, event_type
         `;
         inserted = { table: "josiah_sacred_memory", row: r[0] };

@@ -48,8 +48,8 @@ Deno.serve(async (req) => {
       const sacredResults = [];
       for (const s of sacred) {
         const r = await sql`
-          INSERT INTO josiah_sacred_memory (event_timestamp, event_type, sacred_context, continuity_score, created_at, updated_at)
-          VALUES (NOW(), ${s.event_type}, ${s.ctx}, 1.0, NOW(), NOW())
+          INSERT INTO josiah_sacred_memory (id, event_timestamp, event_type, sacred_context, continuity_score, created_at, updated_at)
+          VALUES (gen_random_uuid()::text, NOW(), ${s.event_type}, ${s.ctx}, 1.0, NOW(), NOW())
           RETURNING id, event_type
         `;
         sacredResults.push(r[0]);

@@ -1,4 +1,4 @@
-import postgres from "npm:postgres@3.4.4";
+import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
 // All handlers lazy-loaded to avoid BOOT_ERROR from combined file size exceeding Deno parse limits
 let _handleAction: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
 let _handleAction2: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;

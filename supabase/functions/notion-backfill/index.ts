@@ -1,5 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import postgres from "npm:postgres@3.4.4";
+import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',

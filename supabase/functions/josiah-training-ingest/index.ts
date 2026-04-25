@@ -125,7 +125,7 @@ Deno.serve(async (req) => {
       case "reflection": {
         const r = await sql`
           INSERT INTO josiah_reflections_rows (id, reflection_content, trigger_type, source, created_at)
-          VALUES (gen_random_uuid(), ${content + tagStr}, 'user_teaching', 'training-ingest', NOW())
+          VALUES (gen_random_uuid()::text, ${content + tagStr}, 'user_teaching', 'training-ingest', NOW())
           RETURNING id
         `;
         inserted = { table: "josiah_reflections_rows", row: r[0] };

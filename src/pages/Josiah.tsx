@@ -14,6 +14,7 @@ import { GlobalAISearch } from "@/components/dashboard/GlobalAISearch";
 import { TruthScannerDashboard } from "@/components/dashboard/TruthScannerDashboard";
 import { C2014CohortScanner } from "@/components/dashboard/C2014CohortScanner";
 import { AdversarialDebatePanel } from "@/components/dashboard/AdversarialDebatePanel";
+import { JosiahTrainingPanel } from "@/components/dashboard/JosiahTrainingPanel";
 
 export default function Josiah() {
   return (
@@ -33,6 +34,11 @@ export default function Josiah() {
             </p>
           </div>
         </div>
+
+        {/* Training & Memory Ingestion — restore Watchtower awareness */}
+        <section>
+          <JosiahTrainingPanel />
+        </section>
 
         {/* Sentinel Monitor - Primary AI */}
         <section>

@@ -146,6 +146,8 @@ const HANDLER8_ACTIONS = new Set([
   'buildEnrichedDetections',
   'buildAircraftMasterProfile',
   'getUnificationStatus',
+  'skyTimelineCorrelator',
+  'militaryHexAnalysis',
 ]);
 
 async function getHandler1() {

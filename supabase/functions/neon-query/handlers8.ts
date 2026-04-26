@@ -2065,6 +2065,172 @@ export async function handleAction8(action: string, body: Record<string, any>, s
       }
     }
 
+    case 'skyTimelineCorrelator': {
+      // Inputs: timestamp (ISO), windowMinutes (default 30), centerLat/centerLng (default user residence), radiusKm (default 25)
+      const ts = String(body.timestamp || '').trim();
+      if (!ts) return { error: 'timestamp (ISO) is required' };
+      const windowMin = Math.max(1, Math.min(720, Number(body.windowMinutes ?? 30)));
+      const lat = Number(body.centerLat ?? 35.437649);
+      const lng = Number(body.centerLng ?? -119.022639);
+      const radiusKm = Math.max(1, Math.min(500, Number(body.radiusKm ?? 25)));
+
+      // Haversine in SQL using earthdistance-free approximation (degrees → km)
+      // Bounding box pre-filter for performance, then exact haversine for proximity_score
+      const latDelta = radiusKm / 111.0;
+      const lngDelta = radiusKm / (111.0 * Math.cos((lat * Math.PI) / 180));
+
+      const rows = await sql.unsafe(`
+        WITH window_set AS (
+          SELECT
+            COALESCE(icao_code,'') AS hex,
+            COALESCE(registration,'') AS registration,
+            COALESCE(callsign,'') AS callsign,
+            COALESCE(altitude,0) AS altitude,
+            COALESCE(speed,0) AS speed,
+            latitude, longitude,
+            COALESCE(detection_timestamp, created_at) AS event_time,
+            taxonomy_tag,
+            COALESCE(threat_score,0) AS threat_score,
+            COALESCE(flagged,false) AS is_flagged,
+            flagged_reasons,
+            (2 * 6371 * asin(sqrt(
+              power(sin(radians((latitude - ${lat})/2)), 2) +
+              cos(radians(${lat})) * cos(radians(latitude)) *
+              power(sin(radians((longitude - ${lng})/2)), 2)
+            ))) AS distance_km,
+            EXTRACT(EPOCH FROM (COALESCE(detection_timestamp, created_at) - TIMESTAMPTZ '${ts.replace(/'/g, "''")}')) / 60.0 AS time_delta_min
+          FROM live_flight_detections_rows
+          WHERE COALESCE(detection_timestamp, created_at)
+                BETWEEN TIMESTAMPTZ '${ts.replace(/'/g, "''")}' - INTERVAL '${windowMin} minutes'
+                    AND TIMESTAMPTZ '${ts.replace(/'/g, "''")}' + INTERVAL '${windowMin} minutes'
+            AND latitude BETWEEN ${lat - latDelta} AND ${lat + latDelta}
+            AND longitude BETWEEN ${lng - lngDelta} AND ${lng + lngDelta}
+            AND latitude IS NOT NULL AND longitude IS NOT NULL
+        )
+        SELECT *,
+          ROUND((100.0 * GREATEST(0, 1 - (distance_km / ${radiusKm}))
+                + 50.0 * GREATEST(0, 1 - (ABS(time_delta_min) / ${windowMin}))
+                + CASE WHEN altitude > 0 AND altitude < 2000 THEN 30 ELSE 0 END
+                + CASE WHEN taxonomy_tag IN ('tier0_kcso','xxb_tier0_kcso','xxb_kcso','tier1_priority','xxb_tier1_priority') THEN 40
+                       WHEN taxonomy_tag IN ('tier2_shell','xxb_tier2_shell','xxb_shell') THEN 25
+                       WHEN taxonomy_tag IN ('military_asset','xxb_military') THEN 35
+                       ELSE 0 END
+              )::numeric, 2) AS proximity_score
+        FROM window_set
+        WHERE distance_km <= ${radiusKm}
+        ORDER BY proximity_score DESC, ABS(time_delta_min) ASC
+        LIMIT 200
+      `);
+
+      // Aggregate summary
+      const summary = {
+        totalOverhead: (rows as any[]).length,
+        uniqueAircraft: new Set((rows as any[]).map((r: any) => r.registration || r.hex).filter(Boolean)).size,
+        militaryCount: (rows as any[]).filter((r: any) => /military|xxb_military/i.test(r.taxonomy_tag || '')).length,
+        kcsoCount: (rows as any[]).filter((r: any) => /kcso/i.test(r.taxonomy_tag || '')).length,
+        shellCount: (rows as any[]).filter((r: any) => /shell/i.test(r.taxonomy_tag || '')).length,
+        lowAltCount: (rows as any[]).filter((r: any) => r.altitude > 0 && r.altitude < 2000).length,
+      };
+
+      return { center: { lat, lng }, radiusKm, windowMin, anchor: ts, summary, hits: rows };
+    }
+
+    case 'militaryHexAnalysis': {
+      const days = Math.max(1, Math.min(365, Number(body.days ?? 30)));
+      // Mode A — USAF/DOD hex ranges broadcast by civilian-looking registrations
+      // USAF allocated ranges (AE/AF prefix). DoD ranges roughly: AE0000-AFFFFF.
+      const usafSpoof = await sql.unsafe(`
+        SELECT
+          UPPER(icao_code) AS hex,
+          registration,
+          callsign,
+          COUNT(*)::int AS detections,
+          MIN(COALESCE(detection_timestamp, created_at)) AS first_seen,
+          MAX(COALESCE(detection_timestamp, created_at)) AS last_seen,
+          ROUND(AVG(NULLIF(altitude,0))::numeric, 0) AS avg_altitude,
+          taxonomy_tag
+        FROM live_flight_detections_rows
+        WHERE COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${days} days'
+          AND icao_code IS NOT NULL
+          AND UPPER(icao_code) ~ '^(AE|AF)[0-9A-F]{4}$'
+          AND registration IS NOT NULL
+          AND registration <> ''
+          AND registration ~* '^N[0-9]'
+        GROUP BY UPPER(icao_code), registration, callsign, taxonomy_tag
+        HAVING COUNT(*) >= 1
+        ORDER BY detections DESC
+        LIMIT 100
+      `);
+
+      // Mode B — Military callsigns (RCH, KOME, SHADY, PAT, REACH, BRAVO, EVAC, SAM, etc.)
+      const milCallsigns = await sql.unsafe(`
+        SELECT
+          UPPER(callsign) AS callsign,
+          COUNT(*)::int AS detections,
+          COUNT(DISTINCT icao_code)::int AS unique_hex,
+          COUNT(DISTINCT registration)::int AS unique_reg,
+          MIN(COALESCE(detection_timestamp, created_at)) AS first_seen,
+          MAX(COALESCE(detection_timestamp, created_at)) AS last_seen,
+          ROUND(AVG(NULLIF(altitude,0))::numeric, 0) AS avg_altitude
+        FROM live_flight_detections_rows
+        WHERE COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${days} days'
+          AND callsign IS NOT NULL
+          AND UPPER(callsign) ~ '^(RCH|KOME|SHADY|PAT[0-9]|REACH|BRAVO|EVAC|SAM[0-9]|TRON|STMPD|CONVOY|DUKE|JOSA|KING|VENUS|SLAM|SNAKE|MAGMA|RIDER|REDEYE|HUSKY|DRAGON|GHOST)[A-Z0-9]*$'
+        GROUP BY UPPER(callsign)
+        ORDER BY detections DESC
+        LIMIT 50
+      `);
+
+      // Mode C — Hex collisions: a single hex broadcast by ≥2 distinct registrations within window
+      const hexCollisions = await sql.unsafe(`
+        WITH pairs AS (
+          SELECT
+            UPPER(icao_code) AS hex,
+            registration,
+            COUNT(*)::int AS detections,
+            MIN(COALESCE(detection_timestamp, created_at)) AS first_seen,
+            MAX(COALESCE(detection_timestamp, created_at)) AS last_seen
+          FROM live_flight_detections_rows
+          WHERE COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${days} days'
+            AND icao_code IS NOT NULL AND icao_code <> ''
+            AND registration IS NOT NULL AND registration <> ''
+          GROUP BY UPPER(icao_code), registration
+        ),
+        collisions AS (
+          SELECT hex, COUNT(*)::int AS distinct_regs, SUM(detections)::int AS total_detections
+          FROM pairs
+          GROUP BY hex
+          HAVING COUNT(*) >= 2
+        )
+        SELECT
+          c.hex,
+          c.distinct_regs,
+          c.total_detections,
+          json_agg(json_build_object(
+            'registration', p.registration,
+            'detections', p.detections,
+            'first_seen', p.first_seen,
+            'last_seen', p.last_seen
+          ) ORDER BY p.detections DESC) AS registrations
+        FROM collisions c
+        JOIN pairs p ON p.hex = c.hex
+        GROUP BY c.hex, c.distinct_regs, c.total_detections
+        ORDER BY c.distinct_regs DESC, c.total_detections DESC
+        LIMIT 75
+      `);
+
+      const summary = {
+        usafSpoofCount: (usafSpoof as any[]).length,
+        usafSpoofDetections: (usafSpoof as any[]).reduce((s: number, r: any) => s + Number(r.detections || 0), 0),
+        militaryCallsignCount: (milCallsigns as any[]).length,
+        militaryCallsignDetections: (milCallsigns as any[]).reduce((s: number, r: any) => s + Number(r.detections || 0), 0),
+        hexCollisionCount: (hexCollisions as any[]).length,
+        windowDays: days,
+      };
+
+      return { summary, usafSpoof, militaryCallsigns: milCallsigns, hexCollisions };
+    }
+
     default:
       return null;
   }

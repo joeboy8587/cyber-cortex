@@ -33,6 +33,7 @@ import ForensicTrajectoryPanel from "@/components/dashboard/ForensicTrajectoryPa
 import TransponderAnalysisDashboard from "@/components/dashboard/TransponderAnalysisDashboard";
 import ICAORecyclingDashboard from "@/components/dashboard/ICAORecyclingDashboard";
 import PosseComitausAnalyzer from "@/components/dashboard/PosseComitausAnalyzer";
+import MilitaryWarfareAnalysisPanel from "@/components/dashboard/MilitaryWarfareAnalysisPanel";
 import IFRSurveillanceDetector from "@/components/dashboard/IFRSurveillanceDetector";
 import IcaoIdentityCleanup from "@/components/dashboard/IcaoIdentityCleanup";
 import GhostAircraftForensics from "@/components/dashboard/GhostAircraftForensics";
@@ -116,6 +117,9 @@ export default function Surveillance() {
           </TabsContent>
 
           <TabsContent value="posse" className="space-y-6">
+            <section>
+              <MilitaryWarfareAnalysisPanel />
+            </section>
             <section>
               <PosseComitausAnalyzer />
             </section>

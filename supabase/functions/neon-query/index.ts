@@ -143,6 +143,9 @@ const HANDLER8_ACTIONS = new Set([
   'aircraftMasterProfile',
   'darkOpsComparison',
   'airMethodsFleet',
+  'buildEnrichedDetections',
+  'buildAircraftMasterProfile',
+  'getUnificationStatus',
 ]);
 
 async function getHandler1() {

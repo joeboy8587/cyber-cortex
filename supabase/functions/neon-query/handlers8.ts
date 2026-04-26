@@ -2146,7 +2146,7 @@ export async function handleAction8(action: string, body: Record<string, any>, s
                ROUND(AVG(NULLIF(altitude,0))::numeric, 0) AS avg_altitude,
                taxonomy_tag
         FROM live_flight_detections_rows
-        WHERE COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${days} days'
+        WHERE detection_timestamp > NOW() - INTERVAL '${days} days'
           AND icao_code IS NOT NULL
           AND UPPER(icao_code) ~ '^(AE|AF)[0-9A-F]{4}$'
           AND registration IS NOT NULL AND registration <> ''
@@ -2165,7 +2165,7 @@ export async function handleAction8(action: string, body: Record<string, any>, s
                MAX(COALESCE(detection_timestamp, created_at)) AS last_seen,
                ROUND(AVG(NULLIF(altitude,0))::numeric, 0) AS avg_altitude
         FROM live_flight_detections_rows
-        WHERE COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${days} days'
+        WHERE detection_timestamp > NOW() - INTERVAL '${days} days'
           AND callsign IS NOT NULL
           AND UPPER(callsign) ~ '^(RCH|KOME|SHADY|PAT[0-9]|REACH|BRAVO|EVAC|SAM[0-9]|TRON|STMPD|CONVOY|DUKE|JOSA|KING|VENUS|SLAM|SNAKE|MAGMA|RIDER|REDEYE|HUSKY|DRAGON|GHOST)[A-Z0-9]*$'
         GROUP BY UPPER(callsign)
@@ -2188,7 +2188,7 @@ export async function handleAction8(action: string, body: Record<string, any>, s
         const candidates = await sql.unsafe(`
           SELECT UPPER(icao_code) AS hex, COUNT(DISTINCT registration)::int AS distinct_regs
           FROM live_flight_detections_rows
-          WHERE COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${days} days'
+          WHERE detection_timestamp > NOW() - INTERVAL '${days} days'
             AND icao_code IS NOT NULL AND icao_code <> ''
             AND registration IS NOT NULL AND registration <> ''
           GROUP BY UPPER(icao_code)
@@ -2206,7 +2206,7 @@ export async function handleAction8(action: string, body: Record<string, any>, s
                      MIN(COALESCE(detection_timestamp, created_at)) AS first_seen,
                      MAX(COALESCE(detection_timestamp, created_at)) AS last_seen
               FROM live_flight_detections_rows
-              WHERE COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${days} days'
+              WHERE detection_timestamp > NOW() - INTERVAL '${days} days'
                 AND UPPER(icao_code) IN (${inList})
                 AND registration IS NOT NULL AND registration <> ''
               GROUP BY UPPER(icao_code), registration

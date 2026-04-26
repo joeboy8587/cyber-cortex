@@ -144,6 +144,7 @@ export default function DataTools() {
 
         {/* Enrichment */}
         <section className="space-y-6">
+          <UnificationPipelinePanel />
           <DataEnrichmentDashboard />
           <MultimodalEnrichmentPanel />
           <HistoricalEnrichmentPanel />

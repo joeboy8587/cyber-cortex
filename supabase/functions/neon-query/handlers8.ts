@@ -2136,42 +2136,34 @@ export async function handleAction8(action: string, body: Record<string, any>, s
     }
 
     case 'militaryHexAnalysis': {
-      const days = Math.max(1, Math.min(365, Number(body.days ?? 30)));
-      // Mode A — USAF/DOD hex ranges broadcast by civilian-looking registrations
-      // USAF allocated ranges (AE/AF prefix). DoD ranges roughly: AE0000-AFFFFF.
-      const usafSpoof = await sql.unsafe(`
-        SELECT
-          UPPER(icao_code) AS hex,
-          registration,
-          callsign,
-          COUNT(*)::int AS detections,
-          MIN(COALESCE(detection_timestamp, created_at)) AS first_seen,
-          MAX(COALESCE(detection_timestamp, created_at)) AS last_seen,
-          ROUND(AVG(NULLIF(altitude,0))::numeric, 0) AS avg_altitude,
-          taxonomy_tag
+      const days = Math.max(1, Math.min(365, Number(body.days ?? 14)));
+
+      const usafSpoofP = sql.unsafe(`
+        SELECT UPPER(icao_code) AS hex, registration, callsign,
+               COUNT(*)::int AS detections,
+               MIN(COALESCE(detection_timestamp, created_at)) AS first_seen,
+               MAX(COALESCE(detection_timestamp, created_at)) AS last_seen,
+               ROUND(AVG(NULLIF(altitude,0))::numeric, 0) AS avg_altitude,
+               taxonomy_tag
         FROM live_flight_detections_rows
         WHERE COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${days} days'
           AND icao_code IS NOT NULL
           AND UPPER(icao_code) ~ '^(AE|AF)[0-9A-F]{4}$'
-          AND registration IS NOT NULL
-          AND registration <> ''
+          AND registration IS NOT NULL AND registration <> ''
           AND registration ~* '^N[0-9]'
         GROUP BY UPPER(icao_code), registration, callsign, taxonomy_tag
-        HAVING COUNT(*) >= 1
         ORDER BY detections DESC
         LIMIT 100
       `);
 
-      // Mode B — Military callsigns (RCH, KOME, SHADY, PAT, REACH, BRAVO, EVAC, SAM, etc.)
-      const milCallsigns = await sql.unsafe(`
-        SELECT
-          UPPER(callsign) AS callsign,
-          COUNT(*)::int AS detections,
-          COUNT(DISTINCT icao_code)::int AS unique_hex,
-          COUNT(DISTINCT registration)::int AS unique_reg,
-          MIN(COALESCE(detection_timestamp, created_at)) AS first_seen,
-          MAX(COALESCE(detection_timestamp, created_at)) AS last_seen,
-          ROUND(AVG(NULLIF(altitude,0))::numeric, 0) AS avg_altitude
+      const milCallsignsP = sql.unsafe(`
+        SELECT UPPER(callsign) AS callsign,
+               COUNT(*)::int AS detections,
+               COUNT(DISTINCT icao_code)::int AS unique_hex,
+               COUNT(DISTINCT registration)::int AS unique_reg,
+               MIN(COALESCE(detection_timestamp, created_at)) AS first_seen,
+               MAX(COALESCE(detection_timestamp, created_at)) AS last_seen,
+               ROUND(AVG(NULLIF(altitude,0))::numeric, 0) AS avg_altitude
         FROM live_flight_detections_rows
         WHERE COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${days} days'
           AND callsign IS NOT NULL
@@ -2180,6 +2172,13 @@ export async function handleAction8(action: string, body: Record<string, any>, s
         ORDER BY detections DESC
         LIMIT 50
       `);
+
+      const [usafRes, milCsRes] = await Promise.allSettled([usafSpoofP, milCallsignsP]);
+      const usafSpoof = usafRes.status === 'fulfilled' ? (usafRes.value as any[]) : [];
+      const milCallsigns = milCsRes.status === 'fulfilled' ? (milCsRes.value as any[]) : [];
+      const partialErrors: string[] = [];
+      if (usafRes.status === 'rejected') partialErrors.push(`usafSpoof: ${(usafRes.reason as any)?.message || usafRes.reason}`);
+      if (milCsRes.status === 'rejected') partialErrors.push(`milCallsigns: ${(milCsRes.reason as any)?.message || milCsRes.reason}`);
 
       // Mode C — Hex collisions: a single hex broadcast by ≥2 distinct registrations.
       // Two-pass: (1) cheap GROUP to find candidate hex codes with >1 distinct reg,

@@ -1802,6 +1802,262 @@ export async function handleAction8(action: string, body: Record<string, any>, s
       }
     }
 
+    case 'buildEnrichedDetections': {
+      const t0 = Date.now();
+      const dryRun = body.dryRun === true;
+      try {
+        // Source counts (use view + sources)
+        const [src] = await sql.unsafe(`
+          SELECT
+            (SELECT COUNT(*) FROM v_unified_flight_detections) AS unified,
+            (SELECT COUNT(*) FROM aircraft_registry_enhanced_rows) AS registry,
+            (SELECT COUNT(*) FROM public_air_traffic_rows) AS pubatc,
+            (SELECT COUNT(*) FROM flight_detections) AS unmask
+        `) as any[];
+
+        if (dryRun) {
+          return { dryRun: true, sources: src, duration_ms: Date.now() - t0 };
+        }
+
+        // Drop & recreate (existing table is empty / different schema)
+        await sql.unsafe(`DROP TABLE IF EXISTS enriched_flight_detections CASCADE`);
+        await sql.unsafe(`
+          CREATE TABLE enriched_flight_detections AS
+          WITH base AS (
+            SELECT
+              u.record_id, u.source_table, u.icao_code, u.registration, u.callsign,
+              u.altitude, u.speed, u.latitude, u.longitude, u.heading,
+              u.detection_timestamp, u.threat_score, u.flagged, u.tier_level
+            FROM v_unified_flight_detections u
+          ),
+          reg AS (
+            SELECT UPPER(registration) AS reg_key, UPPER(icao24) AS hex_key,
+                   threat_tier, shell_company_flag, total_detections AS reg_total_detections,
+                   flagged_detections AS reg_flagged_detections, biometric_correlations
+            FROM aircraft_registry_enhanced_rows
+          ),
+          pub AS (
+            SELECT DISTINCT UPPER(hex) AS hex_key, true AS in_public_traffic
+            FROM public_air_traffic_rows
+            WHERE hex IS NOT NULL AND hex <> ''
+          ),
+          unmask AS (
+            SELECT DISTINCT ON (UPPER(icao_code))
+              UPPER(icao_code) AS hex_key,
+              unmasked_icao, unmasking_confidence, operator_inferred, on_watchlist
+            FROM flight_detections
+            WHERE icao_code IS NOT NULL
+            ORDER BY UPPER(icao_code), unmasking_confidence DESC NULLS LAST
+          )
+          SELECT
+            b.*,
+            r.threat_tier, r.shell_company_flag,
+            r.reg_total_detections, r.reg_flagged_detections, r.biometric_correlations,
+            COALESCE(p.in_public_traffic, false) AS seen_in_public_traffic,
+            (r.threat_tier IS NOT NULL OR r.shell_company_flag IS NOT NULL) AS has_registry_match,
+            (um.unmasked_icao IS NOT NULL) AS has_unmasking_intel,
+            um.unmasked_icao, um.unmasking_confidence, um.operator_inferred, um.on_watchlist,
+            CASE
+              WHEN r.shell_company_flag = true THEN 'SHELL_COMPANY'
+              WHEN r.threat_tier = 1 THEN 'TIER1_CRITICAL'
+              WHEN r.threat_tier = 2 THEN 'TIER2_HIGH'
+              WHEN r.threat_tier = 3 THEN 'TIER3_MEDIUM'
+              WHEN b.threat_score >= 70 THEN 'HIGH_THREAT'
+              WHEN b.flagged = true THEN 'FLAGGED'
+              WHEN p.in_public_traffic IS NULL OR p.in_public_traffic = false THEN 'DARK_AIRCRAFT'
+              ELSE 'NORMAL'
+            END AS risk_classification,
+            now() AS enriched_at
+          FROM base b
+          LEFT JOIN reg r
+            ON (b.registration IS NOT NULL AND UPPER(b.registration) = r.reg_key)
+            OR (b.icao_code IS NOT NULL AND UPPER(b.icao_code) = r.hex_key)
+          LEFT JOIN pub p
+            ON b.icao_code IS NOT NULL AND UPPER(b.icao_code) = p.hex_key
+          LEFT JOIN unmask um
+            ON b.icao_code IS NOT NULL AND UPPER(b.icao_code) = um.hex_key
+        `);
+
+        await sql.unsafe(`CREATE INDEX IF NOT EXISTS idx_efd_registration ON enriched_flight_detections(registration)`);
+        await sql.unsafe(`CREATE INDEX IF NOT EXISTS idx_efd_icao ON enriched_flight_detections(icao_code)`);
+        await sql.unsafe(`CREATE INDEX IF NOT EXISTS idx_efd_risk ON enriched_flight_detections(risk_classification)`);
+        await sql.unsafe(`CREATE INDEX IF NOT EXISTS idx_efd_ts ON enriched_flight_detections(detection_timestamp)`);
+
+        const [counts] = await sql.unsafe(`
+          SELECT COUNT(*)::bigint AS total,
+            COUNT(*) FILTER (WHERE has_registry_match)::bigint AS with_registry,
+            COUNT(*) FILTER (WHERE seen_in_public_traffic)::bigint AS seen_public,
+            COUNT(*) FILTER (WHERE has_unmasking_intel)::bigint AS unmasked
+          FROM enriched_flight_detections
+        `) as any[];
+
+        const breakdown = await sql.unsafe(`
+          SELECT risk_classification, COUNT(*)::bigint AS cnt
+          FROM enriched_flight_detections
+          GROUP BY risk_classification
+          ORDER BY cnt DESC
+        `);
+
+        return { ok: true, sources: src, counts, breakdown, duration_ms: Date.now() - t0 };
+      } catch (e: any) {
+        return { ok: false, error: String(e?.message || e), duration_ms: Date.now() - t0 };
+      }
+    }
+
+    case 'buildAircraftMasterProfile': {
+      const t0 = Date.now();
+      const dryRun = body.dryRun === true;
+      try {
+        if (dryRun) {
+          const [pre] = await sql.unsafe(`
+            SELECT COUNT(DISTINCT COALESCE(NULLIF(UPPER(icao_code),''), NULLIF(UPPER(registration),''))) AS unique_aircraft
+            FROM v_unified_flight_detections
+          `) as any[];
+          return { dryRun: true, estimate: pre, duration_ms: Date.now() - t0 };
+        }
+
+        await sql.unsafe(`DROP TABLE IF EXISTS aircraft_master_profile CASCADE`);
+        await sql.unsafe(`
+          CREATE TABLE aircraft_master_profile AS
+          WITH agg AS (
+            SELECT
+              COALESCE(NULLIF(UPPER(icao_code),''), NULLIF(UPPER(registration),'')) AS aircraft_key,
+              MAX(NULLIF(UPPER(icao_code),'')) AS icao_code,
+              MAX(NULLIF(UPPER(registration),'')) AS registration,
+              MAX(callsign) AS last_callsign,
+              COUNT(*)::bigint AS total_detections,
+              COUNT(*) FILTER (WHERE flagged = true)::bigint AS flagged_detections,
+              ROUND( (COUNT(*) FILTER (WHERE flagged = true)::numeric * 100.0)
+                     / NULLIF(COUNT(*),0), 2) AS flagged_rate_pct,
+              COUNT(DISTINCT DATE(detection_timestamp))::int AS days_active,
+              MIN(detection_timestamp) AS first_seen,
+              MAX(detection_timestamp) AS last_seen,
+              AVG(altitude)::numeric(10,2) AS avg_altitude,
+              MIN(altitude) AS min_altitude,
+              MAX(altitude) AS max_altitude,
+              AVG(speed)::numeric(10,2) AS avg_speed,
+              MAX(speed) AS max_speed,
+              MAX(threat_score) AS max_threat_score,
+              AVG(threat_score)::numeric(10,2) AS avg_threat_score
+            FROM v_unified_flight_detections
+            WHERE COALESCE(NULLIF(UPPER(icao_code),''), NULLIF(UPPER(registration),'')) IS NOT NULL
+            GROUP BY 1
+          ),
+          reg AS (
+            SELECT UPPER(registration) AS reg_key, UPPER(icao24) AS hex_key,
+                   threat_tier, shell_company_flag, biometric_correlations
+            FROM aircraft_registry_enhanced_rows
+          ),
+          pub AS (
+            SELECT UPPER(hex) AS hex_key, COUNT(*)::int AS public_sightings
+            FROM public_air_traffic_rows
+            WHERE hex IS NOT NULL AND hex <> ''
+            GROUP BY 1
+          ),
+          unmask AS (
+            SELECT DISTINCT ON (UPPER(icao_code))
+              UPPER(icao_code) AS hex_key,
+              unmasked_icao, unmasking_confidence, operator_inferred, on_watchlist
+            FROM flight_detections
+            WHERE icao_code IS NOT NULL
+            ORDER BY UPPER(icao_code), unmasking_confidence DESC NULLS LAST
+          )
+          SELECT
+            a.*,
+            r.threat_tier AS registry_threat_tier,
+            r.shell_company_flag AS registry_shell_company,
+            r.biometric_correlations AS registry_biometric_correlations,
+            COALESCE(p.public_sightings, 0) AS public_sightings,
+            (p.public_sightings IS NOT NULL AND p.public_sightings > 0) AS in_public_traffic,
+            um.unmasked_icao, um.unmasking_confidence, um.operator_inferred, um.on_watchlist,
+            CASE
+              WHEN r.shell_company_flag = true THEN 'SHELL_COMPANY'
+              WHEN r.threat_tier = 1 THEN 'TIER1_CRITICAL'
+              WHEN r.threat_tier = 2 THEN 'TIER2_HIGH'
+              WHEN r.threat_tier = 3 THEN 'TIER3_MEDIUM'
+              WHEN a.max_threat_score >= 70 THEN 'HIGH_THREAT'
+              WHEN a.flagged_detections > 0 THEN 'FLAGGED'
+              WHEN (p.public_sightings IS NULL OR p.public_sightings = 0) AND a.total_detections > 10 THEN 'DARK_AIRCRAFT'
+              ELSE 'NORMAL'
+            END AS risk_classification,
+            now() AS profiled_at
+          FROM agg a
+          LEFT JOIN reg r
+            ON (a.registration IS NOT NULL AND a.registration = r.reg_key)
+            OR (a.icao_code IS NOT NULL AND a.icao_code = r.hex_key)
+          LEFT JOIN pub p ON a.icao_code = p.hex_key
+          LEFT JOIN unmask um ON a.icao_code = um.hex_key
+        `);
+
+        await sql.unsafe(`CREATE INDEX IF NOT EXISTS idx_amp_key ON aircraft_master_profile(aircraft_key)`);
+        await sql.unsafe(`CREATE INDEX IF NOT EXISTS idx_amp_risk ON aircraft_master_profile(risk_classification)`);
+        await sql.unsafe(`CREATE INDEX IF NOT EXISTS idx_amp_reg ON aircraft_master_profile(registration)`);
+
+        const [counts] = await sql.unsafe(`
+          SELECT COUNT(*)::bigint AS total_aircraft,
+            COUNT(*) FILTER (WHERE registry_threat_tier IS NOT NULL)::bigint AS with_registry,
+            COUNT(*) FILTER (WHERE in_public_traffic)::bigint AS in_public,
+            COUNT(*) FILTER (WHERE unmasked_icao IS NOT NULL)::bigint AS unmasked
+          FROM aircraft_master_profile
+        `) as any[];
+
+        const breakdown = await sql.unsafe(`
+          SELECT risk_classification, COUNT(*)::bigint AS cnt
+          FROM aircraft_master_profile
+          GROUP BY risk_classification
+          ORDER BY cnt DESC
+        `);
+
+        const top = await sql.unsafe(`
+          SELECT aircraft_key, registration, icao_code, risk_classification,
+                 total_detections, flagged_detections, registry_threat_tier
+          FROM aircraft_master_profile
+          ORDER BY
+            CASE risk_classification
+              WHEN 'TIER1_CRITICAL' THEN 1 WHEN 'SHELL_COMPANY' THEN 2
+              WHEN 'TIER2_HIGH' THEN 3 WHEN 'HIGH_THREAT' THEN 4
+              WHEN 'DARK_AIRCRAFT' THEN 5 WHEN 'TIER3_MEDIUM' THEN 6
+              ELSE 9 END,
+            total_detections DESC
+          LIMIT 25
+        `);
+
+        return { ok: true, counts, breakdown, top, duration_ms: Date.now() - t0 };
+      } catch (e: any) {
+        return { ok: false, error: String(e?.message || e), duration_ms: Date.now() - t0 };
+      }
+    }
+
+    case 'getUnificationStatus': {
+      try {
+        const [src] = await sql.unsafe(`
+          SELECT
+            (SELECT COUNT(*) FROM v_unified_flight_detections) AS unified_view,
+            (SELECT COUNT(*) FROM aircraft_registry_enhanced_rows) AS registry,
+            (SELECT COUNT(*) FROM public_air_traffic_rows) AS public_atc,
+            (SELECT COUNT(*) FROM flight_detections) AS unmasking
+        `) as any[];
+
+        let enriched = { exists: false, total: 0, breakdown: [] as any[] };
+        try {
+          const [c] = await sql.unsafe(`SELECT COUNT(*)::bigint AS cnt FROM enriched_flight_detections`) as any[];
+          const b = await sql.unsafe(`SELECT risk_classification, COUNT(*)::bigint AS cnt FROM enriched_flight_detections GROUP BY 1 ORDER BY cnt DESC`);
+          enriched = { exists: true, total: Number(c?.cnt || 0), breakdown: b as any[] };
+        } catch { /* table missing */ }
+
+        let profile = { exists: false, total: 0, breakdown: [] as any[] };
+        try {
+          const [c] = await sql.unsafe(`SELECT COUNT(*)::bigint AS cnt FROM aircraft_master_profile`) as any[];
+          const b = await sql.unsafe(`SELECT risk_classification, COUNT(*)::bigint AS cnt FROM aircraft_master_profile GROUP BY 1 ORDER BY cnt DESC`);
+          profile = { exists: true, total: Number(c?.cnt || 0), breakdown: b as any[] };
+        } catch { /* table missing */ }
+
+        return { sources: src, enriched, profile };
+      } catch (e: any) {
+        return { error: String(e?.message || e) };
+      }
+    }
+
     default:
       return null;
   }

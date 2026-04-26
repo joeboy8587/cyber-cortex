@@ -2240,7 +2240,7 @@ export async function handleAction8(action: string, body: Record<string, any>, s
         windowDays: days,
       };
 
-      return { summary, usafSpoof, militaryCallsigns: milCallsigns, hexCollisions };
+      return { summary, usafSpoof, militaryCallsigns: milCallsigns, hexCollisions, partialErrors };
     }
 
     default:

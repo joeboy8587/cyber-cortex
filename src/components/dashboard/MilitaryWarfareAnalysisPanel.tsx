@@ -82,7 +82,7 @@ export default function MilitaryWarfareAnalysisPanel() {
   const [skyError, setSkyError] = useState<string | null>(null);
 
   // Military analysis state
-  const [milDays, setMilDays] = useState<number>(30);
+  const [milDays, setMilDays] = useState<number>(14);
   const [milLoading, setMilLoading] = useState(false);
   const [mil, setMil] = useState<MilResult | null>(null);
   const [milError, setMilError] = useState<string | null>(null);

@@ -2181,43 +2181,56 @@ export async function handleAction8(action: string, body: Record<string, any>, s
         LIMIT 50
       `);
 
-      // Mode C — Hex collisions: a single hex broadcast by ≥2 distinct registrations within window
-      const hexCollisions = await sql.unsafe(`
-        WITH pairs AS (
-          SELECT
-            UPPER(icao_code) AS hex,
-            registration,
-            COUNT(*)::int AS detections,
-            MIN(COALESCE(detection_timestamp, created_at)) AS first_seen,
-            MAX(COALESCE(detection_timestamp, created_at)) AS last_seen
+      // Mode C — Hex collisions: a single hex broadcast by ≥2 distinct registrations.
+      // Two-pass: (1) cheap GROUP to find candidate hex codes with >1 distinct reg,
+      // (2) join only against those candidates for detail. Bounded to keep within statement_timeout.
+      let hexCollisions: any[] = [];
+      try {
+        const candidates = await sql.unsafe(`
+          SELECT UPPER(icao_code) AS hex, COUNT(DISTINCT registration)::int AS distinct_regs
           FROM live_flight_detections_rows
           WHERE COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${days} days'
             AND icao_code IS NOT NULL AND icao_code <> ''
             AND registration IS NOT NULL AND registration <> ''
-          GROUP BY UPPER(icao_code), registration
-        ),
-        collisions AS (
-          SELECT hex, COUNT(*)::int AS distinct_regs, SUM(detections)::int AS total_detections
-          FROM pairs
-          GROUP BY hex
-          HAVING COUNT(*) >= 2
-        )
-        SELECT
-          c.hex,
-          c.distinct_regs,
-          c.total_detections,
-          json_agg(json_build_object(
-            'registration', p.registration,
-            'detections', p.detections,
-            'first_seen', p.first_seen,
-            'last_seen', p.last_seen
-          ) ORDER BY p.detections DESC) AS registrations
-        FROM collisions c
-        JOIN pairs p ON p.hex = c.hex
-        GROUP BY c.hex, c.distinct_regs, c.total_detections
-        ORDER BY c.distinct_regs DESC, c.total_detections DESC
-        LIMIT 75
-      `);
+          GROUP BY UPPER(icao_code)
+          HAVING COUNT(DISTINCT registration) >= 2
+          ORDER BY COUNT(DISTINCT registration) DESC
+          LIMIT 75
+        `);
+        const candHexes = (candidates as any[]).map((c: any) => c.hex);
+        if (candHexes.length > 0) {
+          const inList = candHexes.map((h: string) => `'${String(h).replace(/[^A-F0-9]/gi, '')}'`).join(',');
+          hexCollisions = await sql.unsafe(`
+            WITH pairs AS (
+              SELECT UPPER(icao_code) AS hex, registration,
+                     COUNT(*)::int AS detections,
+                     MIN(COALESCE(detection_timestamp, created_at)) AS first_seen,
+                     MAX(COALESCE(detection_timestamp, created_at)) AS last_seen
+              FROM live_flight_detections_rows
+              WHERE COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${days} days'
+                AND UPPER(icao_code) IN (${inList})
+                AND registration IS NOT NULL AND registration <> ''
+              GROUP BY UPPER(icao_code), registration
+            )
+            SELECT hex,
+                   COUNT(*)::int AS distinct_regs,
+                   SUM(detections)::int AS total_detections,
+                   json_agg(json_build_object(
+                     'registration', registration,
+                     'detections', detections,
+                     'first_seen', first_seen,
+                     'last_seen', last_seen
+                   ) ORDER BY detections DESC) AS registrations
+            FROM pairs
+            GROUP BY hex
+            ORDER BY distinct_regs DESC, total_detections DESC
+          `) as any[];
+        }
+      } catch (e: any) {
+        console.warn('hexCollisions failed:', e?.message || e);
+        hexCollisions = [];
+      }
+
 
       const summary = {
         usafSpoofCount: (usafSpoof as any[]).length,

@@ -2030,13 +2030,20 @@ export async function handleAction8(action: string, body: Record<string, any>, s
 
     case 'getUnificationStatus': {
       try {
-        const [src] = await sql.unsafe(`
-          SELECT
-            (SELECT COUNT(*) FROM v_unified_flight_detections) AS unified_view,
-            (SELECT COUNT(*) FROM aircraft_registry_enhanced_rows) AS registry,
-            (SELECT COUNT(*) FROM public_air_traffic_rows) AS public_atc,
-            (SELECT COUNT(*) FROM flight_detections) AS unmasking
+        // Use pg_class reltuples for fast estimates (3M+ rows; exact count too slow)
+        const estRows = await sql.unsafe(`
+          SELECT relname, reltuples::bigint AS est
+          FROM pg_class
+          WHERE relname IN ('live_flight_detections_rows','aircraft_registry_enhanced_rows','public_air_traffic_rows','flight_detections')
         `) as any[];
+        const byName: Record<string, number> = {};
+        for (const r of estRows) byName[r.relname] = Number(r.est || 0);
+        const src = {
+          unified_view: byName['live_flight_detections_rows'] || 0,
+          registry: byName['aircraft_registry_enhanced_rows'] || 0,
+          public_atc: byName['public_air_traffic_rows'] || 0,
+          unmasking: byName['flight_detections'] || 0,
+        };
 
         let enriched = { exists: false, total: 0, breakdown: [] as any[] };
         try {

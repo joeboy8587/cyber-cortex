@@ -10,6 +10,7 @@ import DataQualityAudit from "@/components/dashboard/DataQualityAudit";
 import { DatabaseQualityControl } from "@/components/dashboard/DatabaseQualityControl";
 
 import { DataEnrichmentDashboard } from "@/components/dashboard/DataEnrichmentDashboard";
+import { UnificationPipelinePanel } from "@/components/dashboard/UnificationPipelinePanel";
 import { DataIntegrityPanel } from "@/components/dashboard/DataIntegrityPanel";
 import { DataHardeningHub } from "@/components/dashboard/DataHardeningHub";
 import { ForensicLinkageHub } from "@/components/dashboard/ForensicLinkageHub";

@@ -281,6 +281,7 @@ Be direct and analytical.`;
           predictions,
           missedTactics,
           aiSynthesis,
+          skipped,
           summary: {
             predictionCount: predictions.length,
             missedTacticsCount: missedTactics.length,

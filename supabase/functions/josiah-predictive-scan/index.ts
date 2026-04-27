@@ -121,20 +121,23 @@ serve(async (req) => {
         });
       }
 
-      // PREDICTIVE PATTERN 3: Biometric threshold breach prediction
-      const biometricTrends = await sql`
-        SELECT 
-          DATE(measurement_timestamp) as day,
-          AVG(heart_rate) as avg_hr,
-          AVG(stress_level) as avg_stress,
-          MIN(hrv) as min_hrv,
-          COUNT(*) FILTER (WHERE heart_rate > 110) as critical_events
-        FROM biometric_monitoring
-        WHERE measurement_timestamp > NOW() - INTERVAL '30 days'
-        GROUP BY DATE(measurement_timestamp)
-        ORDER BY day DESC
-        LIMIT 30
-      `;
+      // PREDICTIVE PATTERN 3: Biometric trend
+      let biometricTrends: any[] = [];
+      try {
+        biometricTrends = await sql`
+          SELECT 
+            DATE(measurement_timestamp) as day,
+            AVG(heart_rate) as avg_hr,
+            AVG(stress_level) as avg_stress,
+            MIN(hrv) as min_hrv,
+            COUNT(*) FILTER (WHERE heart_rate > 110)::int as critical_events
+          FROM biometric_monitoring
+          WHERE measurement_timestamp > NOW() - INTERVAL '30 days'
+          GROUP BY DATE(measurement_timestamp)
+          ORDER BY day DESC
+          LIMIT 30
+        `;
+      } catch (e) { skipped.push("biometric_trends"); }
 
       const recentTrend = biometricTrends.slice(0, 7);
       const olderTrend = biometricTrends.slice(7, 14);

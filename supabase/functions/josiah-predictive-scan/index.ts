@@ -180,15 +180,18 @@ serve(async (req) => {
         legal_relevance: "Potential 18 U.S.C. § 2511 wiretapping violations"
       });
 
-      // Tactic 3: Night operations
-      const nightOps = await sql`
-        SELECT 
-          COUNT(*) as night_detections,
-          COUNT(DISTINCT registration) as night_aircraft
-        FROM live_flight_detections_rows
-        WHERE EXTRACT(HOUR FROM detection_timestamp) BETWEEN 22 AND 5
-          AND detection_timestamp > NOW() - INTERVAL '30 days'
-      `;
+      // Tactic 3: Night operations (narrowed window)
+      let nightOps: any[] = [];
+      try {
+        nightOps = await sql`
+          SELECT 
+            COUNT(*)::int as night_detections,
+            COUNT(DISTINCT registration)::int as night_aircraft
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() - INTERVAL '14 days'
+            AND EXTRACT(HOUR FROM detection_timestamp) BETWEEN 22 AND 5
+        `;
+      } catch (e) { skipped.push("night_ops"); }
 
       if (parseInt(nightOps[0]?.night_detections || '0') > 0) {
         missedTactics.push({
@@ -200,16 +203,20 @@ serve(async (req) => {
         });
       }
 
-      // Tactic 4: Medical aircraft as cover
-      const medicalCover = await sql`
-        SELECT registration, callsign, COUNT(*) as detections
-        FROM live_flight_detections_rows
-        WHERE (callsign ILIKE '%MED%' OR callsign ILIKE '%AIR%' OR callsign ILIKE '%MERCY%'
-               OR registration IN ('N743AM', 'N229AM'))
-          AND detection_timestamp > NOW() - INTERVAL '60 days'
-        GROUP BY registration, callsign
-        HAVING COUNT(*) > 5
-      `;
+      // Tactic 4: Medical aircraft as cover (narrowed window, ILIKE on callsign is heavy → 14 days)
+      let medicalCover: any[] = [];
+      try {
+        medicalCover = await sql`
+          SELECT registration, callsign, COUNT(*)::int as detections
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() - INTERVAL '14 days'
+            AND (callsign ILIKE '%MED%' OR callsign ILIKE '%MERCY%'
+                 OR registration IN ('N743AM', 'N229AM'))
+          GROUP BY registration, callsign
+          HAVING COUNT(*) > 5
+          LIMIT 25
+        `;
+      } catch (e) { skipped.push("medical_cover"); }
 
       if (medicalCover.length > 0) {
         missedTactics.push({

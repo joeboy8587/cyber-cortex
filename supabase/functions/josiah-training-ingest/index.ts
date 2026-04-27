@@ -115,8 +115,8 @@ Deno.serve(async (req) => {
       }
       case "pattern": {
         const r = await sql`
-          INSERT INTO josiah_learned_patterns (pattern_type, description, first_observed, last_observed, occurrence_count, confidence_score, status)
-          VALUES ('user_taught', ${content + tagStr}, NOW(), NOW(), 1, 0.9, 'active')
+          INSERT INTO josiah_learned_patterns (pattern_type, description, first_observed, last_observed, occurrence_count, confidence_score)
+          VALUES ('user_taught', ${content + tagStr}, NOW(), NOW(), 1, 0.9)
           RETURNING pattern_id, description
         `;
         inserted = { table: "josiah_learned_patterns", row: r[0] };

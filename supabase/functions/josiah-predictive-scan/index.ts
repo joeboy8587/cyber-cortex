@@ -42,25 +42,31 @@ serve(async (req) => {
       );
     }
 
-    const sql = postgres(NEON_DATABASE_URL, { ssl: "require", max: 1 });
+    const sql = postgres(NEON_DATABASE_URL, { ssl: "require", max: 1, connect_timeout: 10, idle_timeout: 10 });
     const predictions: PredictivePattern[] = [];
     const missedTactics: MissedTactic[] = [];
+    const skipped: string[] = [];
     
     try {
-      // PREDICTIVE PATTERN 1: Time-of-day escalation prediction
-      const timePatterns = await sql`
-        SELECT 
-          EXTRACT(HOUR FROM detection_timestamp) as hour_of_day,
-          EXTRACT(DOW FROM detection_timestamp) as day_of_week,
-          COUNT(*) as detections,
-          COUNT(DISTINCT registration) as unique_aircraft,
-          AVG(CASE WHEN altitude::numeric < 1500 THEN 1 ELSE 0 END) as low_altitude_ratio
-        FROM live_flight_detections_rows
-        WHERE detection_timestamp > NOW() - INTERVAL '60 days'
-        GROUP BY EXTRACT(HOUR FROM detection_timestamp), EXTRACT(DOW FROM detection_timestamp)
-        ORDER BY detections DESC
-        LIMIT 30
-      `;
+      // Set a per-statement timeout so individual heavy queries can't kill the whole scan
+      await sql`SET statement_timeout = '8s'`;
+
+      // PREDICTIVE PATTERN 1: Time-of-day escalation (narrowed to 14 days, indexed column)
+      let timePatterns: any[] = [];
+      try {
+        timePatterns = await sql`
+          SELECT 
+            EXTRACT(HOUR FROM detection_timestamp)::int as hour_of_day,
+            EXTRACT(DOW FROM detection_timestamp)::int as day_of_week,
+            COUNT(*)::int as detections,
+            COUNT(DISTINCT registration)::int as unique_aircraft
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() - INTERVAL '14 days'
+          GROUP BY 1, 2
+          ORDER BY detections DESC
+          LIMIT 30
+        `;
+      } catch (e) { skipped.push("time_patterns"); }
 
       // Find peak hours for prediction
       const peakHours = timePatterns

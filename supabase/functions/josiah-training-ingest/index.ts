@@ -106,8 +106,8 @@ Deno.serve(async (req) => {
     switch (memory_type) {
       case "belief": {
         const r = await sql`
-          INSERT INTO josiah_beliefs (hypothesis_text, confidence_score, evidence_count, status, first_proposed, last_updated)
-          VALUES (${content + tagStr}, 0.9, 1, 'active', NOW(), NOW())
+          INSERT INTO josiah_beliefs (hypothesis_text, confidence_score, evidence_count, first_proposed, last_updated)
+          VALUES (${content + tagStr}, 0.9, 1, NOW(), NOW())
           RETURNING belief_id, hypothesis_text
         `;
         inserted = { table: "josiah_beliefs", row: r[0] };

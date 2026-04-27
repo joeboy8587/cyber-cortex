@@ -65,8 +65,8 @@ Deno.serve(async (req) => {
       const beliefResults = [];
       for (const b of beliefs) {
         const r = await sql`
-          INSERT INTO josiah_beliefs (hypothesis_text, confidence_score, evidence_count, status, first_proposed, last_updated)
-          VALUES (${b}, 1.0, 1, 'active', NOW(), NOW())
+          INSERT INTO josiah_beliefs (hypothesis_text, confidence_score, evidence_count, first_proposed, last_updated)
+          VALUES (${b}, 1.0, 1, NOW(), NOW())
           RETURNING belief_id
         `;
         beliefResults.push(r[0]);
@@ -106,8 +106,8 @@ Deno.serve(async (req) => {
     switch (memory_type) {
       case "belief": {
         const r = await sql`
-          INSERT INTO josiah_beliefs (hypothesis_text, confidence_score, evidence_count, status, first_proposed, last_updated)
-          VALUES (${content + tagStr}, 0.9, 1, 'active', NOW(), NOW())
+          INSERT INTO josiah_beliefs (hypothesis_text, confidence_score, evidence_count, first_proposed, last_updated)
+          VALUES (${content + tagStr}, 0.9, 1, NOW(), NOW())
           RETURNING belief_id, hypothesis_text
         `;
         inserted = { table: "josiah_beliefs", row: r[0] };
@@ -115,8 +115,8 @@ Deno.serve(async (req) => {
       }
       case "pattern": {
         const r = await sql`
-          INSERT INTO josiah_learned_patterns (pattern_type, description, first_observed, last_observed, occurrence_count, confidence_score, status)
-          VALUES ('user_taught', ${content + tagStr}, NOW(), NOW(), 1, 0.9, 'active')
+          INSERT INTO josiah_learned_patterns (pattern_type, description, first_observed, last_observed, occurrence_count, confidence_score)
+          VALUES ('user_taught', ${content + tagStr}, NOW(), NOW(), 1, 0.9)
           RETURNING pattern_id, description
         `;
         inserted = { table: "josiah_learned_patterns", row: r[0] };

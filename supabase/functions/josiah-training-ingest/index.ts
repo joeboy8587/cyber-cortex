@@ -65,8 +65,8 @@ Deno.serve(async (req) => {
       const beliefResults = [];
       for (const b of beliefs) {
         const r = await sql`
-          INSERT INTO josiah_beliefs (hypothesis_text, confidence_score, evidence_count, status, first_proposed, last_updated)
-          VALUES (${b}, 1.0, 1, 'active', NOW(), NOW())
+          INSERT INTO josiah_beliefs (hypothesis_text, confidence_score, evidence_count, first_proposed, last_updated)
+          VALUES (${b}, 1.0, 1, NOW(), NOW())
           RETURNING belief_id
         `;
         beliefResults.push(r[0]);

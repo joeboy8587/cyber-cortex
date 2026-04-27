@@ -85,28 +85,29 @@ serve(async (req) => {
         });
       }
 
-      // PREDICTIVE PATTERN 2: Fleet rotation prediction
-      const fleetRotation = await sql`
-        WITH daily_fleet AS (
+      // PREDICTIVE PATTERN 2: Fleet rotation (narrowed to 14 days)
+      let fleetRotation: any[] = [];
+      try {
+        fleetRotation = await sql`
+          WITH daily_fleet AS (
+            SELECT 
+              DATE(detection_timestamp) as day,
+              registration
+            FROM live_flight_detections_rows
+            WHERE detection_timestamp > NOW() - INTERVAL '14 days'
+              AND registration IS NOT NULL
+            GROUP BY 1, 2
+          )
           SELECT 
-            DATE(detection_timestamp) as day,
             registration,
-            COUNT(*) as daily_detections
-          FROM live_flight_detections_rows
-          WHERE detection_timestamp > NOW() - INTERVAL '30 days'
-          GROUP BY DATE(detection_timestamp), registration
-        ),
-        rotation_pattern AS (
-          SELECT 
-            registration,
-            COUNT(DISTINCT day) as active_days,
-            ARRAY_AGG(DISTINCT EXTRACT(DOW FROM day)) as active_dow
+            COUNT(DISTINCT day)::int as active_days
           FROM daily_fleet
           GROUP BY registration
           HAVING COUNT(DISTINCT day) > 3
-        )
-        SELECT * FROM rotation_pattern ORDER BY active_days DESC LIMIT 15
-      `;
+          ORDER BY active_days DESC
+          LIMIT 15
+        `;
+      } catch (e) { skipped.push("fleet_rotation"); }
 
       if (fleetRotation.length >= 3) {
         predictions.push({

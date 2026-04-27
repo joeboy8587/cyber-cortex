@@ -42,25 +42,31 @@ serve(async (req) => {
       );
     }
 
-    const sql = postgres(NEON_DATABASE_URL, { ssl: "require", max: 1 });
+    const sql = postgres(NEON_DATABASE_URL, { ssl: "require", max: 1, connect_timeout: 10, idle_timeout: 10 });
     const predictions: PredictivePattern[] = [];
     const missedTactics: MissedTactic[] = [];
+    const skipped: string[] = [];
     
     try {
-      // PREDICTIVE PATTERN 1: Time-of-day escalation prediction
-      const timePatterns = await sql`
-        SELECT 
-          EXTRACT(HOUR FROM detection_timestamp) as hour_of_day,
-          EXTRACT(DOW FROM detection_timestamp) as day_of_week,
-          COUNT(*) as detections,
-          COUNT(DISTINCT registration) as unique_aircraft,
-          AVG(CASE WHEN altitude::numeric < 1500 THEN 1 ELSE 0 END) as low_altitude_ratio
-        FROM live_flight_detections_rows
-        WHERE detection_timestamp > NOW() - INTERVAL '60 days'
-        GROUP BY EXTRACT(HOUR FROM detection_timestamp), EXTRACT(DOW FROM detection_timestamp)
-        ORDER BY detections DESC
-        LIMIT 30
-      `;
+      // Set a per-statement timeout so individual heavy queries can't kill the whole scan
+      await sql`SET statement_timeout = '8s'`;
+
+      // PREDICTIVE PATTERN 1: Time-of-day escalation (narrowed to 14 days, indexed column)
+      let timePatterns: any[] = [];
+      try {
+        timePatterns = await sql`
+          SELECT 
+            EXTRACT(HOUR FROM detection_timestamp)::int as hour_of_day,
+            EXTRACT(DOW FROM detection_timestamp)::int as day_of_week,
+            COUNT(*)::int as detections,
+            COUNT(DISTINCT registration)::int as unique_aircraft
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() - INTERVAL '14 days'
+          GROUP BY 1, 2
+          ORDER BY detections DESC
+          LIMIT 30
+        `;
+      } catch (e) { skipped.push("time_patterns"); }
 
       // Find peak hours for prediction
       const peakHours = timePatterns
@@ -79,28 +85,29 @@ serve(async (req) => {
         });
       }
 
-      // PREDICTIVE PATTERN 2: Fleet rotation prediction
-      const fleetRotation = await sql`
-        WITH daily_fleet AS (
+      // PREDICTIVE PATTERN 2: Fleet rotation (narrowed to 14 days)
+      let fleetRotation: any[] = [];
+      try {
+        fleetRotation = await sql`
+          WITH daily_fleet AS (
+            SELECT 
+              DATE(detection_timestamp) as day,
+              registration
+            FROM live_flight_detections_rows
+            WHERE detection_timestamp > NOW() - INTERVAL '14 days'
+              AND registration IS NOT NULL
+            GROUP BY 1, 2
+          )
           SELECT 
-            DATE(detection_timestamp) as day,
             registration,
-            COUNT(*) as daily_detections
-          FROM live_flight_detections_rows
-          WHERE detection_timestamp > NOW() - INTERVAL '30 days'
-          GROUP BY DATE(detection_timestamp), registration
-        ),
-        rotation_pattern AS (
-          SELECT 
-            registration,
-            COUNT(DISTINCT day) as active_days,
-            ARRAY_AGG(DISTINCT EXTRACT(DOW FROM day)) as active_dow
+            COUNT(DISTINCT day)::int as active_days
           FROM daily_fleet
           GROUP BY registration
           HAVING COUNT(DISTINCT day) > 3
-        )
-        SELECT * FROM rotation_pattern ORDER BY active_days DESC LIMIT 15
-      `;
+          ORDER BY active_days DESC
+          LIMIT 15
+        `;
+      } catch (e) { skipped.push("fleet_rotation"); }
 
       if (fleetRotation.length >= 3) {
         predictions.push({
@@ -114,20 +121,23 @@ serve(async (req) => {
         });
       }
 
-      // PREDICTIVE PATTERN 3: Biometric threshold breach prediction
-      const biometricTrends = await sql`
-        SELECT 
-          DATE(measurement_timestamp) as day,
-          AVG(heart_rate) as avg_hr,
-          AVG(stress_level) as avg_stress,
-          MIN(hrv) as min_hrv,
-          COUNT(*) FILTER (WHERE heart_rate > 110) as critical_events
-        FROM biometric_monitoring
-        WHERE measurement_timestamp > NOW() - INTERVAL '30 days'
-        GROUP BY DATE(measurement_timestamp)
-        ORDER BY day DESC
-        LIMIT 30
-      `;
+      // PREDICTIVE PATTERN 3: Biometric trend
+      let biometricTrends: any[] = [];
+      try {
+        biometricTrends = await sql`
+          SELECT 
+            DATE(measurement_timestamp) as day,
+            AVG(heart_rate) as avg_hr,
+            AVG(stress_level) as avg_stress,
+            MIN(hrv) as min_hrv,
+            COUNT(*) FILTER (WHERE heart_rate > 110)::int as critical_events
+          FROM biometric_monitoring
+          WHERE measurement_timestamp > NOW() - INTERVAL '30 days'
+          GROUP BY DATE(measurement_timestamp)
+          ORDER BY day DESC
+          LIMIT 30
+        `;
+      } catch (e) { skipped.push("biometric_trends"); }
 
       const recentTrend = biometricTrends.slice(0, 7);
       const olderTrend = biometricTrends.slice(7, 14);
@@ -170,15 +180,18 @@ serve(async (req) => {
         legal_relevance: "Potential 18 U.S.C. § 2511 wiretapping violations"
       });
 
-      // Tactic 3: Night operations
-      const nightOps = await sql`
-        SELECT 
-          COUNT(*) as night_detections,
-          COUNT(DISTINCT registration) as night_aircraft
-        FROM live_flight_detections_rows
-        WHERE EXTRACT(HOUR FROM detection_timestamp) BETWEEN 22 AND 5
-          AND detection_timestamp > NOW() - INTERVAL '30 days'
-      `;
+      // Tactic 3: Night operations (narrowed window)
+      let nightOps: any[] = [];
+      try {
+        nightOps = await sql`
+          SELECT 
+            COUNT(*)::int as night_detections,
+            COUNT(DISTINCT registration)::int as night_aircraft
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() - INTERVAL '14 days'
+            AND EXTRACT(HOUR FROM detection_timestamp) BETWEEN 22 AND 5
+        `;
+      } catch (e) { skipped.push("night_ops"); }
 
       if (parseInt(nightOps[0]?.night_detections || '0') > 0) {
         missedTactics.push({
@@ -190,16 +203,20 @@ serve(async (req) => {
         });
       }
 
-      // Tactic 4: Medical aircraft as cover
-      const medicalCover = await sql`
-        SELECT registration, callsign, COUNT(*) as detections
-        FROM live_flight_detections_rows
-        WHERE (callsign ILIKE '%MED%' OR callsign ILIKE '%AIR%' OR callsign ILIKE '%MERCY%'
-               OR registration IN ('N743AM', 'N229AM'))
-          AND detection_timestamp > NOW() - INTERVAL '60 days'
-        GROUP BY registration, callsign
-        HAVING COUNT(*) > 5
-      `;
+      // Tactic 4: Medical aircraft as cover (narrowed window, ILIKE on callsign is heavy → 14 days)
+      let medicalCover: any[] = [];
+      try {
+        medicalCover = await sql`
+          SELECT registration, callsign, COUNT(*)::int as detections
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() - INTERVAL '14 days'
+            AND (callsign ILIKE '%MED%' OR callsign ILIKE '%MERCY%'
+                 OR registration IN ('N743AM', 'N229AM'))
+          GROUP BY registration, callsign
+          HAVING COUNT(*) > 5
+          LIMIT 25
+        `;
+      } catch (e) { skipped.push("medical_cover"); }
 
       if (medicalCover.length > 0) {
         missedTactics.push({
@@ -264,6 +281,7 @@ Be direct and analytical.`;
           predictions,
           missedTactics,
           aiSynthesis,
+          skipped,
           summary: {
             predictionCount: predictions.length,
             missedTacticsCount: missedTactics.length,

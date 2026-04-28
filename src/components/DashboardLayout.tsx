@@ -1,5 +1,6 @@
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/AppSidebar";
+import { RealtimeAlertBanner } from "@/components/dashboard/RealtimeAlertBanner";
 
 interface DashboardLayoutProps {
   children: React.ReactNode;

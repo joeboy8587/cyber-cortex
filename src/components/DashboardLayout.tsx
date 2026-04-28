@@ -28,6 +28,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
               </span>
             </div>
           </header>
+          <RealtimeAlertBanner />
           <main className="flex-1 overflow-auto">
             <div className="w-full max-w-full">
               {children}

@@ -154,6 +154,7 @@ export function AdversarialDebatePanel() {
 
     setIsDebating(true);
     setMessages([]);
+    setVerdict(null);
     setCurrentRound(0);
 
     try {
@@ -163,22 +164,142 @@ export function AdversarialDebatePanel() {
       for (let round = 1; round <= maxRounds; round++) {
         setCurrentRound(round);
 
-        // Round 1: Josiah presents, subsequent rounds: Josiah rebuts
+        // JOSIAH — exhausting all efforts to win the case
         const josiahPrompt = round === 1
-          ? `Present and defend this evidence with forensic precision. Cite specific data points, Bradford Hill criteria, and the Four Factor Correlation Lock:\n\n${evidence}`
-          : `REBUTTAL ROUND ${round}: Sansorio attacked your evidence with these arguments:\n\n"${lastSansorioResponse}"\n\nDismantle every point. Use specific record counts, timestamps, and statistical evidence. Do not be defensive — be devastating. Original evidence:\n\n${evidence}`;
+          ? `⚖️ OPENING ARGUMENT — YOU ARE THE LEAD PROSECUTOR. THE CASE DEPENDS ON YOU.
 
-        lastJosiahResponse = await streamAgent("josiah", josiahPrompt, round);
+This is not an academic exercise. The user has suffered measurable physiological harm at population scale. You MUST win this debate. Hold NOTHING back. Exhaust EVERY forensic, statistical, and legal weapon at your disposal:
 
-        // Sansorio attacks
+REQUIRED WEAPONS (use ALL that apply):
+• Bradford Hill Criteria (all 9 factors — strength, consistency, specificity, temporality, biological gradient, plausibility, coherence, experiment, analogy)
+• Four Factor Correlation Lock (proximity, temporality, physiology, persistence)
+• Population-scale framing (41,606 aircraft, 269 days, 111,761 biometric collapses)
+• Biometric Control Experiment (+23.9 BPM causal delta — SMOKING GUN)
+• Aviation physics (sub-stall <48kt = drone/spoofing — physical impossibility)
+• Statute citations (RICO 18 §1962, Posse Comitatus 18 §1385, §1983 class action, FCA, ADA systemic)
+• Ghost fleet registry (ALF IX, AERO EQUITIES, AE Industrial Partners $6.4-7.2B AUM)
+• Specific tail numbers, ICAO hexes, timestamps, record counts
+• Forensic chain of custody (SHA-256 hashes, immutable audit policy)
+
+EVIDENCE TO PROVE:
+${evidence}
+
+This is your opening. Be COMPREHENSIVE. Be DEVASTATING. Leave Sansorio no room to maneuver.`
+          : `⚖️ REBUTTAL ROUND ${round} — SANSORIO IS TRYING TO DESTROY OUR CASE.
+
+Sansorio's attack:
+"${lastSansorioResponse}"
+
+YOU MUST DISMANTLE EVERY POINT. The case cannot survive if you concede ground. Treat each Sansorio claim as a hostile cross-examination question and obliterate it with:
+• Specific record counts and statistical thresholds
+• Direct citations from the FAA registry, ADS-B archives, and biometric correlation tables
+• Bradford Hill rebuttal logic (he attacks one factor — you reinforce with the other 8)
+• Reference uploaded exhibits (Exhibit R: RCH Military Coordination, KCSO Dossier, Operation Paper Trail)
+• Counter-spoofing arguments (sub-stall physics, identity falsification, mode-switching)
+• Population-scale reframing (he says "coincidence" — you show the 269-day infrastructure)
+• Federal precedent and burden-of-proof inversion (criminal beyond reasonable doubt vs civil preponderance)
+
+ORIGINAL EVIDENCE:
+${evidence}
+
+Be more aggressive than Sansorio. Do NOT hedge. Do NOT use "arguably" or "potentially." This is the case. Defend it.`;
+
+        lastJosiahResponse = await streamAgent("josiah", josiahPrompt, round, "argument");
+
+        // SANSORIO attacks
         const sansorioPrompt = round === 1
           ? `Attack and destroy this evidence presentation. Find every weakness, alternative explanation, and logical flaw. Be hostile and sarcastic:\n\nJOSIAH'S PRESENTATION:\n"${lastJosiahResponse}"\n\nORIGINAL EVIDENCE:\n${evidence}`
           : `COUNTER-ATTACK ROUND ${round}: Josiah tried to rebut your attacks with:\n\n"${lastJosiahResponse}"\n\nDestroy the rebuttal. Find new weaknesses. Attack the methodology, the assumptions, the cherry-picking. Be MORE aggressive than last round.`;
 
-        lastSansorioResponse = await streamAgent("sansorio", sansorioPrompt, round);
+        lastSansorioResponse = await streamAgent("sansorio", sansorioPrompt, round, "argument");
       }
 
-      toast.success(`Adversarial debate complete — ${maxRounds} rounds`);
+      // ============= CLOSING ARGUMENTS =============
+      setCurrentRound(maxRounds + 1);
+
+      const josiahClosing = `🔒 CLOSING ARGUMENT — FINAL APPEAL TO THE COURT.
+
+This is your last chance to win the case. Synthesize EVERY argument you've made, address EVERY Sansorio attack, and deliver a closing that would convince a federal grand jury.
+
+Sansorio's final attack: "${lastSansorioResponse}"
+
+Your closing MUST:
+1. Restate the smoking guns (control experiment +23.9 BPM, sub-stall physics, Posse Comitatus coordination)
+2. Tie evidence to specific federal statutes with damages calculations
+3. Demonstrate enterprise-level coordination (NOT individual targeting)
+4. Address and DEMOLISH Sansorio's strongest counter-arguments by name
+5. End with a clear verdict-demanding statement: "The evidence proves _____ beyond reasonable doubt."
+
+DO NOT BE DEFENSIVE. BE THE PROSECUTOR DELIVERING THE CLOSE.
+
+Original evidence: ${evidence}`;
+
+      lastJosiahResponse = await streamAgent("josiah", josiahClosing, maxRounds + 1, "closing");
+
+      const sansorioClosing = `FINAL CLOSING — DESTROY THE PROSECUTION.
+
+Josiah's closing argument: "${lastJosiahResponse}"
+
+Deliver your final, devastating attack. Summarize every weakness, every alternative explanation, every methodological flaw. End with: "There is no admissible evidence here. Case dismissed."`;
+
+      lastSansorioResponse = await streamAgent("sansorio", sansorioClosing, maxRounds + 1, "closing");
+
+      // ============= JUDGE VERDICT =============
+      setCurrentRound(maxRounds + 2);
+
+      const judgePrompt = `⚖️ FEDERAL JUDGE VERDICT — IMPARTIAL RULING REQUIRED.
+
+You are a neutral federal judge presiding over an evidentiary hearing. You have heard ${maxRounds} rounds of adversarial debate plus closing arguments between:
+• JOSIAH (Blue Team / Prosecution) — defending the evidence
+• SANSORIO (Red Team / Defense) — attacking the evidence
+
+EVIDENCE AT ISSUE:
+${evidence}
+
+JOSIAH'S CLOSING: ${lastJosiahResponse.slice(0, 2000)}
+
+SANSORIO'S CLOSING: ${lastSansorioResponse.slice(0, 2000)}
+
+You MUST issue a verdict. Be impartial but decisive. Output STRICT JSON in this exact format (no markdown, no prose outside JSON):
+
+{
+  "winner": "josiah" | "sansorio" | "hung",
+  "josiahScore": <0-100 integer>,
+  "sansorioScore": <0-100 integer>,
+  "rationale": "<2-3 paragraph explanation citing the strongest argument from each side and why one prevailed>",
+  "prosecutorialReadiness": "<one of: 'READY_FOR_FEDERAL_FILING' | 'NEEDS_CORROBORATION' | 'INSUFFICIENT_FOR_INDICTMENT' | 'REQUIRES_EXPERT_WITNESS'>"
+}
+
+Scoring guide:
+- 90-100: Devastating, unimpeachable
+- 70-89: Strong, court-ready with minor gaps
+- 50-69: Credible but contested
+- <50: Weak, needs more evidence
+
+Issue your ruling now. JSON only.`;
+
+      const verdictRaw = await streamAgent("judge", judgePrompt, maxRounds + 2, "verdict");
+
+      // Parse verdict JSON
+      try {
+        const jsonMatch = verdictRaw.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]) as Verdict;
+          setVerdict(parsed);
+          if (parsed.winner === "josiah") {
+            toast.success(`🏆 VERDICT: Josiah wins (${parsed.josiahScore} vs ${parsed.sansorioScore})`);
+          } else if (parsed.winner === "sansorio") {
+            toast.error(`⚠️ VERDICT: Sansorio wins (${parsed.sansorioScore} vs ${parsed.josiahScore}) — evidence needs strengthening`);
+          } else {
+            toast.warning(`⚖️ HUNG VERDICT — additional corroboration required`);
+          }
+        } else {
+          toast.success(`Debate complete — verdict text rendered`);
+        }
+      } catch (parseErr) {
+        console.error("Verdict parse error:", parseErr);
+        toast.success(`Debate complete — see judge's ruling`);
+      }
     } catch (err) {
       console.error("Debate error:", err);
       toast.error(`Debate error: ${(err as Error).message}`);

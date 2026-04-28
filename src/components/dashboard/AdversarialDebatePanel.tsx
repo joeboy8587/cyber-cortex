@@ -5,15 +5,24 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Shield, Sword, Zap, Play, RotateCcw } from "lucide-react";
+import { Shield, Sword, Zap, Play, RotateCcw, Gavel, Trophy } from "lucide-react";
 import { toast } from "sonner";
 
 interface DebateMessage {
   id: string;
-  agent: "josiah" | "sansorio";
+  agent: "josiah" | "sansorio" | "judge";
   content: string;
   timestamp: Date;
   round: number;
+  phase?: "argument" | "closing" | "verdict";
+}
+
+interface Verdict {
+  winner: "josiah" | "sansorio" | "hung";
+  josiahScore: number;
+  sansorioScore: number;
+  rationale: string;
+  prosecutorialReadiness: string;
 }
 
 const EVIDENCE_PRESETS = [

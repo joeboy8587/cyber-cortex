@@ -39,15 +39,24 @@ export function AdversarialDebatePanel() {
   const [isDebating, setIsDebating] = useState(false);
   const [currentRound, setCurrentRound] = useState(0);
   const [maxRounds, setMaxRounds] = useState(3);
+  const [verdict, setVerdict] = useState<Verdict | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, verdict]);
 
-  async function streamAgent(agent: "josiah" | "sansorio", prompt: string, round: number): Promise<string> {
+  async function streamAgent(
+    agent: "josiah" | "sansorio" | "judge",
+    prompt: string,
+    round: number,
+    phase: "argument" | "closing" | "verdict" = "argument",
+  ): Promise<string> {
     const msgId = crypto.randomUUID();
-    setMessages((prev) => [...prev, { id: msgId, agent, content: "", timestamp: new Date(), round }]);
+    setMessages((prev) => [...prev, { id: msgId, agent, content: "", timestamp: new Date(), round, phase }]);
+
+    // Judge uses josiah agent backbone but with override system prompt via "amy" persona-style instructions in user msg
+    const agentType = agent === "judge" ? "legal_analyst" : agent;
 
     const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/agent-orchestrator`, {
       method: "POST",

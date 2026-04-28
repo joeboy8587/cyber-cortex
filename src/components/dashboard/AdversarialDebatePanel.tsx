@@ -441,8 +441,14 @@ Issue your ruling now. JSON only.`;
             <div className="space-y-4">
               {messages.map((msg, i) => {
                 const isJosiah = msg.agent === "josiah";
+                const isJudge = msg.agent === "judge";
                 const prevRound = i > 0 ? messages[i - 1].round : 0;
                 const showRoundHeader = msg.round !== prevRound;
+                const roundLabel = msg.phase === "verdict"
+                  ? "JUDGE'S VERDICT"
+                  : msg.phase === "closing"
+                    ? "CLOSING ARGUMENTS"
+                    : `ROUND ${msg.round}`;
 
                 return (
                   <div key={msg.id}>
@@ -450,26 +456,30 @@ Issue your ruling now. JSON only.`;
                       <div className="flex items-center gap-2 my-3">
                         <Separator className="flex-1" />
                         <Badge variant="outline" className="text-xs font-mono">
-                          ROUND {msg.round}
+                          {roundLabel}
                         </Badge>
                         <Separator className="flex-1" />
                       </div>
                     )}
                     <div className={`rounded-lg p-3 border ${
-                      isJosiah
-                        ? "border-blue-500/30 bg-blue-500/5"
-                        : "border-red-500/30 bg-red-500/5"
+                      isJudge
+                        ? "border-amber-500/40 bg-amber-500/5"
+                        : isJosiah
+                          ? "border-blue-500/30 bg-blue-500/5"
+                          : "border-red-500/30 bg-red-500/5"
                     }`}>
                       <div className="flex items-center gap-2 mb-2">
-                        {isJosiah ? (
+                        {isJudge ? (
+                          <Gavel className="w-4 h-4 text-amber-400" />
+                        ) : isJosiah ? (
                           <Shield className="w-4 h-4 text-blue-400" />
                         ) : (
                           <Sword className="w-4 h-4 text-red-400" />
                         )}
                         <span className={`text-xs font-mono font-bold uppercase ${
-                          isJosiah ? "text-blue-400" : "text-red-400"
+                          isJudge ? "text-amber-400" : isJosiah ? "text-blue-400" : "text-red-400"
                         }`}>
-                          {isJosiah ? "Josiah (Blue Team)" : "Sansorio (Red Team)"}
+                          {isJudge ? "Federal Judge (Verdict)" : isJosiah ? "Josiah (Blue Team)" : "Sansorio (Red Team)"}
                         </span>
                         <span className="text-[10px] text-muted-foreground font-mono ml-auto">
                           {msg.timestamp.toLocaleTimeString()}

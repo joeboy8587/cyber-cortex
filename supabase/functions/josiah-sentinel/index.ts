@@ -625,8 +625,8 @@ Provide 2-3 sentence PROACTIVE assessment: 1) Most likely threat scenario 2) Wha
     }
     proactiveAlerts.push(...escalationAlerts);
 
-    // ========== STEP 9.7: COUNTERMEASURES (deep mode only, time-gated) ==========
-    if (!isMonitorMode && sbSql && LOVABLE_API_KEY && (Date.now() - startTime) < 20000) {
+    // ========== STEP 9.7: COUNTERMEASURES (always run when escalated threats exist) ==========
+    if (sbSql && LOVABLE_API_KEY && (Date.now() - startTime) < 22000) {
       try {
         const highEscalationThreats = await withTimeout(
           sbSql`SELECT registration, threat_type, total_violations, escalation_level, avg_altitude, countermeasure_status
@@ -635,9 +635,11 @@ Provide 2-3 sentence PROACTIVE assessment: 1) Most likely threat scenario 2) Wha
           5000, "high_escalation_query"
         );
         if (highEscalationThreats.length > 0) {
-          const cmPrompt = `Based on these escalated threats, generate countermeasure recommendations.
+          const cmPrompt = `You are an offensive countermeasure planner. For each escalated aerial threat below, recommend ONE concrete legal/forensic countermeasure (e.g. "FAA Hotline 1-866-835-5322 report", "FBI tips.fbi.gov § 1385 referral", "OFAC referral", "FOIA registration owner", "Add to TRO discovery exhibit", "Demand FAA LADD audit", "File NTSB safety complaint").
+Threats:
 ${highEscalationThreats.map((t: any) => `- ${t.registration} | ${t.threat_type} | Level ${t.escalation_level} | ${t.total_violations} violations`).join('\n')}
-For level 3+, recommend ONE action. Format: REGISTRATION | ACTION | PRIORITY (critical/high/medium)`;
+Output STRICT format, one per line, no preamble:
+REGISTRATION | ACTION | PRIORITY (critical/high/medium)`;
 
           const cmResponse = await withTimeout(
             fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
@@ -646,10 +648,10 @@ For level 3+, recommend ONE action. Format: REGISTRATION | ACTION | PRIORITY (cr
               body: JSON.stringify({
                 model: "google/gemini-2.5-flash-lite",
                 messages: [
-                  { role: "system", content: "Output structured countermeasure recommendations. No preamble." },
+                  { role: "system", content: "Output structured countermeasure recommendations. No preamble, no markdown." },
                   { role: "user", content: cmPrompt }
                 ],
-                max_tokens: 400,
+                max_tokens: 600,
               }),
             }),
             10000, "countermeasure_ai"
@@ -662,15 +664,38 @@ For level 3+, recommend ONE action. Format: REGISTRATION | ACTION | PRIORITY (cr
               const parts = line.split('|').map((p: string) => p.trim());
               if (parts.length >= 3) {
                 const matchingThreat = highEscalationThreats.find((t: any) => parts[0].includes(t.registration));
+                const reg = matchingThreat?.registration || parts[0];
+                const action = parts[1];
+                const priority = (parts[2].toLowerCase().includes('critical') ? 'critical' : parts[2].toLowerCase().includes('high') ? 'high' : 'medium') as 'critical' | 'high' | 'medium';
+                const escLvl = matchingThreat ? Number(matchingThreat.escalation_level) : 1;
                 countermeasures.push({
-                  registration: parts[0], action: parts[1],
-                  priority: (parts[2].toLowerCase().includes('critical') ? 'critical' : parts[2].toLowerCase().includes('high') ? 'high' : 'medium') as any,
-                  escalation_level: matchingThreat ? Number(matchingThreat.escalation_level) : 1,
+                  registration: reg, action, priority,
+                  escalation_level: escLvl,
                   total_violations: matchingThreat ? Number(matchingThreat.total_violations) : 0,
-                  status: matchingThreat?.countermeasure_status || 'NONE'
+                  status: 'RECOMMENDED'
                 });
+
+                // Persist countermeasure to threat record
+                if (matchingThreat) {
+                  try {
+                    const newStatus = escLvl >= 4 ? 'ESCALATED' : escLvl >= 3 ? 'RECOMMENDED' : 'PENDING';
+                    await withTimeout(
+                      sbSql`UPDATE sentinel_learned_threats
+                        SET countermeasure_status = ${newStatus},
+                            countermeasure_actions = COALESCE(countermeasure_actions, '[]'::jsonb) || ${JSON.stringify([{
+                              action, priority, generated_at: new Date().toISOString()
+                            }])}::jsonb,
+                            updated_at = NOW()
+                        WHERE registration = ${matchingThreat.registration} AND threat_type = ${matchingThreat.threat_type}`,
+                      3000, "persist_countermeasure"
+                    );
+                  } catch (persistErr) {
+                    console.warn("Countermeasure persist failed:", persistErr instanceof Error ? persistErr.message : persistErr);
+                  }
+                }
               }
             }
+            console.log(`Generated and persisted ${countermeasures.length} countermeasures`);
           }
         }
       } catch (e) { console.warn("Countermeasure generation skipped:", e instanceof Error ? e.message : e); }

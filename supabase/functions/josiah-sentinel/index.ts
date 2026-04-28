@@ -186,10 +186,12 @@ serve(async (req) => {
 
     // ========== STEP 1: ANALYZE RECENT DETECTIONS (GEOFENCED TO OILDALE/BAKERSFIELD) ==========
     // Strict ~15-mile geofence: Oildale/Bakersfield corridor
-    const GEO_LAT_MIN = 35.20;
-    const GEO_LAT_MAX = 35.60;
-    const GEO_LON_MIN = -119.25;
-    const GEO_LON_MAX = -118.75;
+    // Wide AOI: Kern County + south San Joaquin Valley (covers actual feed coverage 34.57–36.23 lat, -120.01 to -118.07 lon)
+    // Tight Oildale box (35.30–35.55, -119.20 to -118.85) is enforced separately in severity scoring.
+    const GEO_LAT_MIN = 34.50;
+    const GEO_LAT_MAX = 36.30;
+    const GEO_LON_MIN = -120.10;
+    const GEO_LON_MAX = -118.00;
 
     const DETECTION_COLUMNS = `id, registration, callsign, altitude, latitude, longitude,
                detection_timestamp, icao_code, speed, heading, vertical_rate,

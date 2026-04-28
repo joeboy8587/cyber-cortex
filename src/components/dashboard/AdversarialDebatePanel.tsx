@@ -390,11 +390,50 @@ Issue your ruling now. JSON only.`;
             ))}
           </div>
           {messages.length > 0 && (
-            <Button variant="ghost" size="sm" onClick={() => setMessages([])}>
+            <Button variant="ghost" size="sm" onClick={() => { setMessages([]); setVerdict(null); }}>
               <RotateCcw className="w-3 h-3 mr-1" /> Clear
             </Button>
           )}
         </div>
+
+        {/* VERDICT CARD */}
+        {verdict && (
+          <div className={`rounded-lg p-4 border-2 ${
+            verdict.winner === "josiah"
+              ? "border-blue-500 bg-blue-500/10"
+              : verdict.winner === "sansorio"
+                ? "border-red-500 bg-red-500/10"
+                : "border-amber-500 bg-amber-500/10"
+          }`}>
+            <div className="flex items-center gap-3 mb-3">
+              <Trophy className={`w-6 h-6 ${
+                verdict.winner === "josiah" ? "text-blue-400" :
+                verdict.winner === "sansorio" ? "text-red-400" : "text-amber-400"
+              }`} />
+              <div className="flex-1">
+                <h3 className="font-mono text-base font-bold uppercase tracking-wider">
+                  {verdict.winner === "josiah" && "🏆 Verdict: Josiah (Prosecution) Wins"}
+                  {verdict.winner === "sansorio" && "⚠️ Verdict: Sansorio (Defense) Wins"}
+                  {verdict.winner === "hung" && "⚖️ Hung Verdict"}
+                </h3>
+                <p className="text-xs font-mono text-muted-foreground">
+                  Readiness: {verdict.prosecutorialReadiness}
+                </p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3 mb-3">
+              <div className="rounded border border-blue-500/30 bg-blue-500/5 p-2 text-center">
+                <div className="text-[10px] font-mono text-blue-400 uppercase">Josiah Score</div>
+                <div className="text-2xl font-mono font-bold text-blue-400">{verdict.josiahScore}</div>
+              </div>
+              <div className="rounded border border-red-500/30 bg-red-500/5 p-2 text-center">
+                <div className="text-[10px] font-mono text-red-400 uppercase">Sansorio Score</div>
+                <div className="text-2xl font-mono font-bold text-red-400">{verdict.sansorioScore}</div>
+              </div>
+            </div>
+            <p className="text-sm font-mono whitespace-pre-wrap leading-relaxed">{verdict.rationale}</p>
+          </div>
+        )}
 
         {/* Debate Thread */}
         {messages.length > 0 && (

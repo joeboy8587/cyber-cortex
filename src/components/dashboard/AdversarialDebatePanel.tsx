@@ -65,7 +65,7 @@ export function AdversarialDebatePanel() {
         Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
       },
       body: JSON.stringify({
-        agentType: agent,
+        agentType,
         message: prompt,
         context: {},
       }),

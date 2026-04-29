@@ -68,10 +68,11 @@ export function LiveFlightTracker() {
       }
 
       setApiConnected(true);
-      console.log(`OpenSky returned ${data?.count || 0} flights, inserted ${data?.inserted || 0}`);
-      
+      setActiveSource(data?.source || 'unknown');
+      console.log(`Live tracker source=${data?.source} returned ${data?.count || 0} flights, inserted ${data?.inserted || 0}`);
+
       if (data?.inserted > 0) {
-        toast.success(`Imported ${data.inserted} live flights from Kern County`);
+        toast.success(`Imported ${data.inserted} live flights (source: ${data?.source || 'unknown'})`);
       }
       
       // Return the flights directly from API response for immediate display

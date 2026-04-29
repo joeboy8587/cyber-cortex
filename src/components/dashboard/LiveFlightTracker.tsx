@@ -44,6 +44,7 @@ export function LiveFlightTracker() {
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [apiConnected, setApiConnected] = useState<boolean | null>(null);
+  const [activeSource, setActiveSource] = useState<string>('—');
   const [dataSource, setDataSource] = useState<'all' | 'live' | 'surveillance'>('all');
 
   // Fetch live flights from OpenSky Network API (FREE) - focused on Kern County
@@ -67,10 +68,11 @@ export function LiveFlightTracker() {
       }
 
       setApiConnected(true);
-      console.log(`OpenSky returned ${data?.count || 0} flights, inserted ${data?.inserted || 0}`);
-      
+      setActiveSource(data?.source || 'unknown');
+      console.log(`Live tracker source=${data?.source} returned ${data?.count || 0} flights, inserted ${data?.inserted || 0}`);
+
       if (data?.inserted > 0) {
-        toast.success(`Imported ${data.inserted} live flights from Kern County`);
+        toast.success(`Imported ${data.inserted} live flights (source: ${data?.source || 'unknown'})`);
       }
       
       // Return the flights directly from API response for immediate display
@@ -284,6 +286,30 @@ export function LiveFlightTracker() {
               >
                 {apiConnected ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
                 {apiConnected ? 'REAL DATA' : 'FALLBACK'}
+              </Badge>
+            )}
+            {apiConnected && (
+              <Badge
+                variant="outline"
+                className={`gap-1 font-mono text-[10px] uppercase ${
+                  activeSource === 'rapidapi_adsbx'
+                    ? 'border-primary/60 text-primary'
+                    : activeSource === 'opensky'
+                    ? 'border-yellow-500/60 text-yellow-500'
+                    : activeSource === 'adsb_lol'
+                    ? 'border-orange-500/60 text-orange-500'
+                    : 'border-muted-foreground/40 text-muted-foreground'
+                }`}
+                title="Active upstream API"
+              >
+                <Satellite className="w-3 h-3" />
+                {activeSource === 'rapidapi_adsbx'
+                  ? 'ADSBX (Primary)'
+                  : activeSource === 'opensky'
+                  ? 'OpenSky (FB1)'
+                  : activeSource === 'adsb_lol'
+                  ? 'adsb.lol (FB2)'
+                  : activeSource}
               </Badge>
             )}
             {apiConnected === true && stats.live_api_count && stats.live_api_count > 0 && (

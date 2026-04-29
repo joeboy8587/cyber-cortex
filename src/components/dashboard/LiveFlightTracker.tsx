@@ -288,6 +288,30 @@ export function LiveFlightTracker() {
                 {apiConnected ? 'REAL DATA' : 'FALLBACK'}
               </Badge>
             )}
+            {apiConnected && (
+              <Badge
+                variant="outline"
+                className={`gap-1 font-mono text-[10px] uppercase ${
+                  activeSource === 'rapidapi_adsbx'
+                    ? 'border-primary/60 text-primary'
+                    : activeSource === 'opensky'
+                    ? 'border-yellow-500/60 text-yellow-500'
+                    : activeSource === 'adsb_lol'
+                    ? 'border-orange-500/60 text-orange-500'
+                    : 'border-muted-foreground/40 text-muted-foreground'
+                }`}
+                title="Active upstream API"
+              >
+                <Satellite className="w-3 h-3" />
+                {activeSource === 'rapidapi_adsbx'
+                  ? 'ADSBX (Primary)'
+                  : activeSource === 'opensky'
+                  ? 'OpenSky (FB1)'
+                  : activeSource === 'adsb_lol'
+                  ? 'adsb.lol (FB2)'
+                  : activeSource}
+              </Badge>
+            )}
             {apiConnected === true && stats.live_api_count && stats.live_api_count > 0 && (
               <Badge variant="outline" className="gap-1 border-green-500/50 text-green-500">
                 <Radio className="w-3 h-3 animate-pulse" />

@@ -585,10 +585,10 @@ serve(async (req) => {
         .filter(f => f.latitude && f.longitude && !f.on_ground)
         .map((f: any) => {
           const callsign = f.callsign || '';
-          const altitudeFeet = (dataSource === 'rapidapi_adsb' || dataSource === 'adsb_lol')
+          const altitudeFeet = (dataSource === 'rapidapi_adsbx' || dataSource === 'adsb_lol')
             ? Math.round(f.altitude || 0)  // ADS-B already in feet
             : metersToFeet(f.altitude || f.geo_altitude);
-          const speedKnots = (dataSource === 'rapidapi_adsb' || dataSource === 'adsb_lol')
+          const speedKnots = (dataSource === 'rapidapi_adsbx' || dataSource === 'adsb_lol')
             ? Math.round((f.velocity || 0) / 0.514444) // convert back from m/s
             : msToKnots(f.velocity);
           
@@ -847,7 +847,7 @@ serve(async (req) => {
         stats,
         source: dataSource,
         apiError,
-        richDataAvailable: dataSource === 'rapidapi_adsb' || dataSource === 'adsb_lol',
+        richDataAvailable: dataSource === 'rapidapi_adsbx' || dataSource === 'adsb_lol',
         timestamp: new Date().toISOString()
       }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }

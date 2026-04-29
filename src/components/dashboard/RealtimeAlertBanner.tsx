@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { AlertTriangle, Plane, Radio, X, Database } from "lucide-react";
+import { AlertTriangle, Plane, Radio, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface LiveAlert {

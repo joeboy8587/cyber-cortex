@@ -44,6 +44,7 @@ export function LiveFlightTracker() {
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [apiConnected, setApiConnected] = useState<boolean | null>(null);
+  const [activeSource, setActiveSource] = useState<string>('—');
   const [dataSource, setDataSource] = useState<'all' | 'live' | 'surveillance'>('all');
 
   // Fetch live flights from OpenSky Network API (FREE) - focused on Kern County

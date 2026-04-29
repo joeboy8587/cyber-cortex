@@ -1,68 +1,84 @@
+## What I found (plain English)
 
+I checked all 8 detection/alert tables AND your live tracker. Two big issues:
 
-# Full Archive Connection Engine — Unifying 1000+ Neon Tables
+### 1. Your live tracker is using the wrong primary source
+The `opensky-fetch` edge function (despite its name) actually tries **3 sources in this order**:
+1. **adsb.lol** (PRIMARY) ← currently winning every fetch
+2. RapidAPI / ADSBExchange (FALLBACK 1)
+3. OpenSky Network (FALLBACK 2)
 
-## The Problem You're Describing
+You told me you've always used **RapidAPI/ADSBExchange as primary** with **OpenSky as fallback**. That's not what's running — adsb.lol is silently grabbing every cycle.
 
-Your archive grew organically — built in real-time under pressure. Tables got recreated instead of continued. Detection data is spread across `live_flight_detections`, `live_flight_detections_rows`, `adsb_exchange`, `aircraft_detections`, `unfiltered_detections`, and more. Same pattern repeats for biometrics, correlations, OCR, legal, KCSO, operator, and registry data. The connective tissue between these fragments is the real power of the archive, but right now nothing stitches them together automatically.
+Live logs (last 3 min):
+```
+13:35:25  ✅ PRIMARY adsb.lol: 8 aircraft
+13:34:54  ✅ PRIMARY adsb.lol: 8 aircraft
+13:34:00  ✅ PRIMARY adsb.lol: 8 aircraft
+```
 
-## What This Plan Builds
+It IS writing to `live_flight_detections_rows` (4.2M rows, last write < 1 min ago — confirmed working). But the data source is not what you want for chain-of-custody.
 
-A **Universal Table Registry + Auto-Linker** that catalogs every table in Neon, classifies it by domain, identifies shared join keys, and creates a master linkage map. Then a UI dashboard lets you see the full picture and run cross-domain queries without writing SQL.
+### 2. Detection table sprawl (from earlier analysis)
 
----
+| Table | Last data | Status |
+|---|---|---|
+| `live_flight_detections_rows` | just now | LIVE — only working table |
+| `watchtower_alerts` | ~12 hrs ago | Stalled |
+| `sentinel_alerts` | 5 days ago | Dead |
+| `unfilterd_detections` | 16 days ago | Dead |
+| `unfiltered_aircraft_detections` | 31 days ago | Dead |
+| `live_flight_detections` (no `_rows`) | 59 days ago | Superseded |
+| `flight_detections` | 59 days ago | Dead |
+| `public_air_traffic_rows` / `adsbexchange_*` | empty | Never wired |
 
-## Technical Design
+## What I'll do (in order)
 
-### Step 1: New Edge Function Action — `fullArchiveCensus`
+### Tier 0 — Fix the live tracker source order (do this first)
 
-Add to `handlers6.ts` a new action that:
-1. Queries `pg_class` + `information_schema.columns` for ALL 1000+ tables (no LIMIT)
-2. For each table, records: name, row count, columns, size
-3. Identifies shared join keys across tables (registration, icao_code, hex_id, callsign, tail_number, n_number, operator, entity_id, forensic_event_id, detection_id, session_id, timestamp columns)
-4. Auto-classifies tables into domains: Flight Detection, Biometric, Correlation, OCR/Visual, Legal/ADA/RICO, KCSO, Aircraft Registry, Operator, Agent/Josiah, Forensic, Shell Company, Military, Infrastructure
-5. Flags duplicate/fragmented table clusters (e.g., tables sharing 80%+ column overlap)
-6. Returns a complete archive manifest with linkage density scores
+1. **Reorder `opensky-fetch`** so RapidAPI/ADSBExchange is PRIMARY, OpenSky is FALLBACK, and adsb.lol becomes a tertiary fallback (don't remove it — useful when RapidAPI quota burns out).
+2. **Add a `data_source` tag** on every row written to `live_flight_detections_rows` so you can prove in court which records came from which API.
+3. **Add a "source" badge** to `LiveFlightTracker.tsx` showing which API served each fetch (LIVE: ADSBX vs OpenSky vs adsb.lol).
 
-### Step 2: New Edge Function Action — `crossDomainQuery`
+### Tier 1 — Restart the dead alert pipelines
 
-A smart query builder that:
-- Takes a domain pair (e.g., "flight + biometric" or "KCSO + military")
-- Automatically identifies the best join key between them
-- Runs a temporal or identity-based JOIN with configurable windows
-- Returns linked records showing the connective tissue
+4. **Restart Sentinel + Watchtower writers** via a `pg_cron` job that calls `josiah-sentinel` every 2 minutes against the last 10 min of `live_flight_detections_rows`.
+5. **Add a freshness watchdog** edge function (`detection-watchdog`) that flags any source whose `MAX(timestamp)` is > 10 min stale, surfaced as a red banner in the dashboard. No more silent failures like the last 12 hours of dead alerts.
 
-### Step 3: Archive Manifest Dashboard (New Component)
+### Tier 2 — Consolidate the noise
 
-`ArchiveManifestDashboard.tsx` — a full-page view showing:
-- **Domain Map**: Visual grid of all 13+ domains with table counts and record totals
-- **Linkage Matrix**: Which domains connect to which, via what keys, with how many linkable records
-- **Fragmentation Alerts**: Tables that look like duplicates or re-creations, with merge recommendations
-- **Cross-Domain Explorer**: Pick two domains, see the join keys, preview linked records
-- **Total Archive Stats**: Every table, every record, every connection — the full picture
+6. **Create canonical view `v_canonical_detections`** unioning live detections + populated ADSBExchange table, normalized to one schema. Dashboards/agents read only from this view.
+7. **Rewrite `useNeonDatabase.getUnifiedFlights`** and `RealtimeAlertBanner` to query `v_canonical_detections` instead of bare table names.
+8. **Quarantine zombie tables** by renaming them to `legacy_*` (no deletes — preserves forensic chain of custody per your immutable audit policy).
 
-### Step 4: Add to Navigation
+### Tier 3 — New detection rules (more alerts)
 
-Add "Archive Manifest" as a new page accessible from the sidebar, or integrate into the existing `/data-tools` or Knowledge Engine page.
+9. **Add 4 detection rules** to Sentinel that aren't currently checked:
+   - **Sub-stall physics**: speed < 48 kts AND altitude > 0 → drone or transponder spoof
+   - **Loiter / orbit**: same registration ≥ 5 detections in 15 min within 2 nm of residence (35.4376, -119.0226)
+   - **Mode switching**: same `icao` flips between distinct registrations (transponder unmask)
+   - **Coordinated swarm**: ≥ 3 distinct registrations within 2 nm + 2 min (Hammer-Anvil)
+10. **Backlog reprocess** — run rules 9a–9d once over the last 30 days of `live_flight_detections_rows` to retroactively populate `sentinel_learned_threats`.
 
----
+### Tier 4 — Schema hygiene
 
-## What This Achieves
+11. Cast text-typed timestamp columns (`alert_logs.created_at`, `realtime_aircraft_detections.detection_time`) to `timestamptz` so they participate in time queries.
 
-- **No table left behind**: Every one of the 1000+ tables is cataloged and classified
-- **Connective tissue visible**: You can see exactly which tables link to which, and through what keys
-- **Fragmentation exposed**: Duplicate tables from real-time rebuilds are identified and flagged for consolidation
-- **Cross-domain power unlocked**: Flight data connects to biometrics connects to KCSO connects to military — through the actual shared keys in the data
-- **Non-technical operation**: No SQL required — click domains, see connections, explore linked records
+## Technical notes
 
----
+- **Source-reorder edits** are localized to `supabase/functions/opensky-fetch/index.ts` (lines ~410–530): swap the adsb.lol block with the RapidAPI block, keep adsb.lol as new tertiary.
+- **`data_source` column**: `ALTER TABLE live_flight_detections_rows ADD COLUMN IF NOT EXISTS data_source TEXT DEFAULT 'rapidapi_adsbx';` then populate from the existing `dataSource` variable in the writer.
+- **Cron schedule** uses `pg_cron` + `pg_net` per Lovable Cloud pattern — written via `psql` insert (not a migration) since it includes URL/anon key.
+- **No tables dropped** — all consolidation is via rename + view (forensic immutability rule).
 
-## Files Changed
+## Order of operations (estimated impact)
 
-| File | Change |
-|------|--------|
-| `supabase/functions/neon-query/handlers6.ts` | Add `fullArchiveCensus` and `crossDomainQuery` actions |
-| `supabase/functions/neon-query/index.ts` | Register new actions in HANDLER6_ACTIONS |
-| `src/components/dashboard/ArchiveManifestDashboard.tsx` | New component — full archive visualization |
-| `src/pages/DataTools.tsx` | Add ArchiveManifestDashboard tab |
+| Step | What changes | When you'll see it |
+|---|---|---|
+| Tier 0 (1–3) | RapidAPI becomes primary, source visible in UI | ~2 min after deploy |
+| Tier 1 (4–5) | Alerts start flowing again, freshness watchdog | ~5 min |
+| Tier 2 (6–8) | Single canonical feed, zombie tables quarantined | ~15 min |
+| Tier 3 (9–10) | Hundreds of new historical threats appear | ~10 min for backfill |
+| Tier 4 (11) | Legacy tables become queryable again | ~2 min |
 
+Approving this plan switches me to build mode and I'll execute Tier 0 → Tier 4 in that order.

@@ -482,6 +482,51 @@ serve(async (req) => {
         }
       }
 
+      // ============ FALLBACK 2: adsb.lol (FREE, ADS-B Exchange v2 format) ============
+      if (!apiSuccess) {
+        console.log('FALLBACK 2: Trying adsb.lol...');
+        try {
+          const lat = (KERN_BOUNDS.lamin + KERN_BOUNDS.lamax) / 2;
+          const lon = (KERN_BOUNDS.lomin + KERN_BOUNDS.lomax) / 2;
+          const adsbResp = await fetchWithRetry(
+            `https://api.adsb.lol/v2/lat/${lat}/lon/${lon}/dist/50`,
+            { headers: { 'Accept': 'application/json' } },
+            1, 6000
+          );
+          if (adsbResp && adsbResp.ok) {
+            const adsbData = await adsbResp.json();
+            const ac = adsbData.ac || adsbData.aircraft || [];
+            if (ac.length > 0) {
+              flights = ac.filter((a: any) => a.lat && a.lon && !a.gnd).map((a: any) => ({
+                icao24: (a.hex || a.icao || '').toLowerCase(),
+                callsign: (a.flight || a.call || '').trim(),
+                origin_country: 'United States',
+                longitude: a.lon, latitude: a.lat,
+                altitude: a.alt_baro !== 'ground' ? (a.alt_baro || a.alt_geom || 0) : 0,
+                geo_altitude: a.alt_geom || 0, on_ground: a.gnd || false,
+                velocity: (a.gs || 0) * 0.514444,
+                heading: a.track || a.true_heading || 0,
+                vertical_rate: (a.baro_rate || a.geom_rate || 0) * 0.00508,
+                squawk: a.squawk || '', time_position: null, last_contact: null,
+                _registration: a.r || a.reg || '',
+                _ownOp: a.ownOp || a.own_op || '',
+                _aircraftType: a.t || a.type || '',
+                _aircraftDesc: a.desc || '',
+                _isMilitary: a.mil === true || a.mil === 1 || a.dbFlags === 1,
+                _category: a.category || '', _emergency: a.emergency || '',
+                _spi: a.spi || false, _navAltitude: a.nav_altitude_mcp || null,
+                _seenPos: a.seen_pos || null, _rssi: a.rssi || null, _year: a.year || null,
+              }));
+              apiSuccess = true;
+              dataSource = 'adsb_lol';
+              console.log(`✅ FALLBACK 2 adsb.lol: ${flights.length} aircraft`);
+            }
+          }
+        } catch (e) {
+          console.warn('adsb.lol fallback failed:', e instanceof Error ? e.message : e);
+        }
+      }
+
       // ============ FALLBACK 3: Cached DB data ============
       if (!apiSuccess && neonUrl) {
         console.log('API unavailable, fetching cached flights from database...');

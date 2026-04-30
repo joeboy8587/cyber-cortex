@@ -32,18 +32,12 @@ function chunkText(text: string, size = 1200, overlap = 150): string[] {
 }
 
 async function parsePdf(bytes: Uint8Array): Promise<string> {
-  const pdfjs = await import("https://esm.sh/pdfjs-dist@4.0.379/legacy/build/pdf.mjs");
-  // @ts-ignore
-  pdfjs.GlobalWorkerOptions.workerSrc = "https://esm.sh/pdfjs-dist@4.0.379/legacy/build/pdf.worker.mjs";
-  const doc = await pdfjs.getDocument({ data: bytes, disableWorker: true, isEvalSupported: false }).promise;
-  let out = "";
-  const max = Math.min(doc.numPages, 200);
-  for (let p = 1; p <= max; p++) {
-    const page = await doc.getPage(p);
-    const tc = await page.getTextContent();
-    out += tc.items.map((it: any) => it.str).join(" ") + "\n\n";
-  }
-  return out;
+  // Use unpdf — Deno-compatible, no native canvas dependency
+  const { extractText } = await import("https://esm.sh/unpdf@0.12.1");
+  const { text } = await extractText(bytes, { mergePages: true });
+  const full = Array.isArray(text) ? text.join("\n\n") : String(text || "");
+  // Cap to keep within embedding/token budgets
+  return full.slice(0, 400000);
 }
 
 async function embed(texts: string[]): Promise<number[][]> {

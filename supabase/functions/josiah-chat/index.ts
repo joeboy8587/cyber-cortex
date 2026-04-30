@@ -646,8 +646,29 @@ ${databaseContext}
 
 ${memoryContext}`;
 
+    // ==================== RAG RECALL: pull relevant chunks from uploaded documents ====================
+    let ragContext = "";
+    try {
+      const ragRes = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/rag-query`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+        },
+        body: JSON.stringify({ query: message, match_count: 6, similarity_threshold: 0.45 }),
+      });
+      if (ragRes.ok) {
+        const rj = await ragRes.json();
+        if (rj.context && rj.count > 0) {
+          ragContext = `\n\n=== RAG KNOWLEDGE BASE (top ${rj.count} relevant excerpts from uploaded case files) ===\n${rj.context}\n=== END RAG ===\n`;
+        }
+      }
+    } catch (e) {
+      console.warn("rag-query failed (non-fatal):", (e as Error).message);
+    }
+
     const messages = [
-      { role: "system", content: systemPrompt },
+      { role: "system", content: systemPrompt + ragContext },
       ...(conversationHistory || []).map((msg: { role: string; content: string }) => ({
         role: msg.role,
         content: msg.content

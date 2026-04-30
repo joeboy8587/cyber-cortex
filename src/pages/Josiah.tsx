@@ -15,6 +15,7 @@ import { TruthScannerDashboard } from "@/components/dashboard/TruthScannerDashbo
 import { C2014CohortScanner } from "@/components/dashboard/C2014CohortScanner";
 import { AdversarialDebatePanel } from "@/components/dashboard/AdversarialDebatePanel";
 import { JosiahTrainingPanel } from "@/components/dashboard/JosiahTrainingPanel";
+import { JosiahRAGPanel } from "@/components/dashboard/JosiahRAGPanel";
 
 export default function Josiah() {
   return (
@@ -38,6 +39,11 @@ export default function Josiah() {
         {/* Training & Memory Ingestion — restore Watchtower awareness */}
         <section>
           <JosiahTrainingPanel />
+        </section>
+
+        {/* RAG Knowledge Base — bulk upload PDFs/MD/TXT for recall + auto-enrichment */}
+        <section>
+          <JosiahRAGPanel />
         </section>
 
         {/* Sentinel Monitor - Primary AI */}

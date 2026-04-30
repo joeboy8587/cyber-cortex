@@ -763,6 +763,157 @@ export type Database = {
           },
         ]
       }
+      rag_chunks: {
+        Row: {
+          chunk_index: number
+          content: string
+          created_at: string
+          document_id: string
+          embedding: string | null
+          id: string
+          metadata: Json | null
+          token_estimate: number | null
+        }
+        Insert: {
+          chunk_index: number
+          content: string
+          created_at?: string
+          document_id: string
+          embedding?: string | null
+          id?: string
+          metadata?: Json | null
+          token_estimate?: number | null
+        }
+        Update: {
+          chunk_index?: number
+          content?: string
+          created_at?: string
+          document_id?: string
+          embedding?: string | null
+          id?: string
+          metadata?: Json | null
+          token_estimate?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "rag_chunks_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "rag_documents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      rag_documents: {
+        Row: {
+          chunk_count: number | null
+          created_at: string
+          document_type: string | null
+          extraction_summary: Json | null
+          file_size: number | null
+          filename: string
+          id: string
+          mime_type: string | null
+          raw_text_preview: string | null
+          sha256_hash: string | null
+          status: string
+          status_message: string | null
+          storage_path: string
+          tags: string[] | null
+          title: string
+          updated_at: string
+          uploaded_by: string | null
+        }
+        Insert: {
+          chunk_count?: number | null
+          created_at?: string
+          document_type?: string | null
+          extraction_summary?: Json | null
+          file_size?: number | null
+          filename: string
+          id?: string
+          mime_type?: string | null
+          raw_text_preview?: string | null
+          sha256_hash?: string | null
+          status?: string
+          status_message?: string | null
+          storage_path: string
+          tags?: string[] | null
+          title: string
+          updated_at?: string
+          uploaded_by?: string | null
+        }
+        Update: {
+          chunk_count?: number | null
+          created_at?: string
+          document_type?: string | null
+          extraction_summary?: Json | null
+          file_size?: number | null
+          filename?: string
+          id?: string
+          mime_type?: string | null
+          raw_text_preview?: string | null
+          sha256_hash?: string | null
+          status?: string
+          status_message?: string | null
+          storage_path?: string
+          tags?: string[] | null
+          title?: string
+          updated_at?: string
+          uploaded_by?: string | null
+        }
+        Relationships: []
+      }
+      rag_extractions: {
+        Row: {
+          confidence: number
+          context: string | null
+          created_at: string
+          document_id: string
+          extraction_type: string
+          id: string
+          label: string
+          promoted_at: string | null
+          promoted_to: string | null
+          status: string
+          value: string | null
+        }
+        Insert: {
+          confidence?: number
+          context?: string | null
+          created_at?: string
+          document_id: string
+          extraction_type: string
+          id?: string
+          label: string
+          promoted_at?: string | null
+          promoted_to?: string | null
+          status?: string
+          value?: string | null
+        }
+        Update: {
+          confidence?: number
+          context?: string | null
+          created_at?: string
+          document_id?: string
+          extraction_type?: string
+          id?: string
+          label?: string
+          promoted_at?: string | null
+          promoted_to?: string | null
+          status?: string
+          value?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "rag_extractions_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "rag_documents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       sentinel_learned_threats: {
         Row: {
           ai_threat_profile: string | null
@@ -1014,6 +1165,23 @@ export type Database = {
       }
       is_admin: { Args: never; Returns: boolean }
       is_investigator_or_admin: { Args: never; Returns: boolean }
+      match_rag_chunks: {
+        Args: {
+          match_count?: number
+          query_embedding: string
+          similarity_threshold?: number
+        }
+        Returns: {
+          chunk_id: string
+          chunk_index: number
+          content: string
+          document_id: string
+          document_title: string
+          document_type: string
+          similarity: number
+          tags: string[]
+        }[]
+      }
     }
     Enums: {
       app_role: "admin" | "investigator"

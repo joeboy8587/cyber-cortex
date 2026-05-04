@@ -428,19 +428,19 @@ ${(recentHypotheses as any[]).map((h: any) => `- ${(h.hypothesis || '').slice(0,
           ORDER BY c.reltuples DESC`,
       sql`SELECT
             (SELECT COUNT(*) FROM live_flight_detections_rows) as flights,
-            (SELECT COUNT(*) FROM biometric_monitoring) as biometrics,
+            (SELECT COUNT(*) FROM unified_biometric_aircraft_correlation_final) as biometrics,
             (SELECT COUNT(*) FROM criminal_enterprise_command_structure) as enterprise,
             (SELECT COUNT(*) FROM shell_companies) as shells,
             (SELECT COUNT(*) FROM josiah_reflections_rows) as reflections,
             (SELECT COUNT(*) FROM aircraft_registry_enriched) as aircraft,
-            (SELECT COUNT(*) FROM biometric_vector_correlations) as bio_correlations,
+            (SELECT COUNT(*) FROM unified_biometric_aircraft_correlation_final WHERE legal_evidence = true) as bio_correlations,
             (SELECT COUNT(*) FROM live_flight_detections_rows WHERE flagged = true) as flagged_aircraft,
             (SELECT COUNT(*) FROM four_factor_correlations) as correlations
         `.catch(() => [{}]),
       sql`SELECT
-            (SELECT COUNT(*) FROM confirmed_biometric_correlations) as bio_correlations_confirmed,
-            (SELECT COUNT(*) FROM aircraft_biometric_correlation_matrix) as matrix_aircraft,
-            (SELECT COUNT(*) FROM aircraft_biometric_correlation_matrix WHERE harm_level IN ('CRITICAL','HIGH')) as high_harm_aircraft,
+            (SELECT COUNT(*) FROM unified_biometric_aircraft_correlation_final) as bio_correlations_confirmed,
+            (SELECT COUNT(DISTINCT aircraft_registration) FROM unified_biometric_aircraft_correlation_final WHERE aircraft_registration IS NOT NULL) as matrix_aircraft,
+            (SELECT COUNT(DISTINCT aircraft_registration) FROM unified_biometric_aircraft_correlation_final WHERE threat_level IN ('CRITICAL','HIGH')) as high_harm_aircraft,
             (SELECT COUNT(*) FROM flight_ocr_correlations) as ocr_unmasking_records,
             (SELECT COUNT(*) FROM biometric_screenshots_ocr) as screenshot_bio_links,
             (SELECT COUNT(*) FROM coordinated_operations_analysis) as coordinated_ops,
@@ -450,15 +450,26 @@ ${(recentHypotheses as any[]).map((h: any) => `- ${(h.hypothesis || '').slice(0,
       sql`SELECT reflection_content, trigger_type, created_at FROM josiah_reflections_rows ORDER BY created_at DESC LIMIT 10`.catch(() => []),
       sql`SELECT registration, callsign, altitude, speed, detection_timestamp, taxonomy_tag
           FROM live_flight_detections_rows ORDER BY detection_timestamp DESC LIMIT 20`.catch(() => []),
-      sql`SELECT heart_rate, hrv, stress_level, measurement_timestamp, medical_alert, legal_evidence, data_source
-          FROM biometric_monitoring ORDER BY measurement_timestamp DESC LIMIT 50`.catch(() => []),
+      sql`SELECT heart_rate_bpm AS heart_rate, hrv_ms AS hrv, stress_score AS stress_level,
+            biometric_timestamp_utc AS measurement_timestamp,
+            (biometric_severity IN ('CRITICAL','HIGH')) AS medical_alert,
+            legal_evidence, biometric_source AS data_source
+          FROM unified_biometric_aircraft_correlation_final
+          ORDER BY biometric_timestamp_utc DESC LIMIT 50`.catch(() => []),
       sql`SELECT * FROM flagged_aircraft_main ORDER BY threat_score DESC NULLS LAST LIMIT 50`.catch(() => []),
       sql`SELECT * FROM criminal_enterprise_command_structure`.catch(() => []),
       sql`SELECT * FROM shell_companies`.catch(() => []),
-      sql`SELECT registration, combined_harm_score, harm_level, p_value, total_encounters, physiological_impact_score, statistically_significant
-          FROM aircraft_biometric_correlation_matrix
-          WHERE harm_level IN ('CRITICAL','HIGH')
-          ORDER BY combined_harm_score DESC LIMIT 20`.catch(() => []),
+      sql`SELECT aircraft_registration AS registration,
+            MAX(threat_score) AS combined_harm_score,
+            MAX(threat_level) AS harm_level,
+            AVG(correlation_strength) AS p_value,
+            COUNT(*) AS total_encounters,
+            AVG(bradford_hill_score) AS physiological_impact_score,
+            BOOL_OR(legal_evidence) AS statistically_significant
+          FROM unified_biometric_aircraft_correlation_final
+          WHERE threat_level IN ('CRITICAL','HIGH')
+          GROUP BY aircraft_registration
+          ORDER BY MAX(threat_score) DESC LIMIT 20`.catch(() => []),
       sql`SELECT COUNT(*) as count FROM biometric_screenshots_ocr WHERE mode_switch_detected = true`.catch(() => [{ count: 0 }]),
       // Josiah Memory Context
       sql`SELECT sacred_context, event_type, trauma_markers, continuity_score FROM josiah_sacred_memory WHERE sacred_context IS NOT NULL ORDER BY continuity_score DESC NULLS LAST LIMIT 10`.catch(() => []),

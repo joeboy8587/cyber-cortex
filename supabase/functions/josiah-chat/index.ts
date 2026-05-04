@@ -238,10 +238,21 @@ CORE EVIDENCE TABLES:
 - shell_companies: company_name, operator_name, aircraft_count, linked_registrations
 - aircraft_registry_enriched: n_number, registrant_name, aircraft_model, aircraft_manufacturer
 
-CORRELATION DATABASE (NEW - 334K+ events):
-- confirmed_biometric_correlations: registration, icao, altitude, speed, latitude, longitude, biometric_timestamp, flight_timestamp, avg_hr, max_hr, avg_stress, max_stress, avg_hrv, min_hrv, hr_delta, stress_delta, hrv_delta, bradford_hill_score, correlation_window_seconds, is_critical, harm_assessment
-- aircraft_biometric_correlation_matrix: registration, icao, aircraft_type, owner_name, total_encounters, encounters_with_biometric_data, avg_hr_during_encounters, max_hr_during_encounters, hr_spike_count, avg_stress_during_encounters, stress_spike_count, physiological_impact_score, combined_harm_score, harm_level (CRITICAL/HIGH/MODERATE/LOW/MINIMAL), p_value, statistically_significant, clinically_significant, loitering_correlation, low_altitude_correlation, night_operation_correlation, first_encounter, last_encounter, confidence_score
-- complete_aircraft_trace: registration, owner, aircraft_type, total_events, source_tables_count, shell_match, fca_risk_score, bradford_hill_avg, harm_score
+CORRELATION DATABASE — CANONICAL UNIFIED TABLE (USE THIS FIRST):
+- unified_biometric_aircraft_correlation_final (113K+ rows, 443 aircraft — THE source of truth):
+  correlation_id, biometric_timestamp_utc, biometric_timestamp_pdt, heart_rate_bpm, hrv_ms,
+  stress_score, stress_level, biometric_severity (CRITICAL/HIGH/MODERATE/LOW), biometric_source,
+  aircraft_timestamp_utc, aircraft_registration, aircraft_callsign, aircraft_icao_code,
+  aircraft_type, aircraft_operator, altitude_ft, speed_kts, latitude, longitude,
+  time_offset_minutes, correlation_window_minutes, correlation_strength, correlation_method,
+  threat_score, threat_level, is_kcso, is_shell_company, is_military, taxonomy_tag,
+  legal_evidence, evidence_strength, bradford_hill_score, causation_grade, sha256_hash
+- master_biometric_aircraft_correlation_unified (36K rows, secondary aggregate)
+- biometrics_unified (10K rows, raw biometric stream)
+LEGACY (smaller, do not use unless instructed):
+- biometric_monitoring (9.8K), confirmed_biometric_correlations (76K),
+- aircraft_biometric_correlation_matrix (395 — DEPRECATED, mostly empty),
+- biometric_vector_correlations (965), complete_aircraft_trace
 
 MODE-SWITCHING / OCR EVIDENCE:
 - biometric_screenshots_ocr: screenshot_id, ocr_text, biometric_timestamp, heart_rate, stress_level, hrv, aircraft_detected, correlation_confidence

@@ -26,20 +26,22 @@ Deno.serve(async (req) => {
   const sql = postgres(NEON_URL, { ssl: "require", max: 2, idle_timeout: 20 });
   try {
     if (action === "status") {
-      const [sealedCount] = await sql`SELECT COUNT(*)::bigint AS n FROM ${sql.unsafe(SEALED)}`;
-      const [canonCount] = await sql`SELECT COUNT(*)::bigint AS n FROM live_flight_detections_rows`;
+      const est = await sql`
+        SELECT 'sealed' AS k, c.reltuples::bigint AS n
+        FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+        WHERE n.nspname='quarantine' AND c.relname='evidence_flight_dump_20260103_sealed'
+        UNION ALL
+        SELECT 'canonical', c.reltuples::bigint
+        FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+        WHERE n.nspname='public' AND c.relname='live_flight_detections_rows'
+      `;
       const log = await sql`SELECT * FROM quarantine_merge_log ORDER BY merged_at DESC LIMIT 20`;
       const totalMerged = await sql`SELECT COALESCE(SUM(records_merged),0)::bigint AS n, COALESCE(SUM(duplicates_skipped),0)::bigint AS d FROM quarantine_merge_log`;
-      // overlap by id
-      const [overlap] = await sql`
-        SELECT COUNT(*)::bigint AS n
-        FROM ${sql.unsafe(SEALED)} q
-        WHERE EXISTS (SELECT 1 FROM live_flight_detections_rows c WHERE c.id = q.id)
-      `.catch(() => [{ n: -1n }]);
+      const sealedRows = Number((est.find((r:any)=>r.k==='sealed') as any)?.n ?? 0);
+      const canonRows  = Number((est.find((r:any)=>r.k==='canonical') as any)?.n ?? 0);
       return json({
-        sealed_rows: Number(sealedCount.n),
-        canonical_rows: Number(canonCount.n),
-        canonical_overlap_with_sealed: Number((overlap as any).n),
+        sealed_rows_estimated: sealedRows,
+        canonical_rows_estimated: canonRows,
         total_merged_so_far: Number((totalMerged[0] as any).n),
         total_dupes_skipped: Number((totalMerged[0] as any).d),
         recent_batches: log,

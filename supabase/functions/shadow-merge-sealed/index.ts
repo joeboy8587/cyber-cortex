@@ -126,41 +126,22 @@ Deno.serve(async (req) => {
         created_at: r.created_at ?? new Date(),
       }));
 
+      // Use postgres.js helper sql(rows) which expands to a multi-row VALUES list.
       const result = await sql`
-        WITH src AS (
-          SELECT * FROM (VALUES ${sql(insertRows.map(r => sql([
-            r.id, r.icao_code, r.callsign, r.registration, r.altitude, r.speed,
-            r.latitude, r.longitude, r.heading, r.vertical_rate, r.on_ground,
-            r.threat_score, r.flagged, r.detection_timestamp, r.icao24,
-            r.flagged_reasons, r.tier_level, r.session_id, r.sha256_hash,
-            r.taxonomy_tag, r.spoof_cluster, r.evidence_hash, r.data_source, r.created_at
-          ])))})
-          AS t(id, icao_code, callsign, registration, altitude, speed, latitude, longitude,
-               heading, vertical_rate, on_ground, threat_score, flagged, detection_timestamp,
-               icao24, flagged_reasons, tier_level, session_id, sha256_hash, taxonomy_tag,
-               spoof_cluster, evidence_hash, data_source, created_at)
-        ),
-        ins AS (
-          INSERT INTO live_flight_detections_rows
-            (id, icao_code, callsign, registration, altitude, speed, latitude, longitude,
-             heading, vertical_rate, on_ground, threat_score, flagged, detection_timestamp,
-             icao24, flagged_reasons, tier_level, session_id, sha256_hash, taxonomy_tag,
-             spoof_cluster, evidence_hash, data_source, created_at)
-          SELECT s.id, s.icao_code, s.callsign, s.registration, s.altitude, s.speed,
-                 s.latitude, s.longitude, s.heading, s.vertical_rate, s.on_ground,
-                 s.threat_score, s.flagged, s.detection_timestamp, s.icao24,
-                 s.flagged_reasons, s.tier_level, s.session_id, s.sha256_hash,
-                 s.taxonomy_tag, s.spoof_cluster, s.evidence_hash, s.data_source, s.created_at
-          FROM src s
-          WHERE NOT EXISTS (
-            SELECT 1 FROM live_flight_detections_rows c
-            WHERE c.sha256_hash = s.sha256_hash
-          )
+        WITH ins AS (
+          INSERT INTO live_flight_detections_rows ${sql(
+            insertRows,
+            'id','icao_code','callsign','registration','altitude','speed',
+            'latitude','longitude','heading','vertical_rate','on_ground',
+            'threat_score','flagged','detection_timestamp','icao24',
+            'flagged_reasons','tier_level','session_id','sha256_hash',
+            'taxonomy_tag','spoof_cluster','evidence_hash','data_source','created_at'
+          )}
           ON CONFLICT (id) DO NOTHING
           RETURNING 1
         )
         SELECT (SELECT COUNT(*) FROM ins)::bigint AS inserted,
-               (SELECT COUNT(*) FROM src)::bigint AS attempted
+               ${insertRows.length}::bigint AS attempted
       `;
 
       const inserted = Number((result[0] as any).inserted);

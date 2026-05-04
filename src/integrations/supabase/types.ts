@@ -631,6 +631,84 @@ export type Database = {
         }
         Relationships: []
       }
+      manual_flight_logs: {
+        Row: {
+          aircraft_type: string | null
+          altitude_ft: number | null
+          behavior: string | null
+          callsign: string | null
+          created_at: string
+          decibel_avg: number | null
+          decibel_peak: number | null
+          ground_speed_kts: number | null
+          hr_bpm: number | null
+          hrv_ms: number | null
+          icao24: string | null
+          id: string
+          latitude: number | null
+          longitude: number | null
+          notes: string | null
+          observed_at: string
+          provenance: string
+          registration: string | null
+          route: string | null
+          sha256_hash: string | null
+          source_pdf: string | null
+          stress_pct: number | null
+          track_deg: number | null
+        }
+        Insert: {
+          aircraft_type?: string | null
+          altitude_ft?: number | null
+          behavior?: string | null
+          callsign?: string | null
+          created_at?: string
+          decibel_avg?: number | null
+          decibel_peak?: number | null
+          ground_speed_kts?: number | null
+          hr_bpm?: number | null
+          hrv_ms?: number | null
+          icao24?: string | null
+          id?: string
+          latitude?: number | null
+          longitude?: number | null
+          notes?: string | null
+          observed_at: string
+          provenance?: string
+          registration?: string | null
+          route?: string | null
+          sha256_hash?: string | null
+          source_pdf?: string | null
+          stress_pct?: number | null
+          track_deg?: number | null
+        }
+        Update: {
+          aircraft_type?: string | null
+          altitude_ft?: number | null
+          behavior?: string | null
+          callsign?: string | null
+          created_at?: string
+          decibel_avg?: number | null
+          decibel_peak?: number | null
+          ground_speed_kts?: number | null
+          hr_bpm?: number | null
+          hrv_ms?: number | null
+          icao24?: string | null
+          id?: string
+          latitude?: number | null
+          longitude?: number | null
+          notes?: string | null
+          observed_at?: string
+          provenance?: string
+          registration?: string | null
+          route?: string | null
+          sha256_hash?: string | null
+          source_pdf?: string | null
+          stress_pct?: number | null
+          track_deg?: number | null
+        }
+        Relationships: []
+      }
       master_forensic_events: {
         Row: {
           bradford_hill_score: number | null

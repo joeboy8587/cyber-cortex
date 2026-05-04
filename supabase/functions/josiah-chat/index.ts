@@ -83,9 +83,13 @@ Deno.serve(async (req) => {
             FROM live_flight_detections_rows WHERE registration IS NOT NULL
             GROUP BY LEFT(registration, 2) HAVING COUNT(*) > 100
             ORDER BY count DESC LIMIT 10`.catch(() => []),
-        sql`SELECT heart_rate, hrv, stress_level, measurement_timestamp, medical_alert
-            FROM biometric_monitoring WHERE heart_rate > 100 OR stress_level > 7
-            ORDER BY measurement_timestamp DESC LIMIT 20`.catch(() => []),
+        sql`SELECT heart_rate_bpm AS heart_rate, hrv_ms AS hrv, stress_score AS stress_level,
+              biometric_timestamp_utc AS measurement_timestamp,
+              (biometric_severity IN ('CRITICAL','HIGH')) AS medical_alert,
+              biometric_source AS data_source
+            FROM unified_biometric_aircraft_correlation_final
+            WHERE heart_rate_bpm > 100 OR stress_score > 70
+            ORDER BY biometric_timestamp_utc DESC LIMIT 20`.catch(() => []),
         sql`SELECT EXTRACT(HOUR FROM detection_timestamp) as hour, COUNT(*) as flight_count
             FROM live_flight_detections_rows WHERE detection_timestamp > NOW() - INTERVAL '7 days'
             GROUP BY EXTRACT(HOUR FROM detection_timestamp)
@@ -94,9 +98,14 @@ Deno.serve(async (req) => {
             FROM live_flight_detections_rows WHERE registration IS NOT NULL
             GROUP BY registration HAVING COUNT(*) > 10
             ORDER BY appearances DESC LIMIT 15`.catch(() => []),
-        sql`SELECT registration, COUNT(*) as correlation_events, AVG(avg_hr) as mean_hr, AVG(bradford_hill_score) as mean_bh
-            FROM confirmed_biometric_correlations
-            GROUP BY registration HAVING COUNT(*) > 50
+        sql`SELECT aircraft_registration AS registration,
+              COUNT(*) AS correlation_events,
+              AVG(heart_rate_bpm) AS mean_hr,
+              AVG(bradford_hill_score) AS mean_bh
+            FROM unified_biometric_aircraft_correlation_final
+            WHERE aircraft_registration IS NOT NULL
+            GROUP BY aircraft_registration
+            HAVING COUNT(*) > 50
             ORDER BY AVG(bradford_hill_score) DESC NULLS LAST LIMIT 10`.catch(() => []),
       ]);
 

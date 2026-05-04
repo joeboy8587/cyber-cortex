@@ -25,6 +25,66 @@ Deno.serve(async (req) => {
 
   const sql = postgres(NEON_URL, { ssl: "require", max: 2, idle_timeout: 20 });
   try {
+    if (action === "aircraft_profile") {
+      const reg: string = (body.registration || "").toUpperCase();
+      if (!reg) return json({ error: "registration required" }, 400);
+      const SEALED_TBL = SEALED;
+      // Run on canonical + sealed combined
+      const summary = await sql`
+        WITH combined AS (
+          SELECT detection_timestamp, altitude, speed, latitude, longitude, taxonomy_tag, 'canonical' AS src
+          FROM live_flight_detections_rows
+          WHERE registration = ${reg} OR icao_code = ${reg}
+          UNION ALL
+          SELECT detection_timestamp, altitude, speed, latitude, longitude, taxonomy_tag, 'sealed' AS src
+          FROM ${sql.unsafe(SEALED_TBL)}
+          WHERE registration = ${reg} OR icao24 = ${reg}
+        )
+        SELECT
+          COUNT(*)::bigint AS total,
+          MIN(detection_timestamp) AS first_seen,
+          MAX(detection_timestamp) AS last_seen,
+          COUNT(*) FILTER (WHERE EXTRACT(hour FROM detection_timestamp AT TIME ZONE 'America/Los_Angeles') >= 22
+                              OR EXTRACT(hour FROM detection_timestamp AT TIME ZONE 'America/Los_Angeles') < 6)::bigint AS night_ops,
+          COUNT(*) FILTER (WHERE EXTRACT(hour FROM detection_timestamp AT TIME ZONE 'America/Los_Angeles') BETWEEN 6 AND 21)::bigint AS day_ops,
+          COUNT(*) FILTER (WHERE altitude < 1500)::bigint AS low_alt_lt1500,
+          COUNT(*) FILTER (WHERE altitude < 500)::bigint AS very_low_lt500,
+          COUNT(*) FILTER (WHERE latitude BETWEEN 35.40 AND 35.47 AND longitude BETWEEN -119.06 AND -118.99)::bigint AS over_oildale_aoi,
+          COUNT(*) FILTER (WHERE latitude BETWEEN 35.42 AND 35.45 AND longitude BETWEEN -119.04 AND -119.00)::bigint AS over_residence_2mi,
+          ROUND(AVG(altitude)::numeric, 0) AS avg_alt,
+          MIN(altitude)::int AS min_alt,
+          MAX(altitude)::int AS max_alt,
+          COUNT(*) FILTER (WHERE src='canonical')::bigint AS in_canonical,
+          COUNT(*) FILTER (WHERE src='sealed')::bigint AS in_sealed
+        FROM combined
+      `;
+      const monthly = await sql`
+        WITH combined AS (
+          SELECT detection_timestamp, altitude, latitude, longitude FROM live_flight_detections_rows WHERE registration=${reg} OR icao_code=${reg}
+          UNION ALL
+          SELECT detection_timestamp, altitude, latitude, longitude FROM ${sql.unsafe(SEALED_TBL)} WHERE registration=${reg} OR icao24=${reg}
+        )
+        SELECT to_char(date_trunc('month', detection_timestamp),'YYYY-MM') AS month,
+               COUNT(*)::bigint AS hits,
+               COUNT(*) FILTER (WHERE altitude<1500)::bigint AS low_alt,
+               COUNT(*) FILTER (WHERE latitude BETWEEN 35.40 AND 35.47 AND longitude BETWEEN -119.06 AND -118.99)::bigint AS over_oildale
+        FROM combined WHERE detection_timestamp IS NOT NULL
+        GROUP BY 1 ORDER BY 1
+      `;
+      const hourly = await sql`
+        WITH combined AS (
+          SELECT detection_timestamp FROM live_flight_detections_rows WHERE registration=${reg} OR icao_code=${reg}
+          UNION ALL
+          SELECT detection_timestamp FROM ${sql.unsafe(SEALED_TBL)} WHERE registration=${reg} OR icao24=${reg}
+        )
+        SELECT EXTRACT(hour FROM detection_timestamp AT TIME ZONE 'America/Los_Angeles')::int AS local_hour,
+               COUNT(*)::bigint AS hits
+        FROM combined WHERE detection_timestamp IS NOT NULL
+        GROUP BY 1 ORDER BY 1
+      `;
+      return json({ registration: reg, summary: summary[0], monthly_timeline: monthly, hourly_pattern: hourly });
+    }
+
     if (action === "status") {
       const est = await sql`
         SELECT 'sealed' AS k, c.reltuples::bigint AS n

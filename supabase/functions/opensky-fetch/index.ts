@@ -783,6 +783,15 @@ serve(async (req) => {
                 }
               }
               // INSERT — new aircraft OR evidence-preservation fall-through
+              // Dedup guard: skip if an identical detection (same SHA-256 payload) already exists.
+              // Forensically safe — same hash = byte-identical telemetry, not a new event.
+              const dupCheck = await sql`
+                SELECT 1 FROM live_flight_detections_rows
+                WHERE sha256_hash = ${sha256Hash} LIMIT 1
+              `;
+              if (dupCheck.length > 0) {
+                continue;
+              }
               if (hasRichCols) {
                 await sql`INSERT INTO live_flight_detections_rows (
                   id, icao_code, registration, callsign, altitude, speed,

@@ -48,6 +48,59 @@ Deno.serve(async (req) => {
       });
     }
 
+    if (action === "audit") {
+      const t0 = Date.now();
+      // Monthly timeline + quality dimensions from sealed dump
+      const monthly = await sql`
+        SELECT to_char(date_trunc('month', detection_timestamp), 'YYYY-MM') AS month,
+               COUNT(*)::bigint AS rows,
+               COUNT(DISTINCT icao24)::bigint AS unique_icao24,
+               COUNT(DISTINCT registration)::bigint AS unique_reg,
+               COUNT(*) FILTER (WHERE altitude < 500)::bigint AS low_alt,
+               COUNT(*) FILTER (WHERE speed < 48)::bigint AS sub_stall,
+               COUNT(*) FILTER (WHERE flagged = true)::bigint AS flagged,
+               COUNT(*) FILTER (WHERE taxonomy_tag LIKE 'xxb%')::bigint AS xxb,
+               MIN(detection_timestamp) AS first_seen,
+               MAX(detection_timestamp) AS last_seen
+        FROM ${sql.unsafe(SEALED)}
+        WHERE detection_timestamp IS NOT NULL
+        GROUP BY 1 ORDER BY 1
+      `;
+      const taxonomy = await sql`
+        SELECT taxonomy_tag, COUNT(*)::bigint AS rows
+        FROM ${sql.unsafe(SEALED)}
+        GROUP BY taxonomy_tag ORDER BY rows DESC LIMIT 50
+      `;
+      const quality = await sql`
+        SELECT
+          COUNT(*)::bigint AS total,
+          COUNT(*) FILTER (WHERE detection_timestamp IS NULL)::bigint AS null_ts,
+          COUNT(*) FILTER (WHERE icao24 IS NULL OR icao24='')::bigint AS null_icao,
+          COUNT(*) FILTER (WHERE registration IS NULL OR registration='')::bigint AS null_reg,
+          COUNT(*) FILTER (WHERE latitude IS NULL OR longitude IS NULL)::bigint AS null_pos,
+          COUNT(*) FILTER (WHERE altitude IS NULL)::bigint AS null_alt,
+          COUNT(*) FILTER (WHERE sha256_hash IS NULL)::bigint AS null_sha,
+          COUNT(DISTINCT id)::bigint AS unique_ids,
+          COUNT(DISTINCT icao24)::bigint AS unique_icao,
+          COUNT(DISTINCT registration)::bigint AS unique_reg
+        FROM ${sql.unsafe(SEALED)}
+      `;
+      const topAircraft = await sql`
+        SELECT registration, icao24, COUNT(*)::bigint AS hits,
+               MIN(detection_timestamp) AS first_seen, MAX(detection_timestamp) AS last_seen
+        FROM ${sql.unsafe(SEALED)}
+        WHERE registration IS NOT NULL AND registration <> ''
+        GROUP BY registration, icao24 ORDER BY hits DESC LIMIT 30
+      `;
+      return json({
+        elapsed_ms: Date.now() - t0,
+        quality: quality[0],
+        monthly_timeline: monthly,
+        taxonomy_distribution: taxonomy,
+        top_aircraft: topAircraft,
+      });
+    }
+
     if (action === "merge_batch") {
       // Cursor: process rows with detection_timestamp > cursor in ascending order.
       const cursorTs = cursor ? new Date(cursor) : new Date("2025-01-01T00:00:00Z");

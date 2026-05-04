@@ -136,15 +136,20 @@ Deno.serve(async (req) => {
             WHERE c.aircraft_id IS NULL`.catch(() => [{ uncorrelated_flights: 0 }]),
         sql`SELECT registration, threat_score FROM flagged_aircraft_main
             WHERE operator_name IS NULL OR operator_name = '' LIMIT 10`.catch(() => []),
-        sql`SELECT COUNT(*) as count FROM biometric_monitoring b
-            LEFT JOIN biometric_vector_correlations c ON b.measurement_timestamp = c.correlation_timestamp
-            WHERE c.id IS NULL AND b.medical_alert = true`.catch(() => [{ count: 0 }]),
+        sql`SELECT COUNT(*) as count FROM unified_biometric_aircraft_correlation_final
+            WHERE biometric_severity IN ('CRITICAL','HIGH')
+              AND aircraft_registration IS NULL`.catch(() => [{ count: 0 }]),
         sql`SELECT company_name FROM shell_companies
             WHERE aircraft_count IS NULL OR aircraft_count = 0 LIMIT 5`.catch(() => []),
-        sql`SELECT registration, combined_harm_score, harm_level, p_value
-            FROM aircraft_biometric_correlation_matrix
-            WHERE harm_level IN ('CRITICAL','HIGH') AND statistically_significant = true
-            ORDER BY combined_harm_score DESC LIMIT 5`.catch(() => []),
+        sql`SELECT aircraft_registration AS registration,
+              MAX(threat_score) AS combined_harm_score,
+              MAX(threat_level) AS harm_level,
+              AVG(correlation_strength) AS p_value
+            FROM unified_biometric_aircraft_correlation_final
+            WHERE threat_level IN ('CRITICAL','HIGH')
+              AND legal_evidence = true
+            GROUP BY aircraft_registration
+            ORDER BY MAX(threat_score) DESC LIMIT 5`.catch(() => []),
       ]);
 
       await sql.end();

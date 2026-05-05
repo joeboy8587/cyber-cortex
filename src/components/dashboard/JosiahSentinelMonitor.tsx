@@ -374,8 +374,8 @@ ${report.ai_synthesis ? `
       )}
 
       {/* Main Content Tabs */}
-      <Tabs defaultValue="violations" className="space-y-4">
-        <TabsList className="grid w-full grid-cols-5">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+        <TabsList className="grid w-full grid-cols-6">
           <TabsTrigger value="violations" className="flex items-center gap-1">
             <AlertTriangle className="h-4 w-4" />
             Live Violations

@@ -19,6 +19,7 @@ import { SentinelViolationsBoard } from "@/components/dashboard/SentinelViolatio
 import { EvidenceStitcher } from "@/components/dashboard/EvidenceStitcher";
 import { ArchiveDataMap } from "@/components/dashboard/ArchiveDataMap";
 import { PopulationScaleAnalysis } from "@/components/dashboard/PopulationScaleAnalysis";
+import { DailyTriagePanel } from "@/components/dashboard/DailyTriagePanel";
 
 const Index = () => {
   return (
@@ -46,6 +47,11 @@ const Index = () => {
             autoRefreshInterval={30000}
             soundEnabled={true}
           />
+        </section>
+
+        {/* DAILY TRIAGE — 1-page brief from 20M rows */}
+        <section>
+          <DailyTriagePanel />
         </section>
 
         {/* POPULATION-SCALE RECLASSIFICATION — Top priority */}

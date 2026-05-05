@@ -71,8 +71,8 @@ Deno.serve(async (req) => {
   if (!url) return new Response(JSON.stringify({ error: "NEON_DATABASE_URL not set" }), { status: 500, headers: corsHeaders });
 
   const sql = postgres(url, {
-    max: 4, idle_timeout: 20, connect_timeout: 30, prepare: false,
-    connection: { statement_timeout: "5000" },
+    max: 8, idle_timeout: 20, connect_timeout: 10, prepare: false,
+    connection: { statement_timeout: "3000" },
   });
 
   try {
@@ -166,7 +166,8 @@ Deno.serve(async (req) => {
       `;
 
       const aircraftAliases = ENTITY_ALIASES.find((e) => e.canonical === "aircraft_id")!.aliases;
-      const MAX_ROWS = Number(body.max_rows ?? 2_000_000); // skip tables larger than this
+      const MAX_ROWS = Number(body.max_rows ?? 500_000); // skip tables larger than this
+      const MAX_TARGETS = Number(body.max_targets ?? 80); // hard cap on probes
       const targets: { table: string; column: string; rows: number }[] = [];
       for (const c of cols) {
         if (!aircraftAliases.includes(c.column_name.toLowerCase())) continue;
@@ -174,34 +175,44 @@ Deno.serve(async (req) => {
         if (rows > MAX_ROWS) continue;
         targets.push({ table: `"${c.table_schema}"."${c.table_name}"`, column: c.column_name, rows });
       }
+      // Smaller tables first — they're fastest and most likely curated
+      targets.sort((a, b) => a.rows - b.rows);
 
-      // Parallelize with a per-statement timeout so one bad table can't hang us
+      // Global deadline so we never exceed the edge timeout
+      const DEADLINE_MS = Number(body.deadline_ms ?? 90_000);
+      const startedAt = Date.now();
+
       const upperTerm = term.toUpperCase();
       const lowerTerm = term.toLowerCase();
       const variants = Array.from(new Set([term, upperTerm, lowerTerm, upperTerm.replace(/^N/, ""), lowerTerm.replace(/^n/, "")]));
       const probe = async (t: { table: string; column: string; rows: number }) => {
+        if (Date.now() - startedAt > DEADLINE_MS) return null;
         try {
           const q = `SELECT COUNT(*)::int AS n FROM ${t.table} WHERE "${t.column}"::text ILIKE ANY($1::text[])`;
           const r = await sql.unsafe(q, [variants]);
           const n = Number(r[0]?.n ?? 0);
           return n > 0 ? { table: t.table.replace(/"/g, ""), column: t.column, matches: n } : null;
-        } catch (e) { console.error("probe err", t.table, t.column, e instanceof Error ? e.message : e); return null; }
+        } catch (e) { return null; }
       };
 
-      // Run in batches of 20 to balance concurrency vs connection limits
       const hits: any[] = [];
-      const BATCH = 20;
-      const slice = targets.slice(0, 300);
+      const BATCH = 8;
+      const slice = targets.slice(0, MAX_TARGETS);
+      let probed = 0;
       for (let i = 0; i < slice.length; i += BATCH) {
+        if (Date.now() - startedAt > DEADLINE_MS) break;
         const results = await Promise.all(slice.slice(i, i + BATCH).map(probe));
+        probed += slice.slice(i, i + BATCH).length;
         for (const r of results) if (r) hits.push(r);
       }
       hits.sort((a, b) => b.matches - a.matches);
 
       return new Response(JSON.stringify({
         term,
-        targets_probed: slice.length,
-        targets_skipped_too_large: targets.length === 0 ? 0 : Math.max(0, cols.filter((c: any) => aircraftAliases.includes(c.column_name.toLowerCase())).length - slice.length),
+        targets_probed: probed,
+        targets_skipped_too_large: Math.max(0, cols.filter((c: any) => aircraftAliases.includes(c.column_name.toLowerCase())).length - slice.length),
+        deadline_hit: Date.now() - startedAt > DEADLINE_MS,
+        elapsed_ms: Date.now() - startedAt,
         total_tables_with_hits: hits.length,
         total_records_across_db: hits.reduce((s, h) => s + h.matches, 0),
         hits,

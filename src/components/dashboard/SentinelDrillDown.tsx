@@ -139,7 +139,7 @@ export function SentinelDrillDown({ initialRegistration = '', windowMinutes = 30
             <option value={720}>Last 30d</option>
             <option value={2160}>Last 90d</option>
           </select>
-          <Button size="sm" onClick={run} disabled={loading}>
+          <Button size="sm" onClick={() => run()} disabled={loading}>
             {loading ? <RefreshCw className="h-4 w-4 mr-1 animate-spin" /> : <Plane className="h-4 w-4 mr-1" />}
             Drill Down
           </Button>
@@ -149,7 +149,7 @@ export function SentinelDrillDown({ initialRegistration = '', windowMinutes = 30
           <div className="flex flex-wrap gap-1 ml-auto">
             {['N912KC','N913KC','N597E','N791FA','N787FA','N788FA','CONG05','STMPD19','CFC3092','N34AK'].map(r => (
               <Badge key={r} variant="outline" className="cursor-pointer hover:bg-primary/10 font-mono text-[10px]"
-                onClick={() => { setRegistration(r); setTimeout(run, 0); }}>
+                onClick={() => { setRegistration(r); run(r); }}>
                 {r}
               </Badge>
             ))}

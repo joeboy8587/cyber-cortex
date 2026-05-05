@@ -40,8 +40,8 @@ export function SentinelDrillDown({ initialRegistration = '', windowMinutes = 30
     min_spd: number | null; first: string | null; last: string | null;
   } | null>(null);
 
-  const run = useCallback(async () => {
-    const reg = registration.trim().toUpperCase();
+  const run = useCallback(async (override?: string) => {
+    const reg = (override ?? registration).trim().toUpperCase();
     if (!reg) {
       toast.error('Enter a registration (e.g. N912KC)');
       return;

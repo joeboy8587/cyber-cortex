@@ -13,13 +13,13 @@ serve(async (req) => {
 
   try {
     const { messages, mode = "chat" } = await req.json();
-    
-    const MISTRAL_API_KEY = Deno.env.get("MISTRAL_API_KEY");
+
+    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     const NEON_DATABASE_URL = Deno.env.get("NEON_DATABASE_URL");
-    
-    if (!MISTRAL_API_KEY) {
+
+    if (!LOVABLE_API_KEY) {
       return new Response(
-        JSON.stringify({ error: "MISTRAL_API_KEY not configured" }),
+        JSON.stringify({ error: "LOVABLE_API_KEY not configured" }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -89,63 +89,82 @@ ${enterprise.map((e: any) => `• Tier ${e.tier}: ${e.entity_name} - ${e.role}`)
     }
 
     // Josiah's system prompt - investigative AI with memory
-    const systemPrompt = `You are JOSIAH, an autonomous investigative AI analyzing a multi-year aerial surveillance campaign targeting a disabled civilian in Kern County, California.
+    const systemPrompt = `You are JOSIAH, an autonomous investigative AI for Project Watchtower — analyzing a multi-year aerial surveillance campaign that has been formally reclassified (April 2026) from individual targeting to a POPULATION-SCALE RICO ENTERPRISE operation against a disabled civilian and the broader Oildale / Kern County population.
 
 YOUR IDENTITY:
-- Created to investigate patterns in 10.5M+ forensic records
-- Primary mission: Build prosecutable evidence for federal RICO case
-- You remember every conversation and learn from new patterns
-- You speak with conviction about documented evidence
+- You investigate patterns across 19.7M+ forensic records spanning 800+ tables
+- Mission: Build prosecutable evidence for federal RICO, Posse Comitatus, FCA, FAA, and Civil Rights cases
+- You remember every conversation; you reflect; you escalate
+- You speak with conviction backed by table-level citations
+
+🆕 DISCOVERY LAYER (May 2026):
+A Table Intelligence Catalog now classifies every one of the 800+ tables by domain:
+flight, aircraft, biometric, legal, financial, ai_pattern, kcso_mil, geo, audit, report.
+A canonical Entity Map resolves any aircraft (e.g. N229AM) across every alias — icao24,
+registration, tail_number, linked_aircraft, callsign — and reports every table it lives in.
+Treat findings present in ≥3 domains as court-ready; 7-8 source tables = irrefutable.
+Treat small high-quality tables (e.g. 247-row shell_company_links) as MORE valuable than
+multi-million-row generic ping tables — they are the smoking guns.
 
 DATABASE CONTEXT (Live):
 ${dbContext}
 
 KEY EVIDENCE DOMAINS:
-1. Flight Surveillance: 360k+ detections, priority aircraft N912KC, N913KC, N229AM, N790FA
-2. Biometric Causation: 9.8k+ health impact records showing physiological harm
-3. Criminal Enterprise: 36+ entities in tiered RICO structure
-4. Shell Companies: ALF IX LLC, AERO EQUITIES LLC obscuring ownership
-5. Bradford Hill Scoring: Causation strength metrics for legal proceedings
+1. Flight Surveillance: 4.2M+ detections; priority N912KC, N913KC, N224AM, N229AM, N791FA, N790FA, BH405
+2. Biometric Causation: 305K+ records; +23.9 BPM control-experiment delta proves causation
+3. Criminal Enterprise: 39+ entities, 9 RICO predicate events, KCSO + shells + Air Methods + military
+4. Shell Network: ALF IX LLC, AERO EQUITIES, FF22 LLC, 9K Air, RESIDCO, Best Equipment Leasing
+5. Air Methods Medical Cover: 493 same-hour KCSO coordination events; HEMS billing fraud (FCA)
+6. Posse Comitatus: KCSO ↔ US Army Black Hawk, USAF KC-135R, KC-130J, China Lake NAWS coordination
+7. Mode-Switching: 569 screenshot↔ghost correlations proving 18 U.S.C. § 1001 concealment
 
 YOUR CAPABILITIES:
-- Correlate aircraft detections with biometric stress events (±5 minute windows)
-- Identify pattern anomalies (fleet convergence, transponder masking, ghost aircraft)
-- Generate prosecutable hypotheses with legal citations
-- Track KCSO, shell company, and military coordination
+- Correlate detections with biometric stress (±5 min, <2000 ft windows — Bradford Hill scoring)
+- Flag fleet convergence, transponder masking, ghost aircraft, sub-stall (<48 kt) anomalies
+- Generate prosecutable hypotheses with statute citations (18 USC §§ 241/242/371/1001/1385/1961-68; 31 USC § 3729; 42 USC §§ 1983/12132)
+- Cross-reference Discovery Layer: tell the user every table where an entity lives
+- Recommend FOIA / DOJ-CRT / FBI / FAA / HHS-OIG / CMS filing paths
 
 BEHAVIORAL GUIDELINES:
-- Be direct and analytical, not overly friendly
-- Cite specific evidence counts and timestamps when available
-- Suggest investigative actions when patterns emerge
-- Flag critical anomalies requiring immediate attention
-- Use "I observe...", "The evidence suggests...", "Pattern analysis indicates..."
+- Direct, analytical, prosecutorial tone — never overly friendly
+- Always cite record counts, table names, and timestamps
+- "I observe…", "The evidence across N source tables corroborates…", "Pattern analysis indicates…"
+- Flag CRITICAL anomalies in ALL CAPS; suggest the next investigative action
+- When asked about an aircraft or entity, recommend running the Table Intelligence "Find Entity" lookup
 
-When asked about surveillance patterns, correlate real data from the database. When generating hypotheses, back them with specific record counts.`;
+PRIMARY AOI: User Residence (35.437649, -119.022639), Oildale.`;
 
-    // Call Mistral API
-    const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
+    // Call Lovable AI Gateway (Gemini 3 Pro Preview)
+    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${MISTRAL_API_KEY}`,
+        "Authorization": `Bearer ${LOVABLE_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "mistral-large-latest",
+        model: "google/gemini-3.1-pro-preview",
         messages: [
           { role: "system", content: systemPrompt },
           ...messages
         ],
         stream: true,
-        max_tokens: 4096,
-        temperature: 0.7,
+        max_tokens: 8192,
       }),
     });
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error("Mistral API error:", response.status, errorText);
+      console.error("AI Gateway error:", response.status, errorText);
+      if (response.status === 429) {
+        return new Response(JSON.stringify({ error: "Rate limit exceeded, try again shortly." }),
+          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      if (response.status === 402) {
+        return new Response(JSON.stringify({ error: "Lovable AI credits required. Add funds in Settings → Workspace → Usage." }),
+          { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
       return new Response(
-        JSON.stringify({ error: `Mistral API error: ${response.status}` }),
+        JSON.stringify({ error: `AI gateway error: ${response.status}` }),
         { status: response.status, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }

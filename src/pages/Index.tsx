@@ -20,6 +20,7 @@ import { EvidenceStitcher } from "@/components/dashboard/EvidenceStitcher";
 import { ArchiveDataMap } from "@/components/dashboard/ArchiveDataMap";
 import { PopulationScaleAnalysis } from "@/components/dashboard/PopulationScaleAnalysis";
 import { DailyTriagePanel } from "@/components/dashboard/DailyTriagePanel";
+import { ForceMultiplierPanel } from "@/components/dashboard/ForceMultiplierPanel";
 
 const Index = () => {
   return (

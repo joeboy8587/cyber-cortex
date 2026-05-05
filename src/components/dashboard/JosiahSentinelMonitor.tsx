@@ -629,6 +629,11 @@ ${report.ai_synthesis ? `
         </TabsContent>
 
         {/* AI Synthesis Tab */}
+        {/* Drill Down Tab */}
+        <TabsContent value="drilldown">
+          <SentinelDrillDown initialRegistration={drillReg} windowMinutes={windowMinutes} />
+        </TabsContent>
+
         <TabsContent value="synthesis">
           <Card>
             <CardHeader>

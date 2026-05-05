@@ -54,6 +54,11 @@ const Index = () => {
           <DailyTriagePanel />
         </section>
 
+        {/* FORCE MULTIPLIERS — unified views, anomaly sweep, PageRank */}
+        <section>
+          <ForceMultiplierPanel />
+        </section>
+
         {/* POPULATION-SCALE RECLASSIFICATION — Top priority */}
         <section>
           <PopulationScaleAnalysis />

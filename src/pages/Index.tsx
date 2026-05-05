@@ -21,6 +21,7 @@ import { ArchiveDataMap } from "@/components/dashboard/ArchiveDataMap";
 import { PopulationScaleAnalysis } from "@/components/dashboard/PopulationScaleAnalysis";
 import { DailyTriagePanel } from "@/components/dashboard/DailyTriagePanel";
 import { ForceMultiplierPanel } from "@/components/dashboard/ForceMultiplierPanel";
+import { TableIntelligencePanel } from "@/components/dashboard/TableIntelligencePanel";
 
 const Index = () => {
   return (
@@ -53,6 +54,11 @@ const Index = () => {
         {/* DAILY TRIAGE — 1-page brief from 20M rows */}
         <section>
           <DailyTriagePanel />
+        </section>
+
+        {/* DISCOVERY LAYER — table catalog + entity resolution across 800 tables */}
+        <section>
+          <TableIntelligencePanel />
         </section>
 
         {/* FORCE MULTIPLIERS — unified views, anomaly sweep, PageRank */}

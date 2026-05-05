@@ -1,0 +1,205 @@
+// Table Intelligence Catalog — Phase 1 of the Discovery Layer
+// Scans every table in Neon, classifies by domain, identifies entity columns,
+// and produces a searchable map. Also supports per-entity cross-table lookup.
+import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+// ---- Domain classification heuristics ----
+// Each domain has keyword patterns matched against table_name + column names.
+const DOMAINS: { domain: string; patterns: RegExp[] }[] = [
+  { domain: "flight",     patterns: [/flight|adsb|opensky|detection|track|telemetry|live_|aircraft_position|opensky/i] },
+  { domain: "aircraft",   patterns: [/aircraft|registry|tail|n_number|icao|faa_|fleet|operator/i] },
+  { domain: "biometric",  patterns: [/biometric|whoop|heart|hrv|stress|ecg|sleep|recovery|hr_/i] },
+  { domain: "legal",      patterns: [/legal|case|exhibit|statute|complaint|filing|rico|foia|violation/i] },
+  { domain: "financial",  patterns: [/shell|company|ein|sos|llc|corp|owner|registrant|funding|grant|contract|vendor/i] },
+  { domain: "ai_pattern", patterns: [/pattern|ai_|ml_|anomaly|score|confidence|cluster|embed|rag_|josiah/i] },
+  { domain: "kcso_mil",   patterns: [/kcso|sheriff|posse|military|navy|army|blackhawk|huey|nws|china_lake|national_guard/i] },
+  { domain: "geo",        patterns: [/oildale|residence|aoi|hq|location|address|geo_|lat|lng|coord/i] },
+  { domain: "audit",      patterns: [/audit|merkle|hash|chain|provenance|sha256|inventory|snapshot/i] },
+  { domain: "report",     patterns: [/report|brief|narrative|summary|sentinel|daily|witness/i] },
+];
+
+// Canonical entity column aliases — same identity, different names across tables
+const ENTITY_ALIASES: { canonical: string; aliases: string[] }[] = [
+  { canonical: "aircraft_id", aliases: ["icao24","icao","registration","tail_number","tail","n_number","linked_aircraft","linked_aircraft_tail","aircraft_id","reg","callsign"] },
+  { canonical: "company_id",  aliases: ["company_name","ein","entity_name","registrant_name","operator","operator_name","llc_name","shell_name"] },
+  { canonical: "person_id",   aliases: ["person","name","officer","agent","pilot","owner_name"] },
+  { canonical: "case_id",     aliases: ["case_id","case_code","exhibit_id","statute","violation_id"] },
+  { canonical: "geo",         aliases: ["lat","latitude","lng","longitude","geo_lat","geo_lng"] },
+  { canonical: "time",        aliases: ["timestamp","ts","observed_at","event_timestamp","created_at","scraped_at","first_seen","last_seen"] },
+];
+
+function classifyDomain(tableName: string, columns: string[]): string[] {
+  const haystack = (tableName + " " + columns.join(" ")).toLowerCase();
+  const matches: string[] = [];
+  for (const d of DOMAINS) {
+    if (d.patterns.some((p) => p.test(haystack))) matches.push(d.domain);
+  }
+  return matches.length ? matches : ["uncategorized"];
+}
+
+function detectEntities(columns: string[]): { canonical: string; column: string }[] {
+  const found: { canonical: string; column: string }[] = [];
+  const lower = columns.map((c) => c.toLowerCase());
+  for (const e of ENTITY_ALIASES) {
+    for (const a of e.aliases) {
+      const idx = lower.findIndex((c) => c === a || c.endsWith("_" + a));
+      if (idx >= 0) {
+        found.push({ canonical: e.canonical, column: columns[idx] });
+        break;
+      }
+    }
+  }
+  return found;
+}
+
+function qualityScore(rowCount: number, hasEntity: boolean, domains: string[]): "high" | "medium" | "low" {
+  // Small, manually-curated tables with strong entity columns are HIGH value
+  if (hasEntity && rowCount > 0 && rowCount < 5000) return "high";
+  if (hasEntity && domains.some((d) => ["legal","financial","kcso_mil","biometric"].includes(d))) return "high";
+  if (rowCount === 0) return "low";
+  return "medium";
+}
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  const url = Deno.env.get("NEON_DATABASE_URL");
+  if (!url) return new Response(JSON.stringify({ error: "NEON_DATABASE_URL not set" }), { status: 500, headers: corsHeaders });
+
+  const sql = postgres(url, { max: 1, idle_timeout: 20, connect_timeout: 30, prepare: false });
+
+  try {
+    const body = req.method === "POST" ? await req.json().catch(() => ({})) : {};
+    const action = body.action || "buildCatalog";
+
+    if (action === "buildCatalog") {
+      // 1. Pull every table + columns from public + legacy schemas
+      const cols = await sql`
+        SELECT table_schema, table_name, column_name, data_type
+        FROM information_schema.columns
+        WHERE table_schema NOT IN ('pg_catalog','information_schema','auth','storage','realtime','supabase_functions','vault','extensions','net','graphql','graphql_public')
+        ORDER BY table_schema, table_name, ordinal_position
+      `;
+      // 2. Pull row count estimates
+      const counts = await sql`
+        SELECT n.nspname AS schema, c.relname AS table, GREATEST(c.reltuples,0)::bigint AS rows
+        FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+        WHERE c.relkind='r' AND n.nspname NOT IN ('pg_catalog','information_schema','auth','storage','realtime','supabase_functions','vault','extensions','net','graphql','graphql_public')
+      `;
+      const countMap = new Map<string, number>();
+      for (const r of counts) countMap.set(`${r.schema}.${r.table}`, Number(r.rows));
+
+      // 3. Group columns by table
+      const byTable = new Map<string, { schema: string; table: string; columns: string[] }>();
+      for (const c of cols) {
+        const key = `${c.table_schema}.${c.table_name}`;
+        if (!byTable.has(key)) byTable.set(key, { schema: c.table_schema, table: c.table_name, columns: [] });
+        byTable.get(key)!.columns.push(c.column_name);
+      }
+
+      // 4. Build catalog entries
+      const catalog = [];
+      const domainCounts: Record<string, number> = {};
+      const entityIndex: Record<string, { table: string; column: string; rows: number }[]> = {};
+
+      for (const [key, t] of byTable) {
+        const rows = countMap.get(key) ?? 0;
+        const domains = classifyDomain(t.table, t.columns);
+        const entities = detectEntities(t.columns);
+        const quality = qualityScore(rows, entities.length > 0, domains);
+
+        catalog.push({
+          schema: t.schema, table: t.table, full_name: key,
+          row_count: rows, column_count: t.columns.length,
+          domains, entities, quality,
+          sample_columns: t.columns.slice(0, 10),
+        });
+
+        for (const d of domains) domainCounts[d] = (domainCounts[d] ?? 0) + 1;
+        for (const e of entities) {
+          if (!entityIndex[e.canonical]) entityIndex[e.canonical] = [];
+          entityIndex[e.canonical].push({ table: key, column: e.column, rows });
+        }
+      }
+
+      catalog.sort((a, b) => {
+        const qOrd = { high: 0, medium: 1, low: 2 };
+        if (qOrd[a.quality] !== qOrd[b.quality]) return qOrd[a.quality] - qOrd[b.quality];
+        return b.row_count - a.row_count;
+      });
+
+      return new Response(JSON.stringify({
+        scanned_at: new Date().toISOString(),
+        summary: {
+          total_tables: catalog.length,
+          high_quality: catalog.filter((c) => c.quality === "high").length,
+          medium_quality: catalog.filter((c) => c.quality === "medium").length,
+          low_quality: catalog.filter((c) => c.quality === "low").length,
+          domain_counts: domainCounts,
+          canonical_entities: Object.fromEntries(Object.entries(entityIndex).map(([k, v]) => [k, v.length])),
+        },
+        catalog,
+        entity_index: entityIndex,
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    if (action === "findEntity") {
+      // Cross-table lookup for a single identifier (e.g. "N229AM")
+      const term = String(body.term ?? "").trim();
+      if (!term) return new Response(JSON.stringify({ error: "term required" }), { status: 400, headers: corsHeaders });
+
+      // Re-derive entity column map quickly
+      const cols = await sql`
+        SELECT table_schema, table_name, column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+      `;
+      const byTable = new Map<string, string[]>();
+      for (const c of cols) {
+        const key = `${c.table_schema}.${c.table_name}`;
+        if (!byTable.has(key)) byTable.set(key, []);
+        byTable.get(key)!.push(c.column_name);
+      }
+
+      const aircraftAliases = ENTITY_ALIASES.find((e) => e.canonical === "aircraft_id")!.aliases;
+      const targets: { table: string; column: string }[] = [];
+      for (const [key, cols] of byTable) {
+        for (const col of cols) {
+          if (aircraftAliases.includes(col.toLowerCase())) targets.push({ table: key, column: col });
+        }
+      }
+
+      // For each target, count matches (cap to avoid runaway)
+      const hits: any[] = [];
+      const upperTerm = term.toUpperCase();
+      const lowerTerm = term.toLowerCase();
+      for (const t of targets.slice(0, 200)) {
+        try {
+          const q = `SELECT COUNT(*)::int AS n FROM ${t.table} WHERE UPPER("${t.column}"::text) = $1 OR LOWER("${t.column}"::text) = $2 LIMIT 1`;
+          const r = await sql.unsafe(q, [upperTerm, lowerTerm]);
+          const n = Number(r[0]?.n ?? 0);
+          if (n > 0) hits.push({ table: t.table, column: t.column, matches: n });
+        } catch (_) { /* skip incompatible types */ }
+      }
+      hits.sort((a, b) => b.matches - a.matches);
+
+      return new Response(JSON.stringify({
+        term, total_tables_with_hits: hits.length,
+        total_records_across_db: hits.reduce((s, h) => s + h.matches, 0),
+        hits,
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    return new Response(JSON.stringify({ error: "unknown action" }), { status: 400, headers: corsHeaders });
+  } catch (e) {
+    return new Response(JSON.stringify({ error: e instanceof Error ? e.message : String(e) }), {
+      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  } finally {
+    await sql.end();
+  }
+});

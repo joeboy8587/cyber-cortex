@@ -152,43 +152,53 @@ Deno.serve(async (req) => {
       const term = String(body.term ?? "").trim();
       if (!term) return new Response(JSON.stringify({ error: "term required" }), { status: 400, headers: corsHeaders });
 
-      // Re-derive entity column map quickly
+      // Pull columns + row estimates to skip mega-tables that would time out
       const cols = await sql`
-        SELECT table_schema, table_name, column_name
-        FROM information_schema.columns
-        WHERE table_schema = 'public'
+        SELECT c.table_schema, c.table_name, c.column_name,
+               COALESCE(pc.reltuples, 0)::bigint AS rows
+        FROM information_schema.columns c
+        LEFT JOIN pg_namespace pn ON pn.nspname = c.table_schema
+        LEFT JOIN pg_class pc ON pc.relname = c.table_name AND pc.relnamespace = pn.oid AND pc.relkind = 'r'
+        WHERE c.table_schema NOT IN ('pg_catalog','information_schema','auth','storage','realtime','supabase_functions','vault','extensions','net','graphql','graphql_public')
       `;
-      const byTable = new Map<string, string[]>();
-      for (const c of cols) {
-        const key = `${c.table_schema}.${c.table_name}`;
-        if (!byTable.has(key)) byTable.set(key, []);
-        byTable.get(key)!.push(c.column_name);
-      }
 
       const aircraftAliases = ENTITY_ALIASES.find((e) => e.canonical === "aircraft_id")!.aliases;
-      const targets: { table: string; column: string }[] = [];
-      for (const [key, cols] of byTable) {
-        for (const col of cols) {
-          if (aircraftAliases.includes(col.toLowerCase())) targets.push({ table: key, column: col });
-        }
+      const MAX_ROWS = Number(body.max_rows ?? 2_000_000); // skip tables larger than this
+      const targets: { table: string; column: string; rows: number }[] = [];
+      for (const c of cols) {
+        if (!aircraftAliases.includes(c.column_name.toLowerCase())) continue;
+        const rows = Number(c.rows ?? 0);
+        if (rows > MAX_ROWS) continue;
+        targets.push({ table: `"${c.table_schema}"."${c.table_name}"`, column: c.column_name, rows });
       }
 
-      // For each target, count matches (cap to avoid runaway)
-      const hits: any[] = [];
+      // Parallelize with a per-statement timeout so one bad table can't hang us
       const upperTerm = term.toUpperCase();
-      const lowerTerm = term.toLowerCase();
-      for (const t of targets.slice(0, 200)) {
+      const variants = Array.from(new Set([term, upperTerm, term.toLowerCase()]));
+      const probe = async (t: { table: string; column: string; rows: number }) => {
         try {
-          const q = `SELECT COUNT(*)::int AS n FROM ${t.table} WHERE UPPER("${t.column}"::text) = $1 OR LOWER("${t.column}"::text) = $2 LIMIT 1`;
-          const r = await sql.unsafe(q, [upperTerm, lowerTerm]);
+          const q = `SET LOCAL statement_timeout = '4s'; SELECT COUNT(*)::int AS n FROM ${t.table} WHERE "${t.column}"::text = ANY($1::text[])`;
+          const r = await sql.unsafe(q, [variants]);
           const n = Number(r[0]?.n ?? 0);
-          if (n > 0) hits.push({ table: t.table, column: t.column, matches: n });
-        } catch (_) { /* skip incompatible types */ }
+          return n > 0 ? { table: t.table.replace(/"/g, ""), column: t.column, matches: n } : null;
+        } catch (_) { return null; }
+      };
+
+      // Run in batches of 20 to balance concurrency vs connection limits
+      const hits: any[] = [];
+      const BATCH = 20;
+      const slice = targets.slice(0, 300);
+      for (let i = 0; i < slice.length; i += BATCH) {
+        const results = await Promise.all(slice.slice(i, i + BATCH).map(probe));
+        for (const r of results) if (r) hits.push(r);
       }
       hits.sort((a, b) => b.matches - a.matches);
 
       return new Response(JSON.stringify({
-        term, total_tables_with_hits: hits.length,
+        term,
+        targets_probed: slice.length,
+        targets_skipped_too_large: targets.length === 0 ? 0 : Math.max(0, cols.filter((c: any) => aircraftAliases.includes(c.column_name.toLowerCase())).length - slice.length),
+        total_tables_with_hits: hits.length,
         total_records_across_db: hits.reduce((s, h) => s + h.matches, 0),
         hits,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });

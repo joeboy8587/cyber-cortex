@@ -280,12 +280,15 @@ serve(async (req) => {
                  taxonomy_tag AS tag
           FROM live_flight_detections_rows
           WHERE detection_timestamp IS NOT NULL AND latitude IS NOT NULL
+            AND detection_timestamp > NOW() - INTERVAL '180 days'
           UNION ALL
           SELECT 'biometric_monitoring', measurement_timestamp,
                  NULL::float8, NULL::float8,
                  'SELF'::text,
                  heart_rate::numeric, stress_level::numeric, NULL::text
-          FROM biometric_monitoring WHERE measurement_timestamp IS NOT NULL;
+          FROM biometric_monitoring
+          WHERE measurement_timestamp IS NOT NULL
+            AND measurement_timestamp > NOW() - INTERVAL '180 days';
           CREATE INDEX IF NOT EXISTS idx_mv_st_ts ON mv_spacetime(ts DESC);
           CREATE INDEX IF NOT EXISTS idx_mv_st_entity ON mv_spacetime(entity_id);
           CREATE INDEX IF NOT EXISTS idx_mv_st_geo ON mv_spacetime(lat, lng);

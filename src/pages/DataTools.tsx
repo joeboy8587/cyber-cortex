@@ -52,6 +52,11 @@ export default function DataTools() {
           </div>
         </div>
 
+        {/* XXB Unmasking Engine — attribute MLAT-only ghosts to known airframes */}
+        <section>
+          <XxbUnmaskPanel />
+        </section>
+
         {/* Phase 1: Forensic DB Inventory — safe, read-only audit */}
         <section>
           <ForensicDBInventory />

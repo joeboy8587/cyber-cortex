@@ -426,7 +426,8 @@ ${report.ai_synthesis ? `
                   {report?.violations.map((violation, idx) => (
                     <div 
                       key={idx} 
-                      className={`p-3 rounded-lg border ${
+                      onClick={() => { setDrillReg(violation.registration); setActiveTab('drilldown'); }}
+                      className={`p-3 rounded-lg border cursor-pointer hover:ring-1 hover:ring-primary/40 ${
                         violation.severity === 'critical' 
                           ? 'border-red-500/50 bg-red-500/10' 
                           : violation.severity === 'high'

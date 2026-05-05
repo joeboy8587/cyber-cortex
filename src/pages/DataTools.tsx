@@ -31,6 +31,7 @@ import { ArchiveConsolidationPanel } from "@/components/dashboard/ArchiveConsoli
 
 import { ChronologicalTimelineRebuilder } from "@/components/dashboard/ChronologicalTimelineRebuilder";
 import { ForensicDBInventory } from "@/components/dashboard/ForensicDBInventory";
+import { XxbUnmaskPanel } from "@/components/dashboard/XxbUnmaskPanel";
 
 export default function DataTools() {
   return (

@@ -250,27 +250,13 @@ serve(async (req) => {
       }
 
       case "createUnified": {
-        // Build the 3 foundation views that collapse 800 tables into 3 query surfaces.
-        console.log("Building unified foundation views (spacetime / entities / correlations)...");
-        const log: string[] = [];
-        const safeRun = async (label: string, q: string) => {
-          try { await sql!.unsafe(q); log.push(`✓ ${label}`); }
-          catch (e) { log.push(`✗ ${label}: ${(e as Error).message}`); }
-        };
-
-        // Discover candidate spacetime tables (have lat/lng + timestamp-ish col)
-        const spacetimeTables = await sql`
-          SELECT table_name FROM information_schema.columns
-          WHERE table_schema='public'
-            AND column_name IN ('latitude','lat','geo_lat')
-          GROUP BY table_name
-          HAVING COUNT(*) >= 1
-          LIMIT 200
-        `.catch(() => []);
-
-        // mv_spacetime — every record with (ts, lat, lng, entity_id, source_table)
-        await safeRun("mv_spacetime", `
+        // Build the 3 foundation views in the BACKGROUND so the gateway 150s
+        // limit doesn't kill us. Caller polls action=stats to see progress.
+        const buildSql = `
+          DROP MATERIALIZED VIEW IF EXISTS mv_correlations CASCADE;
+          DROP MATERIALIZED VIEW IF EXISTS mv_entities CASCADE;
           DROP MATERIALIZED VIEW IF EXISTS mv_spacetime CASCADE;
+
           CREATE MATERIALIZED VIEW mv_spacetime AS
           SELECT 'live_flight_detections_rows'::text AS source_table,
                  detection_timestamp AS ts,
@@ -280,23 +266,18 @@ serve(async (req) => {
                  taxonomy_tag AS tag
           FROM live_flight_detections_rows
           WHERE detection_timestamp IS NOT NULL AND latitude IS NOT NULL
-            AND detection_timestamp > NOW() - INTERVAL '180 days'
+            AND detection_timestamp > NOW() - INTERVAL '120 days'
           UNION ALL
           SELECT 'biometric_monitoring', measurement_timestamp,
-                 NULL::float8, NULL::float8,
-                 'SELF'::text,
+                 NULL::float8, NULL::float8, 'SELF'::text,
                  heart_rate::numeric, stress_level::numeric, NULL::text
           FROM biometric_monitoring
           WHERE measurement_timestamp IS NOT NULL
-            AND measurement_timestamp > NOW() - INTERVAL '180 days';
-          CREATE INDEX IF NOT EXISTS idx_mv_st_ts ON mv_spacetime(ts DESC);
-          CREATE INDEX IF NOT EXISTS idx_mv_st_entity ON mv_spacetime(entity_id);
-          CREATE INDEX IF NOT EXISTS idx_mv_st_geo ON mv_spacetime(lat, lng);
-        `);
+            AND measurement_timestamp > NOW() - INTERVAL '120 days';
+          CREATE INDEX idx_mv_st_ts ON mv_spacetime(ts DESC);
+          CREATE INDEX idx_mv_st_entity ON mv_spacetime(entity_id);
+          CREATE INDEX idx_mv_st_geo ON mv_spacetime(lat, lng);
 
-        // mv_entities — rollup per aircraft / call sign
-        await safeRun("mv_entities", `
-          DROP MATERIALIZED VIEW IF EXISTS mv_entities CASCADE;
           CREATE MATERIALIZED VIEW mv_entities AS
           SELECT entity_id,
                  COUNT(*)::int AS detections,
@@ -313,13 +294,9 @@ serve(async (req) => {
           FROM mv_spacetime
           WHERE entity_id IS NOT NULL AND entity_id <> 'SELF'
           GROUP BY entity_id;
-          CREATE INDEX IF NOT EXISTS idx_mv_ent_id ON mv_entities(entity_id);
-          CREATE INDEX IF NOT EXISTS idx_mv_ent_det ON mv_entities(detections DESC);
-        `);
+          CREATE INDEX idx_mv_ent_id ON mv_entities(entity_id);
+          CREATE INDEX idx_mv_ent_det ON mv_entities(detections DESC);
 
-        // mv_correlations — pre-joined biometric ↔ aircraft within ±5min
-        await safeRun("mv_correlations", `
-          DROP MATERIALIZED VIEW IF EXISTS mv_correlations CASCADE;
           CREATE MATERIALIZED VIEW mv_correlations AS
           SELECT b.measurement_timestamp AS bio_ts,
                  b.heart_rate, b.stress_level,
@@ -333,11 +310,30 @@ serve(async (req) => {
                         AND b.measurement_timestamp + INTERVAL '5 min'
           WHERE b.measurement_timestamp > NOW() - INTERVAL '120 days'
             AND (b.heart_rate >= 100 OR b.stress_level >= 60);
-          CREATE INDEX IF NOT EXISTS idx_mv_corr_ac ON mv_correlations(aircraft);
-          CREATE INDEX IF NOT EXISTS idx_mv_corr_ts ON mv_correlations(bio_ts DESC);
-        `);
+          CREATE INDEX idx_mv_corr_ac ON mv_correlations(aircraft);
+          CREATE INDEX idx_mv_corr_ts ON mv_correlations(bio_ts DESC);
+        `;
 
-        result = { ok: true, log, spacetime_candidates: spacetimeTables.length };
+        // Fire-and-forget background build (own connection, long timeout)
+        const bgBuild = async () => {
+          const bg = postgres(databaseUrl, { ssl: "require", max: 1, idle_timeout: 30, prepare: false, connect_timeout: 60 });
+          try {
+            await bg.unsafe(`SET statement_timeout = '1800000'`); // 30 min
+            console.log("[mv build] starting unified view construction…");
+            const t = Date.now();
+            await bg.unsafe(buildSql);
+            console.log(`[mv build] done in ${Math.round((Date.now() - t) / 1000)}s`);
+          } catch (e) {
+            console.error("[mv build] failed:", (e as Error).message);
+          } finally {
+            try { await bg.end(); } catch {}
+          }
+        };
+        // @ts-ignore EdgeRuntime is available in Supabase edge runtime
+        if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(bgBuild());
+        else bgBuild();
+
+        result = { ok: true, status: "build_started_in_background", poll: "POST {action:'stats'} to check progress" };
         break;
       }
 

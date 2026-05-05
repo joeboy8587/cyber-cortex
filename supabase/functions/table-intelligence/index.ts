@@ -209,8 +209,10 @@ Deno.serve(async (req) => {
 
       return new Response(JSON.stringify({
         term,
-        targets_probed: slice.length,
-        targets_skipped_too_large: targets.length === 0 ? 0 : Math.max(0, cols.filter((c: any) => aircraftAliases.includes(c.column_name.toLowerCase())).length - slice.length),
+        targets_probed: probed,
+        targets_skipped_too_large: Math.max(0, cols.filter((c: any) => aircraftAliases.includes(c.column_name.toLowerCase())).length - slice.length),
+        deadline_hit: Date.now() - startedAt > DEADLINE_MS,
+        elapsed_ms: Date.now() - startedAt,
         total_tables_with_hits: hits.length,
         total_records_across_db: hits.reduce((s, h) => s + h.matches, 0),
         hits,

@@ -6,8 +6,21 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+// KCSO operator-owned fleet — these are LAW ENFORCEMENT, never classify as shell
+const KCSO_FLEET_REGS = ['N912KC', 'N913KC', 'N957E', 'N597E', 'N788FA', 'N911KC', 'N914KC', 'N915KC'];
+const KCSO_OPERATOR_KEYWORDS = ['KERN COUNTY SHERIFF', 'KCSO', 'KERN CO SHERIFF', 'SHERIFF KERN'];
+
+function isKcsoAircraft(reg?: string, callsign?: string, ownerOperator?: string): boolean {
+  const r = String(reg || '').toUpperCase();
+  const c = String(callsign || '').toUpperCase();
+  const o = String(ownerOperator || '').toUpperCase();
+  if (KCSO_FLEET_REGS.some(k => r.includes(k) || c.includes(k))) return true;
+  if (KCSO_OPERATOR_KEYWORDS.some(k => o.includes(k))) return true;
+  return false;
+}
+
 const THREAT_SIGNATURES = {
-  kcsoFleet: ['N912KC', 'N913KC', 'N597E', 'N788FA'],
+  kcsoFleet: KCSO_FLEET_REGS,
   shellCompany: ['N790FA', 'N791FA', 'N789FA', 'N792FA'],
   medicalCover: ['N229AM', 'N230AM', 'N743AM'],
   icaoAnchors: ['ac9efd', 'a2027c', '24'],
@@ -289,8 +302,9 @@ serve(async (req) => {
       proactiveAlerts.push(`⚠️ KCSO FLEET ACTIVE: ${uniqueKCSO.join(', ')} detected.`);
     }
 
-    // ========== STEP 4: SHELL COMPANY ACTIVITY ==========
+    // ========== STEP 4: SHELL COMPANY ACTIVITY (KCSO aircraft excluded — they are operator-owned LE) ==========
     const shellActivity = recentDetections.filter((d: any) => {
+      if (isKcsoAircraft(d.registration, d.callsign, d.owner_operator)) return false;
       const regMatch = THREAT_SIGNATURES.shellCompany.some(reg => d.registration?.includes(reg) || d.callsign?.includes(reg));
       const ownOp = String(d.owner_operator || '').toUpperCase();
       const ownOpKeywordHits = SHELL_OWNOP_KEYWORDS.filter(kw => ownOp.includes(kw)).length;

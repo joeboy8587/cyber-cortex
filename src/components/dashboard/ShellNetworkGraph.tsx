@@ -54,6 +54,16 @@ const FALLBACK_ENTERPRISE: Array<{
 }> = [];
 
 
+// KCSO operator-owned fleet — never classify as shell
+const KCSO_FLEET_REGS = new Set(['N912KC', 'N913KC', 'N957E', 'N597E', 'N788FA', 'N911KC', 'N914KC', 'N915KC']);
+const KCSO_OPERATOR_KEYWORDS = ['KERN COUNTY SHERIFF', 'KCSO', 'KERN CO SHERIFF'];
+const isKcsoEntity = (name?: string) => {
+  const n = String(name || '').toUpperCase().replace(/\s+/g, '');
+  if (KCSO_FLEET_REGS.has(n)) return true;
+  const raw = String(name || '').toUpperCase();
+  return KCSO_OPERATOR_KEYWORDS.some(k => raw.includes(k));
+};
+
 export function ShellNetworkGraph() {
   const [isLoading, setIsLoading] = useState(false);
   const [networkData, setNetworkData] = useState<NetworkData | null>(null);
@@ -134,8 +144,9 @@ export function ShellNetworkGraph() {
         });
       });
 
-      // 1b. Add shell companies from shell_companies table
+      // 1b. Add shell companies from shell_companies table (skip KCSO operator-owned aircraft)
       shellCompanies.forEach((sc: any) => {
+        if (isKcsoEntity(sc.company_name)) return;
         const scId = (sc.company_name || '').toLowerCase().replace(/[\s\/]+/g, "_");
         if (!scId || nodeMap.has(scId)) return;
         addNode({
@@ -144,6 +155,16 @@ export function ShellNetworkGraph() {
           connections: 0, threatScore: parseInt(String(sc.risk_score || '70'))
         });
       });
+
+      // Ensure KCSO agency node exists so fleet links resolve
+      const kcsoAgencyId = "kcso_aviation_unit";
+      if (!nodeMap.has(kcsoAgencyId)) {
+        addNode({
+          id: kcsoAgencyId, name: "Kern County Sheriff Aviation Unit",
+          type: "agency", tier: 1, ricoIndicators: ["LAW_ENFORCEMENT_OPERATOR"],
+          connections: 0, threatScore: 70
+        });
+      }
 
       // 1c. Add KCSO fleet aircraft
       kcsoFleet.forEach((f: any) => {
@@ -171,19 +192,26 @@ export function ShellNetworkGraph() {
       // 2. Enrich from entity_registry (Supabase)
       const entities = entityResp.data || [];
       entities.forEach((e: any) => {
+        const isKcso = isKcsoEntity(e.canonical_identifier);
         const entityId = (e.canonical_identifier || "").toLowerCase().replace(/[\s\/]+/g, "_");
         if (entityId && !nodeMap.has(entityId)) {
+          const resolvedType: NetworkNode["type"] = isKcso
+            ? (KCSO_FLEET_REGS.has(String(e.canonical_identifier || '').toUpperCase().replace(/\s+/g, '')) ? "aircraft" : "agency")
+            : e.entity_type === "shell_company" ? "shell"
+            : e.entity_type === "agency" ? "agency"
+            : e.entity_type === "contractor" ? "contractor" : "individual";
           addNode({
             id: entityId,
             name: e.canonical_identifier,
-            type: e.entity_type === "shell_company" ? "shell" :
-                  e.entity_type === "agency" ? "agency" :
-                  e.entity_type === "contractor" ? "contractor" : "individual",
-            tier: e.entity_type === "shell_company" ? 2 : 3,
-            ricoIndicators: e.threat_classification ? [e.threat_classification] : [],
+            type: resolvedType,
+            tier: resolvedType === "aircraft" ? 4 : resolvedType === "shell" ? 2 : resolvedType === "agency" ? 1 : 3,
+            ricoIndicators: isKcso ? ["LAW_ENFORCEMENT_OPERATOR"] : (e.threat_classification ? [e.threat_classification] : []),
             connections: 0,
             threatScore: 50
           });
+          if (resolvedType === "aircraft" && isKcso) {
+            addLink("kcso_aviation_unit", entityId, "ownership", 0.95);
+          }
         }
       });
 

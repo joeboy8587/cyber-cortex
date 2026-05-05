@@ -7,8 +7,21 @@ const corsHeaders = {
 };
 
 // KCSO operator-owned fleet — these are LAW ENFORCEMENT, never classify as shell
-const KCSO_FLEET_REGS = ['N912KC', 'N913KC', 'N957E', 'N597E', 'N788FA', 'N911KC', 'N914KC', 'N915KC'];
+// NOTE: N788FA / N787FA / N791FA REMOVED from KCSO list — visually confirmed as FLYT Aviation
+// Cessna 172s (real fixed-wing, bimodal surveillance profile, not KCSO-owned).
+const KCSO_FLEET_REGS = ['N912KC', 'N913KC', 'N957E', 'N597E', 'N911KC', 'N914KC', 'N915KC'];
 const KCSO_OPERATOR_KEYWORDS = ['KERN COUNTY SHERIFF', 'KCSO', 'KERN CO SHERIFF', 'SHERIFF KERN'];
+
+// FLYT Aviation / ALF IX LLC fleet — visually confirmed real Cessna 172 fixed-wing.
+// These tails are NOT drones. They show a BIMODAL surveillance profile:
+// alternating sub-500ft loiter passes with normal 3,000–11,000ft transit legs.
+// Exempt from DRONE_SIGNATURE and ADSB_SPOOFING classifiers — flagged via BIMODAL_SURVEILLANCE only.
+const FLYT_FLEET_REGS = ['N787FA', 'N788FA', 'N789FA', 'N790FA', 'N791FA', 'N792FA'];
+function isFlytAircraft(reg?: string, callsign?: string): boolean {
+  const r = String(reg || '').toUpperCase();
+  const c = String(callsign || '').toUpperCase();
+  return FLYT_FLEET_REGS.some(k => r.includes(k) || c.includes(k));
+}
 
 function isKcsoAircraft(reg?: string, callsign?: string, ownerOperator?: string): boolean {
   const r = String(reg || '').toUpperCase();

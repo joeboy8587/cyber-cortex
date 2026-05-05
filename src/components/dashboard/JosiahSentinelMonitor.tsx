@@ -538,7 +538,9 @@ ${report.ai_synthesis ? `
                   )}
                   <div className="space-y-3">
                     {report?.countermeasures?.map((cm, idx) => (
-                      <div key={idx} className="p-4 rounded-lg border border-emerald-500/20 bg-emerald-500/5">
+                      <div key={idx}
+                        onClick={() => { setDrillReg(cm.registration); setActiveTab('drilldown'); }}
+                        className="p-4 rounded-lg border border-emerald-500/20 bg-emerald-500/5 cursor-pointer hover:ring-1 hover:ring-emerald-400/40">
                         <div className="flex items-start justify-between mb-2">
                           <div className="flex items-center gap-2">
                             <span className="font-mono font-bold">{cm.registration}</span>

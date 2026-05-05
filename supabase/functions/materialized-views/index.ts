@@ -25,7 +25,8 @@ serve(async (req) => {
   try {
     const { action, view } = await req.json();
     
-    sql = postgres(databaseUrl, { ssl: "require", max: 1, idle_timeout: 30 });
+    sql = postgres(databaseUrl, { ssl: "require", max: 1, idle_timeout: 30, prepare: false });
+    await sql.unsafe(`SET statement_timeout = '600000'`).catch(() => {});
 
     let result;
 
@@ -245,6 +246,94 @@ serve(async (req) => {
         const safeView = view.replace(/[^a-zA-Z0-9_]/g, "");
         await sql.unsafe(`DROP MATERIALIZED VIEW IF EXISTS ${safeView}`);
         result = { dropped: true, view: safeView };
+        break;
+      }
+
+      case "createUnified": {
+        // Build the 3 foundation views in the BACKGROUND so the gateway 150s
+        // limit doesn't kill us. Caller polls action=stats to see progress.
+        const buildSql = `
+          DROP MATERIALIZED VIEW IF EXISTS mv_correlations CASCADE;
+          DROP MATERIALIZED VIEW IF EXISTS mv_entities CASCADE;
+          DROP MATERIALIZED VIEW IF EXISTS mv_spacetime CASCADE;
+
+          CREATE MATERIALIZED VIEW mv_spacetime AS
+          SELECT 'live_flight_detections_rows'::text AS source_table,
+                 detection_timestamp AS ts,
+                 latitude::float8 AS lat, longitude::float8 AS lng,
+                 COALESCE(registration, icao_code, callsign) AS entity_id,
+                 altitude::numeric AS altitude, speed::numeric AS speed,
+                 taxonomy_tag AS tag
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp IS NOT NULL AND latitude IS NOT NULL
+            AND detection_timestamp > NOW() - INTERVAL '120 days'
+          UNION ALL
+          SELECT 'biometric_monitoring', measurement_timestamp,
+                 NULL::float8, NULL::float8, 'SELF'::text,
+                 heart_rate::numeric, stress_level::numeric, NULL::text
+          FROM biometric_monitoring
+          WHERE measurement_timestamp IS NOT NULL
+            AND measurement_timestamp > NOW() - INTERVAL '120 days';
+          CREATE INDEX idx_mv_st_ts ON mv_spacetime(ts DESC);
+          CREATE INDEX idx_mv_st_entity ON mv_spacetime(entity_id);
+          CREATE INDEX idx_mv_st_geo ON mv_spacetime(lat, lng);
+
+          CREATE MATERIALIZED VIEW mv_entities AS
+          SELECT entity_id,
+                 COUNT(*)::int AS detections,
+                 MIN(ts) AS first_seen, MAX(ts) AS last_seen,
+                 ROUND(AVG(altitude)::numeric, 0) AS avg_alt,
+                 MIN(altitude)::numeric AS min_alt,
+                 ROUND(AVG(speed)::numeric, 0) AS avg_spd,
+                 MIN(speed)::numeric AS min_spd,
+                 COUNT(*) FILTER (WHERE speed BETWEEN 1 AND 48)::int AS sub_stall_pings,
+                 COUNT(*) FILTER (WHERE altitude BETWEEN 1 AND 500)::int AS low_alt_pings,
+                 COUNT(*) FILTER (WHERE EXTRACT(HOUR FROM ts) BETWEEN 0 AND 5)::int AS night_pings,
+                 ARRAY_AGG(DISTINCT source_table) AS sources,
+                 ARRAY_AGG(DISTINCT tag) FILTER (WHERE tag IS NOT NULL) AS tags
+          FROM mv_spacetime
+          WHERE entity_id IS NOT NULL AND entity_id <> 'SELF'
+          GROUP BY entity_id;
+          CREATE INDEX idx_mv_ent_id ON mv_entities(entity_id);
+          CREATE INDEX idx_mv_ent_det ON mv_entities(detections DESC);
+
+          CREATE MATERIALIZED VIEW mv_correlations AS
+          SELECT b.measurement_timestamp AS bio_ts,
+                 b.heart_rate, b.stress_level,
+                 f.entity_id AS aircraft, f.altitude, f.speed,
+                 f.lat, f.lng, f.source_table,
+                 EXTRACT(EPOCH FROM (f.ts - b.measurement_timestamp))::int AS lag_sec
+          FROM biometric_monitoring b
+          JOIN mv_spacetime f
+            ON f.entity_id <> 'SELF'
+           AND f.ts BETWEEN b.measurement_timestamp - INTERVAL '5 min'
+                        AND b.measurement_timestamp + INTERVAL '5 min'
+          WHERE b.measurement_timestamp > NOW() - INTERVAL '120 days'
+            AND (b.heart_rate >= 100 OR b.stress_level >= 60);
+          CREATE INDEX idx_mv_corr_ac ON mv_correlations(aircraft);
+          CREATE INDEX idx_mv_corr_ts ON mv_correlations(bio_ts DESC);
+        `;
+
+        // Fire-and-forget background build (own connection, long timeout)
+        const bgBuild = async () => {
+          const bg = postgres(databaseUrl, { ssl: "require", max: 1, idle_timeout: 30, prepare: false, connect_timeout: 60 });
+          try {
+            await bg.unsafe(`SET statement_timeout = '1800000'`); // 30 min
+            console.log("[mv build] starting unified view construction…");
+            const t = Date.now();
+            await bg.unsafe(buildSql);
+            console.log(`[mv build] done in ${Math.round((Date.now() - t) / 1000)}s`);
+          } catch (e) {
+            console.error("[mv build] failed:", (e as Error).message);
+          } finally {
+            try { await bg.end(); } catch {}
+          }
+        };
+        // @ts-ignore EdgeRuntime is available in Supabase edge runtime
+        if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(bgBuild());
+        else bgBuild();
+
+        result = { ok: true, status: "build_started_in_background", poll: "POST {action:'stats'} to check progress" };
         break;
       }
 

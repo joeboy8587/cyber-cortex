@@ -20,6 +20,7 @@ import { EvidenceStitcher } from "@/components/dashboard/EvidenceStitcher";
 import { ArchiveDataMap } from "@/components/dashboard/ArchiveDataMap";
 import { PopulationScaleAnalysis } from "@/components/dashboard/PopulationScaleAnalysis";
 import { DailyTriagePanel } from "@/components/dashboard/DailyTriagePanel";
+import { ForceMultiplierPanel } from "@/components/dashboard/ForceMultiplierPanel";
 
 const Index = () => {
   return (
@@ -52,6 +53,11 @@ const Index = () => {
         {/* DAILY TRIAGE — 1-page brief from 20M rows */}
         <section>
           <DailyTriagePanel />
+        </section>
+
+        {/* FORCE MULTIPLIERS — unified views, anomaly sweep, PageRank */}
+        <section>
+          <ForceMultiplierPanel />
         </section>
 
         {/* POPULATION-SCALE RECLASSIFICATION — Top priority */}

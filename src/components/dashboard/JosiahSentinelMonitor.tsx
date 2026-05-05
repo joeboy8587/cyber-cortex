@@ -394,6 +394,10 @@ ${report.ai_synthesis ? `
             <TrendingUp className="h-4 w-4" />
             Learned Patterns
           </TabsTrigger>
+          <TabsTrigger value="drilldown" className="flex items-center gap-1">
+            <Plane className="h-4 w-4" />
+            Drill Down
+          </TabsTrigger>
           <TabsTrigger value="synthesis" className="flex items-center gap-1">
             <Brain className="h-4 w-4" />
             AI Synthesis

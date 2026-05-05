@@ -144,8 +144,9 @@ export function ShellNetworkGraph() {
         });
       });
 
-      // 1b. Add shell companies from shell_companies table
+      // 1b. Add shell companies from shell_companies table (skip KCSO operator-owned aircraft)
       shellCompanies.forEach((sc: any) => {
+        if (isKcsoEntity(sc.company_name)) return;
         const scId = (sc.company_name || '').toLowerCase().replace(/[\s\/]+/g, "_");
         if (!scId || nodeMap.has(scId)) return;
         addNode({
@@ -154,6 +155,16 @@ export function ShellNetworkGraph() {
           connections: 0, threatScore: parseInt(String(sc.risk_score || '70'))
         });
       });
+
+      // Ensure KCSO agency node exists so fleet links resolve
+      const kcsoAgencyId = "kcso_aviation_unit";
+      if (!nodeMap.has(kcsoAgencyId)) {
+        addNode({
+          id: kcsoAgencyId, name: "Kern County Sheriff Aviation Unit",
+          type: "agency", tier: 1, ricoIndicators: ["LAW_ENFORCEMENT_OPERATOR"],
+          connections: 0, threatScore: 70
+        });
+      }
 
       // 1c. Add KCSO fleet aircraft
       kcsoFleet.forEach((f: any) => {

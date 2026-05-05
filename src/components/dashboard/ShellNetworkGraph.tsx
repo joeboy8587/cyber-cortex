@@ -192,19 +192,26 @@ export function ShellNetworkGraph() {
       // 2. Enrich from entity_registry (Supabase)
       const entities = entityResp.data || [];
       entities.forEach((e: any) => {
+        const isKcso = isKcsoEntity(e.canonical_identifier);
         const entityId = (e.canonical_identifier || "").toLowerCase().replace(/[\s\/]+/g, "_");
         if (entityId && !nodeMap.has(entityId)) {
+          const resolvedType: NetworkNode["type"] = isKcso
+            ? (KCSO_FLEET_REGS.has(String(e.canonical_identifier || '').toUpperCase().replace(/\s+/g, '')) ? "aircraft" : "agency")
+            : e.entity_type === "shell_company" ? "shell"
+            : e.entity_type === "agency" ? "agency"
+            : e.entity_type === "contractor" ? "contractor" : "individual";
           addNode({
             id: entityId,
             name: e.canonical_identifier,
-            type: e.entity_type === "shell_company" ? "shell" :
-                  e.entity_type === "agency" ? "agency" :
-                  e.entity_type === "contractor" ? "contractor" : "individual",
-            tier: e.entity_type === "shell_company" ? 2 : 3,
-            ricoIndicators: e.threat_classification ? [e.threat_classification] : [],
+            type: resolvedType,
+            tier: resolvedType === "aircraft" ? 4 : resolvedType === "shell" ? 2 : resolvedType === "agency" ? 1 : 3,
+            ricoIndicators: isKcso ? ["LAW_ENFORCEMENT_OPERATOR"] : (e.threat_classification ? [e.threat_classification] : []),
             connections: 0,
             threatScore: 50
           });
+          if (resolvedType === "aircraft" && isKcso) {
+            addLink("kcso_aviation_unit", entityId, "ownership", 0.95);
+          }
         }
       });
 

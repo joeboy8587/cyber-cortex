@@ -177,14 +177,15 @@ Deno.serve(async (req) => {
 
       // Parallelize with a per-statement timeout so one bad table can't hang us
       const upperTerm = term.toUpperCase();
-      const variants = Array.from(new Set([term, upperTerm, term.toLowerCase()]));
+      const lowerTerm = term.toLowerCase();
+      const variants = Array.from(new Set([term, upperTerm, lowerTerm, upperTerm.replace(/^N/, ""), lowerTerm.replace(/^n/, "")]));
       const probe = async (t: { table: string; column: string; rows: number }) => {
         try {
-          const q = `SET LOCAL statement_timeout = '4s'; SELECT COUNT(*)::int AS n FROM ${t.table} WHERE "${t.column}"::text = ANY($1::text[])`;
+          const q = `SELECT COUNT(*)::int AS n FROM ${t.table} WHERE "${t.column}"::text ILIKE ANY($1::text[])`;
           const r = await sql.unsafe(q, [variants]);
           const n = Number(r[0]?.n ?? 0);
           return n > 0 ? { table: t.table.replace(/"/g, ""), column: t.column, matches: n } : null;
-        } catch (_) { return null; }
+        } catch (e) { console.error("probe err", t.table, t.column, e instanceof Error ? e.message : e); return null; }
       };
 
       // Run in batches of 20 to balance concurrency vs connection limits

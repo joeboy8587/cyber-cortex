@@ -71,8 +71,8 @@ Deno.serve(async (req) => {
   if (!url) return new Response(JSON.stringify({ error: "NEON_DATABASE_URL not set" }), { status: 500, headers: corsHeaders });
 
   const sql = postgres(url, {
-    max: 4, idle_timeout: 20, connect_timeout: 30, prepare: false,
-    connection: { statement_timeout: "5000" },
+    max: 8, idle_timeout: 20, connect_timeout: 10, prepare: false,
+    connection: { statement_timeout: "3000" },
   });
 
   try {

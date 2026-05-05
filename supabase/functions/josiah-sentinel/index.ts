@@ -7,8 +7,21 @@ const corsHeaders = {
 };
 
 // KCSO operator-owned fleet — these are LAW ENFORCEMENT, never classify as shell
-const KCSO_FLEET_REGS = ['N912KC', 'N913KC', 'N957E', 'N597E', 'N788FA', 'N911KC', 'N914KC', 'N915KC'];
+// NOTE: N788FA / N787FA / N791FA REMOVED from KCSO list — visually confirmed as FLYT Aviation
+// Cessna 172s (real fixed-wing, bimodal surveillance profile, not KCSO-owned).
+const KCSO_FLEET_REGS = ['N912KC', 'N913KC', 'N957E', 'N597E', 'N911KC', 'N914KC', 'N915KC'];
 const KCSO_OPERATOR_KEYWORDS = ['KERN COUNTY SHERIFF', 'KCSO', 'KERN CO SHERIFF', 'SHERIFF KERN'];
+
+// FLYT Aviation / ALF IX LLC fleet — visually confirmed real Cessna 172 fixed-wing.
+// These tails are NOT drones. They show a BIMODAL surveillance profile:
+// alternating sub-500ft loiter passes with normal 3,000–11,000ft transit legs.
+// Exempt from DRONE_SIGNATURE and ADSB_SPOOFING classifiers — flagged via BIMODAL_SURVEILLANCE only.
+const FLYT_FLEET_REGS = ['N787FA', 'N788FA', 'N789FA', 'N790FA', 'N791FA', 'N792FA'];
+function isFlytAircraft(reg?: string, callsign?: string): boolean {
+  const r = String(reg || '').toUpperCase();
+  const c = String(callsign || '').toUpperCase();
+  return FLYT_FLEET_REGS.some(k => r.includes(k) || c.includes(k));
+}
 
 function isKcsoAircraft(reg?: string, callsign?: string, ownerOperator?: string): boolean {
   const r = String(reg || '').toUpperCase();
@@ -377,6 +390,9 @@ serve(async (req) => {
       const alt = parseInt(d.altitude || '99999');
       const speed = parseFloat(d.speed || '0');
       const reg = d.registration || d.callsign || '';
+      // EXCLUSION: FLYT Aviation tails (N787FA/N788FA/N791FA etc.) are visually
+      // confirmed real Cessna 172s — bimodal profile, NOT drones.
+      if (isFlytAircraft(d.registration, d.callsign)) return false;
       if (THREAT_SIGNATURES.droneSignatures.knownDrones.includes(reg)) return true;
       if (alt > 0 && alt <= THREAT_SIGNATURES.droneSignatures.droneAltitudeMax && speed > 0 && speed < 120) return true;
       return false;
@@ -389,6 +405,47 @@ serve(async (req) => {
         details: `${droneSignatures.length} drone-profile detections from ${droneRegs.length} aircraft`,
         timestamp: new Date().toISOString(), relatedAircraft: droneRegs as string[]
       });
+    }
+
+    // ========== STEP 7.1b: BIMODAL SURVEILLANCE PROFILE ==========
+    // Real fixed-wing aircraft alternating sub-500ft loiter with normal 3,000ft+ transit.
+    // Smoking-gun signature: same tail flying both regimes within the same window.
+    // Threshold: ≥25% of detections sub-500ft AND ≥20% above 3,000ft (min 8 detections per tail).
+    {
+      const profile = new Map<string, { total: number; low: number; high: number; minAlt: number; maxAlt: number; lastSeen: string }>();
+      for (const d of recentDetections) {
+        const reg = (d.registration || d.callsign || '').toUpperCase();
+        if (!reg) continue;
+        const alt = Number(d.altitude || 0);
+        const p = profile.get(reg) || { total: 0, low: 0, high: 0, minAlt: Infinity, maxAlt: -Infinity, lastSeen: d.detection_timestamp };
+        p.total += 1;
+        if (alt > 0 && alt < 500) p.low += 1;
+        if (alt > 3000) p.high += 1;
+        if (alt > 0 && alt < p.minAlt) p.minAlt = alt;
+        if (alt > p.maxAlt) p.maxAlt = alt;
+        p.lastSeen = d.detection_timestamp || p.lastSeen;
+        profile.set(reg, p);
+      }
+      const bimodal: { reg: string; total: number; low: number; high: number; minAlt: number; maxAlt: number; lastSeen: string }[] = [];
+      for (const [reg, p] of profile) {
+        if (p.total < 8) continue;
+        const lowPct = p.low / p.total;
+        const highPct = p.high / p.total;
+        if (lowPct >= 0.25 && highPct >= 0.20) {
+          bimodal.push({ reg, ...p });
+        }
+      }
+      if (bimodal.length > 0) {
+        const regs = bimodal.map(b => b.reg);
+        const summary = bimodal.map(b => `${b.reg} (${b.low}/${b.total} <500ft + ${b.high}/${b.total} >3kft, range ${b.minAlt}–${b.maxAlt}ft)`).join('; ');
+        violations.push({
+          type: 'BIMODAL_SURVEILLANCE', severity: bimodal.length >= 2 ? 'critical' : 'high',
+          registration: regs.join(', '),
+          details: `${bimodal.length} aircraft with bimodal surveillance profile (real fixed-wing alternating sub-500ft loiter with 3kft+ transit): ${summary}`,
+          timestamp: new Date().toISOString(), relatedAircraft: regs
+        });
+        proactiveAlerts.push(`🛩️ BIMODAL SURVEILLANCE: ${regs.join(', ')} — real aircraft running loiter+transit dual-mode (NOT drone, NOT spoof — operational profile is the smoking gun).`);
+      }
     }
 
     // ========== STEP 7.2: GHOST NETWORK ==========

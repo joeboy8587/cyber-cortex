@@ -67,6 +67,8 @@ export function JosiahSentinelMonitor() {
   const [isAutoMonitor, setIsAutoMonitor] = useState(false);
   const [windowMinutes, setWindowMinutes] = useState(30);
   const [scanHistory, setScanHistory] = useState<SentinelReport[]>([]);
+  const [drillReg, setDrillReg] = useState<string>('');
+  const [activeTab, setActiveTab] = useState<string>('violations');
   const scanInFlightRef = useRef(false);
 
   const runScan = useCallback(async () => {

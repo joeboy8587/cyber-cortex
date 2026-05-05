@@ -302,8 +302,9 @@ serve(async (req) => {
       proactiveAlerts.push(`⚠️ KCSO FLEET ACTIVE: ${uniqueKCSO.join(', ')} detected.`);
     }
 
-    // ========== STEP 4: SHELL COMPANY ACTIVITY ==========
+    // ========== STEP 4: SHELL COMPANY ACTIVITY (KCSO aircraft excluded — they are operator-owned LE) ==========
     const shellActivity = recentDetections.filter((d: any) => {
+      if (isKcsoAircraft(d.registration, d.callsign, d.owner_operator)) return false;
       const regMatch = THREAT_SIGNATURES.shellCompany.some(reg => d.registration?.includes(reg) || d.callsign?.includes(reg));
       const ownOp = String(d.owner_operator || '').toUpperCase();
       const ownOpKeywordHits = SHELL_OWNOP_KEYWORDS.filter(kw => ownOp.includes(kw)).length;

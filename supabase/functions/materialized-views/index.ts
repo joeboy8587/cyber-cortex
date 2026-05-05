@@ -284,13 +284,7 @@ serve(async (req) => {
                  NULL::float8, NULL::float8,
                  'SELF'::text,
                  heart_rate::numeric, stress_level::numeric, NULL::text
-          FROM biometric_monitoring WHERE measurement_timestamp IS NOT NULL
-          UNION ALL
-          SELECT 'manual_flight_logs', observed_at,
-                 latitude::float8, longitude::float8,
-                 COALESCE(registration, icao24, callsign),
-                 altitude_ft::numeric, ground_speed_kts::numeric, behavior
-          FROM manual_flight_logs WHERE observed_at IS NOT NULL;
+          FROM biometric_monitoring WHERE measurement_timestamp IS NOT NULL;
           CREATE INDEX IF NOT EXISTS idx_mv_st_ts ON mv_spacetime(ts DESC);
           CREATE INDEX IF NOT EXISTS idx_mv_st_entity ON mv_spacetime(entity_id);
           CREATE INDEX IF NOT EXISTS idx_mv_st_geo ON mv_spacetime(lat, lng);

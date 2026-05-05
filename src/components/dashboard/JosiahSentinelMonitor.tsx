@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { SentinelDrillDown } from "./SentinelDrillDown";
 
 interface LiveViolation {
   type: string;
@@ -66,6 +67,8 @@ export function JosiahSentinelMonitor() {
   const [isAutoMonitor, setIsAutoMonitor] = useState(false);
   const [windowMinutes, setWindowMinutes] = useState(30);
   const [scanHistory, setScanHistory] = useState<SentinelReport[]>([]);
+  const [drillReg, setDrillReg] = useState<string>('');
+  const [activeTab, setActiveTab] = useState<string>('violations');
   const scanInFlightRef = useRef(false);
 
   const runScan = useCallback(async () => {
@@ -371,8 +374,8 @@ ${report.ai_synthesis ? `
       )}
 
       {/* Main Content Tabs */}
-      <Tabs defaultValue="violations" className="space-y-4">
-        <TabsList className="grid w-full grid-cols-5">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+        <TabsList className="grid w-full grid-cols-6">
           <TabsTrigger value="violations" className="flex items-center gap-1">
             <AlertTriangle className="h-4 w-4" />
             Live Violations
@@ -390,6 +393,10 @@ ${report.ai_synthesis ? `
           <TabsTrigger value="patterns" className="flex items-center gap-1">
             <TrendingUp className="h-4 w-4" />
             Learned Patterns
+          </TabsTrigger>
+          <TabsTrigger value="drilldown" className="flex items-center gap-1">
+            <Plane className="h-4 w-4" />
+            Drill Down
           </TabsTrigger>
           <TabsTrigger value="synthesis" className="flex items-center gap-1">
             <Brain className="h-4 w-4" />
@@ -419,7 +426,8 @@ ${report.ai_synthesis ? `
                   {report?.violations.map((violation, idx) => (
                     <div 
                       key={idx} 
-                      className={`p-3 rounded-lg border ${
+                      onClick={() => { setDrillReg(violation.registration); setActiveTab('drilldown'); }}
+                      className={`p-3 rounded-lg border cursor-pointer hover:ring-1 hover:ring-primary/40 ${
                         violation.severity === 'critical' 
                           ? 'border-red-500/50 bg-red-500/10' 
                           : violation.severity === 'high'
@@ -530,7 +538,9 @@ ${report.ai_synthesis ? `
                   )}
                   <div className="space-y-3">
                     {report?.countermeasures?.map((cm, idx) => (
-                      <div key={idx} className="p-4 rounded-lg border border-emerald-500/20 bg-emerald-500/5">
+                      <div key={idx}
+                        onClick={() => { setDrillReg(cm.registration); setActiveTab('drilldown'); }}
+                        className="p-4 rounded-lg border border-emerald-500/20 bg-emerald-500/5 cursor-pointer hover:ring-1 hover:ring-emerald-400/40">
                         <div className="flex items-start justify-between mb-2">
                           <div className="flex items-center gap-2">
                             <span className="font-mono font-bold">{cm.registration}</span>
@@ -619,6 +629,11 @@ ${report.ai_synthesis ? `
         </TabsContent>
 
         {/* AI Synthesis Tab */}
+        {/* Drill Down Tab */}
+        <TabsContent value="drilldown">
+          <SentinelDrillDown initialRegistration={drillReg} windowMinutes={windowMinutes} />
+        </TabsContent>
+
         <TabsContent value="synthesis">
           <Card>
             <CardHeader>

@@ -25,7 +25,8 @@ serve(async (req) => {
   try {
     const { action, view } = await req.json();
     
-    sql = postgres(databaseUrl, { ssl: "require", max: 1, idle_timeout: 30 });
+    sql = postgres(databaseUrl, { ssl: "require", max: 1, idle_timeout: 30, prepare: false });
+    await sql.unsafe(`SET statement_timeout = '600000'`).catch(() => {});
 
     let result;
 

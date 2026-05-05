@@ -9,6 +9,9 @@ verify_jwt = false
 [functions.neon-query]
 verify_jwt = false
 
+[functions.air-methods-forensics]
+verify_jwt = false
+
 [functions.legal-analysis]
 verify_jwt = false
 

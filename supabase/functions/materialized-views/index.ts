@@ -248,6 +248,101 @@ serve(async (req) => {
         break;
       }
 
+      case "createUnified": {
+        // Build the 3 foundation views that collapse 800 tables into 3 query surfaces.
+        console.log("Building unified foundation views (spacetime / entities / correlations)...");
+        const log: string[] = [];
+        const safeRun = async (label: string, q: string) => {
+          try { await sql!.unsafe(q); log.push(`✓ ${label}`); }
+          catch (e) { log.push(`✗ ${label}: ${(e as Error).message}`); }
+        };
+
+        // Discover candidate spacetime tables (have lat/lng + timestamp-ish col)
+        const spacetimeTables = await sql`
+          SELECT table_name FROM information_schema.columns
+          WHERE table_schema='public'
+            AND column_name IN ('latitude','lat','geo_lat')
+          GROUP BY table_name
+          HAVING COUNT(*) >= 1
+          LIMIT 200
+        `.catch(() => []);
+
+        // mv_spacetime — every record with (ts, lat, lng, entity_id, source_table)
+        await safeRun("mv_spacetime", `
+          DROP MATERIALIZED VIEW IF EXISTS mv_spacetime CASCADE;
+          CREATE MATERIALIZED VIEW mv_spacetime AS
+          SELECT 'live_flight_detections_rows'::text AS source_table,
+                 detection_timestamp AS ts,
+                 latitude::float8 AS lat, longitude::float8 AS lng,
+                 COALESCE(registration, icao_code, callsign) AS entity_id,
+                 altitude::numeric AS altitude, speed::numeric AS speed,
+                 taxonomy_tag AS tag
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp IS NOT NULL AND latitude IS NOT NULL
+          UNION ALL
+          SELECT 'biometric_monitoring', measurement_timestamp,
+                 NULL::float8, NULL::float8,
+                 'SELF'::text,
+                 heart_rate::numeric, stress_level::numeric, NULL::text
+          FROM biometric_monitoring WHERE measurement_timestamp IS NOT NULL
+          UNION ALL
+          SELECT 'manual_flight_logs', observed_at,
+                 latitude::float8, longitude::float8,
+                 COALESCE(registration, icao24, callsign),
+                 altitude_ft::numeric, ground_speed_kts::numeric, behavior
+          FROM manual_flight_logs WHERE observed_at IS NOT NULL;
+          CREATE INDEX IF NOT EXISTS idx_mv_st_ts ON mv_spacetime(ts DESC);
+          CREATE INDEX IF NOT EXISTS idx_mv_st_entity ON mv_spacetime(entity_id);
+          CREATE INDEX IF NOT EXISTS idx_mv_st_geo ON mv_spacetime(lat, lng);
+        `);
+
+        // mv_entities — rollup per aircraft / call sign
+        await safeRun("mv_entities", `
+          DROP MATERIALIZED VIEW IF EXISTS mv_entities CASCADE;
+          CREATE MATERIALIZED VIEW mv_entities AS
+          SELECT entity_id,
+                 COUNT(*)::int AS detections,
+                 MIN(ts) AS first_seen, MAX(ts) AS last_seen,
+                 ROUND(AVG(altitude)::numeric, 0) AS avg_alt,
+                 MIN(altitude)::numeric AS min_alt,
+                 ROUND(AVG(speed)::numeric, 0) AS avg_spd,
+                 MIN(speed)::numeric AS min_spd,
+                 COUNT(*) FILTER (WHERE speed BETWEEN 1 AND 48)::int AS sub_stall_pings,
+                 COUNT(*) FILTER (WHERE altitude BETWEEN 1 AND 500)::int AS low_alt_pings,
+                 COUNT(*) FILTER (WHERE EXTRACT(HOUR FROM ts) BETWEEN 0 AND 5)::int AS night_pings,
+                 ARRAY_AGG(DISTINCT source_table) AS sources,
+                 ARRAY_AGG(DISTINCT tag) FILTER (WHERE tag IS NOT NULL) AS tags
+          FROM mv_spacetime
+          WHERE entity_id IS NOT NULL AND entity_id <> 'SELF'
+          GROUP BY entity_id;
+          CREATE INDEX IF NOT EXISTS idx_mv_ent_id ON mv_entities(entity_id);
+          CREATE INDEX IF NOT EXISTS idx_mv_ent_det ON mv_entities(detections DESC);
+        `);
+
+        // mv_correlations — pre-joined biometric ↔ aircraft within ±5min
+        await safeRun("mv_correlations", `
+          DROP MATERIALIZED VIEW IF EXISTS mv_correlations CASCADE;
+          CREATE MATERIALIZED VIEW mv_correlations AS
+          SELECT b.measurement_timestamp AS bio_ts,
+                 b.heart_rate, b.stress_level,
+                 f.entity_id AS aircraft, f.altitude, f.speed,
+                 f.lat, f.lng, f.source_table,
+                 EXTRACT(EPOCH FROM (f.ts - b.measurement_timestamp))::int AS lag_sec
+          FROM biometric_monitoring b
+          JOIN mv_spacetime f
+            ON f.entity_id <> 'SELF'
+           AND f.ts BETWEEN b.measurement_timestamp - INTERVAL '5 min'
+                        AND b.measurement_timestamp + INTERVAL '5 min'
+          WHERE b.measurement_timestamp > NOW() - INTERVAL '120 days'
+            AND (b.heart_rate >= 100 OR b.stress_level >= 60);
+          CREATE INDEX IF NOT EXISTS idx_mv_corr_ac ON mv_correlations(aircraft);
+          CREATE INDEX IF NOT EXISTS idx_mv_corr_ts ON mv_correlations(bio_ts DESC);
+        `);
+
+        result = { ok: true, log, spacetime_candidates: spacetimeTables.length };
+        break;
+      }
+
       case "createPerformanceIndexes": {
         console.log("Creating performance indexes...");
         

@@ -160,9 +160,11 @@ serve(async (req) => {
 
     await sql.end();
 
-    // AI synthesis
+    // AI synthesis (skip with ?skipAi=1)
+    const url = new URL(req.url);
+    const skipAi = url.searchParams.get("skipAi") === "1";
     let aiAnalysis = null;
-    if (LOVABLE_API_KEY) {
+    if (LOVABLE_API_KEY && !skipAi) {
       try {
         const snap = JSON.stringify(results, null, 1).slice(0, 18000);
         const aiResp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {

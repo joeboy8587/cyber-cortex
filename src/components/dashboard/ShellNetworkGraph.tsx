@@ -54,6 +54,16 @@ const FALLBACK_ENTERPRISE: Array<{
 }> = [];
 
 
+// KCSO operator-owned fleet — never classify as shell
+const KCSO_FLEET_REGS = new Set(['N912KC', 'N913KC', 'N957E', 'N597E', 'N788FA', 'N911KC', 'N914KC', 'N915KC']);
+const KCSO_OPERATOR_KEYWORDS = ['KERN COUNTY SHERIFF', 'KCSO', 'KERN CO SHERIFF'];
+const isKcsoEntity = (name?: string) => {
+  const n = String(name || '').toUpperCase().replace(/\s+/g, '');
+  if (KCSO_FLEET_REGS.has(n)) return true;
+  const raw = String(name || '').toUpperCase();
+  return KCSO_OPERATOR_KEYWORDS.some(k => raw.includes(k));
+};
+
 export function ShellNetworkGraph() {
   const [isLoading, setIsLoading] = useState(false);
   const [networkData, setNetworkData] = useState<NetworkData | null>(null);

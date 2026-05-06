@@ -267,7 +267,56 @@ export function NullIcaoForensicPanel() {
           </div>
         )}
 
-        {!results && !loading && (
+        {driftResult && (
+          <div className={`p-3 rounded text-xs border ${driftResult.success ? 'bg-warning/10 border-warning/30 text-foreground' : 'bg-destructive/10 border-destructive/30 text-destructive'}`}>
+            {driftResult.success ? (
+              <div className="space-y-2">
+                <p className="font-bold text-warning">
+                  🔍 Column Drift {driftResult.mode === 'apply' ? 'Repair' : 'Audit'} —
+                  {' '}{Number(driftResult.totals?.audit || 0).toLocaleString()} drifted records detected
+                  {driftResult.mode === 'apply' && <> · {Number(driftResult.totals?.applied || 0).toLocaleString()} repaired</>}
+                </p>
+                {Object.entries(driftResult.tables || {}).map(([tbl, info]: any) => (
+                  <div key={tbl} className="border-l-2 border-warning/50 pl-2 space-y-0.5">
+                    <p className="font-mono text-[11px] font-bold">{tbl}</p>
+                    {info.skipped ? (
+                      <p className="text-muted-foreground italic">{info.skipped}</p>
+                    ) : (
+                      <>
+                        {Object.entries(info.audit || {}).map(([k, v]: any) => (
+                          <p key={k} className="text-[10px]">
+                            <span className="text-muted-foreground">{k}:</span>{' '}
+                            <span className="font-mono">{Number(v.count).toLocaleString()}</span>
+                            {v.samples?.length > 0 && (
+                              <span className="text-muted-foreground"> · e.g. {v.samples.slice(0, 3).join(', ')}</span>
+                            )}
+                          </p>
+                        ))}
+                        {driftResult.mode === 'apply' && info.applied && Object.keys(info.applied).length > 0 && (
+                          <div className="mt-1 pl-2 border-l border-primary/30">
+                            {Object.entries(info.applied).map(([k, v]: any) => (
+                              <p key={k} className="text-[10px] text-primary">
+                                ✓ {k}: <span className="font-mono">{Number(v).toLocaleString()}</span>
+                              </p>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                ))}
+                {driftResult.mode === 'audit' && (
+                  <p className="text-[10px] text-muted-foreground italic pt-1">
+                    Audit-only — no rows modified. Click "Apply Drift Repair" to commit fixes.
+                  </p>
+                )}
+              </div>
+            ) : (
+              <p><AlertTriangle className="w-3 h-3 inline mr-1" />{driftResult.error}</p>
+            )}
+          </div>
+        )}
+
           <div className="text-center py-12 text-muted-foreground space-y-2">
             <Ghost className="w-12 h-12 mx-auto opacity-30" />
             <p className="text-sm">Investigates detections with no ICAO24 transponder hex</p>

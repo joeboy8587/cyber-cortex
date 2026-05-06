@@ -785,6 +785,232 @@ export async function handleAction3(action: string, body: Record<string, any>, s
       }
     }
 
+    case 'layeredDeceptionScan': {
+      // Seven-layer deception detector — Kern AOI (35.20-35.60, -119.25 to -118.75)
+      // Layers: physics_violation, icao_registry_mismatch, icao_rotation, foreign_prefix,
+      //         transponder_mask, bimodal_profile, shell_ownership
+      try {
+        await sql`SET statement_timeout = '120s'`;
+        const timeWindow = body.timeWindow || '90 days';
+        const minLayers = parseInt(String(body.minLayers ?? '2'));
+        const writeFlags = body.writeFlags === true;
+
+        // L1 — Physics violations (impossible flight states): altitude=0 + speed=0 OR airborne+speed=0
+        const physicsRaw = await sql.unsafe(`
+          SELECT registration, icao_code,
+                 COUNT(*)::int as violations,
+                 MIN(detection_timestamp)::text as first_seen,
+                 MAX(detection_timestamp)::text as last_seen
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() - INTERVAL '${timeWindow}'
+            AND latitude BETWEEN 35.20 AND 35.60
+            AND longitude BETWEEN -119.25 AND -118.75
+            AND registration IS NOT NULL AND registration != ''
+            AND (
+              (COALESCE(altitude,0) = 0 AND COALESCE(speed,0) = 0)
+              OR (COALESCE(altitude,0) > 100 AND COALESCE(speed,0) = 0)
+              OR (COALESCE(speed,0) BETWEEN 0.1 AND 22 AND COALESCE(altitude,0) > 0)
+            )
+          GROUP BY registration, icao_code
+          HAVING COUNT(*) >= 2
+          ORDER BY violations DESC LIMIT 500
+        `);
+
+        // L2 — ICAO/Registry mismatch: detected hex differs from FAA-registered Mode S hex
+        const mismatchRaw = await sql.unsafe(`
+          WITH detected AS (
+            SELECT registration, LOWER(icao_code) as detected_hex, COUNT(*)::int as cnt
+            FROM live_flight_detections_rows
+            WHERE detection_timestamp > NOW() - INTERVAL '${timeWindow}'
+              AND latitude BETWEEN 35.20 AND 35.60
+              AND longitude BETWEEN -119.25 AND -118.75
+              AND registration ~ '^N[0-9]'
+              AND icao_code IS NOT NULL AND icao_code ~ '^[0-9a-fA-F]{6}$'
+            GROUP BY registration, LOWER(icao_code)
+          ),
+          reg AS (
+            SELECT UPPER(registration) as reg_n, LOWER(icao24) as registered_hex
+            FROM aircraft_registry_enriched
+            WHERE icao24 IS NOT NULL AND icao24 ~ '^[0-9a-fA-F]{6}$'
+          )
+          SELECT d.registration, d.detected_hex, r.registered_hex, d.cnt as detections
+          FROM detected d
+          JOIN reg r ON UPPER(d.registration) = r.reg_n
+          WHERE d.detected_hex != r.registered_hex
+          ORDER BY d.cnt DESC LIMIT 500
+        `);
+
+        // L3 — ICAO rotation (>2 hexes per N-number)
+        const rotationRaw = await sql.unsafe(`
+          SELECT registration, COUNT(DISTINCT LOWER(icao_code))::int as hex_count,
+                 ARRAY_AGG(DISTINCT LOWER(icao_code)) as hexes
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() - INTERVAL '${timeWindow}'
+            AND latitude BETWEEN 35.20 AND 35.60
+            AND longitude BETWEEN -119.25 AND -118.75
+            AND registration ~ '^N[0-9]'
+            AND icao_code ~ '^[0-9a-fA-F]{6}$'
+          GROUP BY registration
+          HAVING COUNT(DISTINCT LOWER(icao_code)) > 2
+          ORDER BY hex_count DESC LIMIT 200
+        `);
+
+        // L4 — Foreign-prefix tails appearing in Kern AOI
+        const foreignRaw = await sql.unsafe(`
+          SELECT registration, COUNT(*)::int as detections,
+                 ROUND(AVG(altitude::numeric)) as avg_alt,
+                 ROUND(100.0 * COUNT(*) FILTER (WHERE altitude::numeric BETWEEN 1 AND 500) / NULLIF(COUNT(*),0), 1) as pct_low
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() - INTERVAL '${timeWindow}'
+            AND latitude BETWEEN 35.20 AND 35.60
+            AND longitude BETWEEN -119.25 AND -118.75
+            AND registration ~ '^(VN-|JA|RP-|9M-|B-[0-9]|VH-|VT-|HL|F-|D-|G-)'
+          GROUP BY registration
+          HAVING COUNT(*) >= 3
+          ORDER BY detections DESC LIMIT 200
+        `);
+
+        // L5 — Transponder masking (null/empty hex+reg in AOI)
+        const maskedRaw = await sql.unsafe(`
+          SELECT COALESCE(NULLIF(registration,''), '~MASKED~') as registration, COUNT(*)::int as masked_events
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() - INTERVAL '${timeWindow}'
+            AND latitude BETWEEN 35.20 AND 35.60
+            AND longitude BETWEEN -119.25 AND -118.75
+            AND ((icao_code IS NULL OR icao_code = '') OR (registration IS NULL OR registration = ''))
+          GROUP BY 1 ORDER BY masked_events DESC LIMIT 200
+        `);
+
+        // L6 — Bimodal surveillance profile (significant low + significant high altitude bands)
+        const bimodalRaw = await sql.unsafe(`
+          SELECT registration,
+                 COUNT(*)::int as total,
+                 COUNT(*) FILTER (WHERE altitude::numeric BETWEEN 1 AND 1000)::int as low,
+                 COUNT(*) FILTER (WHERE altitude::numeric > 3000)::int as high
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() - INTERVAL '${timeWindow}'
+            AND latitude BETWEEN 35.20 AND 35.60
+            AND longitude BETWEEN -119.25 AND -118.75
+            AND registration ~ '^N[0-9]'
+            AND altitude::numeric > 0
+          GROUP BY registration
+          HAVING COUNT(*) >= 20
+             AND COUNT(*) FILTER (WHERE altitude::numeric BETWEEN 1 AND 1000) >= COUNT(*) * 0.30
+             AND COUNT(*) FILTER (WHERE altitude::numeric > 3000) >= COUNT(*) * 0.20
+          ORDER BY low DESC LIMIT 200
+        `);
+
+        // L7 — Shell ownership (FAA registry shows LLC/trustee in shell-prone states)
+        let shellRaw: any[] = [];
+        try {
+          shellRaw = await sql.unsafe(`
+            SELECT UPPER(registration) as registration, registrant_name, registrant_state
+            FROM aircraft_registry_enriched
+            WHERE registrant_name ~* '(LLC|TRUST|HOLDINGS|LEASING)'
+              AND (registrant_state IN ('DE','AK','MT','SD','WY','NV','OR') OR registrant_name ~* 'ALF IX|9K AIR|RESIDCO|CHRISTIANSEN')
+          `) as any[];
+        } catch (e) {
+          console.warn('shell ownership query failed:', (e as Error).message);
+        }
+        const shellSet = new Set((shellRaw as any[]).map(r => String(r.registration)));
+
+        // ---- Aggregate by registration ----
+        type Layer = 'physics_violation' | 'icao_registry_mismatch' | 'icao_rotation' | 'foreign_prefix' | 'transponder_mask' | 'bimodal_profile' | 'shell_ownership';
+        const agg = new Map<string, { layers: Set<Layer>; details: Record<string, any> }>();
+        const add = (reg: string, layer: Layer, detail: any) => {
+          const k = String(reg || '').toUpperCase();
+          if (!k) return;
+          if (!agg.has(k)) agg.set(k, { layers: new Set(), details: {} });
+          const e = agg.get(k)!;
+          e.layers.add(layer);
+          e.details[layer] = detail;
+        };
+
+        for (const r of physicsRaw as any[]) add(r.registration, 'physics_violation', { violations: r.violations, hex: r.icao_code, last_seen: r.last_seen });
+        for (const r of mismatchRaw as any[]) add(r.registration, 'icao_registry_mismatch', { detected: r.detected_hex, registered: r.registered_hex, detections: r.detections });
+        for (const r of rotationRaw as any[]) add(r.registration, 'icao_rotation', { hex_count: r.hex_count, hexes: r.hexes });
+        for (const r of foreignRaw as any[]) add(r.registration, 'foreign_prefix', { detections: r.detections, avg_alt: r.avg_alt, pct_low: r.pct_low });
+        for (const r of maskedRaw as any[]) {
+          if (r.registration && r.registration !== '~MASKED~') add(r.registration, 'transponder_mask', { events: r.masked_events });
+        }
+        for (const r of bimodalRaw as any[]) add(r.registration, 'bimodal_profile', { total: r.total, low: r.low, high: r.high });
+        for (const reg of shellSet) {
+          if (agg.has(reg)) add(reg, 'shell_ownership', { confirmed: true });
+        }
+
+        // Build layered table sorted by layer count desc
+        const layered = Array.from(agg.entries())
+          .map(([registration, v]) => ({
+            registration,
+            layer_count: v.layers.size,
+            layers: Array.from(v.layers),
+            details: v.details,
+            severity: v.layers.size >= 5 ? 'critical' : v.layers.size >= 3 ? 'high' : v.layers.size >= 2 ? 'medium' : 'low',
+          }))
+          .sort((a, b) => b.layer_count - a.layer_count);
+
+        const flagged = layered.filter(x => x.layer_count >= minLayers);
+
+        // Optional: write to watchtower_autonomous_flags via Supabase service role
+        let flagsWritten = 0;
+        if (writeFlags && flagged.length > 0) {
+          try {
+            const SUPABASE_URL = Deno.env.get('SUPABASE_URL');
+            const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+            if (SUPABASE_URL && SERVICE_KEY) {
+              const rows = flagged.slice(0, 200).map(f => ({
+                flag_type: 'LAYERED_DECEPTION',
+                severity: f.severity,
+                registration: f.registration,
+                description: `${f.layer_count} concealment tactics co-occurring: ${f.layers.join(', ')}`,
+                confidence_score: Math.min(0.5 + 0.1 * f.layer_count, 1.0),
+                evidence_summary: { layers: f.layers, details: f.details },
+                source_scan_id: `layered-${new Date().toISOString()}`,
+              }));
+              const resp = await fetch(`${SUPABASE_URL}/rest/v1/watchtower_autonomous_flags`, {
+                method: 'POST',
+                headers: {
+                  'apikey': SERVICE_KEY,
+                  'Authorization': `Bearer ${SERVICE_KEY}`,
+                  'Content-Type': 'application/json',
+                  'Prefer': 'return=minimal',
+                },
+                body: JSON.stringify(rows),
+              });
+              if (resp.ok) flagsWritten = rows.length;
+              else console.error('flag insert failed', await resp.text());
+            }
+          } catch (e) {
+            console.error('flag write error', e);
+          }
+        }
+
+        return {
+          success: true,
+          aoi: { lat: [35.20, 35.60], lng: [-119.25, -118.75] },
+          timeWindow,
+          minLayers,
+          counts: {
+            physics_violation: (physicsRaw as any[]).length,
+            icao_registry_mismatch: (mismatchRaw as any[]).length,
+            icao_rotation: (rotationRaw as any[]).length,
+            foreign_prefix: (foreignRaw as any[]).length,
+            transponder_mask: (maskedRaw as any[]).length,
+            bimodal_profile: (bimodalRaw as any[]).length,
+            shell_ownership: shellSet.size,
+            total_aircraft_with_any_layer: agg.size,
+            flagged_multi_layer: flagged.length,
+          },
+          layered: flagged.slice(0, 100),
+          flagsWritten,
+          scanTimestamp: new Date().toISOString(),
+        };
+      } catch (e) {
+        console.error('layeredDeceptionScan error:', e);
+        return { error: String((e as Error).message) };
+      }
+    }
+
     case 'droneInvestigationScan': {
       try {
         const timeWindow = body.timeWindow || '90 days';

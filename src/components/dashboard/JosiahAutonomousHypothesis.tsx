@@ -748,13 +748,13 @@ export function JosiahAutonomousHypothesis() {
 
       // Compile anomalies
       const detectedAnomalies: PatternAnomaly[] = [];
-      if (maskedAircraft.length > 0) {
+      if (trulyInvisible.length > 0) {
         detectedAnomalies.push({
-          type: 'INVISIBLE_FLEET',
-          description: 'KCSO aircraft with zero ADS-B detections',
-          count: maskedAircraft.length,
-          severity: 'critical',
-          aircraft: maskedAircraft.map((a: Record<string, unknown>) => a.registration as string)
+          type: 'KCSO_ADSB_GAP',
+          description: 'KCSO-listed tails with zero hits in our ADS-B archive (pending Mode-S cross-check)',
+          count: trulyInvisible.length,
+          severity: 'high',
+          aircraft: trulyInvisible.map((a: Record<string, unknown>) => a.registration as string)
         });
       }
       if (convergenceEvents.length > 10) {

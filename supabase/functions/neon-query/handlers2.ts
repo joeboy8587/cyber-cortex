@@ -942,9 +942,10 @@ export async function handleAction2(action: string, body: Record<string, any>, s
             } else {
               // ---- IN-PLACE MODE: live_flight_detections_rows ----
               tableRes.applied.mode = 'in_place';
+              tableRes.applied.phase = phase;
 
               // 2a) Swap hex-in-reg → icao_code
-              if (hasIcao) {
+              if (hasIcao && (phase === 'all' || phase === 'hex')) {
                 const swapHex = await sql.unsafe(`
                   UPDATE ${t}
                   SET icao_code = UPPER(registration),
@@ -957,7 +958,7 @@ export async function handleAction2(action: string, body: Record<string, any>, s
               }
 
               // 2b) Move N-numbers from icao_code → registration
-              if (hasIcao) {
+              if (hasIcao && (phase === 'all' || phase === 'nnumber')) {
                 const moveN = await sql.unsafe(`
                   UPDATE ${t}
                   SET registration = UPPER(icao_code),
@@ -971,16 +972,18 @@ export async function handleAction2(action: string, body: Record<string, any>, s
               }
 
               // 2c) Null out garbage/foreign callsign
-              const clearGarbage = await sql.unsafe(`
-                UPDATE ${t}
-                SET registration = NULL
-                WHERE registration ~* '${GARBAGE_RE}'
-                   OR registration ~ '${CALLSIGN_RE}'
-              `);
-              tableRes.applied.garbage_cleared = clearGarbage.count || 0;
+              if (phase === 'all' || phase === 'garbage') {
+                const clearGarbage = await sql.unsafe(`
+                  UPDATE ${t}
+                  SET registration = NULL
+                  WHERE registration ~* '${GARBAGE_RE}'
+                     OR registration ~ '${CALLSIGN_RE}'
+                `);
+                tableRes.applied.garbage_cleared = clearGarbage.count || 0;
+              }
 
               // 2d) Tag military IDs
-              if (hasTax) {
+              if (hasTax && (phase === 'all' || phase === 'military')) {
                 const tagMil = await sql.unsafe(`
                   UPDATE ${t}
                   SET taxonomy_tag = 'military_asset'

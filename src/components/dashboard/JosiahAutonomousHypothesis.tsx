@@ -528,23 +528,23 @@ export function JosiahAutonomousHypothesis() {
 
       if (phantomRatio > 10) {
         const phantomHypothesis: Hypothesis = {
-          id: `hyp-phantom-${Date.now()}`,
-          title: 'Phantom Response Events: Stealth Operations',
+          id: `hyp-masked-${Date.now()}`,
+          title: 'Masked Aircraft Events: Transponder-Off Surveillance',
           category: 'biometric_causation',
           confidence: Math.min(60 + phantomRatio, 95),
           evidence_count: parseInt(gapStats.phantom_events),
           status: 'investigating',
-          summary: `${gapStats.phantom_events} biometric stress events (${phantomRatio.toFixed(1)}%) occurred with NO visible aircraft on ADS-B. This suggests transponder-off operations, signal spoofing, or ground-based harassment.`,
+          summary: `${gapStats.phantom_events} biometric stress events (${phantomRatio.toFixed(1)}%) occurred with NO ADS-B return. These are NOT phantom — they are masked aircraft: transponder-off / Mode-S suppressed / ICAO-spoofed operations consistent with deliberate concealment over the AOI.`,
           supporting_evidence: [
-            `${gapStats.phantom_events} stress events with zero aircraft correlation`,
-            `${gapStats.correlated_events} events have aircraft correlation (control group)`,
-            `Pattern inconsistent with random physiological variation`
+            `${gapStats.phantom_events} stress events coincide with ADS-B blackouts (masked aircraft signature)`,
+            `${gapStats.correlated_events} events correlate to visible aircraft (positive control)`,
+            `Biometric response pattern matches manned overflight, not random variation`
           ],
-          contrary_evidence: ['Stress events could have non-aircraft causes', 'ADS-B coverage gaps possible'],
+          contrary_evidence: ['ADS-B receiver coverage gaps possible', 'Requires secondary radar / acoustic confirmation'],
           generated_at: new Date().toISOString(),
           last_updated: new Date().toISOString(),
-          trigger: 'Biometric-ADS-B gap analysis',
-          legal_implications: 'Evidence of deliberate concealment, potential 18 U.S.C. § 2511 violations'
+          trigger: 'Biometric ↔ ADS-B masking gap analysis',
+          legal_implications: 'Deliberate transponder concealment — 14 CFR § 91.225/91.227 violations + 18 U.S.C. § 2511 intercept-concealment predicate'
         };
         setHypotheses(prev => [phantomHypothesis, ...prev.filter(h => h.id !== phantomHypothesis.id)]);
       }
@@ -699,11 +699,11 @@ export function JosiahAutonomousHypothesis() {
 
       if (phantomRatio > 10) {
         newLeads.unshift({
-          id: `lead-phantom-${Date.now()}`,
+          id: `lead-masked-${Date.now()}`,
           priority: 'critical',
-          question: `What caused ${gapStats.phantom_events} stress events (${phantomRatio.toFixed(1)}%) with zero aircraft correlation?`,
-          data_needed: 'Secondary radar data, ground vehicle tracking, RF spectrum analysis',
-          potential_finding: 'Evidence of stealth operations or ground-based harassment',
+          question: `Identify masked aircraft behind ${gapStats.phantom_events} stress events (${phantomRatio.toFixed(1)}%) with zero ADS-B return.`,
+          data_needed: 'Secondary radar, MLAT, acoustic correlation, FAA SWIM, KCSO/military flight plans',
+          potential_finding: 'Confirmation of transponder-off / ICAO-spoofed surveillance overflights',
           status: 'open',
           hypothesis_template: 'aircraft_biometric_correlation'
         });

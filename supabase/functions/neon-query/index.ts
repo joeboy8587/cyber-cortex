@@ -71,6 +71,7 @@ const HANDLER3_ACTIONS = new Set([
   'getTableCategories',
   'spoofDetectionScan',
   'droneInvestigationScan',
+  'layeredDeceptionScan',
 ]);
 
 const HANDLER4_ACTIONS = new Set([

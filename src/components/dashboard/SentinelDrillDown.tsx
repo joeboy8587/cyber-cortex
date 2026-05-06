@@ -24,6 +24,15 @@ interface DetectionRow {
   threat_score: number | null;
 }
 
+interface SummaryRow {
+  total: string | number;
+  min_alt: string | number | null;
+  max_alt: string | number | null;
+  min_spd: string | number | null;
+  first: string | null;
+  last: string | null;
+}
+
 interface Props {
   initialRegistration?: string;
   windowMinutes?: number;
@@ -101,7 +110,7 @@ export function SentinelDrillDown({ initialRegistration = '', windowMinutes = 30
         WHERE ${baseWhere}
           ${summaryWhere}
       `);
-      const sum = extractNeonData<any>(sumRes)[0] || null;
+      const sum = extractNeonData<SummaryRow>(sumRes)[0] || null;
       setRows(dets);
       setQueryMode(mode);
       setSummary(sum ? {
@@ -113,8 +122,9 @@ export function SentinelDrillDown({ initialRegistration = '', windowMinutes = 30
         last: sum.last || null,
       } : null);
       if (dets.length === 0) toast.info(`No detections found for ${reg}`);
-    } catch (e: any) {
-      toast.error('Drill-down query failed', { description: e.message });
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Unknown query error';
+      toast.error('Drill-down query failed', { description: message });
     } finally {
       setLoading(false);
     }
@@ -132,10 +142,10 @@ export function SentinelDrillDown({ initialRegistration = '', windowMinutes = 30
 
   const exportCSV = () => {
     if (!rows.length) return;
-    const header = ['detection_timestamp','registration','icao24','callsign','altitude','speed','latitude','longitude','flagged','flagged_reasons','threat_score'];
+    const header: (keyof DetectionRow)[] = ['detection_timestamp','registration','icao24','callsign','altitude','speed','latitude','longitude','flagged','flagged_reasons','threat_score'];
     const csv = [header.join(',')].concat(
       rows.map(r => header.map(k => {
-        const v = (r as any)[k];
+        const v = r[k];
         if (v == null) return '';
         const s = String(v).replace(/"/g, '""');
         return /[",\n]/.test(s) ? `"${s}"` : s;

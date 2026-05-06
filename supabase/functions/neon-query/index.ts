@@ -46,6 +46,7 @@ const HANDLER2_ACTIONS = new Set([
   'getTopFlaggedAircraft',
   'getAnomalousHexCodes',
   'fixIcaoColumnMapping',
+  'fixColumnDrift',
   'getAircraftTrajectory',
   'getAltitudeViolations',
   'getViolationAircraft',

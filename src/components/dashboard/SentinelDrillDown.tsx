@@ -51,7 +51,7 @@ export function SentinelDrillDown({ initialRegistration = '', windowMinutes = 30
       const [detRes, sumRes] = await Promise.all([
         customQuery(`
           SELECT detection_timestamp, registration, icao24, callsign,
-                 altitude, ground_speed, latitude, longitude,
+                 altitude, speed, latitude, longitude,
                  flagged, flagged_reasons, threat_score
           FROM live_flight_detections_rows
           WHERE UPPER(registration) = '${reg.replace(/'/g, "''")}'
@@ -62,7 +62,7 @@ export function SentinelDrillDown({ initialRegistration = '', windowMinutes = 30
         customQuery(`
           SELECT COUNT(*) as total,
                  MIN(altitude) as min_alt, MAX(altitude) as max_alt,
-                 MIN(ground_speed) as min_spd,
+                 MIN(speed) as min_spd,
                  MIN(detection_timestamp) as first, MAX(detection_timestamp) as last
           FROM live_flight_detections_rows
           WHERE UPPER(registration) = '${reg.replace(/'/g, "''")}'
@@ -90,7 +90,7 @@ export function SentinelDrillDown({ initialRegistration = '', windowMinutes = 30
 
   const exportCSV = () => {
     if (!rows.length) return;
-    const header = ['detection_timestamp','registration','icao24','callsign','altitude','ground_speed','latitude','longitude','flagged','flagged_reasons','threat_score'];
+    const header = ['detection_timestamp','registration','icao24','callsign','altitude','speed','latitude','longitude','flagged','flagged_reasons','threat_score'];
     const csv = [header.join(',')].concat(
       rows.map(r => header.map(k => {
         const v = (r as any)[k];
@@ -191,7 +191,7 @@ export function SentinelDrillDown({ initialRegistration = '', windowMinutes = 30
                   <TableCell className="text-xs font-mono">{r.detection_timestamp?.slice(0,19) || '—'}</TableCell>
                   <TableCell className="text-xs font-mono">{r.callsign || '—'}</TableCell>
                   <TableCell className="text-xs font-mono">{r.altitude != null ? `${r.altitude}ft` : '—'}</TableCell>
-                  <TableCell className="text-xs font-mono">{r.ground_speed != null ? `${r.ground_speed}kts` : '—'}</TableCell>
+                  <TableCell className="text-xs font-mono">{r.speed != null ? `${r.speed}kts` : '—'}</TableCell>
                   <TableCell className="text-xs font-mono">
                     {r.latitude != null && r.longitude != null
                       ? `${Number(r.latitude).toFixed(4)}, ${Number(r.longitude).toFixed(4)}`

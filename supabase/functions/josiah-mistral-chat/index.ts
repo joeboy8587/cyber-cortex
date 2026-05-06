@@ -91,9 +91,10 @@ ENTERPRISE STRUCTURE (Top Tiers):
 ${enterprise.map((e: any) => `• Tier ${e.tier}: ${e.entity_name} - ${e.role}`).join('\n')}
 `;
         
-        await sql.end();
       } catch (dbErr) {
         console.error("Database context error:", dbErr);
+      } finally {
+        try { await sql.end({ timeout: 2 }); } catch { /* ignore */ }
       }
     }
 

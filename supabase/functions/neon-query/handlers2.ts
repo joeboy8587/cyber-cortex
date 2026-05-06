@@ -785,6 +785,9 @@ export async function handleAction2(action: string, body: Record<string, any>, s
     //   4) Military tail numbers (NN-NNNNN) misclassified as civilian
     case 'fixColumnDrift': {
       const mode = (body.mode === 'apply') ? 'apply' : 'audit';
+      // Optional: run a single repair phase per call to fit edge function timeout.
+      // Phases: 'hex' | 'nnumber' | 'garbage' | 'military' | 'all' (default)
+      const phase: string = (body.phase as string) || 'all';
       const tables: string[] = Array.isArray(body.tables) && body.tables.length
         ? body.tables
         : ['live_flight_detections_rows', 'unfilterd_detections', 'unfiltered_flights', 'unfiltered_aircraft_detections'];

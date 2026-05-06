@@ -317,6 +317,7 @@ export function NullIcaoForensicPanel() {
           </div>
         )}
 
+        {!results && !loading && (
           <div className="text-center py-12 text-muted-foreground space-y-2">
             <Ghost className="w-12 h-12 mx-auto opacity-30" />
             <p className="text-sm">Investigates detections with no ICAO24 transponder hex</p>

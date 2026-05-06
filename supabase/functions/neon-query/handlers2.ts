@@ -787,11 +787,13 @@ export async function handleAction2(action: string, body: Record<string, any>, s
       const mode = (body.mode === 'apply') ? 'apply' : 'audit';
       const tables: string[] = Array.isArray(body.tables) && body.tables.length
         ? body.tables
-        : ['live_flight_detections_rows', 'unfilterd_detections', 'evidence_flight_dump_20260103_sealed'];
+        : ['live_flight_detections_rows', 'unfilterd_detections', 'unfiltered_flights', 'unfiltered_aircraft_detections'];
 
       const SAFE_TABLES = new Set([
         'live_flight_detections_rows',
         'unfilterd_detections',
+        'unfiltered_flights',
+        'unfiltered_aircraft_detections',
         'evidence_flight_dump_20260103_sealed',
       ]);
 
@@ -809,10 +811,11 @@ export async function handleAction2(action: string, body: Record<string, any>, s
         for (const t of tables) {
           if (!SAFE_TABLES.has(t)) continue;
 
-          // Detect which columns this table actually has
+          // Detect which columns this table actually has (also confirms table exists)
           const cols = await sql.unsafe(
-            `SELECT column_name FROM information_schema.columns WHERE table_name = $1`, [t]
+            `SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name = $1`, [t]
           ) as any[];
+          if (cols.length === 0) { results.tables[t] = { skipped: 'table not found' }; continue; }
           const colSet = new Set(cols.map((c: any) => c.column_name));
           const hasIcao24 = colSet.has('icao24');
           const hasIcao   = colSet.has('icao_code');
@@ -822,51 +825,47 @@ export async function handleAction2(action: string, body: Record<string, any>, s
 
           const tableRes: any = { audit: {}, applied: {} };
 
-          // ============ 1. AUDIT (always run) ============
-          // 1a) Hex-in-Registration
-          const hexInReg = await sql.unsafe(`
-            SELECT COUNT(*)::int AS n,
-                   (array_agg(registration ORDER BY registration))[1:5] AS samples
-            FROM ${t}
-            WHERE registration ~ '${HEX_RE}'
-              AND registration !~ '${N_RE}'
+          // ============ 1. AUDIT (single combined query for performance) ============
+          // For huge tables (>1M rows), audit on a 100k-row recent slice to avoid timeout
+          const sizeRow = await sql.unsafe(
+            `SELECT COALESCE(reltuples,0)::bigint AS n FROM pg_class WHERE relname=$1`, [t]
+          ) as any[];
+          const tableSize = Number(sizeRow[0]?.n || 0);
+          const useSample = tableSize > 1_000_000;
+          const fromClause = useSample
+            ? `(SELECT registration${hasIcao ? ', icao_code' : ''}${hasTax ? ', taxonomy_tag' : ''} FROM ${t} LIMIT 200000) sub`
+            : t;
+
+          const combined = await sql.unsafe(`
+            SELECT
+              COUNT(*) FILTER (WHERE registration ~ '${HEX_RE}' AND registration !~ '${N_RE}')::int AS hex_n,
+              (array_agg(registration) FILTER (WHERE registration ~ '${HEX_RE}' AND registration !~ '${N_RE}'))[1:5] AS hex_s,
+              ${hasIcao
+                ? `COUNT(*) FILTER (WHERE icao_code ~ '${N_RE}')::int AS nicao_n,
+                   (array_agg(icao_code) FILTER (WHERE icao_code ~ '${N_RE}'))[1:5] AS nicao_s,`
+                : `0::int AS nicao_n, ARRAY[]::text[] AS nicao_s,`}
+              COUNT(*) FILTER (WHERE registration ~* '${GARBAGE_RE}' OR registration ~ '${CALLSIGN_RE}')::int AS garb_n,
+              (array_agg(DISTINCT registration) FILTER (WHERE registration ~* '${GARBAGE_RE}' OR registration ~ '${CALLSIGN_RE}'))[1:5] AS garb_s,
+              COUNT(*) FILTER (WHERE registration ~ '${MIL_RE}' ${hasTax ? `AND (taxonomy_tag IS NULL OR taxonomy_tag NOT LIKE '%military%')` : ''})::int AS mil_n,
+              (array_agg(DISTINCT registration) FILTER (WHERE registration ~ '${MIL_RE}' ${hasTax ? `AND (taxonomy_tag IS NULL OR taxonomy_tag NOT LIKE '%military%')` : ''}))[1:5] AS mil_s
+            FROM ${fromClause}
           `) as any[];
+          const r = combined[0] || {};
 
-          // 1b) N-number in icao_code
-          let nInIcao: any = [{ n: 0, samples: [] }];
-          if (hasIcao) {
-            nInIcao = await sql.unsafe(`
-              SELECT COUNT(*)::int AS n,
-                     (array_agg(icao_code ORDER BY icao_code))[1:5] AS samples
-              FROM ${t}
-              WHERE icao_code ~ '${N_RE}'
-            `) as any[];
-          }
-
-          // 1c) Garbage / callsign in registration
-          const garbageInReg = await sql.unsafe(`
-            SELECT COUNT(*)::int AS n,
-                   (array_agg(DISTINCT registration))[1:5] AS samples
-            FROM ${t}
-            WHERE registration ~* '${GARBAGE_RE}'
-               OR registration ~ '${CALLSIGN_RE}'
-          `) as any[];
-
-          // 1d) Military IDs misclassified
-          const milInReg = await sql.unsafe(`
-            SELECT COUNT(*)::int AS n,
-                   (array_agg(DISTINCT registration))[1:5] AS samples
-            FROM ${t}
-            WHERE registration ~ '${MIL_RE}'
-              ${hasTax ? `AND (taxonomy_tag IS NULL OR taxonomy_tag NOT LIKE '%military%')` : ''}
-          `) as any[];
-
-          tableRes.audit = {
-            hex_in_registration:     { count: hexInReg[0]?.n     || 0, samples: hexInReg[0]?.samples     || [] },
-            nnumber_in_icao_code:    { count: nInIcao[0]?.n      || 0, samples: nInIcao[0]?.samples      || [] },
-            garbage_in_registration: { count: garbageInReg[0]?.n || 0, samples: garbageInReg[0]?.samples || [] },
-            military_misclassified:  { count: milInReg[0]?.n     || 0, samples: milInReg[0]?.samples     || [] },
+          const parseArr = (v: any): string[] => {
+            if (Array.isArray(v)) return v;
+            if (typeof v === 'string' && v.startsWith('{') && v.endsWith('}')) {
+              return v.slice(1, -1).split(',').filter(Boolean).map(s => s.replace(/^"|"$/g, ''));
+            }
+            return [];
           };
+          tableRes.audit = {
+            hex_in_registration:     { count: r.hex_n   || 0, samples: parseArr(r.hex_s) },
+            nnumber_in_icao_code:    { count: r.nicao_n || 0, samples: parseArr(r.nicao_s) },
+            garbage_in_registration: { count: r.garb_n  || 0, samples: parseArr(r.garb_s) },
+            military_misclassified:  { count: r.mil_n   || 0, samples: parseArr(r.mil_s) },
+          };
+          tableRes.audit_method = useSample ? `sampled (200k of ${tableSize.toLocaleString()})` : 'full scan';
 
           // ============ 2. APPLY (only when requested) ============
           if (mode === 'apply') {

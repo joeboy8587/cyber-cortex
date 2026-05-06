@@ -285,7 +285,7 @@ ANALYSIS GUIDELINES:
 11. Maintain prosecutorial tone; tier every cited fact (HIGH/MED/LOW value).
 12. For TRO/injunction, cite irreparable harm from ongoing biometric collapses and class size.`;
 
-    console.log("Calling Lovable AI Gateway with openai/gpt-5.5...");
+    console.log("Calling Lovable AI Gateway with openai/gpt-5...");
 
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
@@ -294,14 +294,13 @@ ANALYSIS GUIDELINES:
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "openai/gpt-5.5",
+        model: "openai/gpt-5",
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: query }
         ],
         stream: true,
-        max_tokens: 16000,
-        reasoning: { effort: "high" },
+        max_completion_tokens: 16000,
       }),
     });
 

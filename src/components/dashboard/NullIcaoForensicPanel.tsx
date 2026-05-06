@@ -204,6 +204,14 @@ export function NullIcaoForensicPanel() {
             {backfilling ? <Loader2 className="w-3 h-3 animate-spin" /> : <Database className="w-3 h-3" />}
             {backfilling ? 'Backfilling...' : 'Backfill ICAOs'}
           </Button>
+          <Button onClick={() => runColumnDrift('audit')} disabled={driftLoading !== null || loading} size="sm" variant="outline" className="gap-2">
+            {driftLoading === 'audit' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Search className="w-3 h-3" />}
+            {driftLoading === 'audit' ? 'Auditing...' : 'Audit Column Drift'}
+          </Button>
+          <Button onClick={() => runColumnDrift('apply')} disabled={driftLoading !== null || loading} size="sm" variant="destructive" className="gap-2">
+            {driftLoading === 'apply' ? <Loader2 className="w-3 h-3 animate-spin" /> : <AlertTriangle className="w-3 h-3" />}
+            {driftLoading === 'apply' ? 'Repairing...' : 'Apply Drift Repair'}
+          </Button>
           <Button onClick={runScan} disabled={loading} size="sm" className="gap-2">
             {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Search className="w-3 h-3" />}
             {loading ? 'Scanning...' : 'Run Deep Scan'}

@@ -16,7 +16,7 @@ interface DetectionRow {
   icao24: string | null;
   callsign: string | null;
   altitude: number | null;
-  ground_speed: number | null;
+  speed: number | null;
   latitude: number | null;
   longitude: number | null;
   flagged: boolean | null;

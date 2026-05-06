@@ -811,10 +811,11 @@ export async function handleAction2(action: string, body: Record<string, any>, s
         for (const t of tables) {
           if (!SAFE_TABLES.has(t)) continue;
 
-          // Detect which columns this table actually has
+          // Detect which columns this table actually has (also confirms table exists)
           const cols = await sql.unsafe(
-            `SELECT column_name FROM information_schema.columns WHERE table_name = $1`, [t]
+            `SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name = $1`, [t]
           ) as any[];
+          if (cols.length === 0) { results.tables[t] = { skipped: 'table not found' }; continue; }
           const colSet = new Set(cols.map((c: any) => c.column_name));
           const hasIcao24 = colSet.has('icao24');
           const hasIcao   = colSet.has('icao_code');

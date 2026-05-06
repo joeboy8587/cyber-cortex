@@ -152,7 +152,15 @@ serve(async (req) => {
 
   let sql;
   try {
-    sql = postgres(databaseUrl, { ssl: 'require', max: 1 });
+    sql = postgres(databaseUrl, {
+      ssl: 'require',
+      max: 1,
+      idle_timeout: 20,
+      max_lifetime: 60 * 5,
+      connection: {
+        statement_timeout: 240_000, // 240s — bulk pg_class scans on 500+ tables can be slow
+      },
+    });
     const { action, params = {} } = await req.json();
 
     switch (action) {

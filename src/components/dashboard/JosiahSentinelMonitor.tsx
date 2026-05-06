@@ -68,6 +68,7 @@ export function JosiahSentinelMonitor() {
   const [windowMinutes, setWindowMinutes] = useState(30);
   const [scanHistory, setScanHistory] = useState<SentinelReport[]>([]);
   const [drillReg, setDrillReg] = useState<string>('');
+  const [drillTimestamp, setDrillTimestamp] = useState<string | undefined>();
   const [activeTab, setActiveTab] = useState<string>('violations');
   const scanInFlightRef = useRef(false);
 
@@ -426,7 +427,7 @@ ${report.ai_synthesis ? `
                   {report?.violations.map((violation, idx) => (
                     <div 
                       key={idx} 
-                      onClick={() => { setDrillReg(violation.registration); setActiveTab('drilldown'); }}
+                      onClick={() => { setDrillReg(violation.registration); setDrillTimestamp(violation.timestamp); setActiveTab('drilldown'); }}
                       className={`p-3 rounded-lg border cursor-pointer hover:ring-1 hover:ring-primary/40 ${
                         violation.severity === 'critical' 
                           ? 'border-red-500/50 bg-red-500/10' 
@@ -631,7 +632,7 @@ ${report.ai_synthesis ? `
         {/* AI Synthesis Tab */}
         {/* Drill Down Tab */}
         <TabsContent value="drilldown">
-          <SentinelDrillDown initialRegistration={drillReg} windowMinutes={windowMinutes} />
+          <SentinelDrillDown initialRegistration={drillReg} windowMinutes={windowMinutes} referenceTimestamp={drillTimestamp} />
         </TabsContent>
 
         <TabsContent value="synthesis">

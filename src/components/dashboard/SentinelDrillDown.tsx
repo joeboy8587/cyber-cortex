@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -24,54 +24,95 @@ interface DetectionRow {
   threat_score: number | null;
 }
 
+interface SummaryRow {
+  total: string | number;
+  min_alt: string | number | null;
+  max_alt: string | number | null;
+  min_spd: string | number | null;
+  first: string | null;
+  last: string | null;
+}
+
 interface Props {
   initialRegistration?: string;
   windowMinutes?: number;
+  referenceTimestamp?: string;
 }
 
-export function SentinelDrillDown({ initialRegistration = '', windowMinutes = 30 }: Props) {
+function normalizeRegistration(value: string) {
+  const upper = value.trim().toUpperCase();
+  if (!upper || /^\d+\s+AIRCRAFT$/.test(upper)) return '';
+  return upper.split(',')[0].trim();
+}
+
+function escapeSqlLiteral(value: string) {
+  return value.replace(/'/g, "''");
+}
+
+export function SentinelDrillDown({ initialRegistration = '', windowMinutes = 30, referenceTimestamp }: Props) {
   const { customQuery } = useNeonDatabase();
-  const [registration, setRegistration] = useState(initialRegistration);
+  const [registration, setRegistration] = useState(normalizeRegistration(initialRegistration));
   const [hours, setHours] = useState(24);
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState<DetectionRow[]>([]);
+  const [queryMode, setQueryMode] = useState<string>('');
+  const lastAutoRunKey = useRef('');
   const [summary, setSummary] = useState<{
     total: number; min_alt: number | null; max_alt: number | null;
     min_spd: number | null; first: string | null; last: string | null;
   } | null>(null);
 
-  const run = useCallback(async (override?: string) => {
-    const reg = (override ?? registration).trim().toUpperCase();
+  const run = useCallback(async (override?: string, timestampOverride?: string) => {
+    const reg = normalizeRegistration(override ?? registration);
     if (!reg) {
       toast.error('Enter a registration (e.g. N912KC)');
       return;
     }
+    setRegistration(reg);
     setLoading(true);
     try {
-      const [detRes, sumRes] = await Promise.all([
-        customQuery(`
-          SELECT detection_timestamp, registration, icao24, callsign,
+      const safeReg = escapeSqlLiteral(reg);
+      const safeHours = Math.max(1, Math.min(2160, Number(hours) || 24));
+      const refTs = timestampOverride || referenceTimestamp;
+      const timeClause = refTs
+        ? `AND detection_timestamp BETWEEN TIMESTAMP '${escapeSqlLiteral(new Date(refTs).toISOString())}' - INTERVAL '${safeHours} hours' AND TIMESTAMP '${escapeSqlLiteral(new Date(refTs).toISOString())}' + INTERVAL '2 hours'`
+        : `AND detection_timestamp >= NOW() AT TIME ZONE 'UTC' - INTERVAL '${safeHours} hours'`;
+      const baseWhere = `UPPER(registration) = '${safeReg}'`;
+      const selectColumns = `detection_timestamp, registration, icao_code AS icao24, callsign,
                  altitude, speed, latitude, longitude,
-                 flagged, flagged_reasons, threat_score
+                 flagged, flagged_reasons, threat_score`;
+      const loadRows = (extraWhere: string) => customQuery(`
+          SELECT ${selectColumns}
           FROM live_flight_detections_rows
-          WHERE UPPER(registration) = '${reg.replace(/'/g, "''")}'
-            AND detection_timestamp >= NOW() - INTERVAL '${hours} hours'
+          WHERE ${baseWhere}
+            ${extraWhere}
           ORDER BY detection_timestamp DESC
           LIMIT 500
-        `),
-        customQuery(`
-          SELECT COUNT(*) as total,
-                 MIN(altitude) as min_alt, MAX(altitude) as max_alt,
-                 MIN(speed) as min_spd,
-                 MIN(detection_timestamp) as first, MAX(detection_timestamp) as last
-          FROM live_flight_detections_rows
-          WHERE UPPER(registration) = '${reg.replace(/'/g, "''")}'
-            AND detection_timestamp >= NOW() - INTERVAL '${hours} hours'
-        `),
-      ]);
-      const dets = extractNeonData<DetectionRow>(detRes);
-      const sum = extractNeonData<any>(sumRes)[0] || null;
+        `);
+
+      let mode = refTs ? `Around selected violation (${safeHours}h lookback)` : `Last ${safeHours}h`;
+      let detRes = await loadRows(timeClause);
+      let dets = extractNeonData<DetectionRow>(detRes);
+
+      if (dets.length === 0) {
+        detRes = await loadRows('');
+        dets = extractNeonData<DetectionRow>(detRes);
+        mode = 'Latest archived detections';
+      }
+
+      const summaryWhere = mode === 'Latest archived detections' ? '' : timeClause;
+      const sumRes = await customQuery(`
+        SELECT COUNT(*) as total,
+               MIN(altitude) as min_alt, MAX(altitude) as max_alt,
+               MIN(speed) as min_spd,
+               MIN(detection_timestamp) as first, MAX(detection_timestamp) as last
+        FROM live_flight_detections_rows
+        WHERE ${baseWhere}
+          ${summaryWhere}
+      `);
+      const sum = extractNeonData<SummaryRow>(sumRes)[0] || null;
       setRows(dets);
+      setQueryMode(mode);
       setSummary(sum ? {
         total: safeNumber(sum.total),
         min_alt: sum.min_alt != null ? safeNumber(sum.min_alt) : null,
@@ -80,20 +121,31 @@ export function SentinelDrillDown({ initialRegistration = '', windowMinutes = 30
         first: sum.first || null,
         last: sum.last || null,
       } : null);
-      if (dets.length === 0) toast.info(`No detections for ${reg} in last ${hours}h`);
-    } catch (e: any) {
-      toast.error('Drill-down query failed', { description: e.message });
+      if (dets.length === 0) toast.info(`No detections found for ${reg}`);
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Unknown query error';
+      toast.error('Drill-down query failed', { description: message });
     } finally {
       setLoading(false);
     }
-  }, [registration, hours, customQuery]);
+  }, [registration, hours, customQuery, referenceTimestamp]);
+
+  useEffect(() => {
+    const next = normalizeRegistration(initialRegistration);
+    if (!next) return;
+    const key = `${next}:${referenceTimestamp || ''}`;
+    setRegistration(next);
+    if (lastAutoRunKey.current === key) return;
+    lastAutoRunKey.current = key;
+    void run(next, referenceTimestamp);
+  }, [initialRegistration, referenceTimestamp, run]);
 
   const exportCSV = () => {
     if (!rows.length) return;
-    const header = ['detection_timestamp','registration','icao24','callsign','altitude','speed','latitude','longitude','flagged','flagged_reasons','threat_score'];
+    const header: (keyof DetectionRow)[] = ['detection_timestamp','registration','icao24','callsign','altitude','speed','latitude','longitude','flagged','flagged_reasons','threat_score'];
     const csv = [header.join(',')].concat(
       rows.map(r => header.map(k => {
-        const v = (r as any)[k];
+        const v = r[k];
         if (v == null) return '';
         const s = String(v).replace(/"/g, '""');
         return /[",\n]/.test(s) ? `"${s}"` : s;
@@ -157,8 +209,9 @@ export function SentinelDrillDown({ initialRegistration = '', windowMinutes = 30
         </div>
 
         {summary && (
-          <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 text-xs">
+          <div className="grid grid-cols-2 sm:grid-cols-7 gap-2 text-xs">
             <Stat label="Detections" value={summary.total.toLocaleString()} />
+            <Stat label="Window" value={queryMode || '—'} />
             <Stat label="Min Alt" value={summary.min_alt != null ? `${summary.min_alt}ft` : '—'} />
             <Stat label="Max Alt" value={summary.max_alt != null ? `${summary.max_alt}ft` : '—'} />
             <Stat label="Min Spd" value={summary.min_spd != null ? `${summary.min_spd}kts` : '—'} />
@@ -215,7 +268,7 @@ function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="bg-muted/30 rounded p-2">
       <div className="text-[10px] text-muted-foreground uppercase">{label}</div>
-      <div className="text-sm font-mono text-primary truncate">{value}</div>
+      <div className="text-sm font-mono text-primary break-words">{value}</div>
     </div>
   );
 }

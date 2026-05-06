@@ -24,42 +24,51 @@ serve(async (req) => {
       );
     }
 
-    // Fetch real-time database context for Josiah
+    // Fetch real-time database context for Josiah (best-effort, never blocks AI streaming)
     let dbContext = "";
     if (NEON_DATABASE_URL) {
-      const sql = postgres(NEON_DATABASE_URL, { ssl: "require", max: 1 });
-      
+      const sql = postgres(NEON_DATABASE_URL, {
+        ssl: "require",
+        max: 1,
+        idle_timeout: 10,
+        max_lifetime: 30,
+        connect_timeout: 5,
+        connection: { statement_timeout: '4000' }, // 4s per query — context only
+      });
+
       try {
-        // Get recent flight activity
-        const recentFlights = await sql`
-          SELECT registration, callsign, taxonomy_tag, altitude, speed, 
-                 detection_timestamp, latitude, longitude
-          FROM live_flight_detections_rows
-          WHERE detection_timestamp > NOW() - INTERVAL '24 hours'
-          ORDER BY detection_timestamp DESC
-          LIMIT 20
-        `.catch(() => []);
+        // Run all context queries in parallel with a hard 6s wallclock cap
+        const withTimeout = <T,>(p: Promise<T>, fallback: T): Promise<T> =>
+          Promise.race([
+            p.catch(() => fallback),
+            new Promise<T>((res) => setTimeout(() => res(fallback), 6000)),
+          ]);
 
-        // Get biometric status
-        const recentBio = await sql`
-          SELECT measurement_timestamp, heart_rate, hrv, stress_level
-          FROM biometric_monitoring
-          WHERE measurement_timestamp > NOW() - INTERVAL '24 hours'
-          ORDER BY measurement_timestamp DESC
-          LIMIT 10
-        `.catch(() => []);
-
-        // Get hypothesis count
-        const hypothesisCount = await sql`
-          SELECT COUNT(*) as count FROM josiah_reflections_rows
-        `.catch(() => [{ count: 0 }]);
-
-        // Get enterprise structure summary
-        const enterprise = await sql`
-          SELECT entity_name, tier, role 
-          FROM criminal_enterprise_command_structure 
-          ORDER BY tier LIMIT 10
-        `.catch(() => []);
+        const [recentFlights, recentBio, hypothesisCount, enterprise] = await Promise.all([
+          withTimeout(sql`
+            SELECT registration, callsign, taxonomy_tag, altitude, speed,
+                   detection_timestamp, latitude, longitude
+            FROM live_flight_detections_rows
+            WHERE detection_timestamp > NOW() - INTERVAL '6 hours'
+            ORDER BY detection_timestamp DESC
+            LIMIT 20
+          ` as any, [] as any[]),
+          withTimeout(sql`
+            SELECT measurement_timestamp, heart_rate, hrv, stress_level
+            FROM biometric_monitoring
+            WHERE measurement_timestamp > NOW() - INTERVAL '24 hours'
+            ORDER BY measurement_timestamp DESC
+            LIMIT 10
+          ` as any, [] as any[]),
+          withTimeout(sql`
+            SELECT COUNT(*)::int as count FROM josiah_reflections_rows
+          ` as any, [{ count: 0 }] as any[]),
+          withTimeout(sql`
+            SELECT entity_name, tier, role
+            FROM criminal_enterprise_command_structure
+            ORDER BY tier LIMIT 10
+          ` as any, [] as any[]),
+        ]);
 
         dbContext = `
 REAL-TIME DATABASE STATUS:

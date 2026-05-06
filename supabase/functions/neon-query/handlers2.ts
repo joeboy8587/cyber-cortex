@@ -806,7 +806,7 @@ export async function handleAction2(action: string, body: Record<string, any>, s
       const results: any = { mode, tables: {} };
 
       try {
-        await sql.unsafe(`SET statement_timeout = '50s'`);
+        await sql.unsafe(`SET statement_timeout = '${mode === 'apply' ? '240s' : '50s'}'`);
 
         for (const t of tables) {
           if (!SAFE_TABLES.has(t)) continue;

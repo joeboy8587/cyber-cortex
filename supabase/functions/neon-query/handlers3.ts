@@ -901,12 +901,17 @@ export async function handleAction3(action: string, body: Record<string, any>, s
         `);
 
         // L7 — Shell ownership (FAA registry shows LLC/trustee in shell-prone states)
-        const shellRaw = await sql.unsafe(`
-          SELECT UPPER(n_number) as registration, registrant_name, registrant_state
-          FROM aircraft_registry
-          WHERE registrant_name ~* '(LLC|TRUST|HOLDINGS|LEASING)'
-            AND (registrant_state IN ('DE','AK','MT','SD','WY','NV','OR') OR registrant_name ~* 'ALF IX|9K AIR|RESIDCO|CHRISTIANSEN')
-        `);
+        let shellRaw: any[] = [];
+        try {
+          shellRaw = await sql.unsafe(`
+            SELECT UPPER(registration) as registration, registrant_name, registrant_state
+            FROM aircraft_registry_enriched
+            WHERE registrant_name ~* '(LLC|TRUST|HOLDINGS|LEASING)'
+              AND (registrant_state IN ('DE','AK','MT','SD','WY','NV','OR') OR registrant_name ~* 'ALF IX|9K AIR|RESIDCO|CHRISTIANSEN')
+          `) as any[];
+        } catch (e) {
+          console.warn('shell ownership query failed:', (e as Error).message);
+        }
         const shellSet = new Set((shellRaw as any[]).map(r => String(r.registration)));
 
         // ---- Aggregate by registration ----

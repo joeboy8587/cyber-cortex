@@ -57,12 +57,57 @@ export function NullIcaoForensicPanel() {
     setDriftLoading(mode);
     setDriftResult(null);
     try {
-      const { data, error: err } = await supabase.functions.invoke('neon-query', {
-        body: { action: 'fixColumnDrift', mode }
-      });
-      if (err) throw new Error(err.message);
-      if (data?.error && !data?.partial) throw new Error(data.error);
-      setDriftResult(data);
+      if (mode === 'audit') {
+        const { data, error: err } = await supabase.functions.invoke('neon-query', {
+          body: { action: 'fixColumnDrift', mode: 'audit' }
+        });
+        if (err) throw new Error(err.message);
+        if (data?.error && !data?.partial) throw new Error(data.error);
+        setDriftResult(data);
+        return;
+      }
+
+      // APPLY: split into per-table + per-phase calls so each fits the edge timeout.
+      // - live_flight_detections_rows: in-place repair, 4 phases run sequentially
+      // - guarded tables: shadow-table build (single call each)
+      const inPlaceTables = ['live_flight_detections_rows'];
+      const shadowTables = ['unfilterd_detections', 'unfiltered_aircraft_detections'];
+      const phases: Array<'hex' | 'nnumber' | 'garbage' | 'military'> = ['hex', 'nnumber', 'garbage', 'military'];
+
+      const merged: any = { mode: 'apply', success: true, tables: {}, totals: { audit: 0, applied: 0 } };
+
+      for (const t of inPlaceTables) {
+        merged.tables[t] = { applied: { mode: 'in_place' }, audit: {} };
+        for (const p of phases) {
+          const { data, error: err } = await supabase.functions.invoke('neon-query', {
+            body: { action: 'fixColumnDrift', mode: 'apply', tables: [t], phase: p }
+          });
+          if (err) throw new Error(`${t}/${p}: ${err.message}`);
+          if (data?.error && !data?.partial) throw new Error(`${t}/${p}: ${data.error}`);
+          const applied = data?.tables?.[t]?.applied || {};
+          merged.tables[t].applied = { ...merged.tables[t].applied, ...applied };
+          for (const v of Object.values(applied)) {
+            if (typeof v === 'number') merged.totals.applied += v;
+          }
+          setDriftResult({ ...merged, _progress: `${t} → ${p} done` });
+        }
+      }
+
+      for (const t of shadowTables) {
+        const { data, error: err } = await supabase.functions.invoke('neon-query', {
+          body: { action: 'fixColumnDrift', mode: 'apply', tables: [t] }
+        });
+        if (err) throw new Error(`${t}: ${err.message}`);
+        if (data?.error && !data?.partial) throw new Error(`${t}: ${data.error}`);
+        const applied = data?.tables?.[t]?.applied || {};
+        merged.tables[t] = { applied, audit: {} };
+        for (const v of Object.values(applied)) {
+          if (typeof v === 'number') merged.totals.applied += v;
+        }
+        setDriftResult({ ...merged, _progress: `${t} shadow built` });
+      }
+
+      setDriftResult(merged);
     } catch (err) {
       setDriftResult({ success: false, error: err instanceof Error ? err.message : 'Drift scan failed' });
     } finally {

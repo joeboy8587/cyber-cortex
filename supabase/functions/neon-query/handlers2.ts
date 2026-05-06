@@ -785,6 +785,9 @@ export async function handleAction2(action: string, body: Record<string, any>, s
     //   4) Military tail numbers (NN-NNNNN) misclassified as civilian
     case 'fixColumnDrift': {
       const mode = (body.mode === 'apply') ? 'apply' : 'audit';
+      // Optional: run a single repair phase per call to fit edge function timeout.
+      // Phases: 'hex' | 'nnumber' | 'garbage' | 'military' | 'all' (default)
+      const phase: string = (body.phase as string) || 'all';
       const tables: string[] = Array.isArray(body.tables) && body.tables.length
         ? body.tables
         : ['live_flight_detections_rows', 'unfilterd_detections', 'unfiltered_flights', 'unfiltered_aircraft_detections'];
@@ -806,7 +809,7 @@ export async function handleAction2(action: string, body: Record<string, any>, s
       const results: any = { mode, tables: {} };
 
       try {
-        await sql.unsafe(`SET statement_timeout = '50s'`);
+        await sql.unsafe(`SET statement_timeout = '${mode === 'apply' ? '240s' : '50s'}'`);
 
         for (const t of tables) {
           if (!SAFE_TABLES.has(t)) continue;
@@ -868,52 +871,127 @@ export async function handleAction2(action: string, body: Record<string, any>, s
           tableRes.audit_method = useSample ? `sampled (200k of ${tableSize.toLocaleString()})` : 'full scan';
 
           // ============ 2. APPLY (only when requested) ============
+          // Tables guarded by Neon triggers (taxonomy-free / forensic-immutable)
+          // are repaired into a *_drift_corrected shadow copy instead of in-place.
+          const GUARDED_TABLES = new Set([
+            'unfilterd_detections',
+            'unfiltered_aircraft_detections',
+            'unfiltered_flights',
+            'evidence_flight_dump_20260103_sealed',
+          ]);
+
           if (mode === 'apply') {
-            // 2a) Swap hex-in-reg → icao_code (only if icao_code is empty / not valid hex)
-            if (hasIcao) {
-              const swapHex = await sql.unsafe(`
-                UPDATE ${t}
-                SET icao_code = UPPER(registration),
-                    registration = NULL
-                WHERE registration ~ '${HEX_RE}'
-                  AND registration !~ '${N_RE}'
-                  AND (icao_code IS NULL OR icao_code = '' OR icao_code !~ '${HEX_RE}')
-              `);
-              tableRes.applied.hex_swapped_to_icao = swapHex.count || 0;
-            }
+            const isGuarded = GUARDED_TABLES.has(t);
 
-            // 2b) Move N-numbers from icao_code → registration (when reg is empty/garbage)
-            if (hasIcao) {
-              const moveN = await sql.unsafe(`
-                UPDATE ${t}
-                SET registration = UPPER(icao_code),
-                    icao_code = NULL
-                WHERE icao_code ~ '${N_RE}'
-                  AND (registration IS NULL OR registration = ''
-                       OR registration ~* '${GARBAGE_RE}'
-                       OR registration ~ '${HEX_RE}')
-              `);
-              tableRes.applied.nnumber_moved_to_registration = moveN.count || 0;
-            }
+            if (isGuarded) {
+              // ---- SHADOW MODE: build/refresh ${t}_drift_corrected ----
+              const shadow = `${t}_drift_corrected`;
+              tableRes.applied.shadow_table = shadow;
 
-            // 2c) Null out garbage/foreign callsign registration values
-            const clearGarbage = await sql.unsafe(`
-              UPDATE ${t}
-              SET registration = NULL
-              WHERE registration ~* '${GARBAGE_RE}'
-                 OR registration ~ '${CALLSIGN_RE}'
-            `);
-            tableRes.applied.garbage_cleared = clearGarbage.count || 0;
-
-            // 2d) Tag military IDs (preserve registration, just flag taxonomy)
-            if (hasTax) {
-              const tagMil = await sql.unsafe(`
-                UPDATE ${t}
-                SET taxonomy_tag = 'military_asset'
-                WHERE registration ~ '${MIL_RE}'
-                  AND (taxonomy_tag IS NULL OR taxonomy_tag NOT LIKE '%military%')
+              // Drop & rebuild as a clean snapshot (no triggers carried over)
+              await sql.unsafe(`DROP TABLE IF EXISTS ${shadow}`);
+              await sql.unsafe(`
+                CREATE TABLE ${shadow} AS
+                SELECT
+                  *,
+                  -- corrected_registration: prefer N-number from icao_code, else strip garbage/hex from registration
+                  CASE
+                    ${hasIcao ? `WHEN icao_code ~ '${N_RE}' THEN UPPER(icao_code)` : ''}
+                    WHEN registration ~ '${N_RE}' THEN UPPER(registration)
+                    WHEN registration ~* '${GARBAGE_RE}' OR registration ~ '${CALLSIGN_RE}' OR registration ~ '${HEX_RE}' THEN NULL
+                    ELSE registration
+                  END AS corrected_registration,
+                  -- corrected_icao: use hex from registration if icao is empty
+                  ${hasIcao ? `
+                  CASE
+                    WHEN registration ~ '${HEX_RE}' AND registration !~ '${N_RE}'
+                         AND (icao_code IS NULL OR icao_code = '' OR icao_code !~ '${HEX_RE}')
+                      THEN UPPER(registration)
+                    WHEN icao_code ~ '${N_RE}' THEN NULL
+                    ELSE icao_code
+                  END AS corrected_icao,` : `NULL::text AS corrected_icao,`}
+                  -- corrected_taxonomy: tag military if reg matches MIL pattern
+                  ${hasTax
+                    ? `CASE WHEN registration ~ '${MIL_RE}' AND (taxonomy_tag IS NULL OR taxonomy_tag NOT LIKE '%military%')
+                          THEN 'military_asset' ELSE taxonomy_tag END AS corrected_taxonomy`
+                    : `NULL::text AS corrected_taxonomy`}
+                FROM ${t}
               `);
-              tableRes.applied.military_tagged = tagMil.count || 0;
+
+              // Index for downstream lookups
+              try {
+                await sql.unsafe(`CREATE INDEX IF NOT EXISTS idx_${shadow}_creg ON ${shadow}(corrected_registration)`);
+                if (hasIcao) await sql.unsafe(`CREATE INDEX IF NOT EXISTS idx_${shadow}_cicao ON ${shadow}(corrected_icao)`);
+              } catch (_) {}
+
+              // Tally what changed
+              const tallies = await sql.unsafe(`
+                SELECT
+                  COUNT(*) FILTER (WHERE corrected_registration IS DISTINCT FROM registration)::int AS reg_changed,
+                  ${hasIcao ? `COUNT(*) FILTER (WHERE corrected_icao IS DISTINCT FROM icao_code)::int` : `0::int`} AS icao_changed,
+                  ${hasTax ? `COUNT(*) FILTER (WHERE corrected_taxonomy IS DISTINCT FROM taxonomy_tag)::int` : `0::int`} AS tax_changed,
+                  COUNT(*)::int AS total_rows
+                FROM ${shadow}
+              `) as any[];
+              const tt = tallies[0] || {};
+              tableRes.applied.registration_corrected = tt.reg_changed || 0;
+              tableRes.applied.icao_corrected = tt.icao_changed || 0;
+              tableRes.applied.military_tagged = tt.tax_changed || 0;
+              tableRes.applied.shadow_row_count = tt.total_rows || 0;
+              tableRes.applied.mode = 'shadow';
+            } else {
+              // ---- IN-PLACE MODE: live_flight_detections_rows ----
+              tableRes.applied.mode = 'in_place';
+              tableRes.applied.phase = phase;
+
+              // 2a) Swap hex-in-reg → icao_code
+              if (hasIcao && (phase === 'all' || phase === 'hex')) {
+                const swapHex = await sql.unsafe(`
+                  UPDATE ${t}
+                  SET icao_code = UPPER(registration),
+                      registration = NULL
+                  WHERE registration ~ '${HEX_RE}'
+                    AND registration !~ '${N_RE}'
+                    AND (icao_code IS NULL OR icao_code = '' OR icao_code !~ '${HEX_RE}')
+                `);
+                tableRes.applied.hex_swapped_to_icao = swapHex.count || 0;
+              }
+
+              // 2b) Move N-numbers from icao_code → registration
+              if (hasIcao && (phase === 'all' || phase === 'nnumber')) {
+                const moveN = await sql.unsafe(`
+                  UPDATE ${t}
+                  SET registration = UPPER(icao_code),
+                      icao_code = NULL
+                  WHERE icao_code ~ '${N_RE}'
+                    AND (registration IS NULL OR registration = ''
+                         OR registration ~* '${GARBAGE_RE}'
+                         OR registration ~ '${HEX_RE}')
+                `);
+                tableRes.applied.nnumber_moved_to_registration = moveN.count || 0;
+              }
+
+              // 2c) Null out garbage/foreign callsign
+              if (phase === 'all' || phase === 'garbage') {
+                const clearGarbage = await sql.unsafe(`
+                  UPDATE ${t}
+                  SET registration = NULL
+                  WHERE registration ~* '${GARBAGE_RE}'
+                     OR registration ~ '${CALLSIGN_RE}'
+                `);
+                tableRes.applied.garbage_cleared = clearGarbage.count || 0;
+              }
+
+              // 2d) Tag military IDs
+              if (hasTax && (phase === 'all' || phase === 'military')) {
+                const tagMil = await sql.unsafe(`
+                  UPDATE ${t}
+                  SET taxonomy_tag = 'military_asset'
+                  WHERE registration ~ '${MIL_RE}'
+                    AND (taxonomy_tag IS NULL OR taxonomy_tag NOT LIKE '%military%')
+                `);
+                tableRes.applied.military_tagged = tagMil.count || 0;
+              }
             }
           }
 

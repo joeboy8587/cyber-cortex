@@ -852,11 +852,18 @@ export async function handleAction2(action: string, body: Record<string, any>, s
           `) as any[];
           const r = combined[0] || {};
 
+          const parseArr = (v: any): string[] => {
+            if (Array.isArray(v)) return v;
+            if (typeof v === 'string' && v.startsWith('{') && v.endsWith('}')) {
+              return v.slice(1, -1).split(',').filter(Boolean).map(s => s.replace(/^"|"$/g, ''));
+            }
+            return [];
+          };
           tableRes.audit = {
-            hex_in_registration:     { count: r.hex_n   || 0, samples: r.hex_s   || [] },
-            nnumber_in_icao_code:    { count: r.nicao_n || 0, samples: r.nicao_s || [] },
-            garbage_in_registration: { count: r.garb_n  || 0, samples: r.garb_s  || [] },
-            military_misclassified:  { count: r.mil_n   || 0, samples: r.mil_s   || [] },
+            hex_in_registration:     { count: r.hex_n   || 0, samples: parseArr(r.hex_s) },
+            nnumber_in_icao_code:    { count: r.nicao_n || 0, samples: parseArr(r.nicao_s) },
+            garbage_in_registration: { count: r.garb_n  || 0, samples: parseArr(r.garb_s) },
+            military_misclassified:  { count: r.mil_n   || 0, samples: parseArr(r.mil_s) },
           };
           tableRes.audit_method = useSample ? `sampled (200k of ${tableSize.toLocaleString()})` : 'full scan';
 

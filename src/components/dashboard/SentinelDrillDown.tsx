@@ -199,8 +199,9 @@ export function SentinelDrillDown({ initialRegistration = '', windowMinutes = 30
         </div>
 
         {summary && (
-          <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 text-xs">
+          <div className="grid grid-cols-2 sm:grid-cols-7 gap-2 text-xs">
             <Stat label="Detections" value={summary.total.toLocaleString()} />
+            <Stat label="Window" value={queryMode || '—'} />
             <Stat label="Min Alt" value={summary.min_alt != null ? `${summary.min_alt}ft` : '—'} />
             <Stat label="Max Alt" value={summary.max_alt != null ? `${summary.max_alt}ft` : '—'} />
             <Stat label="Min Spd" value={summary.min_spd != null ? `${summary.min_spd}kts` : '—'} />
@@ -257,7 +258,7 @@ function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="bg-muted/30 rounded p-2">
       <div className="text-[10px] text-muted-foreground uppercase">{label}</div>
-      <div className="text-sm font-mono text-primary truncate">{value}</div>
+      <div className="text-sm font-mono text-primary break-words">{value}</div>
     </div>
   );
 }

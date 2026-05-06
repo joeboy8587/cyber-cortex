@@ -700,13 +700,13 @@ export function JosiahAutonomousHypothesis() {
       });
 
       // Conditional leads based on scan results
-      if (maskedAircraft.length > 0) {
+      if (trulyInvisible.length > 0) {
         newLeads.unshift({
-          id: `lead-masked-${Date.now()}`,
+          id: `lead-invisible-${Date.now()}`,
           priority: 'critical',
-          question: `Why have ${maskedAircraft.length} KCSO aircraft NEVER appeared on ADS-B?`,
-          data_needed: 'FAA N-Number inquiry, Mode-S hex verification, flight plan records',
-          potential_finding: 'Deliberate transponder manipulation or registration fraud',
+          question: `Mode-S hex cross-check needed: ${trulyInvisible.length} KCSO tails have zero ADS-B archive hits. Are they actually flying under different hex/callsign?`,
+          data_needed: 'FAA registry Mode-S hex lookup, callsign-to-hex map, KCSO flight ops log',
+          potential_finding: 'Confirmed transponder masking → 14 CFR § 91.225 + 49 U.S.C. § 46306',
           status: 'open',
           hypothesis_template: 'invisible_fleet_detection'
         });

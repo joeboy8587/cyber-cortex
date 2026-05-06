@@ -829,13 +829,13 @@ export async function handleAction3(action: string, body: Record<string, any>, s
             GROUP BY registration, LOWER(icao_code)
           ),
           reg AS (
-            SELECT n_number, LOWER(mode_s_hex) as registered_hex
+            SELECT UPPER(registration) as reg_n, LOWER(icao24) as registered_hex
             FROM aircraft_registry_enriched
-            WHERE mode_s_hex IS NOT NULL AND mode_s_hex ~ '^[0-9a-fA-F]{6}$'
+            WHERE icao24 IS NOT NULL AND icao24 ~ '^[0-9a-fA-F]{6}$'
           )
           SELECT d.registration, d.detected_hex, r.registered_hex, d.cnt as detections
           FROM detected d
-          JOIN reg r ON UPPER(d.registration) = UPPER(r.n_number)
+          JOIN reg r ON UPPER(d.registration) = r.reg_n
           WHERE d.detected_hex != r.registered_hex
           ORDER BY d.cnt DESC LIMIT 500
         `);

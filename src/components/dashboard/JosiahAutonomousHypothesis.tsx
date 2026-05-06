@@ -699,11 +699,11 @@ export function JosiahAutonomousHypothesis() {
 
       if (phantomRatio > 10) {
         newLeads.unshift({
-          id: `lead-phantom-${Date.now()}`,
+          id: `lead-masked-${Date.now()}`,
           priority: 'critical',
-          question: `What caused ${gapStats.phantom_events} stress events (${phantomRatio.toFixed(1)}%) with zero aircraft correlation?`,
-          data_needed: 'Secondary radar data, ground vehicle tracking, RF spectrum analysis',
-          potential_finding: 'Evidence of stealth operations or ground-based harassment',
+          question: `Identify masked aircraft behind ${gapStats.phantom_events} stress events (${phantomRatio.toFixed(1)}%) with zero ADS-B return.`,
+          data_needed: 'Secondary radar, MLAT, acoustic correlation, FAA SWIM, KCSO/military flight plans',
+          potential_finding: 'Confirmation of transponder-off / ICAO-spoofed surveillance overflights',
           status: 'open',
           hypothesis_template: 'aircraft_biometric_correlation'
         });

@@ -16,6 +16,7 @@ import { C2014CohortScanner } from "@/components/dashboard/C2014CohortScanner";
 import { AdversarialDebatePanel } from "@/components/dashboard/AdversarialDebatePanel";
 import { JosiahTrainingPanel } from "@/components/dashboard/JosiahTrainingPanel";
 import { JosiahRAGPanel } from "@/components/dashboard/JosiahRAGPanel";
+import { LayeredDeceptionPanel } from "@/components/dashboard/LayeredDeceptionPanel";
 
 export default function Josiah() {
   return (

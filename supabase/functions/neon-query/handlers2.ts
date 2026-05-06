@@ -787,11 +787,13 @@ export async function handleAction2(action: string, body: Record<string, any>, s
       const mode = (body.mode === 'apply') ? 'apply' : 'audit';
       const tables: string[] = Array.isArray(body.tables) && body.tables.length
         ? body.tables
-        : ['live_flight_detections_rows', 'unfilterd_detections', 'evidence_flight_dump_20260103_sealed'];
+        : ['live_flight_detections_rows', 'unfilterd_detections', 'unfiltered_flights', 'unfiltered_aircraft_detections'];
 
       const SAFE_TABLES = new Set([
         'live_flight_detections_rows',
         'unfilterd_detections',
+        'unfiltered_flights',
+        'unfiltered_aircraft_detections',
         'evidence_flight_dump_20260103_sealed',
       ]);
 

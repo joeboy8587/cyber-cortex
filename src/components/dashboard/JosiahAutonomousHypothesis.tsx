@@ -451,44 +451,59 @@ export function JosiahAutonomousHypothesis() {
         body: {
           action: 'customQuery',
           query: `
-            SELECT 
+            WITH norm_detections AS (
+              SELECT UPPER(REPLACE(registration,' ','')) as reg,
+                     COUNT(*) as cnt,
+                     MAX(detection_timestamp) as last_seen
+              FROM live_flight_detections_rows
+              WHERE registration IS NOT NULL
+              GROUP BY UPPER(REPLACE(registration,' ',''))
+            )
+            SELECT
               kf.tail_number as registration,
               kf.model,
-              COALESCE(d.detection_count, 0) as detection_count,
+              COALESCE(d.cnt, 0) as detection_count,
               d.last_seen
             FROM kcso_fleet kf
-            LEFT JOIN (
-              SELECT registration, COUNT(*) as detection_count, MAX(detection_timestamp) as last_seen
-              FROM live_flight_detections_rows
-              GROUP BY registration
-            ) d ON d.registration = kf.tail_number
-            WHERE COALESCE(d.detection_count, 0) = 0
-               OR d.last_seen < NOW() - INTERVAL '30 days'
+            LEFT JOIN norm_detections d
+              ON d.reg = UPPER(REPLACE(kf.tail_number,' ',''))
+            WHERE COALESCE(d.cnt, 0) = 0
           `
         }
       });
 
       const maskedAircraft = Array.isArray(maskedData) ? maskedData : (maskedData?.data || []);
-      if (maskedAircraft.length > 0) {
+      // Strict gate: only flag truly invisible KCSO tails (zero archive hits, ever)
+      const trulyInvisible = maskedAircraft.filter(
+        (a: Record<string, unknown>) => Number(a.detection_count) === 0
+      );
+      if (trulyInvisible.length > 0) {
         const maskedHypothesis: Hypothesis = {
           id: `hyp-masked-${Date.now()}`,
-          title: 'Identity Masking Operation Detected',
+          title: 'KCSO Tails Absent From ADS-B Archive',
           category: 'identity_masking',
-          confidence: 75 + Math.min(maskedAircraft.length * 5, 20),
-          evidence_count: maskedAircraft.length,
+          confidence: 55 + Math.min(trulyInvisible.length * 4, 25),
+          evidence_count: trulyInvisible.length,
           status: 'investigating',
-          summary: `${maskedAircraft.length} KCSO fleet aircraft have ZERO detections or haven't been seen in 30+ days despite known active operations. This suggests deliberate transponder masking or registration fraud.`,
-          supporting_evidence: maskedAircraft.map((a: Record<string, unknown>) => 
-            `${a.registration} (${a.model}): ${a.detection_count} detections, last seen: ${a.last_seen || 'NEVER'}`
+          summary: `${trulyInvisible.length} KCSO-listed tails have ZERO matches in our ADS-B archive. Consistent with — but does NOT alone prove — transponder masking, Mode-S hex reassignment, or registration aliasing. Requires Mode-S hex / FAA registry cross-check before being treated as fraud.`,
+          supporting_evidence: trulyInvisible.map((a: Record<string, unknown>) =>
+            `${a.registration} (${a.model}): 0 detections in archive`
           ),
-          contrary_evidence: ['Aircraft may be grounded for maintenance', 'Registration changes may have occurred'],
+          contrary_evidence: [
+            'Aircraft may be in maintenance / hangar status',
+            'Our ADS-B receiver footprint may not cover their operating area',
+            'Registration may have been re-issued — cross-check FAA Mode-S hex',
+            'Tail may operate exclusively under callsign or military exemption'
+          ],
           generated_at: new Date().toISOString(),
           last_updated: new Date().toISOString(),
-          trigger: 'Autonomous fleet visibility scan',
-          legal_implications: '49 U.S.C. § 46306 (fraudulent registration), RICO pattern evidence of concealment'
+          trigger: 'KCSO fleet ADS-B archive coverage scan',
+          legal_implications: 'IF Mode-S hex cross-check confirms active flight with no ADS-B output → 14 CFR § 91.225/91.227 violation + 49 U.S.C. § 46306 (false registration) + RICO concealment predicate. Until then: investigative lead, not finding.'
         };
         setHypotheses(prev => [maskedHypothesis, ...prev.filter(h => h.category !== 'identity_masking')]);
       }
+      // Replace older variable used downstream so legacy refs keep working
+      const trulyInvisibleAircraft = trulyInvisible;
 
       // Step 2: Analyze biometric-aircraft temporal gaps (40%)
       setScanProgress(30);

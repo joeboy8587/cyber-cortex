@@ -50,6 +50,25 @@ export function NullIcaoForensicPanel() {
   const [backfillResult, setBackfillResult] = useState<any>(null);
   const [results, setResults] = useState<ScanResults | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [driftLoading, setDriftLoading] = useState<'audit' | 'apply' | null>(null);
+  const [driftResult, setDriftResult] = useState<any>(null);
+
+  const runColumnDrift = async (mode: 'audit' | 'apply') => {
+    setDriftLoading(mode);
+    setDriftResult(null);
+    try {
+      const { data, error: err } = await supabase.functions.invoke('neon-query', {
+        body: { action: 'fixColumnDrift', mode }
+      });
+      if (err) throw new Error(err.message);
+      if (data?.error && !data?.partial) throw new Error(data.error);
+      setDriftResult(data);
+    } catch (err) {
+      setDriftResult({ success: false, error: err instanceof Error ? err.message : 'Drift scan failed' });
+    } finally {
+      setDriftLoading(null);
+    }
+  };
 
   const runColumnFix = async () => {
     setFixing(true);

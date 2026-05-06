@@ -52,6 +52,11 @@ export default function Josiah() {
           <JosiahSentinelMonitor />
         </section>
 
+        {/* Layered Deception Detector — 7-layer spoof + concealment hunter */}
+        <section>
+          <LayeredDeceptionPanel />
+        </section>
+
         {/* Memory & Pattern Insights */}
         <section>
           <JosiahMemoryInsights />

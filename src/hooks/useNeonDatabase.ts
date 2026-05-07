@@ -130,9 +130,7 @@ export function useNeonDatabase() {
 
       for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
         try {
-          const { data, error: fnError } = await supabase.functions.invoke('neon-query', {
-            body: { action, ...params },
-          });
+          const { data, error: fnError } = await neonQuery({ action, ...params }, 0);
 
           if (fnError) {
             const msg = fnError.message || 'Database function error';

@@ -310,6 +310,74 @@ Deno.serve(async (req) => {
           break;
         }
 
+        case 'entityCanonicalIndex': {
+          // Phase 1: Canonical entity index across high-value tables.
+          // Each candidate: {table, idCol, tsCol, type}. We probe schema first,
+          // then UNION ALL aggregated counts. Keep result <= 5000 rows.
+          const candidates: { table: string; idCol: string; tsCol: string | null; type: string }[] = [
+            { table: 'confirmed_biometric_correlations', idCol: 'aircraft_id', tsCol: 'event_timestamp', type: 'aircraft_id' },
+            { table: 'confirmed_biometric_correlations', idCol: 'registration', tsCol: 'event_timestamp', type: 'aircraft_id' },
+            { table: 'exhibit_d_biometric_harm',          idCol: 'aircraft_id', tsCol: 'event_timestamp', type: 'aircraft_id' },
+            { table: 'exhibit_d_biometric_harm',          idCol: 'registration', tsCol: 'event_timestamp', type: 'aircraft_id' },
+            { table: 'alert_logs',                        idCol: 'icao24',      tsCol: 'created_at',     type: 'aircraft_icao24' },
+            { table: 'alert_logs',                        idCol: 'aircraft_id', tsCol: 'created_at',     type: 'aircraft_id' },
+            { table: 'alert_logs',                        idCol: 'registration', tsCol: 'created_at',    type: 'aircraft_id' },
+            { table: 'alert_logs',                        idCol: 'callsign',    tsCol: 'created_at',     type: 'aircraft_callsign' },
+            { table: 'flight_events',                     idCol: 'registration', tsCol: 'event_timestamp', type: 'aircraft_id' },
+            { table: 'flight_events',                     idCol: 'icao24',      tsCol: 'event_timestamp', type: 'aircraft_icao24' },
+            { table: 'flight_events',                     idCol: 'callsign',    tsCol: 'event_timestamp', type: 'aircraft_callsign' },
+          ];
+
+          // Probe which (table, col) pairs actually exist
+          const tableNames = Array.from(new Set(candidates.map(c => c.table)));
+          const tableList = tableNames.map(t => `'${t.replace(/'/g, "''")}'`).join(",");
+          const colExists = await sql.unsafe(`
+            SELECT table_name, column_name
+            FROM information_schema.columns
+            WHERE table_schema='public' AND table_name IN (${tableList})
+          `);
+          const have = new Set((colExists as any[]).map(r => `${r.table_name}.${r.column_name}`));
+
+          const minOcc = Number(body.min_occurrences ?? 5);
+          const limit = Math.min(Number(body.limit ?? 5000), 10000);
+          const parts: string[] = [];
+          for (const c of candidates) {
+            if (!have.has(`${c.table}.${c.idCol}`)) continue;
+            const tsExpr = c.tsCol && have.has(`${c.table}.${c.tsCol}`) ? `MAX(("${c.tsCol}")::timestamptz)` : `NULL::timestamptz`;
+            parts.push(`
+              SELECT
+                '${c.type}'::text                            AS type,
+                "${c.idCol}"::text                            AS canonical_value,
+                '${c.table}'::text                            AS source_table,
+                COUNT(*)::bigint                              AS occurrences,
+                ${tsExpr}                                     AS last_seen
+              FROM "${c.table}"
+              WHERE "${c.idCol}" IS NOT NULL AND "${c.idCol}"::text <> ''
+              GROUP BY "${c.idCol}"
+              HAVING COUNT(*) >= ${minOcc}
+            `);
+          }
+          if (parts.length === 0) {
+            result = { rows: [], probed: candidates.length, sources_available: 0 };
+            break;
+          }
+          const unionSql = `
+            WITH agg AS (${parts.join(' UNION ALL ')})
+            SELECT type, canonical_value, source_table, occurrences, last_seen
+            FROM agg
+            ORDER BY occurrences DESC
+            LIMIT ${limit}
+          `;
+          const rows = await sql.unsafe(unionSql);
+          result = {
+            rows,
+            probed: candidates.length,
+            sources_available: parts.length,
+            generated_at: new Date().toISOString(),
+          };
+          break;
+        }
+
         case 'getStats': {
           const tables = await sql`SELECT COUNT(*) as table_count FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relkind = 'r' AND n.nspname NOT IN ('pg_catalog','information_schema','pg_toast')`;
           const records = await sql`SELECT COALESCE(SUM(c.reltuples)::bigint, 0) as total_records FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relkind = 'r' AND n.nspname NOT IN ('pg_catalog','information_schema','pg_toast')`;

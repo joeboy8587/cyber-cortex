@@ -23,6 +23,7 @@ import KnowledgeEngine from "./pages/KnowledgeEngine";
 import DroneDetection from "./pages/DroneDetection";
 import CaseFiles from "./pages/CaseFiles";
 import UniversalAnalyst from "./pages/UniversalAnalyst";
+import EntityResolution from "./pages/EntityResolution";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 2, staleTime: 5000 } },
@@ -132,6 +133,11 @@ const App = () => (
             <Route path="/analyst" element={
               <ProtectedRoute>
                 <UniversalAnalyst />
+              </ProtectedRoute>
+            } />
+            <Route path="/entities" element={
+              <ProtectedRoute>
+                <EntityResolution />
               </ProtectedRoute>
             } />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}

@@ -17,7 +17,8 @@ import {
   Network,
   Ghost,
   FolderOpen,
-  ScanEye
+  ScanEye,
+  Fingerprint
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useAuth } from "@/hooks/useAuth";
@@ -114,6 +115,12 @@ const navigationItems = [
     url: "/analyst", 
     icon: ScanEye,
     description: "Equal Analysis Engine"
+  },
+  { 
+    title: "Entity Resolution", 
+    url: "/entities", 
+    icon: Fingerprint,
+    description: "Canonical Index → Exhibits"
   },
 ];
 

@@ -346,7 +346,7 @@ Deno.serve(async (req) => {
           const parts: string[] = [];
           for (const c of candidates) {
             if (!have.has(`${c.table}.${c.idCol}`)) continue;
-            const tsExpr = c.tsCol && have.has(`${c.table}.${c.tsCol}`) ? `MAX("${c.tsCol}")` : `NULL::timestamptz`;
+            const tsExpr = c.tsCol && have.has(`${c.table}.${c.tsCol}`) ? `MAX(("${c.tsCol}")::timestamptz)` : `NULL::timestamptz`;
             parts.push(`
               SELECT
                 '${c.type}'::text                            AS type,

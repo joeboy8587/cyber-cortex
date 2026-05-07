@@ -332,12 +332,13 @@ Deno.serve(async (req) => {
           ];
 
           // Probe which (table, col) pairs actually exist
-          const colExists = await sql.unsafe(`
+          const tableNames = Array.from(new Set(candidates.map(c => c.table)));
+          const colExists = await sql`
             SELECT table_name, column_name
             FROM information_schema.columns
             WHERE table_schema='public'
-              AND table_name = ANY($1::text[])
-          `, [Array.from(new Set(candidates.map(c => c.table)))] as any);
+              AND table_name = ANY(${tableNames}::text[])
+          `;
           const have = new Set((colExists as any[]).map(r => `${r.table_name}.${r.column_name}`));
 
           const minOcc = Number(body.min_occurrences ?? 5);

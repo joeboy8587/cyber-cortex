@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { neonQuery } from '@/lib/neonQueryRetry';
 
 export interface TableInfo {
   schemaname: string;

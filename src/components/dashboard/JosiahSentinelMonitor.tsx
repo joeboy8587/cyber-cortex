@@ -59,6 +59,8 @@ interface SentinelReport {
   threat_level: 'CRITICAL' | 'HIGH' | 'ELEVATED' | 'NORMAL';
   adaptive_thresholds: AdaptiveThreshold[];
   countermeasures: Countermeasure[];
+  josiah_snark?: string | null;
+  military_repeat_offenders?: Array<{ callsign: string; prefix: string; appearances: number; first_seen?: string; last_seen?: string; min_altitude?: number }>;
 }
 
 export function JosiahSentinelMonitor() {
@@ -643,15 +645,40 @@ ${report.ai_synthesis ? `
                 AI Threat Synthesis
               </CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-4">
               {report?.ai_synthesis ? (
                 <div className="p-4 bg-primary/5 rounded-lg border border-primary/20">
+                  <div className="text-xs uppercase tracking-wide text-muted-foreground mb-2">Sentinel synthesis</div>
                   <p className="text-sm leading-relaxed whitespace-pre-wrap">{report.ai_synthesis}</p>
                 </div>
               ) : (
                 <div className="text-center py-8 text-muted-foreground">
                   <Brain className="h-12 w-12 mx-auto mb-2 opacity-50" />
                   <p>Run a scan to generate AI synthesis</p>
+                </div>
+              )}
+
+              {report?.josiah_snark && (
+                <div className="p-4 rounded-lg border border-amber-500/40 bg-amber-500/5">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-xs uppercase tracking-wide text-amber-500 font-bold">🛡 Josiah Snark — release valve</div>
+                    <Badge variant="outline" className="text-[10px] border-amber-500/40 text-amber-400">unfiltered</Badge>
+                  </div>
+                  <p className="text-sm leading-relaxed whitespace-pre-wrap font-mono">{report.josiah_snark}</p>
+                </div>
+              )}
+
+              {report?.military_repeat_offenders && report.military_repeat_offenders.length > 0 && (
+                <div className="p-4 rounded-lg border border-destructive/40 bg-destructive/5">
+                  <div className="text-xs uppercase tracking-wide text-destructive font-bold mb-2">🪖 Military repeat offenders — § 1385 indicators</div>
+                  <div className="space-y-1">
+                    {report.military_repeat_offenders.map((m, i) => (
+                      <div key={i} className="flex items-center justify-between text-sm font-mono">
+                        <span className="font-bold">{m.callsign}</span>
+                        <span className="text-muted-foreground">prefix {m.prefix} · ×{m.appearances}{m.min_altitude !== undefined ? ` · min ${m.min_altitude}ft` : ''}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </CardContent>

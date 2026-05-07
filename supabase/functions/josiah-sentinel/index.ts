@@ -36,6 +36,8 @@ const THREAT_SIGNATURES = {
   kcsoFleet: KCSO_FLEET_REGS,
   shellCompany: ['N790FA', 'N791FA', 'N789FA', 'N792FA'],
   medicalCover: ['N229AM', 'N230AM', 'N743AM'],
+  // Military callsign prefixes — repeat appearances over Kern AOI = Posse Comitatus red flag
+  militaryCallsignPrefixes: ['CONGO', 'RCH', 'CNV', 'KNIFE', 'STMPD', 'TRON', 'REACH', 'SHELL', 'JOSA', 'PAT', 'BLUE', 'GOLD', 'SAM', 'EVAC', 'MEDEVAC', 'NIGHTHAWK'],
   icaoAnchors: ['ac9efd', 'a2027c', '24'],
   lowAltitudeThreshold: 2000,
   harassmentAltitude: 1500,
@@ -54,6 +56,16 @@ const THREAT_SIGNATURES = {
     negativeAltitudeFlag: true,
   },
 };
+
+function isMilitaryCallsign(reg?: string, callsign?: string): { hit: boolean; prefix: string | null } {
+  const c = String(callsign || '').toUpperCase().trim();
+  const r = String(reg || '').toUpperCase().trim();
+  for (const p of THREAT_SIGNATURES.militaryCallsignPrefixes) {
+    if (c.startsWith(p) || r.startsWith(p)) return { hit: true, prefix: p };
+  }
+  return { hit: false, prefix: null };
+}
+
 
 const KNOWN_SHELL_OPERATORS = [
   '9K AIR', 'FLYEXCLUSIVE', 'FLY EXCLUSIVE', 'NETJETS', 'FLEXJET',

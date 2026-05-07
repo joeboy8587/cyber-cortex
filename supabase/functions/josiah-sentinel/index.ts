@@ -880,6 +880,8 @@ REGISTRATION | ACTION | PRIORITY (critical/high/medium)`;
       threat_level: threatLevel,
       adaptive_thresholds: adaptiveThresholds,
       countermeasures,
+      josiah_snark: josiahSnark,
+      military_repeat_offenders: militaryRepeatOffenders,
     };
 
     console.log(`Sentinel scan complete in ${Date.now() - startTime}ms: ${violations.length} violations, threat=${threatLevel}`);

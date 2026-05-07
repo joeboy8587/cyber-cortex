@@ -116,6 +116,12 @@ const navigationItems = [
     icon: ScanEye,
     description: "Equal Analysis Engine"
   },
+  { 
+    title: "Entity Resolution", 
+    url: "/entities", 
+    icon: Fingerprint,
+    description: "Canonical Index → Exhibits"
+  },
 ];
 
 export function AppSidebar() {

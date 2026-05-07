@@ -1,12 +1,12 @@
-// Phase 1: dedup, create rag_documents row, chunk, insert rag_chunks WITHOUT embeddings.
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
-
+// Phase 1: dedup, create rag_documents, insert chunks (no embeddings). Bare fetch to PostgREST.
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const SB_URL = Deno.env.get("SUPABASE_URL")!;
+const SK = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const PG = `${SB_URL}/rest/v1`;
+const H = { "Content-Type": "application/json", apikey: SK, Authorization: `Bearer ${SK}` };
 
 function chunkText(text: string, size = 1500, overlap = 150): string[] {
   const c = text.replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
@@ -34,53 +34,56 @@ async function sha256hex(s: string): Promise<string> {
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
-  const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
   try {
     const { title, filename, content, document_type = "legal_research", tags = [] } = await req.json();
     if (!content || !title) throw new Error("title and content required");
-
     const hash = await sha256hex(content);
 
-    const { data: existing } = await supabase.from("rag_documents")
-      .select("id,status,chunk_count").eq("sha256_hash", hash).maybeSingle();
-    if (existing) {
-      return new Response(JSON.stringify({ skipped: true, document_id: existing.id, status: existing.status, chunks: existing.chunk_count, reason: "duplicate sha256" }),
+    // Dedup
+    const dupRes = await fetch(`${PG}/rag_documents?sha256_hash=eq.${hash}&select=id,status,chunk_count`, { headers: H });
+    const dup = await dupRes.json();
+    if (Array.isArray(dup) && dup.length) {
+      return new Response(JSON.stringify({ skipped: true, document_id: dup[0].id, reason: "duplicate" }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     const chunks = chunkText(content);
-    if (chunks.length === 0) throw new Error("no chunks");
+    if (!chunks.length) throw new Error("no chunks");
 
-    const { data: doc, error: dErr } = await supabase.from("rag_documents").insert({
-      title, filename,
-      storage_path: `inline://${hash}`,
-      document_type, tags,
-      sha256_hash: hash,
-      file_size: content.length,
-      mime_type: filename?.endsWith(".pdf") ? "application/pdf" : "text/markdown",
-      status: "embedding",
-      status_message: `phase1 done; ${chunks.length} chunks pending embed`,
-      chunk_count: chunks.length,
-      raw_text_preview: content.slice(0, 2000),
-    }).select("id").single();
-    if (dErr) throw new Error(`doc insert: ${dErr.message}`);
+    const docRes = await fetch(`${PG}/rag_documents`, {
+      method: "POST", headers: { ...H, Prefer: "return=representation" },
+      body: JSON.stringify({
+        title, filename, storage_path: `inline://${hash}`,
+        document_type, tags, sha256_hash: hash,
+        file_size: content.length,
+        mime_type: filename?.endsWith(".pdf") ? "application/pdf" : "text/markdown",
+        status: "embedding", status_message: `phase1: ${chunks.length} chunks pending embed`,
+        chunk_count: chunks.length,
+        raw_text_preview: content.slice(0, 2000),
+      }),
+    });
+    if (!docRes.ok) throw new Error(`doc insert ${docRes.status}: ${await docRes.text()}`);
+    const documentId = (await docRes.json())[0].id;
 
-    const documentId = doc.id;
-    const rows = chunks.map((c, i) => ({
-      document_id: documentId, chunk_index: i, content: c,
-      token_estimate: Math.ceil(c.length / 4), embedding: null,
-    }));
-    for (let i = 0; i < rows.length; i += 200) {
-      const { error } = await supabase.from("rag_chunks").insert(rows.slice(i, i + 200));
-      if (error) throw new Error(`chunks: ${error.message}`);
+    // Insert chunks in batches
+    for (let i = 0; i < chunks.length; i += 200) {
+      const batch = chunks.slice(i, i + 200).map((c, j) => ({
+        document_id: documentId, chunk_index: i + j, content: c,
+        token_estimate: Math.ceil(c.length / 4),
+      }));
+      const r = await fetch(`${PG}/rag_chunks`, { method: "POST", headers: H, body: JSON.stringify(batch) });
+      if (!r.ok) throw new Error(`chunk batch ${i}: ${r.status} ${await r.text()}`);
     }
 
-    // Mirror raw doc immediately so case files see it even if later phases fail
-    await supabase.from("evidence_documents").insert({
-      title, filename, content: content.slice(0, 500000),
-      file_size: content.length, document_type,
-      tags: [...tags, "rag", "josiah_knowledge"], sha256_hash: hash,
-    });
+    // Mirror to evidence_documents (best-effort)
+    await fetch(`${PG}/evidence_documents`, {
+      method: "POST", headers: H,
+      body: JSON.stringify({
+        title, filename, content: content.slice(0, 500000),
+        file_size: content.length, document_type,
+        tags: [...tags, "rag", "josiah_knowledge"], sha256_hash: hash,
+      }),
+    }).catch(() => {});
 
     return new Response(JSON.stringify({ success: true, document_id: documentId, chunks: chunks.length }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } });

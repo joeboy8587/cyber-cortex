@@ -66,37 +66,6 @@ function isMilitaryCallsign(reg?: string, callsign?: string): { hit: boolean; pr
   return { hit: false, prefix: null };
 }
 
-    // ========== STEP 4.5: MILITARY CALLSIGN ACTIVITY (Posse Comitatus indicator) ==========
-    const militaryHits = recentDetections
-      .map((d: any) => ({ d, m: isMilitaryCallsign(d.registration, d.callsign) }))
-      .filter((x: any) => x.m.hit);
-    const militaryGroups = new Map<string, { prefix: string; rows: any[] }>();
-    for (const { d, m } of militaryHits) {
-      const key = String(d.callsign || d.registration || '').toUpperCase();
-      if (!key) continue;
-      if (!militaryGroups.has(key)) militaryGroups.set(key, { prefix: m.prefix || '', rows: [] });
-      militaryGroups.get(key)!.rows.push(d);
-    }
-    const militaryRepeatOffenders: Array<{ callsign: string; prefix: string; appearances: number; first_seen?: string; last_seen?: string; min_altitude?: number }> = [];
-    for (const [callsign, info] of militaryGroups) {
-      const alts = info.rows.map((r: any) => Number(r.altitude || 0)).filter((a: number) => a > 0);
-      const minAlt = alts.length ? Math.min(...alts) : undefined;
-      const times = info.rows.map((r: any) => r.detected_at || r.timestamp).filter(Boolean).sort();
-      militaryRepeatOffenders.push({
-        callsign, prefix: info.prefix, appearances: info.rows.length,
-        first_seen: times[0], last_seen: times[times.length - 1], min_altitude: minAlt,
-      });
-      const severity: 'critical' | 'high' = (info.rows.length >= 3 || (minAlt !== undefined && minAlt < 1500)) ? 'critical' : 'high';
-      violations.push({
-        type: 'MILITARY_OVER_AOI', severity, registration: callsign,
-        details: `Military callsign ${callsign} (prefix ${info.prefix}) — ${info.rows.length} appearance(s)${minAlt !== undefined ? `, min ${minAlt}ft` : ''} over Kern AOI. Posse Comitatus § 1385 indicator.`,
-        timestamp: new Date().toISOString(), altitude: minAlt,
-      });
-    }
-    if (militaryRepeatOffenders.length > 0) {
-      proactiveAlerts.push(`🪖 MILITARY ACTIVE: ${militaryRepeatOffenders.map(m => `${m.callsign}×${m.appearances}`).join(', ')} — § 1385 review.`);
-    }
-
 
 const KNOWN_SHELL_OPERATORS = [
   '9K AIR', 'FLYEXCLUSIVE', 'FLY EXCLUSIVE', 'NETJETS', 'FLEXJET',

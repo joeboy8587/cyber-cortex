@@ -326,9 +326,6 @@ Deno.serve(async (req) => {
             { table: 'flight_events',                     idCol: 'registration', tsCol: 'event_timestamp', type: 'aircraft_id' },
             { table: 'flight_events',                     idCol: 'icao24',      tsCol: 'event_timestamp', type: 'aircraft_icao24' },
             { table: 'flight_events',                     idCol: 'callsign',    tsCol: 'event_timestamp', type: 'aircraft_callsign' },
-            { table: 'live_flight_detections_rows',       idCol: 'registration', tsCol: 'detection_time', type: 'aircraft_id' },
-            { table: 'live_flight_detections_rows',       idCol: 'icao24',      tsCol: 'detection_time', type: 'aircraft_icao24' },
-            { table: 'live_flight_detections_rows',       idCol: 'callsign',    tsCol: 'detection_time', type: 'aircraft_callsign' },
           ];
 
           // Probe which (table, col) pairs actually exist

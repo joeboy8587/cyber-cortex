@@ -23,6 +23,7 @@ import KnowledgeEngine from "./pages/KnowledgeEngine";
 import DroneDetection from "./pages/DroneDetection";
 import CaseFiles from "./pages/CaseFiles";
 import UniversalAnalyst from "./pages/UniversalAnalyst";
+import EntityResolution from "./pages/EntityResolution";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 2, staleTime: 5000 } },

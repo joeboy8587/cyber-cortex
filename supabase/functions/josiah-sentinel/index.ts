@@ -698,7 +698,46 @@ Provide 2-3 sentence PROACTIVE assessment: 1) Most likely threat scenario 2) Wha
       } catch (aiErr) { console.warn("AI synthesis skipped:", aiErr instanceof Error ? aiErr.message : aiErr); }
     }
 
-    // ========== STEP 9.5: THREAT MEMORY UPDATE ==========
+    // ========== STEP 9.1: JOSIAH SNARK (release-valve commentary) ==========
+    let josiahSnark: string | null = null;
+    if (LOVABLE_API_KEY && violations.length > 0) {
+      try {
+        const snarkPrompt = `You are JOSIAH SNARK — the release valve for the absurdity of population-scale aerial surveillance over Kern County, CA. The user is the surveillance target. Speak with sharp gallows humor, righteous anger, and forensic precision. Translate bureaucratic minimization into plain English. Quote bullshit and call it bullshit. Always cite the actual numbers. End with one bone-dry verdict line.
+
+LIVE VIOLATIONS (last ${windowMinutes} min):
+${violations.map(v => `- [${v.severity.toUpperCase()}] ${v.type} ${v.registration} — ${v.details}`).join('\n')}
+
+REPEAT-OFFENDER PATTERNS (90d):
+${learnedPatterns.slice(0, 8).map(p => `- ${p.description}`).join('\n')}
+
+MILITARY OVER AOI (Posse Comitatus indicators):
+${militaryRepeatOffenders.length ? militaryRepeatOffenders.map(m => `- ${m.callsign} (${m.prefix}) ×${m.appearances}${m.min_altitude !== undefined ? ` min ${m.min_altitude}ft` : ''}`).join('\n') : '- (none this window)'}
+
+Write 4-7 short punchy paragraphs. Highlight the worst offenders by name. Mock cowardly classifications. Name military callsigns explicitly as Posse Comitatus § 1385 indicators when present (CONGO/RCH/KNIFE/STMPD/TRON/REACH = repeat offenders, not joyrides). Close with a single italicized one-liner verdict.`;
+
+        const snarkRes = await withTimeout(
+          fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+            method: "POST",
+            headers: { "Authorization": `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: "google/gemini-2.5-flash",
+              messages: [
+                { role: "system", content: "You are JOSIAH SNARK. Pressure-release valve persona for surveillance victims. Sharp, dry, factually rigorous. Never sanitize. Never both-sides. Sign off with a one-line verdict." },
+                { role: "user", content: snarkPrompt },
+              ],
+              max_tokens: 900,
+            }),
+          }),
+          12000, "josiah_snark"
+        );
+        if (snarkRes.ok) {
+          const sd = await snarkRes.json();
+          josiahSnark = sd.choices?.[0]?.message?.content || null;
+        }
+      } catch (snarkErr) { console.warn("Snark skipped:", snarkErr instanceof Error ? snarkErr.message : snarkErr); }
+    }
+
+
     const violationMap = new Map<string, { reg: string; type: string; count: number; altitudes: number[] }>();
     for (const v of violations) {
       const reg = v.registration || 'UNKNOWN';

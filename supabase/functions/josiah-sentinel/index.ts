@@ -139,6 +139,8 @@ interface SentinelReport {
   threat_level: 'CRITICAL' | 'HIGH' | 'ELEVATED' | 'NORMAL';
   adaptive_thresholds: AdaptiveThreshold[];
   countermeasures: Countermeasure[];
+  josiah_snark: string | null;
+  military_repeat_offenders: Array<{ callsign: string; prefix: string; appearances: number; first_seen?: string; last_seen?: string; min_altitude?: number }>;
 }
 
 // Helper: run with overall timeout

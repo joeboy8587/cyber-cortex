@@ -35,19 +35,29 @@ async function sha256hex(s: string): Promise<string> {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   try {
-    const { title, filename, content, document_type = "legal_research", tags = [] } = await req.json();
+    const body = await req.json();
+    const title: string = body.title;
+    const filename: string = body.filename;
+    let content: string | null = body.content;
+    const document_type: string = body.document_type || "legal_research";
+    const tags: string[] = body.tags || [];
     if (!content || !title) throw new Error("title and content required");
     const hash = await sha256hex(content);
+    const fileSize = content.length;
+    const preview = content.slice(0, 2000);
+    const mirrorContent = content.slice(0, 200000);
 
     // Dedup
-    const dupRes = await fetch(`${PG}/rag_documents?sha256_hash=eq.${hash}&select=id,status,chunk_count`, { headers: H });
+    const dupRes = await fetch(`${PG}/rag_documents?sha256_hash=eq.${hash}&select=id`, { headers: H });
     const dup = await dupRes.json();
     if (Array.isArray(dup) && dup.length) {
+      content = null;
       return new Response(JSON.stringify({ skipped: true, document_id: dup[0].id, reason: "duplicate" }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     const chunks = chunkText(content);
+    content = null; // free original
     if (!chunks.length) throw new Error("no chunks");
 
     const docRes = await fetch(`${PG}/rag_documents`, {
@@ -55,32 +65,36 @@ Deno.serve(async (req) => {
       body: JSON.stringify({
         title, filename, storage_path: `inline://${hash}`,
         document_type, tags, sha256_hash: hash,
-        file_size: content.length,
+        file_size: fileSize,
         mime_type: filename?.endsWith(".pdf") ? "application/pdf" : "text/markdown",
         status: "embedding", status_message: `phase1: ${chunks.length} chunks pending embed`,
         chunk_count: chunks.length,
-        raw_text_preview: content.slice(0, 2000),
+        raw_text_preview: preview,
       }),
     });
     if (!docRes.ok) throw new Error(`doc insert ${docRes.status}: ${await docRes.text()}`);
     const documentId = (await docRes.json())[0].id;
 
-    // Insert chunks in batches
-    for (let i = 0; i < chunks.length; i += 200) {
-      const batch = chunks.slice(i, i + 200).map((c, j) => ({
-        document_id: documentId, chunk_index: i + j, content: c,
-        token_estimate: Math.ceil(c.length / 4),
-      }));
+    // Insert chunks in small batches
+    for (let i = 0; i < chunks.length; i += 50) {
+      const batch = [];
+      const end = Math.min(i + 50, chunks.length);
+      for (let j = i; j < end; j++) {
+        batch.push({
+          document_id: documentId, chunk_index: j, content: chunks[j],
+          token_estimate: Math.ceil(chunks[j].length / 4),
+        });
+      }
       const r = await fetch(`${PG}/rag_chunks`, { method: "POST", headers: H, body: JSON.stringify(batch) });
       if (!r.ok) throw new Error(`chunk batch ${i}: ${r.status} ${await r.text()}`);
     }
 
-    // Mirror to evidence_documents (best-effort)
+    // Mirror to evidence_documents (best-effort, capped)
     await fetch(`${PG}/evidence_documents`, {
       method: "POST", headers: H,
       body: JSON.stringify({
-        title, filename, content: content.slice(0, 500000),
-        file_size: content.length, document_type,
+        title, filename, content: mirrorContent,
+        file_size: fileSize, document_type,
         tags: [...tags, "rag", "josiah_knowledge"], sha256_hash: hash,
       }),
     }).catch(() => {});

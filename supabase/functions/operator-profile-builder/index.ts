@@ -13,11 +13,13 @@ const corsHeaders = {
 const SOURCES_LIGHT: Array<{ table: string; idCol: string; tsCol?: string }> = [
   { table: "confirmed_biometric_correlations", idCol: "registration", tsCol: "event_timestamp" },
   { table: "exhibit_d_biometric_harm", idCol: "registration", tsCol: "event_timestamp" },
-  { table: "alert_logs", idCol: "registration", tsCol: "created_at" },
-  { table: "flight_events", idCol: "registration", tsCol: "event_timestamp" },
   { table: "aircraft_registry_neon", idCol: "registration" },
 ];
-const SOURCE_HEAVY = { table: "live_flight_detections_rows", idCol: "registration", tsCol: "detection_timestamp" };
+const SOURCES_HEAVY: Array<{ table: string; idCol: string; tsCol?: string }> = [
+  { table: "alert_logs", idCol: "registration", tsCol: "created_at" },
+  { table: "flight_events", idCol: "registration", tsCol: "event_timestamp" },
+  { table: "live_flight_detections_rows", idCol: "registration", tsCol: "detection_timestamp" },
+];
 
 
 const KCSO_REGS = ["N912KC", "N913KC", "N597E", "N911KC"];

@@ -66,14 +66,29 @@ serve(async (req) => {
       )
     `;
 
-    // 2. Probe which source tables actually exist
+    // 2. Probe which source tables actually exist AND have the registration column
     const tableNames = SOURCES.map((s) => s.table);
-    const existing = await sql`
-      SELECT table_name FROM information_schema.tables
-      WHERE table_schema = 'public' AND table_name = ANY(${tableNames})
+    const cols = await sql`
+      SELECT table_name, column_name FROM information_schema.columns
+      WHERE table_schema='public' AND table_name = ANY(${tableNames})
     `;
-    const existingSet = new Set(existing.map((r: any) => r.table_name));
-    const usable = SOURCES.filter((s) => existingSet.has(s.table));
+    const colMap = new Map<string, Set<string>>();
+    for (const c of cols as any[]) {
+      if (!colMap.has(c.table_name)) colMap.set(c.table_name, new Set());
+      colMap.get(c.table_name)!.add(c.column_name);
+    }
+    const existingSet = new Set(colMap.keys());
+    const usable = SOURCES.filter((s) => {
+      const colSet = colMap.get(s.table);
+      return colSet?.has(s.idCol);
+    }).map((s) => ({ ...s, tsCol: s.tsCol && colMap.get(s.table)?.has(s.tsCol) ? s.tsCol : undefined }));
+
+    if (usable.length === 0) {
+      return new Response(JSON.stringify({ ok: false, error: "no source tables with registration column found" }), {
+        status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
 
     // 3. Aggregate occurrences per (registration, source)
     const unionParts = usable.map((s) => {

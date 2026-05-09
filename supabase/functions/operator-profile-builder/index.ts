@@ -92,7 +92,7 @@ serve(async (req) => {
 
     // 3. Aggregate occurrences per (registration, source)
     const unionParts = usable.map((s) => {
-      const tsExpr = s.tsCol ? `MAX(${s.tsCol})` : `NULL::timestamptz`;
+      const tsExpr = s.tsCol ? `MAX(NULLIF(${s.tsCol}::text,'')::timestamptz)` : `NULL::timestamptz`;
       return `SELECT UPPER(TRIM(${s.idCol}::text)) AS registration, '${s.table}' AS src, COUNT(*)::bigint AS n, ${tsExpr} AS last_seen FROM ${s.table} WHERE ${s.idCol} IS NOT NULL AND TRIM(${s.idCol}::text) <> '' GROUP BY 1`;
     }).join(" UNION ALL ");
 

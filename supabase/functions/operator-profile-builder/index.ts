@@ -9,15 +9,16 @@ const corsHeaders = {
 };
 
 // Sources that hold a registration column. Each contributes occurrences + flags.
-const SOURCES: Array<{ table: string; idCol: string; tsCol?: string; tag?: string }> = [
-  { table: "live_flight_detections_rows", idCol: "registration", tsCol: "detection_timestamp" },
-  { table: "surveillance_feed_rows", idCol: "registration", tsCol: "detection_timestamp" },
+// live_flight_detections_rows is HEAVY (millions of rows) — opt-in via body.includeHeavy.
+const SOURCES_LIGHT: Array<{ table: string; idCol: string; tsCol?: string }> = [
   { table: "confirmed_biometric_correlations", idCol: "registration", tsCol: "event_timestamp" },
   { table: "exhibit_d_biometric_harm", idCol: "registration", tsCol: "event_timestamp" },
   { table: "alert_logs", idCol: "registration", tsCol: "created_at" },
   { table: "flight_events", idCol: "registration", tsCol: "event_timestamp" },
   { table: "aircraft_registry_neon", idCol: "registration" },
 ];
+const SOURCE_HEAVY = { table: "live_flight_detections_rows", idCol: "registration", tsCol: "detection_timestamp" };
+
 
 const KCSO_REGS = ["N912KC", "N913KC", "N597E", "N911KC"];
 const SHELL_HINTS = ["9K AIR", "BEST EQUIPMENT", "RESIDCO", "ALF IX", "LBBO", "BANC OF CAL"];

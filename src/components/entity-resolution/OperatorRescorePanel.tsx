@@ -13,11 +13,11 @@ export function OperatorRescorePanel() {
   const [tails, setTails] = useState("N912KC,N913KC,N597E,N949SL,N4022W,N473CA,N791FA");
   const [result, setResult] = useState<any>(null);
 
-  async function rebuildProfiles() {
+  async function rebuildProfiles(includeHeavy = false) {
     setBusy("profiles");
     setResult(null);
     try {
-      const { data, error } = await supabase.functions.invoke("operator-profile-builder", { body: {} });
+      const { data, error } = await supabase.functions.invoke("operator-profile-builder", { body: { includeHeavy } });
       if (error) throw error;
       setResult(data);
       toast({ title: "Operator profiles rebuilt", description: `${data?.profiles_upserted ?? 0} profiles upserted` });

@@ -43,6 +43,10 @@ serve(async (req) => {
   const sql = postgres(NEON_DATABASE_URL, { ssl: "require", max: 2, idle_timeout: 20 });
   const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
+  const reqBody = await req.json().catch(() => ({}));
+  const includeHeavy: boolean = reqBody?.includeHeavy === true;
+  const SOURCES = includeHeavy ? [...SOURCES_LIGHT, SOURCE_HEAVY] : SOURCES_LIGHT;
+
   try {
     // 1. Ensure target table
     await sql`

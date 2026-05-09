@@ -47,7 +47,7 @@ export function OperatorRescorePanel() {
   const tailList = tails.split(",").map((t) => t.trim().toUpperCase()).filter(Boolean);
 
   return (
-    <CyberPanel title="Operator Truth & Threat Re-Scoring" icon={<Target className="w-4 h-4" />} variant="primary">
+    <CyberPanel title="Operator Truth & Threat Re-Scoring" icon={<Target className="w-4 h-4" />} variant="default">
       <div className="p-4 space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div className="space-y-2">

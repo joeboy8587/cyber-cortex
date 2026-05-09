@@ -11,13 +11,12 @@ const corsHeaders = {
 // Sources that hold a registration column. Each contributes occurrences + flags.
 // live_flight_detections_rows is HEAVY (millions of rows) — opt-in via body.includeHeavy.
 const SOURCES_LIGHT: Array<{ table: string; idCol: string; tsCol?: string }> = [
-  { table: "confirmed_biometric_correlations", idCol: "registration", tsCol: "event_timestamp" },
-  { table: "exhibit_d_biometric_harm", idCol: "registration", tsCol: "event_timestamp" },
-  { table: "aircraft_registry_neon", idCol: "registration" },
+  { table: "confirmed_biometric_correlations", idCol: "aircraft_registration", tsCol: "aircraft_timestamp" },
+  { table: "exhibit_d_biometric_harm", idCol: "aircraft_registration", tsCol: "aircraft_timestamp" },
+  { table: "alert_logs", idCol: "registration", tsCol: "created_at" },
 ];
 const SOURCES_HEAVY: Array<{ table: string; idCol: string; tsCol?: string }> = [
-  { table: "alert_logs", idCol: "registration", tsCol: "created_at" },
-  { table: "flight_events", idCol: "registration", tsCol: "event_timestamp" },
+  { table: "flight_events", idCol: "registration", tsCol: "detection_timestamp" },
   { table: "live_flight_detections_rows", idCol: "registration", tsCol: "detection_timestamp" },
 ];
 

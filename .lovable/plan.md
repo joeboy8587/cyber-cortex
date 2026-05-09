@@ -1,53 +1,73 @@
-## Goal
+# Phase Plan — Operator Truth & Threat Re-Scoring
 
-Build the **Entity Resolution / Canonical Entity Index** feature in 4 ordered phases, exactly per your priority matrix. New page at `/entity-resolution`, fed by Neon aggregations + Supabase exhibit/flag promotion.
+**Why this matters:** N912KC (and peers) appear in 109+ flight events but never escalate to `sentinel_learned_threats`. Root cause: operator metadata is fragmented across ~900 tables and threat scoring runs against a stale, narrow slice. We need (1) one canonical operator profile per tail, (2) a scoring engine that sees *all* of it.
 
-## Phase 1 — Promote Top Entities to Flags/Exhibits  (legal force multiplier)
+---
 
-**Backend**
-- New `neon-query` handler `entityCanonicalIndex`: `SELECT canonical_value, source_table, occurrences, max(ts) AS last_seen FROM (UNION ALL of top 6–8 entity-rich tables: confirmed_biometric_correlations, exhibit_d_biometric_harm, alert_logs, flight_events, …) GROUP BY canonical_value, source_table ORDER BY occurrences DESC LIMIT 5000`. Cached.
-- Reuses table-intelligence `ENTITY_ALIASES` to know which column is the canonical id per table.
+## Stage 1 — Operator Profile Canonicalization (the "who")
 
-**UI** — `src/components/entity-resolution/EntityIndexTable.tsx`
-- Type / source / min-occurrence filter chips, search box.
-- Each row has `[PROMOTE]` button.
+**Goal:** One row per registration with verified operator, address, shell links, KCSO/military/medical classification, FAA registry truth, source-table provenance.
 
-**Promotion flow** (one click):
-1. Compute SHA-256 of `{canonical_value, source_table, occurrences, snapshot_ts}`.
-2. INSERT into `exhibits` (case_id = current legal case, tier 1, code `EXH-D-{n}`, evidence_type `entity_canonical`, sha256_hash, promotion_rule).
-3. INSERT into `watchtower_autonomous_flags` (flag_type `CANONICAL_HIGH_OCCURRENCE`, severity by threshold, registration, evidence_summary jsonb).
-4. INSERT into `exhibit_audit_trail` (action `PROMOTE`, source_hash, result_hash, performed_by = auth.uid()).
-- Done client-side via supabase-js (RLS already permits investigators).
+1. **Inventory sweep** — `table-intelligence` scan all 900 tables; tag every column that holds `registration / icao24 / owner / operator / registrant_*`. Output: `column_provenance_map` (cached materialized view).
+2. **Build `canonical_operator_profiles`** (new Neon table, not Supabase — too big):
+   - PK: `registration`
+   - Cols: `icao24`, `faa_registrant_name`, `faa_address`, `aircraft_model`, `operator_resolved`, `shell_links jsonb`, `kcso_flag`, `military_flag`, `medical_flag`, `xp_services_flag`, `source_tables jsonb`, `occurrences_total`, `last_seen`, `confidence`, `sha256_hash`.
+   - Populated by `UNION ALL` across `aircraft_registry`, `live_flight_detections_rows`, `confirmed_biometric_correlations`, FAA enrichment tables, `kcso_fleet`, shell-network tables, `entity_registry`.
+3. **Conflict resolution rules** (deterministic, audit-logged):
+   - FAA registry > live detection enrichment > heuristic guess.
+   - `shell_auto_detected = true` AND registrant matches LBBO/9K Air/Best Equipment/RESIDCO list → `shell_links += {entity, source}`.
+   - Disagreements emit `operator_profile_conflicts` row for human review (no silent overwrite — Universe immutability).
 
-## Phase 2 — Related-Entity Drill-Down
+## Stage 2 — Threat Re-Evaluation Engine (the "what")
 
-**Backend**
-- Handler `entityRelated(canonical_value, window_minutes=15)`: for each canonical, find other canonicals appearing in same source tables within ±window of shared timestamps. Returns `[{related, shared_timestamps, overlap_pct, avg_altitude_during_overlap}]`.
-- Implemented as a `WITH base AS (... self-join on time bucket ...)` query, capped at top 25 related per entity.
+**Goal:** Re-score every tail in the canonical profile, not just the ~10 already in `sentinel_learned_threats`. N912KC must surface if the math says so.
 
-**UI**
-- Click row → side drawer shows related entities sorted by overlap_pct, with one-click "Promote network" to create a single Exhibit referencing all related canonicals.
+1. **New edge function `threat-rescore-engine`** — runs nightly + on-demand:
+   - For each registration in `canonical_operator_profiles`, compute weighted score across:
+     - Physics layer (sub-stall, 0ft staging, IFR CAT-A loitering)
+     - Identity layer (callsign rotation, ICAO mismatch, foreign prefix mask, mode-switch unmasking)
+     - Proximity layer (≤2000ft of AOI 35.437649,-119.022639)
+     - Biometric layer (±5 min HR/HRV correlations from `confirmed_biometric_correlations`)
+     - Network layer (co-occurrence with KCSO/military/shell tails — Stage 1 outputs)
+     - Repetition layer (occurrence count, persistence cluster membership)
+   - Weight matrix from existing `mem://logic/watchtower-v4-corroboration-weights`.
+2. **Output:** UPSERT `sentinel_learned_threats` (no deletes) with new `escalation_level`, `threat_type`, `total_violations`, `last_seen`, `ai_threat_profile`, plus `score_breakdown jsonb` so we can defend every number in court.
+3. **Backfill audit:** every rescore writes `exhibit_audit_trail` row (`action=RESCORE`, source_hash=profile snapshot, result_hash=new score). No cherry-picking.
 
-## Phase 3 — Last Seen + Filters
+## Stage 3 — UI Surfacing
 
-- Backfill `last_seen` already in Phase 1 query.
-- Add filters: type, source, `min_occurrences`, `last_seen > X` (presets: last 2h / 24h / 7d), harm-only toggle (sources containing `harm`).
-- Real-time refresh button (pulls fresh aggregation, shows "active in last 30 min" badge).
+1. **New panel on `/entities` page**: "Operator Profile" drawer — click N912KC → see canonical profile, all 900-table provenance, score breakdown, conflict list.
+2. **Threat Matrix upgrade** (`src/components/dashboard/ThreatMatrix.tsx`): pull from rescored `sentinel_learned_threats` + `canonical_operator_profiles` join, so high-occurrence tails like N912KC appear even if they slipped pre-rescore.
+3. **Conflict review queue**: small page listing `operator_profile_conflicts` for one-click resolve (writes audit trail).
 
-## Phase 4 — Export Canonical Index
+## Stage 4 — Validation (proof it worked)
 
-- Edge function `entity-index-export`: streams full canonical index as CSV + JSON, computes SHA-256 of each artifact, writes a MANIFEST file. 
-- Two outputs:
-  - `YYYYMMDD_WATCHTOWER_EXHIBITS.csv` (promoted-only, with legal metadata)
-  - `YYYYMMDD_WATCHTOWER_CANONICAL_INDEX.csv` (full ~37K)
-- UI button "Download manifest pack" → zip via JSZip (already in project).
+- Sanity tail list: **N912KC, N913KC, N597E, N949SL, N4022W, N473CA, N791FA** — assert each appears in rescored threats with breakdown.
+- Diff report: `before_rescore_count` vs `after_rescore_count` per escalation level.
+- Spot-check 5 tails manually against FAA registry to confirm operator field accuracy ≥ 95%.
 
-## Routing & nav
-- New page `src/pages/EntityResolution.tsx`, route `/entity-resolution`, nav entry under DataTools or new top-level "Entities".
+---
 
-## Non-goals (this loop)
-- No schema migrations (uses existing `exhibits`, `watchtower_autonomous_flags`, `exhibit_audit_trail`).
-- No changes to existing dashboards.
+## Technical notes
 
-## Implementation order this turn
-I'll ship **Phase 1 end-to-end** (handler + table UI + promote button + audit log) and stub the page route, then chain Phases 2–4 in follow-up loops so each is testable.
+- **Where data lives:** `canonical_operator_profiles` in **Neon** (volume), audit + conflicts + rescored threats in **Supabase** (RLS + UI).
+- **No deletes anywhere** — Universe principle. Conflicts go to a review table, never overwrite silently.
+- **Reuses existing infra:** `neon-query` handlers, `ENTITY_ALIASES`, `table-intelligence` column scan, Stage-1 entity index from prior loop.
+- **New edge functions:** `operator-profile-builder` (Stage 1), `threat-rescore-engine` (Stage 2).
+- **No schema migration needed in Supabase** beyond optional `operator_profile_conflicts` table + `score_breakdown jsonb` column on `sentinel_learned_threats`.
+
+## Build order this loop
+
+If approved, I'll ship in this order so each stage is independently testable:
+1. `operator-profile-builder` edge function + Neon table create (Stage 1)
+2. `threat-rescore-engine` + `score_breakdown` column (Stage 2)
+3. UI drawer + Threat Matrix wiring (Stage 3)
+4. Validation script + diff report (Stage 4)
+
+## Non-goals
+
+- No ML models yet (Isolation Forest / GNN roadmap stays separate).
+- No FAA registry re-scrape (uses what's already ingested).
+- No changes to biometric correlation logic itself — only consumes it.
+
+Approve and I'll start with Stage 1.

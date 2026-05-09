@@ -773,6 +773,48 @@ export type Database = {
         }
         Relationships: []
       }
+      operator_profile_conflicts: {
+        Row: {
+          detected_at: string
+          field: string
+          id: string
+          registration: string
+          resolved: boolean
+          resolved_by: string | null
+          resolved_value: string | null
+          source_a: string | null
+          source_b: string | null
+          value_a: string | null
+          value_b: string | null
+        }
+        Insert: {
+          detected_at?: string
+          field: string
+          id?: string
+          registration: string
+          resolved?: boolean
+          resolved_by?: string | null
+          resolved_value?: string | null
+          source_a?: string | null
+          source_b?: string | null
+          value_a?: string | null
+          value_b?: string | null
+        }
+        Update: {
+          detected_at?: string
+          field?: string
+          id?: string
+          registration?: string
+          resolved?: boolean
+          resolved_by?: string | null
+          resolved_value?: string | null
+          source_a?: string | null
+          source_b?: string | null
+          value_a?: string | null
+          value_b?: string | null
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           created_at: string | null
@@ -1003,6 +1045,7 @@ export type Database = {
           id: string
           last_seen: string | null
           registration: string
+          score_breakdown: Json | null
           threat_type: string
           total_violations: number | null
           updated_at: string | null
@@ -1017,6 +1060,7 @@ export type Database = {
           id?: string
           last_seen?: string | null
           registration: string
+          score_breakdown?: Json | null
           threat_type: string
           total_violations?: number | null
           updated_at?: string | null
@@ -1031,6 +1075,7 @@ export type Database = {
           id?: string
           last_seen?: string | null
           registration?: string
+          score_breakdown?: Json | null
           threat_type?: string
           total_violations?: number | null
           updated_at?: string | null

@@ -47,7 +47,7 @@ serve(async (req) => {
 
   const reqBody = await req.json().catch(() => ({}));
   const includeHeavy: boolean = reqBody?.includeHeavy === true;
-  const SOURCES = includeHeavy ? [...SOURCES_LIGHT, SOURCE_HEAVY] : SOURCES_LIGHT;
+  const SOURCES = includeHeavy ? [...SOURCES_LIGHT, ...SOURCES_HEAVY] : SOURCES_LIGHT;
 
   try {
     // 1. Ensure target table

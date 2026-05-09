@@ -54,10 +54,15 @@ export function OperatorRescorePanel() {
             <div className="text-xs text-muted-foreground uppercase tracking-wider flex items-center gap-2">
               <Users className="w-3 h-3" /> Stage 1 — Canonical operator profiles
             </div>
-            <Button onClick={rebuildProfiles} disabled={busy !== "none"} className="w-full" variant="secondary">
-              {busy === "profiles" ? <Loader2 className="w-3 h-3 mr-2 animate-spin" /> : <RefreshCw className="w-3 h-3 mr-2" />}
-              Rebuild operator profiles (Neon)
-            </Button>
+            <div className="flex gap-2">
+              <Button onClick={() => rebuildProfiles(false)} disabled={busy !== "none"} className="flex-1" variant="secondary">
+                {busy === "profiles" ? <Loader2 className="w-3 h-3 mr-2 animate-spin" /> : <RefreshCw className="w-3 h-3 mr-2" />}
+                Rebuild (light)
+              </Button>
+              <Button onClick={() => rebuildProfiles(true)} disabled={busy !== "none"} variant="outline" size="sm">
+                + Heavy tables
+              </Button>
+            </div>
             <p className="text-[10px] text-muted-foreground">
               Aggregates registration across live detections, biometric correlations, alert logs, flight events &amp; FAA registry into one canonical row per tail.
             </p>

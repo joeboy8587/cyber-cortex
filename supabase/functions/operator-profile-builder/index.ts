@@ -41,12 +41,20 @@ serve(async (req) => {
     });
   }
 
-  const sql = postgres(NEON_DATABASE_URL, { ssl: "require", max: 2, idle_timeout: 20 });
+  const sql = postgres(NEON_DATABASE_URL, {
+    ssl: "require",
+    max: 2,
+    idle_timeout: 20,
+    connect_timeout: 10,
+    connection: { statement_timeout: "540000" }, // 9 min per statement
+  });
   const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
   const reqBody = await req.json().catch(() => ({}));
   const includeHeavy: boolean = reqBody?.includeHeavy === true;
-  const SOURCES = includeHeavy ? [...SOURCES_LIGHT, ...SOURCES_HEAVY] : SOURCES_LIGHT;
+  const onlySources: string[] | undefined = Array.isArray(reqBody?.onlySources) ? reqBody.onlySources : undefined;
+  let SOURCES = includeHeavy ? [...SOURCES_LIGHT, ...SOURCES_HEAVY] : SOURCES_LIGHT;
+  if (onlySources?.length) SOURCES = SOURCES.filter((s) => onlySources.includes(s.table));
 
   try {
     // 1. Ensure target table
@@ -96,23 +104,48 @@ serve(async (req) => {
     }
 
 
-    // 3. Aggregate occurrences per (registration, source)
-    const unionParts = usable.map((s) => {
-      const tsExpr = s.tsCol ? `MAX(NULLIF(${s.tsCol}::text,'')::timestamptz)` : `NULL::timestamptz`;
-      return `SELECT UPPER(TRIM(${s.idCol}::text)) AS registration, '${s.table}' AS src, COUNT(*)::bigint AS n, ${tsExpr} AS last_seen FROM ${s.table} WHERE ${s.idCol} IS NOT NULL AND TRIM(${s.idCol}::text) <> '' GROUP BY 1`;
-    }).join(" UNION ALL ");
+    // 3. Aggregate occurrences per (registration, source) — ONE TABLE AT A TIME
+    // (avoids a single mega-query timeout when live_flight_detections_rows is included)
+    type Agg = { total: bigint; last_seen: string | null; source_tables: Record<string, number> };
+    const aggMap = new Map<string, Agg>();
+    const sourceErrors: Record<string, string> = {};
 
-    const aggSql = `
-      WITH src AS (${unionParts})
-      SELECT registration,
-             SUM(n)::bigint AS total,
-             MAX(last_seen) AS last_seen,
-             jsonb_object_agg(src, n) AS source_tables
-      FROM src
-      GROUP BY registration
-      HAVING SUM(n) >= 5
-    `;
-    const rows = await sql.unsafe(aggSql);
+    for (const s of usable) {
+      const tsExpr = s.tsCol ? `MAX(NULLIF(${s.tsCol}::text,'')::timestamptz)` : `NULL::timestamptz`;
+      const q = `SELECT UPPER(TRIM(${s.idCol}::text)) AS registration,
+                        COUNT(*)::bigint AS n,
+                        ${tsExpr} AS last_seen
+                 FROM ${s.table}
+                 WHERE ${s.idCol} IS NOT NULL AND TRIM(${s.idCol}::text) <> ''
+                 GROUP BY 1`;
+      try {
+        const partRows = await sql.unsafe(q);
+        for (const pr of partRows as any[]) {
+          const reg = pr.registration;
+          if (!reg) continue;
+          const cur = aggMap.get(reg) || { total: 0n, last_seen: null, source_tables: {} };
+          const n = BigInt(pr.n);
+          cur.total += n;
+          cur.source_tables[s.table] = Number(pr.n);
+          if (pr.last_seen && (!cur.last_seen || pr.last_seen > cur.last_seen)) {
+            cur.last_seen = pr.last_seen;
+          }
+          aggMap.set(reg, cur);
+        }
+      } catch (e: any) {
+        console.error(`source ${s.table} failed:`, e?.message || e);
+        sourceErrors[s.table] = String(e?.message || e);
+      }
+    }
+
+    const rows = Array.from(aggMap.entries())
+      .filter(([_, v]) => v.total >= 5n)
+      .map(([registration, v]) => ({
+        registration,
+        total: v.total.toString(),
+        last_seen: v.last_seen,
+        source_tables: v.source_tables,
+      }));
 
     // 4. Try to enrich with FAA registry data (if a registry table exists in Neon)
     const regTbl = existingSet.has("aircraft_registry_neon") ? "aircraft_registry_neon" : null;
@@ -185,13 +218,14 @@ serve(async (req) => {
       records_evaluated: rows.length,
       records_promoted: upserts,
       result_hash: await sha256(`${upserts}|${Date.now()}`),
-      metadata: { sources: usable.map((s) => s.table), conflicts: conflicts.length },
+      metadata: { sources: usable.map((s) => s.table), conflicts: conflicts.length, source_errors: sourceErrors },
     });
 
     return new Response(
       JSON.stringify({
         ok: true,
         sources_used: usable.map((s) => s.table),
+        source_errors: sourceErrors,
         profiles_upserted: upserts,
         conflicts_logged: conflicts.length,
       }),

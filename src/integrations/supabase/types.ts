@@ -258,6 +258,78 @@ export type Database = {
         }
         Relationships: []
       }
+      corporate_transit_corridors: {
+        Row: {
+          acreage: number | null
+          bbox_max_lat: number | null
+          bbox_max_lng: number | null
+          bbox_min_lat: number | null
+          bbox_min_lng: number | null
+          controlling_family: string | null
+          corporate_owner: string
+          corridor_name: string
+          created_at: string
+          detection_count: number | null
+          function_role: string | null
+          id: string
+          legal_significance: string | null
+          notes: string | null
+          parent_entity: string | null
+          political_nexus: Json | null
+          sha256_hash: string | null
+          source_citations: Json | null
+          top_operators: Json | null
+          unique_aircraft: number | null
+          updated_at: string
+        }
+        Insert: {
+          acreage?: number | null
+          bbox_max_lat?: number | null
+          bbox_max_lng?: number | null
+          bbox_min_lat?: number | null
+          bbox_min_lng?: number | null
+          controlling_family?: string | null
+          corporate_owner: string
+          corridor_name: string
+          created_at?: string
+          detection_count?: number | null
+          function_role?: string | null
+          id?: string
+          legal_significance?: string | null
+          notes?: string | null
+          parent_entity?: string | null
+          political_nexus?: Json | null
+          sha256_hash?: string | null
+          source_citations?: Json | null
+          top_operators?: Json | null
+          unique_aircraft?: number | null
+          updated_at?: string
+        }
+        Update: {
+          acreage?: number | null
+          bbox_max_lat?: number | null
+          bbox_max_lng?: number | null
+          bbox_min_lat?: number | null
+          bbox_min_lng?: number | null
+          controlling_family?: string | null
+          corporate_owner?: string
+          corridor_name?: string
+          created_at?: string
+          detection_count?: number | null
+          function_role?: string | null
+          id?: string
+          legal_significance?: string | null
+          notes?: string | null
+          parent_entity?: string | null
+          political_nexus?: Json | null
+          sha256_hash?: string | null
+          source_citations?: Json | null
+          top_operators?: Json | null
+          unique_aircraft?: number | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       correlation_job_status: {
         Row: {
           completed_at: string | null

@@ -218,13 +218,14 @@ serve(async (req) => {
       records_evaluated: rows.length,
       records_promoted: upserts,
       result_hash: await sha256(`${upserts}|${Date.now()}`),
-      metadata: { sources: usable.map((s) => s.table), conflicts: conflicts.length },
+      metadata: { sources: usable.map((s) => s.table), conflicts: conflicts.length, source_errors: sourceErrors },
     });
 
     return new Response(
       JSON.stringify({
         ok: true,
         sources_used: usable.map((s) => s.table),
+        source_errors: sourceErrors,
         profiles_upserted: upserts,
         conflicts_logged: conflicts.length,
       }),

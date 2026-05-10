@@ -52,7 +52,7 @@ serve(async (req) => {
     ? body.registrations.map((s: string) => String(s).toUpperCase())
     : null;
   const maxRows: number = Math.min(Number(body?.maxRows) || 500, 2000);
-  const includeLiveSignals: boolean = body?.includeLiveSignals !== false; // default true but bulk-optimized
+  const includeLiveSignals: boolean = body?.includeLiveSignals === true; // default false to avoid heavy table scans
 
   const sql = postgres(NEON_DATABASE_URL, { ssl: "require", max: 2, idle_timeout: 20, connect_timeout: 10 });
   const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);

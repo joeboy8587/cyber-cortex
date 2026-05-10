@@ -93,27 +93,27 @@ serve(async (req) => {
 
     if (includeLiveSignals && have.has("live_flight_detections_rows")) {
       const rows = await sql`
-        SELECT UPPER(TRIM(registration)) AS reg,
+        SELECT UPPER(registration) AS reg,
                COUNT(*) FILTER (WHERE COALESCE(speed,1000) < 48 AND COALESCE(altitude,1000) < 500)::int AS substall,
                COUNT(*) FILTER (WHERE COALESCE(altitude,9999) <= 0)::int AS zerofoot,
                AVG(altitude)::numeric AS avg_alt,
                COUNT(DISTINCT icao24)::int AS hex_n,
                COUNT(DISTINCT callsign)::int AS cs_n
         FROM live_flight_detections_rows
-        WHERE UPPER(TRIM(registration)) = ANY(${tails})
-        GROUP BY 1
+        WHERE registration = ANY(${tails})
+        GROUP BY UPPER(registration)
       `;
       for (const r of rows) flightAgg.set(r.reg, r);
 
       const aoiRows = await sql`
-        SELECT UPPER(TRIM(registration)) AS reg,
+        SELECT UPPER(registration) AS reg,
                COUNT(*)::int AS n,
                AVG(altitude)::numeric AS avg_alt
         FROM live_flight_detections_rows
-        WHERE UPPER(TRIM(registration)) = ANY(${tails})
+        WHERE registration = ANY(${tails})
           AND latitude BETWEEN ${AOI_LAT - AOI_RADIUS_DEG} AND ${AOI_LAT + AOI_RADIUS_DEG}
           AND longitude BETWEEN ${AOI_LNG - AOI_RADIUS_DEG} AND ${AOI_LNG + AOI_RADIUS_DEG}
-        GROUP BY 1
+        GROUP BY UPPER(registration)
       `;
       for (const r of aoiRows) aoiAgg.set(r.reg, r);
     }

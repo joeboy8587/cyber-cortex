@@ -97,7 +97,7 @@ serve(async (req) => {
                COUNT(*) FILTER (WHERE COALESCE(speed,1000) < 48 AND COALESCE(altitude,1000) < 500)::int AS substall,
                COUNT(*) FILTER (WHERE COALESCE(altitude,9999) <= 0)::int AS zerofoot,
                AVG(altitude)::numeric AS avg_alt,
-               COUNT(DISTINCT hex)::int AS hex_n,
+               COUNT(DISTINCT icao24)::int AS hex_n,
                COUNT(DISTINCT callsign)::int AS cs_n
         FROM live_flight_detections_rows
         WHERE UPPER(TRIM(registration)) = ANY(${tails})

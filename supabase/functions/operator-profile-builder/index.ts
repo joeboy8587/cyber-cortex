@@ -41,12 +41,20 @@ serve(async (req) => {
     });
   }
 
-  const sql = postgres(NEON_DATABASE_URL, { ssl: "require", max: 2, idle_timeout: 20 });
+  const sql = postgres(NEON_DATABASE_URL, {
+    ssl: "require",
+    max: 2,
+    idle_timeout: 20,
+    connect_timeout: 10,
+    connection: { statement_timeout: "540000" }, // 9 min per statement
+  });
   const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
   const reqBody = await req.json().catch(() => ({}));
   const includeHeavy: boolean = reqBody?.includeHeavy === true;
-  const SOURCES = includeHeavy ? [...SOURCES_LIGHT, ...SOURCES_HEAVY] : SOURCES_LIGHT;
+  const onlySources: string[] | undefined = Array.isArray(reqBody?.onlySources) ? reqBody.onlySources : undefined;
+  let SOURCES = includeHeavy ? [...SOURCES_LIGHT, ...SOURCES_HEAVY] : SOURCES_LIGHT;
+  if (onlySources?.length) SOURCES = SOURCES.filter((s) => onlySources.includes(s.table));
 
   try {
     // 1. Ensure target table

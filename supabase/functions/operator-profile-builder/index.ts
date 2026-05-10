@@ -104,112 +104,129 @@ serve(async (req) => {
     }
 
 
-    // 3. Aggregate occurrences per (registration, source) — ONE TABLE AT A TIME
-    // (avoids a single mega-query timeout when live_flight_detections_rows is included)
-    type Agg = { total: bigint; last_seen: string | null; source_tables: Record<string, number> };
-    const aggMap = new Map<string, Agg>();
-    const sourceErrors: Record<string, string> = {};
+    // 3. Stage occurrences in a Neon temp table — aggregation runs server-side, no JS row holding.
+    await sql`DROP TABLE IF EXISTS _opb_stage`;
+    await sql`CREATE TEMP TABLE _opb_stage (
+      registration TEXT,
+      src TEXT,
+      n BIGINT,
+      last_seen TIMESTAMPTZ
+    )`;
 
+    const sourceErrors: Record<string, string> = {};
+    const sourceCounts: Record<string, number> = {};
     for (const s of usable) {
       const tsExpr = s.tsCol ? `MAX(NULLIF(${s.tsCol}::text,'')::timestamptz)` : `NULL::timestamptz`;
-      const q = `SELECT UPPER(TRIM(${s.idCol}::text)) AS registration,
-                        COUNT(*)::bigint AS n,
-                        ${tsExpr} AS last_seen
-                 FROM ${s.table}
-                 WHERE ${s.idCol} IS NOT NULL AND TRIM(${s.idCol}::text) <> ''
-                 GROUP BY 1`;
+      const insertSql = `
+        INSERT INTO _opb_stage (registration, src, n, last_seen)
+        SELECT UPPER(TRIM(${s.idCol}::text)), '${s.table}', COUNT(*)::bigint, ${tsExpr}
+        FROM ${s.table}
+        WHERE ${s.idCol} IS NOT NULL AND TRIM(${s.idCol}::text) <> ''
+        GROUP BY 1
+      `;
       try {
-        const partRows = await sql.unsafe(q);
-        for (const pr of partRows as any[]) {
-          const reg = pr.registration;
-          if (!reg) continue;
-          const cur = aggMap.get(reg) || { total: 0n, last_seen: null, source_tables: {} };
-          const n = BigInt(pr.n);
-          cur.total += n;
-          cur.source_tables[s.table] = Number(pr.n);
-          if (pr.last_seen && (!cur.last_seen || pr.last_seen > cur.last_seen)) {
-            cur.last_seen = pr.last_seen;
-          }
-          aggMap.set(reg, cur);
-        }
+        const result: any = await sql.unsafe(insertSql);
+        sourceCounts[s.table] = result?.count ?? 0;
       } catch (e: any) {
         console.error(`source ${s.table} failed:`, e?.message || e);
         sourceErrors[s.table] = String(e?.message || e);
       }
     }
 
-    const rows = Array.from(aggMap.entries())
-      .filter(([_, v]) => v.total >= 5n)
-      .map(([registration, v]) => ({
-        registration,
-        total: v.total.toString(),
-        last_seen: v.last_seen,
-        source_tables: v.source_tables,
-      }));
-
-    // 4. Try to enrich with FAA registry data (if a registry table exists in Neon)
+    // 4. FAA enrichment table (optional) staged similarly
     const regTbl = existingSet.has("aircraft_registry_neon") ? "aircraft_registry_neon" : null;
-    const faaMap = new Map<string, any>();
+    await sql`DROP TABLE IF EXISTS _opb_faa`;
+    await sql`CREATE TEMP TABLE _opb_faa (
+      registration TEXT PRIMARY KEY,
+      name TEXT,
+      address TEXT,
+      model TEXT,
+      icao24 TEXT
+    )`;
     if (regTbl) {
-      const regRows = await sql.unsafe(
-        `SELECT UPPER(TRIM(registration::text)) AS registration,
-                COALESCE(registrant_name, owner_operator) AS name,
-                COALESCE(registrant_street || ', ' || registrant_city || ', ' || registrant_state, '') AS address,
-                COALESCE(aircraft_model, model) AS model,
-                icao24
-         FROM ${regTbl}
-         WHERE registration IS NOT NULL`
-      ).catch(() => []);
-      for (const r of regRows) faaMap.set(r.registration, r);
+      try {
+        await sql.unsafe(`
+          INSERT INTO _opb_faa (registration, name, address, model, icao24)
+          SELECT UPPER(TRIM(registration::text)),
+                 COALESCE(registrant_name, owner_operator),
+                 COALESCE(registrant_street || ', ' || registrant_city || ', ' || registrant_state, ''),
+                 COALESCE(aircraft_model, model),
+                 icao24
+          FROM ${regTbl}
+          WHERE registration IS NOT NULL
+          ON CONFLICT (registration) DO NOTHING
+        `);
+      } catch (e: any) {
+        console.error("FAA enrichment failed:", e?.message || e);
+      }
     }
 
-    // 5. Build profile rows + classification
-    let upserts = 0;
+    // 5. Server-side aggregation + upsert in ONE statement — no JS row iteration.
+    const kcsoArr = `ARRAY[${KCSO_REGS.map((r) => `'${r}'`).join(",")}]`;
+    const upsertSql = `
+      WITH agg AS (
+        SELECT registration,
+               SUM(n)::bigint AS total,
+               MAX(last_seen) AS last_seen,
+               jsonb_object_agg(src, n) AS source_tables
+        FROM _opb_stage
+        WHERE registration IS NOT NULL AND registration <> ''
+        GROUP BY registration
+        HAVING SUM(n) >= 5
+      ),
+      enriched AS (
+        SELECT a.*,
+               f.name, f.address, f.model, f.icao24,
+               UPPER(COALESCE(f.name,'')) AS uname
+        FROM agg a
+        LEFT JOIN _opb_faa f USING (registration)
+      )
+      INSERT INTO canonical_operator_profiles (
+        registration, icao24, faa_registrant_name, faa_address, aircraft_model,
+        operator_resolved, shell_links, kcso_flag, military_flag, medical_flag, xp_services_flag,
+        source_tables, occurrences_total, last_seen, confidence, sha256_hash, rebuilt_at
+      )
+      SELECT
+        registration, icao24, name, address, model,
+        name,
+        COALESCE((
+          SELECT jsonb_agg(jsonb_build_object('entity', h, 'source','faa_registrant_name'))
+          FROM unnest(ARRAY['9K AIR','BEST EQUIPMENT','RESIDCO','ALF IX','LBBO','BANC OF CAL']) h
+          WHERE uname LIKE '%' || h || '%'
+        ), '[]'::jsonb),
+        (registration = ANY(${kcsoArr}) OR uname LIKE '%KERN COUNTY%' OR uname LIKE '%SHERIFF%'),
+        (uname LIKE '%U.S.%' OR uname LIKE '%USAF%' OR uname LIKE '%ARMY%' OR uname LIKE '%NAVY%' OR uname LIKE '%DEPT OF DEF%' OR uname LIKE '%DOD%'),
+        (uname LIKE '%AIR METHODS%' OR uname LIKE '%MERCY%' OR uname LIKE '%MEDEVAC%'),
+        (uname LIKE '%XP SERVICES%'),
+        source_tables,
+        total,
+        last_seen,
+        LEAST(1.0, (CASE WHEN name IS NOT NULL THEN 0.6 ELSE 0.2 END) + LEAST(0.4, LOG(GREATEST(total,1)+1) * 0.1)),
+        encode(sha256(convert_to(registration || '|' || total::text || '|' || COALESCE(uname,''), 'UTF8')), 'hex'),
+        now()
+      FROM enriched
+      ON CONFLICT (registration) DO UPDATE SET
+        icao24 = EXCLUDED.icao24,
+        faa_registrant_name = EXCLUDED.faa_registrant_name,
+        faa_address = EXCLUDED.faa_address,
+        aircraft_model = EXCLUDED.aircraft_model,
+        operator_resolved = EXCLUDED.operator_resolved,
+        shell_links = EXCLUDED.shell_links,
+        kcso_flag = EXCLUDED.kcso_flag,
+        military_flag = EXCLUDED.military_flag,
+        medical_flag = EXCLUDED.medical_flag,
+        xp_services_flag = EXCLUDED.xp_services_flag,
+        source_tables = EXCLUDED.source_tables,
+        occurrences_total = EXCLUDED.occurrences_total,
+        last_seen = EXCLUDED.last_seen,
+        confidence = EXCLUDED.confidence,
+        sha256_hash = EXCLUDED.sha256_hash,
+        rebuilt_at = now()
+    `;
+    const upsertResult: any = await sql.unsafe(upsertSql);
+    const upserts = upsertResult?.count ?? 0;
     const conflicts: any[] = [];
-    for (const r of rows) {
-      const reg = r.registration;
-      const faa = faaMap.get(reg) || {};
-      const name: string = (faa.name || "").toUpperCase();
-      const kcso = KCSO_REGS.includes(reg) || name.includes("KERN COUNTY") || name.includes("SHERIFF");
-      const shell_links = SHELL_HINTS.filter((h) => name.includes(h)).map((h) => ({ entity: h, source: "faa_registrant_name" }));
-      const military = MILITARY_HINTS.some((h) => name.includes(h));
-      const medical = MEDICAL_HINTS.some((h) => name.includes(h));
-      const xp = name.includes("XP SERVICES");
-
-      const confidence = (faa.name ? 0.6 : 0.2) + Math.min(0.4, Math.log10(Number(r.total) + 1) * 0.1);
-      const snapshot = JSON.stringify({ reg, name, total: r.total, last_seen: r.last_seen });
-      const hash = await sha256(snapshot);
-
-      await sql`
-        INSERT INTO canonical_operator_profiles (
-          registration, icao24, faa_registrant_name, faa_address, aircraft_model,
-          operator_resolved, shell_links, kcso_flag, military_flag, medical_flag, xp_services_flag,
-          source_tables, occurrences_total, last_seen, confidence, sha256_hash, rebuilt_at
-        ) VALUES (
-          ${reg}, ${faa.icao24 || null}, ${faa.name || null}, ${faa.address || null}, ${faa.model || null},
-          ${faa.name || null}, ${sql.json(shell_links)}, ${kcso}, ${military}, ${medical}, ${xp},
-          ${sql.json(r.source_tables)}, ${r.total}, ${r.last_seen}, ${confidence}, ${hash}, now()
-        )
-        ON CONFLICT (registration) DO UPDATE SET
-          icao24 = EXCLUDED.icao24,
-          faa_registrant_name = EXCLUDED.faa_registrant_name,
-          faa_address = EXCLUDED.faa_address,
-          aircraft_model = EXCLUDED.aircraft_model,
-          operator_resolved = EXCLUDED.operator_resolved,
-          shell_links = EXCLUDED.shell_links,
-          kcso_flag = EXCLUDED.kcso_flag,
-          military_flag = EXCLUDED.military_flag,
-          medical_flag = EXCLUDED.medical_flag,
-          xp_services_flag = EXCLUDED.xp_services_flag,
-          source_tables = EXCLUDED.source_tables,
-          occurrences_total = EXCLUDED.occurrences_total,
-          last_seen = EXCLUDED.last_seen,
-          confidence = EXCLUDED.confidence,
-          sha256_hash = EXCLUDED.sha256_hash,
-          rebuilt_at = now()
-      `;
-      upserts++;
-    }
+    const rows = { length: upserts } as any;
 
     // 6. Audit trail (one summary row, not per-tail to keep volume sane)
     await supabase.from("exhibit_audit_trail").insert({

@@ -1,6 +1,7 @@
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { EntityIndexTable } from "@/components/entity-resolution/EntityIndexTable";
 import { OperatorRescorePanel } from "@/components/entity-resolution/OperatorRescorePanel";
+import { NetworkExtractsPanel } from "@/components/entity-resolution/NetworkExtractsPanel";
 
 export default function EntityResolution() {
   return (
@@ -13,6 +14,7 @@ export default function EntityResolution() {
           </p>
         </header>
         <OperatorRescorePanel />
+        <NetworkExtractsPanel />
         <EntityIndexTable />
       </div>
     </DashboardLayout>

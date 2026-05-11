@@ -14,6 +14,7 @@ export default function EntityResolution() {
           </p>
         </header>
         <OperatorRescorePanel />
+        <NetworkExtractsPanel />
         <EntityIndexTable />
       </div>
     </DashboardLayout>

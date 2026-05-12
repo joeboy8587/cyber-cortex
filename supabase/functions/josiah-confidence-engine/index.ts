@@ -227,25 +227,21 @@ async function actionScore(sql: any, body: any) {
     });
   }
 
-  // Persist (chunked)
+  // Persist (one row at a time — small batch, simple & safe)
   let persisted = 0;
-  for (let i = 0; i < scored.length; i += 100) {
-    const chunk = scored.slice(i, i + 100);
-    if (!chunk.length) continue;
-    await sql`
-      INSERT INTO josiah_scored_detections (registration, icao24, detection_timestamp, score, tier, factor_scores, weights_version, contributing_factors)
-      SELECT * FROM ${sql(chunk.map((s) => ({
-        registration: s.registration,
-        icao24: s.icao24,
-        detection_timestamp: s.detection_timestamp,
-        score: s.score,
-        tier: s.tier,
-        factor_scores: s.factor_scores,
-        weights_version: version,
-        contributing_factors: s.contributing_factors,
-      })))}
-    `;
-    persisted += chunk.length;
+  for (const s of scored) {
+    try {
+      await sql`
+        INSERT INTO josiah_scored_detections
+          (registration, icao24, detection_timestamp, score, tier, factor_scores, weights_version, contributing_factors)
+        VALUES
+          (${s.registration}, ${s.icao24}, ${s.detection_timestamp}, ${s.score}, ${s.tier},
+           ${JSON.stringify(s.factor_scores)}::jsonb, ${version}, ${s.contributing_factors})
+      `;
+      persisted++;
+    } catch (e) {
+      console.warn("score insert failed:", (e as any)?.message);
+    }
   }
 
   return {

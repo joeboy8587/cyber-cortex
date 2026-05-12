@@ -251,6 +251,7 @@ serve(async (req) => {
         ok: true,
         evaluated: profiles.length,
         upserted: upserts,
+        flags_created: flagsCreated,
         signals_used: Array.from(have),
         sample: summaries.slice(0, 50),
       }),

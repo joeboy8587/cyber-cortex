@@ -94,8 +94,13 @@ async function ensureSchema(sql: any) {
 
 async function loadWeights(sql: any): Promise<{ weights: Record<string, number>; version: number }> {
   const r = await sql`SELECT weights, version FROM josiah_confidence_weights ORDER BY version DESC LIMIT 1`;
-  if (r.length) return { weights: r[0].weights, version: r[0].version };
-  await sql`INSERT INTO josiah_confidence_weights (weights, reason) VALUES (${JSON.stringify(DEFAULT_WEIGHTS)}::jsonb, 'bootstrap')`;
+  if (r.length) {
+    let w: any = r[0].weights;
+    if (typeof w === "string") { try { w = JSON.parse(w); } catch { w = null; } }
+    if (!w || typeof w !== "object" || !Object.keys(w).length) w = { ...DEFAULT_WEIGHTS };
+    return { weights: w, version: r[0].version };
+  }
+  await sql`INSERT INTO josiah_confidence_weights (weights, reason) VALUES (${sql.json(DEFAULT_WEIGHTS)}, 'bootstrap')`;
   return { weights: { ...DEFAULT_WEIGHTS }, version: 1 };
 }
 

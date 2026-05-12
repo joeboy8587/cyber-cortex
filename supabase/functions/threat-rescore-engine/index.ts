@@ -52,7 +52,9 @@ serve(async (req) => {
     ? body.registrations.map((s: string) => String(s).toUpperCase())
     : null;
   const maxRows: number = Math.min(Number(body?.maxRows) || 500, 2000);
-  const includeLiveSignals: boolean = body?.includeLiveSignals === true; // default false to avoid heavy table scans
+  // Default ON — physics/proximity/identity are the whole point of the engine. Disable only for huge sweeps.
+  const includeLiveSignals: boolean = body?.includeLiveSignals !== false;
+  const autoFlag: boolean = body?.autoFlag !== false; // auto-create watchtower flags for emerging high-score tails
 
   const sql = postgres(NEON_DATABASE_URL, { ssl: "require", max: 2, idle_timeout: 20, connect_timeout: 10 });
   const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
@@ -198,12 +200,12 @@ serve(async (req) => {
       summaries.push({ registration: reg, score, level: lvl, type: tType });
     }
 
-    // 5. Bulk upsert in chunks of 100
+    // 5. Bulk upsert in chunks of 100 — conflict target MUST match unique constraint (registration, threat_type)
     for (let i = 0; i < upsertRows.length; i += 100) {
       const chunk = upsertRows.slice(i, i + 100);
       const { error } = await supabase
         .from("sentinel_learned_threats")
-        .upsert(chunk, { onConflict: "registration" });
+        .upsert(chunk, { onConflict: "registration,threat_type" });
       if (error) {
         console.warn("chunk upsert failed:", error.message);
       } else {
@@ -211,13 +213,37 @@ serve(async (req) => {
       }
     }
 
+    // 5b. AUTO-LEARNING: surface emerging high-score tails into watchtower_autonomous_flags
+    let flagsCreated = 0;
+    if (autoFlag) {
+      const emerging = summaries.filter((s) => s.level >= 4); // L4+ = ≥60 score
+      if (emerging.length) {
+        const flagRows = emerging.map((s) => ({
+          flag_type: "EVOLVED_THREAT_PATTERN",
+          severity: s.level >= 5 ? "critical" : "high",
+          registration: s.registration,
+          description: `Sentinel learned: ${s.type} (score ${s.score}, L${s.level}) emerged from 6-layer rescore. Auto-promoted from operator profile evidence.`,
+          confidence_score: Math.min(0.99, s.score / 100),
+          evidence_summary: { score: s.score, level: s.level, type: s.type },
+          source_scan_id: `rescore-${Date.now()}`,
+          auto_resolved: false,
+        }));
+        for (let i = 0; i < flagRows.length; i += 50) {
+          const { error } = await supabase
+            .from("watchtower_autonomous_flags")
+            .insert(flagRows.slice(i, i + 50));
+          if (!error) flagsCreated += Math.min(50, flagRows.length - i);
+        }
+      }
+    }
+
     await supabase.from("exhibit_audit_trail").insert({
       action: "RESCORE_THREATS",
-      rule_applied: "weighted_6layer_v2_bulk",
+      rule_applied: "weighted_6layer_v3_learning",
       records_evaluated: profiles.length,
       records_promoted: upserts,
       result_hash: await sha256(JSON.stringify(summaries.slice(0, 50))),
-      metadata: { weights: W, max_rows: maxRows, sample: summaries.slice(0, 20) },
+      metadata: { weights: W, max_rows: maxRows, flags_created: flagsCreated, sample: summaries.slice(0, 20) },
     });
 
     return new Response(
@@ -225,6 +251,7 @@ serve(async (req) => {
         ok: true,
         evaluated: profiles.length,
         upserted: upserts,
+        flags_created: flagsCreated,
         signals_used: Array.from(have),
         sample: summaries.slice(0, 50),
       }),

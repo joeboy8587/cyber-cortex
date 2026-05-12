@@ -32,11 +32,16 @@ export function OperatorRescorePanel() {
     setBusy("rescore");
     setResult(null);
     try {
-      const body = targetTails?.length ? { registrations: targetTails } : { maxRows: 500 };
+      const body: any = targetTails?.length
+        ? { registrations: targetTails, includeLiveSignals: true, autoFlag: true }
+        : { maxRows: 500, includeLiveSignals: true, autoFlag: true };
       const { data, error } = await supabase.functions.invoke("threat-rescore-engine", { body });
       if (error) throw error;
       setResult(data);
-      toast({ title: "Threats re-scored", description: `${data?.upserted ?? 0} threats updated` });
+      toast({
+        title: "Sentinel evolved",
+        description: `${data?.upserted ?? 0} threats re-scored · ${data?.flags_created ?? 0} new patterns auto-flagged`,
+      });
     } catch (e: any) {
       toast({ title: "Rescore failed", description: e.message, variant: "destructive" });
     } finally {

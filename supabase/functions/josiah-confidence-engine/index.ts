@@ -146,7 +146,12 @@ function scoreFactors(d: any, ctx: any) {
 
 function computeScore(factors: Record<string, number>, weights: Record<string, number>): number {
   let s = 0;
-  for (const k of Object.keys(weights)) s += (factors[k] ?? 0) * weights[k];
+  for (const k of Object.keys(weights)) {
+    const w = Number(weights[k]) || 0;
+    const f = Number(factors[k]) || 0;
+    s += f * w;
+  }
+  if (!isFinite(s)) s = 0;
   return Math.round(s * 10000) / 100; // 0..100
 }
 

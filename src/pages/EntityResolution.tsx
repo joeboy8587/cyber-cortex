@@ -2,6 +2,7 @@ import { DashboardLayout } from "@/components/DashboardLayout";
 import { EntityIndexTable } from "@/components/entity-resolution/EntityIndexTable";
 import { OperatorRescorePanel } from "@/components/entity-resolution/OperatorRescorePanel";
 import { NetworkExtractsPanel } from "@/components/entity-resolution/NetworkExtractsPanel";
+import { JosiahConfidencePanel } from "@/components/entity-resolution/JosiahConfidencePanel";
 
 export default function EntityResolution() {
   return (

@@ -56,10 +56,10 @@ export default function Surveillance() {
           </div>
           <div>
             <h1 className="font-display text-2xl uppercase tracking-wider text-primary">
-              Surveillance Hub
+              Airspace Enterprise Hub
             </h1>
             <p className="font-mono text-xs text-muted-foreground">
-              AIRCRAFT TRACKING // FLIGHT PATTERNS // ADSB MONITORING
+              POPULATION-SCALE FLIGHT TRACKING // RICO ENTERPRISE PATTERNS // ADSB MONITORING
             </p>
           </div>
         </div>

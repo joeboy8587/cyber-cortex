@@ -45,10 +45,10 @@ const navigationItems = [
     description: "Overview & Alerts"
   },
   { 
-    title: "Surveillance", 
+    title: "Airspace Enterprise", 
     url: "/surveillance", 
     icon: Radar,
-    description: "Flight Tracking"
+    description: "Population-Scale Flight Tracking"
   },
   { 
     title: "Biometrics", 
@@ -66,7 +66,7 @@ const navigationItems = [
     title: "KCSO", 
     url: "/kcso", 
     icon: Shield,
-    description: "Investigation Hub"
+    description: "Government Actor Investigation"
   },
   { 
     title: "Josiah AI", 

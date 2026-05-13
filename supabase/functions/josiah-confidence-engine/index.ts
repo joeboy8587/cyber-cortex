@@ -255,12 +255,40 @@ async function actionScore(sql: any, body: any) {
     }
   }
 
+  // ─── WIRE: auto-flag HIGH/CERTAIN tier detections into watchtower_autonomous_flags ───
+  let flagsCreated = 0;
+  const elite = scored.filter((s) => s.tier === "CERTAIN" || s.tier === "HIGH");
+  if (body.autoFlag !== false && elite.length) {
+    try {
+      const supa = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+      // dedupe by registration to avoid spamming
+      const seen = new Set<string>();
+      const flagRows = elite
+        .filter((s) => s.registration && !seen.has(s.registration) && (seen.add(s.registration), true))
+        .map((s) => ({
+          flag_type: "JOSIAH_CONFIDENCE_TIER",
+          severity: s.tier === "CERTAIN" ? "critical" : "high",
+          registration: s.registration,
+          description: `Josiah Confidence: ${s.tier} (${s.score}/100). ${s.meaning}. Contributing: ${s.contributing_factors.join(", ") || "n/a"}.`,
+          confidence_score: s.score / 100,
+          evidence_summary: { score: s.score, tier: s.tier, factor_scores: s.factor_scores, weights_version: version },
+          source_scan_id: `josiah-conf-${Date.now()}`,
+          auto_resolved: false,
+        }));
+      for (let i = 0; i < flagRows.length; i += 50) {
+        const { error } = await supa.from("watchtower_autonomous_flags").insert(flagRows.slice(i, i + 50));
+        if (!error) flagsCreated += Math.min(50, flagRows.length - i);
+      }
+    } catch (e) { console.warn("autoflag failed:", (e as any)?.message); }
+  }
+
   return {
     ok: true,
     weights_version: version,
     weights,
     evaluated: rows.length,
     persisted,
+    flags_created: flagsCreated,
     tier_counts: scored.reduce((m: any, s) => ((m[s.tier] = (m[s.tier] || 0) + 1), m), {}),
     sample: scored.slice(0, 25),
   };

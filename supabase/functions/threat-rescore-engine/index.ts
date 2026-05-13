@@ -195,6 +195,8 @@ serve(async (req) => {
       breakdown.total_score = score;
       breakdown.weights = W;
       breakdown.computed_at = new Date().toISOString();
+      breakdown.enterprise_role = enterpriseRole(p);
+      breakdown.framing = "population_scale_rico_enterprise";
 
       upsertRows.push({
         registration: reg,

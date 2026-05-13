@@ -237,13 +237,26 @@ serve(async (req) => {
       }
     }
 
+    // 5c. WIRE: invoke Josiah Confidence Engine for the same tails (per-detection meta-cognition + auto-flag)
+    let confidence: any = null;
+    if (autoFlag) {
+      try {
+        const { data: cdata } = await supabase.functions.invoke("josiah-confidence-engine", {
+          body: { action: "score", registrations: tails, limit: 500, autoFlag: true },
+        });
+        confidence = cdata
+          ? { evaluated: cdata.evaluated, persisted: cdata.persisted, flags_created: cdata.flags_created, tier_counts: cdata.tier_counts, weights_version: cdata.weights_version }
+          : null;
+      } catch (e) { console.warn("confidence-engine wire failed:", (e as any)?.message); }
+    }
+
     await supabase.from("exhibit_audit_trail").insert({
       action: "RESCORE_THREATS",
-      rule_applied: "weighted_6layer_v3_learning",
+      rule_applied: "weighted_6layer_v3_learning+josiah_confidence",
       records_evaluated: profiles.length,
       records_promoted: upserts,
       result_hash: await sha256(JSON.stringify(summaries.slice(0, 50))),
-      metadata: { weights: W, max_rows: maxRows, flags_created: flagsCreated, sample: summaries.slice(0, 20) },
+      metadata: { weights: W, max_rows: maxRows, flags_created: flagsCreated, confidence, sample: summaries.slice(0, 20) },
     });
 
     return new Response(
@@ -252,6 +265,7 @@ serve(async (req) => {
         evaluated: profiles.length,
         upserted: upserts,
         flags_created: flagsCreated,
+        confidence,
         signals_used: Array.from(have),
         sample: summaries.slice(0, 50),
       }),

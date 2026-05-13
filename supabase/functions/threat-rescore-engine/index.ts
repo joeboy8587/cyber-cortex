@@ -28,13 +28,22 @@ function escalation(score: number): number {
 }
 
 function threatType(b: any, profile: any): string {
-  if (profile?.kcso_flag) return "KCSO Surveillance Asset";
-  if (profile?.military_flag) return "Military Coordination";
-  if (profile?.shell_links && (Array.isArray(profile.shell_links) ? profile.shell_links.length > 0 : true)) return "Shell Network Operator";
+  // Reframed labels — every threat type ties to an enterprise role + statute,
+  // never to "surveillance" or "harassment" of an individual. See doctrine.ts.
+  if (profile?.kcso_flag) return "KCSO Civil-Rights Enterprise Actor";
+  if (profile?.military_flag) return "Military Coordination (Posse Comitatus § 1385 exposure)";
+  if (profile?.shell_links && (Array.isArray(profile.shell_links) ? profile.shell_links.length > 0 : true)) return "Shell Network Operator (RICO predicate)";
   if ((b.physics || 0) > 0) return "Physics Anomaly (sub-stall / 0ft staging)";
-  if ((b.identity || 0) > 0) return "Identity Falsification";
-  if ((b.biometric || 0) > 0) return "Biometric Causation";
-  return "Persistent Surveillance Pattern";
+  if ((b.identity || 0) > 0) return "Enterprise Identity Falsification (RICO predicate)";
+  if ((b.biometric || 0) > 0) return "Biometric Causation (population-scale harm)";
+  return "Sustained Enterprise Coordination Pattern";
+}
+
+function enterpriseRole(profile: any): string {
+  if (profile?.kcso_flag) return "tier1_government_actor";
+  if (profile?.military_flag) return "tier3_military_coordination";
+  if (profile?.shell_links && (Array.isArray(profile.shell_links) ? profile.shell_links.length > 0 : true)) return "tier2_shell_proxy";
+  return "tier4_swarm_participant";
 }
 
 serve(async (req) => {

@@ -40,7 +40,8 @@ const THREAT_SIGNATURES = {
   militaryCallsignPrefixes: ['CONGO', 'RCH', 'CNV', 'KNIFE', 'STMPD', 'TRON', 'REACH', 'SHELL', 'JOSA', 'PAT', 'BLUE', 'GOLD', 'SAM', 'EVAC', 'MEDEVAC', 'NIGHTHAWK'],
   icaoAnchors: ['ac9efd', 'a2027c', '24'],
   lowAltitudeThreshold: 2000,
-  harassmentAltitude: 1500,
+  // Tied to 14 CFR § 91.119 minimum safe altitude — not subjective harassment.
+  minimumSafeAltitudeFloor: 1500,
   criticalAltitude: 500,
   convergenceWindow: 30,
   convergenceMinAircraft: 3,
@@ -302,12 +303,12 @@ serve(async (req) => {
       const alt = parseInt(detection.altitude);
       let severity: 'critical' | 'high' | 'medium' = 'medium';
       if (alt < THREAT_SIGNATURES.criticalAltitude) severity = 'critical';
-      else if (alt < THREAT_SIGNATURES.harassmentAltitude) severity = 'high';
+      else if (alt < THREAT_SIGNATURES.minimumSafeAltitudeFloor) severity = 'high';
 
       violations.push({
-        type: 'LOW_ALTITUDE', severity,
+        type: 'LOW_ALTITUDE_CIVIL_RIGHTS_VIOLATION', severity,
         registration: detection.registration || detection.callsign || 'UNKNOWN',
-        details: `Aircraft at ${alt}ft - ${severity === 'critical' ? 'CRITICAL harassment altitude' : 'below minimum safe altitude'}`,
+        details: `Aircraft at ${alt}ft — ${severity === 'critical' ? 'critical 14 CFR § 91.119 violation (color-of-law exposure)' : 'below FAA minimum safe altitude — § 1983 class-action exposure'}`,
         timestamp: detection.detection_timestamp, altitude: alt,
         coordinates: detection.latitude && detection.longitude ? 
           { lat: parseFloat(detection.latitude), lng: parseFloat(detection.longitude) } : undefined

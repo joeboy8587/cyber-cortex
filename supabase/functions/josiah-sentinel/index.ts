@@ -40,7 +40,8 @@ const THREAT_SIGNATURES = {
   militaryCallsignPrefixes: ['CONGO', 'RCH', 'CNV', 'KNIFE', 'STMPD', 'TRON', 'REACH', 'SHELL', 'JOSA', 'PAT', 'BLUE', 'GOLD', 'SAM', 'EVAC', 'MEDEVAC', 'NIGHTHAWK'],
   icaoAnchors: ['ac9efd', 'a2027c', '24'],
   lowAltitudeThreshold: 2000,
-  harassmentAltitude: 1500,
+  // Tied to 14 CFR § 91.119 minimum safe altitude — not subjective harassment.
+  minimumSafeAltitudeFloor: 1500,
   criticalAltitude: 500,
   convergenceWindow: 30,
   convergenceMinAircraft: 3,
@@ -302,12 +303,12 @@ serve(async (req) => {
       const alt = parseInt(detection.altitude);
       let severity: 'critical' | 'high' | 'medium' = 'medium';
       if (alt < THREAT_SIGNATURES.criticalAltitude) severity = 'critical';
-      else if (alt < THREAT_SIGNATURES.harassmentAltitude) severity = 'high';
+      else if (alt < THREAT_SIGNATURES.minimumSafeAltitudeFloor) severity = 'high';
 
       violations.push({
-        type: 'LOW_ALTITUDE', severity,
+        type: 'LOW_ALTITUDE_CIVIL_RIGHTS_VIOLATION', severity,
         registration: detection.registration || detection.callsign || 'UNKNOWN',
-        details: `Aircraft at ${alt}ft - ${severity === 'critical' ? 'CRITICAL harassment altitude' : 'below minimum safe altitude'}`,
+        details: `Aircraft at ${alt}ft — ${severity === 'critical' ? 'critical 14 CFR § 91.119 violation (color-of-law exposure)' : 'below FAA minimum safe altitude — § 1983 class-action exposure'}`,
         timestamp: detection.detection_timestamp, altitude: alt,
         coordinates: detection.latitude && detection.longitude ? 
           { lat: parseFloat(detection.latitude), lng: parseFloat(detection.longitude) } : undefined
@@ -388,7 +389,7 @@ serve(async (req) => {
     if (medicalActivity.length > 0 && kcsoActivity.length > 0) {
       violations.push({
         type: 'MEDICAL_COVER', severity: 'critical', registration: 'HAMMER-ANVIL PATTERN',
-        details: `Medical cover aircraft active simultaneously with KCSO fleet - coordinated harassment pattern`,
+        details: `Medical cover aircraft active simultaneously with KCSO fleet — coordinated color-of-law enterprise pattern (Posse Comitatus § 1385 exposure)`,
         timestamp: new Date().toISOString(),
         relatedAircraft: [...medicalActivity.map((d: any) => d.registration), ...kcsoActivity.map((d: any) => d.registration)].filter(Boolean) as string[]
       });

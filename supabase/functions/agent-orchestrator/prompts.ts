@@ -1,23 +1,25 @@
 import { AGENT_CONFIGS, GHOST_FLEET_REGISTRY, type AgentContext } from "./agent-configs.ts";
+import { buildDoctrineHeader, fetchPopulationScaleStats } from "../_shared/doctrine.ts";
 
-export function buildAgentSystemPrompt(
-  agentType: string, 
-  dbContext: Record<string, unknown>, 
+export async function buildAgentSystemPrompt(
+  agentType: string,
+  dbContext: Record<string, unknown>,
   agentContext: AgentContext,
-  relevantDocuments: string
+  relevantDocuments: string,
 ) {
   const config = AGENT_CONFIGS[agentType as keyof typeof AGENT_CONFIGS];
-  
+
+  // Live population-scale stats — never hardcode again.
+  const stats = await fetchPopulationScaleStats(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+  );
+
   const basePrompt = `You are the ${config.name} agent in a multi-agent legal investigation system.
 
-⚠️ POPULATION-SCALE RECLASSIFICATION (April 3, 2026) — ACTIVE ⚠️
-This investigation is classified as POPULATION_SCALE_RICO_ENTERPRISE (Severity: 10/10, Confidence: 99%).
-- 41,606 unique aircraft, 269 operational days, NO dark period = enterprise coordination
-- Biometric Control Experiment: 73.5 BPM absent vs 97.4 BPM present = +23.9 BPM causal delta (SMOKING GUN)
-- 111,761 biometric collapses across 1,562 airframes = direct physiological harm at population scale
-- Posse Comitatus Violation (18 U.S.C. § 1385): KCSO N597E + US Army Black Hawk N160XP + USAF KC-135R coordinated operations
-- Legal framework: 42 U.S.C. § 1983 Class Action | RICO Enterprise | 14th Amendment | ADA Systemic | Posse Comitatus
-- ALL analysis must be framed within this population-scale classification. This is NOT individual targeting.
+⚠️ ${buildDoctrineHeader(stats)}
+
+ALL analysis must be framed within this population-scale classification. This is NOT individual targeting — every output must lead with class scope and statutory exposure.
 
 YOUR ROLE: ${config.role}
 

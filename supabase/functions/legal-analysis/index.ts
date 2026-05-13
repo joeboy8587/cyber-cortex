@@ -218,8 +218,8 @@ USER QUERY: ${query}
 The 800-table schema sprawl is now indexed. A canonical ENTITY MAP resolves every aircraft (e.g. N229AM) across all aliases — \`icao24\`, \`registration\`, \`tail_number\`, \`linked_aircraft\`, \`aircraft_id\`, \`callsign\` — and tags every table with one or more domains: flight / aircraft / biometric / legal / financial / ai_pattern / kcso_mil / geo / audit / report. When citing evidence, always note which DOMAINS corroborate (a finding present across ≥3 domains = court-ready; 7-8 source tables = irrefutable).
 
 ⚠️ POPULATION-SCALE RECLASSIFICATION (April 3, 2026) — SEVERITY 10/10, CONFIDENCE 99% ⚠️
-Reclassified from individual targeting → POPULATION_SCALE_RICO_ENTERPRISE:
-- 41,606 unique aircraft / 269 operational days / NO dark period
+POPULATION_SCALE_RICO_ENTERPRISE classification (live stats authoritative — see population-scale-stats edge function):
+- Continuous operational tempo across all measured days, no dark period — enterprise infrastructure, not opportunistic individual targeting
 - Biometric Control Experiment SMOKING GUN: 73.5 BPM (absent) vs 97.4 BPM (present) = +23.9 BPM causal delta
 - ${liveContext.biometricCollapses} biometric threshold collapses across 1,562 correlated airframes
 - 42 U.S.C. § 1983 CLASS ACTION • RICO ENTERPRISE (18 U.S.C. §§ 1961-1968) • 14th Amendment Due Process

@@ -1,6 +1,7 @@
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/AppSidebar";
 import { RealtimeAlertBanner } from "@/components/dashboard/RealtimeAlertBanner";
+import { DoctrineBanner } from "@/components/DoctrineBanner";
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -28,6 +29,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
               </span>
             </div>
           </header>
+          <DoctrineBanner />
           <RealtimeAlertBanner />
           <main className="flex-1 overflow-auto">
             <div className="w-full max-w-full">

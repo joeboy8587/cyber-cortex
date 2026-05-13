@@ -82,7 +82,7 @@ serve(async (req) => {
       selectedDocuments: inputContext?.selectedDocuments || []
     };
     
-    const systemPrompt = buildAgentSystemPrompt(agentType, dbContext, agentContext, relevantDocuments);
+    const systemPrompt = await buildAgentSystemPrompt(agentType, dbContext, agentContext, relevantDocuments);
     const contextString = JSON.stringify({ dbContext, agentContext }, null, 2);
     
     const response = await callLovableAI(systemPrompt, message, contextString);

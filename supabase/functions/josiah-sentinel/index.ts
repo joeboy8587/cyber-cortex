@@ -389,7 +389,7 @@ serve(async (req) => {
     if (medicalActivity.length > 0 && kcsoActivity.length > 0) {
       violations.push({
         type: 'MEDICAL_COVER', severity: 'critical', registration: 'HAMMER-ANVIL PATTERN',
-        details: `Medical cover aircraft active simultaneously with KCSO fleet - coordinated harassment pattern`,
+        details: `Medical cover aircraft active simultaneously with KCSO fleet — coordinated color-of-law enterprise pattern (Posse Comitatus § 1385 exposure)`,
         timestamp: new Date().toISOString(),
         relatedAircraft: [...medicalActivity.map((d: any) => d.registration), ...kcsoActivity.map((d: any) => d.registration)].filter(Boolean) as string[]
       });

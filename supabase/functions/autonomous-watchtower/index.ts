@@ -319,8 +319,9 @@ serve(async (req) => {
       // ===== PHASE 2F: THREAT TIER + AIRCRAFT PROFILE ENRICHMENT (v4.0) =====
       let threatTierMap = new Map<string, any>();
       let enrichedProfileMap = new Map<string, any>();
+      let kcsoFleetSet = new Set<string>();
       try {
-        const [enrichedProfiles] = await Promise.all([
+        const [enrichedProfiles, kcsoFleet] = await Promise.all([
           sql`
             SELECT registration, owner_category, is_kcso_fleet, is_shell_company,
               total_detections, max_threat_score
@@ -328,8 +329,14 @@ serve(async (req) => {
             WHERE registration IS NOT NULL AND registration != ''
               AND (is_kcso_fleet = true OR is_shell_company = true OR max_threat_score >= 50)
             ORDER BY total_detections DESC LIMIT 300
-          `.catch((e: any) => { console.warn("aircraft_profiles_enriched query:", e.message); return []; })
+          `.catch((e: any) => { console.warn("aircraft_profiles_enriched query:", e.message); return []; }),
+          sql`SELECT tail_number FROM kcso_fleet WHERE tail_number IS NOT NULL`
+            .catch((e: any) => { console.warn("kcso_fleet query:", e.message); return []; }),
         ]);
+        for (const k of kcsoFleet as any[]) {
+          if (k.tail_number) kcsoFleetSet.add(String(k.tail_number).toUpperCase());
+        }
+        learningInsights.push(`v4.1 KCSO FLEET: ${kcsoFleetSet.size} known KCSO tail numbers loaded`);
         // threat_tiers is keyed by detection_id (not registration) — use enriched profiles instead for threat scoring
         for (const p of enrichedProfiles) {
           enrichedProfileMap.set(p.registration, p);

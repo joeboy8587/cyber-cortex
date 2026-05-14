@@ -350,12 +350,14 @@ serve(async (req) => {
       // ===== HELPER: Build full corroboration sources for a registration =====
       function buildCorroborationSources(reg: string, baseSources: string[]): string[] {
         const sources = [...baseSources];
+        const REG = (reg || '').toUpperCase();
         if (forensicCorpusMap.has(reg)) sources.push('forensic_corpus');
         if (caseEvidenceMap.has(reg)) sources.push('active_case');
         if (bioDeepMap.has(reg) || confirmedCorrelationsSet.has(reg)) sources.push('biometric_deep');
         if (josiahPatternsMap.has(reg)) sources.push('josiah_memory');
         if (legalViolationsMap.has(reg) || harmExhibitsMap.has(reg)) sources.push('legal_history');
         if (threatTierMap.has(reg)) sources.push('threat_tier');
+        if (kcsoFleetSet.has(REG)) sources.push('enterprise_structure');
         return [...new Set(sources)];
       }
 

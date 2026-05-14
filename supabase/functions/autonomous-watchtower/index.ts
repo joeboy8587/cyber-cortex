@@ -433,6 +433,102 @@ serve(async (req) => {
 
       learningInsights.push(`Multi-modal intelligence loaded: ${sentinelThreats.length} sentinel threats, ${enterpriseEntities.length} enterprise entities, ${shellCompanies.length} shell companies, ${xxbResolutions.length} XXB resolutions, ${violationRecords.length} violation records`);
 
+      // ===== PHASE 3.5: PRE-CONFIRMED BAD-ACTOR PRESENCE (v4.1) =====
+      // Any aircraft already linked to KCSO/shell/biometric harm/ADA violations/threshold collapse
+      // that was DETECTED in the last 24h is auto-flagged — no fresh statistical anomaly required.
+      const last24hRegs = new Map<string, { count: number; minAlt: number; maxAlt: number; firstTs: any; lastTs: any }>();
+      for (const d of recentDetections) {
+        const reg = d.registration;
+        if (!reg) continue;
+        const alt = Number(d.altitude || 0);
+        const cur = last24hRegs.get(reg);
+        if (!cur) {
+          last24hRegs.set(reg, { count: 1, minAlt: alt || 99999, maxAlt: alt, firstTs: d.detection_timestamp, lastTs: d.detection_timestamp });
+        } else {
+          cur.count++;
+          if (alt > 0 && alt < cur.minAlt) cur.minAlt = alt;
+          if (alt > cur.maxAlt) cur.maxAlt = alt;
+          cur.lastTs = d.detection_timestamp;
+        }
+      }
+
+      let preConfirmedFlagCount = 0;
+      for (const [reg, stats] of last24hRegs) {
+        const REG = reg.toUpperCase();
+        const isKcso = kcsoFleetSet.has(REG);
+        const isShell = shellRegMap.has(reg);
+        const hasConfirmedBio = confirmedCorrelationsSet.has(reg);
+        const hasCollapse = bioDeepMap.has(reg);
+        const hasAda = legalViolationsMap.has(reg);
+        const hasHarm = harmExhibitsMap.has(reg);
+        const isThreatTier = threatTierMap.has(reg);
+        const hasForensicCorpus = forensicCorpusMap.has(reg);
+        const isXxb = xxbAircraft.has(reg);
+        const hasSentinel = sentinelMap.has(reg);
+
+        const reasons: string[] = [];
+        if (isKcso) reasons.push('KCSO_FLEET');
+        if (isShell) reasons.push('SHELL_COMPANY');
+        if (hasConfirmedBio) reasons.push('CONFIRMED_BIO_CORR');
+        if (hasCollapse) reasons.push('THRESHOLD_COLLAPSE');
+        if (hasAda) reasons.push('ADA_VIOLATIONS');
+        if (hasHarm) reasons.push('HARM_EXHIBIT');
+        if (isThreatTier) reasons.push('HIGH_THREAT_TIER');
+        if (hasForensicCorpus) reasons.push('FORENSIC_CORPUS');
+        if (isXxb) reasons.push('XXB_MLAT');
+        if (hasSentinel) reasons.push('SENTINEL_HISTORY');
+
+        if (reasons.length === 0) continue;
+
+        const baseSources: string[] = ['flight_telemetry'];
+        if (hasSentinel) baseSources.push('sentinel_history');
+        if (isShell || isKcso) baseSources.push('enterprise_structure');
+        if (isXxb) baseSources.push('xxb_resolution');
+        if (hasAda || hasHarm) baseSources.push('violations');
+        const sources = buildCorroborationSources(reg, baseSources);
+        const tier = computeCertaintyTier(sources);
+
+        // Severity ladder: KCSO/shell + harm = critical, any single confirmed = high
+        const isCritical = (isKcso || isShell) && (hasConfirmedBio || hasCollapse || hasHarm || hasAda)
+          || reasons.length >= 3;
+        const isHigh = isKcso || isShell || hasCollapse || hasHarm || reasons.length >= 2;
+
+        // Base confidence reflects pre-confirmed status (already proven), then corroboration boost
+        const baseConfidence = 70 + Math.min(20, reasons.length * 5);
+        const confidence = computeCorroboratedScore(baseConfidence, sources);
+
+        const adaInfo = legalViolationsMap.get(reg);
+        const harmInfo = harmExhibitsMap.get(reg);
+        const collapseInfo = bioDeepMap.get(reg);
+
+        flags.push({
+          flag_type: 'PRE_CONFIRMED_PRESENCE',
+          severity: isCritical ? 'critical' : isHigh ? 'high' : 'medium',
+          registration: reg,
+          description: `${reg} (pre-confirmed: ${reasons.join(', ')}) detected ${stats.count}x in last 24h, alt ${stats.minAlt}–${stats.maxAlt}ft [${tier}]`,
+          evidence_summary: {
+            reasons,
+            detection_count_24h: stats.count,
+            min_altitude_ft: stats.minAlt === 99999 ? null : stats.minAlt,
+            max_altitude_ft: stats.maxAlt,
+            kcso_fleet: isKcso,
+            shell_company: isShell,
+            confirmed_bio_correlations: hasConfirmedBio,
+            threshold_collapses: collapseInfo?.collapse_count || 0,
+            ada_violations: adaInfo?.violation_count || 0,
+            harm_exhibits: harmInfo?.exhibit_count || 0,
+            corroboration_count: sources.length,
+          },
+          cross_references: sources.map(s => ({ type: s })),
+          confidence_score: confidence,
+          certainty_tier: tier,
+          corroboration_sources: sources,
+          learning_context: { method: 'pre_confirmed_presence_v4_1', auto_promoted: true },
+        });
+        preConfirmedFlagCount++;
+      }
+      learningInsights.push(`v4.1 PRE-CONFIRMED PRESENCE: ${preConfirmedFlagCount} known bad-actor aircraft detected in last 24h (auto-flagged regardless of fresh anomaly)`);
+
       // ===== PHASE 4: ANOMALY DETECTION (statistical) =====
       // 4a. Altitude anomalies
       const altAnomalyByReg = new Map<string, any[]>();

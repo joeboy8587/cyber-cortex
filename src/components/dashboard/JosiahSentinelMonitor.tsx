@@ -398,12 +398,19 @@ ${report.ai_synthesis ? `
 
       {/* Main Content Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList className="grid w-full grid-cols-6">
+        <TabsList className="grid w-full grid-cols-7">
           <TabsTrigger value="violations" className="flex items-center gap-1">
             <AlertTriangle className="h-4 w-4" />
             Live Violations
             {report && report.violations.length > 0 && (
               <Badge variant="destructive" className="ml-1">{report.violations.length}</Badge>
+            )}
+          </TabsTrigger>
+          <TabsTrigger value="hallofshame" className="flex items-center gap-1">
+            <Target className="h-4 w-4" />
+            Hall of Shame
+            {report?.hall_of_shame && report.hall_of_shame.length > 0 && (
+              <Badge className="ml-1 bg-amber-600">{report.hall_of_shame.length}</Badge>
             )}
           </TabsTrigger>
           <TabsTrigger value="countermeasures" className="flex items-center gap-1">

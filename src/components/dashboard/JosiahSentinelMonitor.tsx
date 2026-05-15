@@ -518,7 +518,88 @@ ${report.ai_synthesis ? `
           )}
         </TabsContent>
 
-        {/* Countermeasures Tab */}
+        {/* Hall of Shame Tab — 90 day top tails */}
+        <TabsContent value="hallofshame">
+          <Card className="border-amber-500/30">
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Target className="h-5 w-5 text-amber-400" />
+                90-Day Hall of Shame
+                {report?.hall_of_shame_meta && (
+                  <Badge variant="outline" className="ml-2 font-mono text-xs">
+                    {report.hall_of_shame_meta.total_aircraft} tails · {report.hall_of_shame_meta.total_detections.toLocaleString()} hits · {report.hall_of_shame_meta.oildale_cluster_pct}% Oildale
+                  </Badge>
+                )}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {(!report?.hall_of_shame || report.hall_of_shame.length === 0) ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <Target className="h-12 w-12 mx-auto mb-2 opacity-50" />
+                  <p>Run a scan to populate Hall of Shame.</p>
+                </div>
+              ) : (
+                <ScrollArea className="h-[520px]">
+                  <table className="w-full text-xs font-mono">
+                    <thead className="sticky top-0 bg-card border-b border-border">
+                      <tr className="text-left text-muted-foreground">
+                        <th className="py-2 pr-2">#</th>
+                        <th className="py-2 pr-2">Tail</th>
+                        <th className="py-2 pr-2">Class</th>
+                        <th className="py-2 pr-2 text-right">Detections</th>
+                        <th className="py-2 pr-2 text-right">Avg Alt</th>
+                        <th className="py-2 pr-2 text-right">Min Alt</th>
+                        <th className="py-2 pr-2 text-right">&lt;1000ft</th>
+                        <th className="py-2 pr-2 text-right">&lt;500ft</th>
+                        <th className="py-2 pr-2 text-right">Oildale</th>
+                        <th className="py-2 pr-2 text-right">Spread</th>
+                        <th className="py-2 pr-2">Snark / What it really means</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {report.hall_of_shame.map((e) => {
+                        const clsColor =
+                          e.classification === 'KCSO' ? 'bg-orange-500/20 text-orange-300' :
+                          e.classification === 'SHELL' ? 'bg-purple-500/20 text-purple-300' :
+                          e.classification === 'FLYT' ? 'bg-blue-500/20 text-blue-300' :
+                          e.classification === 'MEDICAL' ? 'bg-red-500/20 text-red-300' :
+                          e.classification === 'MILITARY' ? 'bg-yellow-500/20 text-yellow-300' :
+                          'bg-muted text-muted-foreground';
+                        return (
+                          <tr
+                            key={e.registration}
+                            onClick={() => { setDrillReg(e.registration); setActiveTab('drilldown'); }}
+                            className="border-b border-border/40 hover:bg-amber-500/5 cursor-pointer"
+                          >
+                            <td className="py-2 pr-2">{e.rank}</td>
+                            <td className="py-2 pr-2 font-bold">{e.registration}</td>
+                            <td className="py-2 pr-2"><Badge className={`${clsColor} text-[10px]`}>{e.classification}</Badge></td>
+                            <td className="py-2 pr-2 text-right">{e.detections.toLocaleString()}</td>
+                            <td className="py-2 pr-2 text-right">{e.avg_altitude_ft}</td>
+                            <td className={`py-2 pr-2 text-right ${e.min_altitude_ft < 0 ? 'text-red-400 font-bold' : ''}`}>{e.min_altitude_ft}</td>
+                            <td className="py-2 pr-2 text-right">{e.pct_below_1000ft.toFixed(0)}%</td>
+                            <td className={`py-2 pr-2 text-right ${e.pct_below_500ft > 25 ? 'text-red-400 font-bold' : ''}`}>{e.pct_below_500ft.toFixed(0)}%</td>
+                            <td className={`py-2 pr-2 text-right ${e.oildale_cluster_pct > 50 ? 'text-amber-400 font-bold' : ''}`}>{e.oildale_cluster_pct.toFixed(0)}%</td>
+                            <td className="py-2 pr-2 text-right">{e.spread_km}km</td>
+                            <td className="py-2 pr-2 max-w-[320px]">
+                              <div className="italic text-amber-300">{e.snark}</div>
+                              <div className="text-muted-foreground text-[11px] mt-0.5 normal-case">{e.what_it_really_means}</div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </ScrollArea>
+              )}
+              <p className="text-[10px] text-muted-foreground mt-3">
+                Window: 90 days · AOI: Kern/South San Joaquin · Oildale = % of detections inside tight Oildale box (35.30–35.55, -119.20 to -118.85). Spread = max corner-to-corner distance of detection footprint. Click a row to drill down.
+              </p>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+
         <TabsContent value="countermeasures">
           <div className="space-y-4">
             {/* Adaptive Thresholds */}

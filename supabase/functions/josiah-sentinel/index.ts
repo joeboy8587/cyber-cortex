@@ -933,6 +933,88 @@ REGISTRATION | ACTION | PRIORITY (critical/high/medium)`;
       } catch (e) { console.warn("Countermeasure generation skipped:", e instanceof Error ? e.message : e); }
     }
 
+    // ========== STEP 9.5: 90-DAY HALL OF SHAME ==========
+    // Top tails by detection count over 90 days within Kern AOI, with altitude
+    // distribution, Oildale clustering, and snark commentary.
+    const hallOfShame: HallOfShameEntry[] = [];
+    let hosMeta = { window_days: 90, total_aircraft: 0, total_detections: 0, oildale_cluster_pct: 0 };
+    try {
+      // Tight Oildale box for clustering metric
+      const OILDALE_LAT_MIN = 35.30, OILDALE_LAT_MAX = 35.55;
+      const OILDALE_LON_MIN = -119.20, OILDALE_LON_MAX = -118.85;
+
+      const hosRows: any[] = await withTimeout(
+        sql.unsafe(`
+          WITH win AS (
+            SELECT registration,
+                   NULLIF(altitude::text,'')::int AS alt,
+                   latitude::float AS lat, longitude::float AS lng,
+                   detection_timestamp
+            FROM live_flight_detections_rows
+            WHERE detection_timestamp > NOW() - INTERVAL '90 days'
+              AND latitude BETWEEN ${GEO_LAT_MIN} AND ${GEO_LAT_MAX}
+              AND longitude BETWEEN ${GEO_LON_MIN} AND ${GEO_LON_MAX}
+              AND registration IS NOT NULL AND registration <> ''
+          )
+          SELECT registration,
+                 COUNT(*)::int AS detections,
+                 ROUND(AVG(NULLIF(alt,0)))::int AS avg_alt,
+                 MIN(alt)::int AS min_alt,
+                 ROUND(100.0 * SUM(CASE WHEN alt < 1000 AND alt > 0 THEN 1 ELSE 0 END) / NULLIF(COUNT(*),0), 1) AS pct_below_1000,
+                 ROUND(100.0 * SUM(CASE WHEN alt < 500 AND alt > 0 THEN 1 ELSE 0 END) / NULLIF(COUNT(*),0), 1) AS pct_below_500,
+                 ROUND(100.0 * SUM(CASE WHEN lat BETWEEN ${OILDALE_LAT_MIN} AND ${OILDALE_LAT_MAX}
+                                         AND lng BETWEEN ${OILDALE_LON_MIN} AND ${OILDALE_LON_MAX} THEN 1 ELSE 0 END) / NULLIF(COUNT(*),0), 1) AS pct_oildale,
+                 AVG(lat) AS centroid_lat, AVG(lng) AS centroid_lng,
+                 MIN(lat) AS lat_min, MAX(lat) AS lat_max, MIN(lng) AS lng_min, MAX(lng) AS lng_max,
+                 MIN(detection_timestamp) AS first_seen, MAX(detection_timestamp) AS last_seen
+          FROM win
+          GROUP BY registration
+          HAVING COUNT(*) >= 10
+          ORDER BY detections DESC
+          LIMIT 25
+        `),
+        15000, "hall_of_shame_query"
+      );
+
+      let totalDet = 0, totalOildale = 0, rank = 0;
+      for (const r of hosRows) {
+        rank += 1;
+        const detections = Number(r.detections) || 0;
+        const avg = Number(r.avg_alt) || 0;
+        const minA = Number(r.min_alt) || 0;
+        const pBelow1000 = Number(r.pct_below_1000) || 0;
+        const pBelow500 = Number(r.pct_below_500) || 0;
+        const pOildale = Number(r.pct_oildale) || 0;
+        const centroid = (r.centroid_lat != null) ? { lat: Number(r.centroid_lat), lng: Number(r.centroid_lng) } : null;
+        const spreadKm = (r.lat_min != null && r.lat_max != null)
+          ? haversineKm(Number(r.lat_min), Number(r.lng_min), Number(r.lat_max), Number(r.lng_max))
+          : 0;
+        const cls = classifyTail(r.registration);
+        const base = {
+          rank, registration: r.registration, detections,
+          avg_altitude_ft: avg, min_altitude_ft: minA,
+          pct_below_1000ft: pBelow1000, pct_below_500ft: pBelow500,
+          oildale_cluster_pct: pOildale,
+          centroid, spread_km: Math.round(spreadKm * 10) / 10,
+          classification: cls,
+          first_seen: r.first_seen, last_seen: r.last_seen,
+        };
+        const { snark, what_it_really_means } = generateSnark(base);
+        hallOfShame.push({ ...base, snark, what_it_really_means });
+        totalDet += detections;
+        totalOildale += detections * (pOildale / 100);
+      }
+      hosMeta = {
+        window_days: 90,
+        total_aircraft: hosRows.length,
+        total_detections: totalDet,
+        oildale_cluster_pct: totalDet > 0 ? Math.round((totalOildale / totalDet) * 1000) / 10 : 0,
+      };
+      console.log(`Hall of Shame: ${hallOfShame.length} tails, ${totalDet} detections, ${hosMeta.oildale_cluster_pct}% Oildale clustered`);
+    } catch (e) {
+      console.warn("Hall of Shame query failed:", e instanceof Error ? e.message : e);
+    }
+
     // ========== STEP 10: DETERMINE THREAT LEVEL ==========
     let threatLevel: 'CRITICAL' | 'HIGH' | 'ELEVATED' | 'NORMAL' = 'NORMAL';
     const criticalCount = violations.filter(v => v.severity === 'critical').length;
@@ -957,6 +1039,8 @@ REGISTRATION | ACTION | PRIORITY (critical/high/medium)`;
       countermeasures,
       josiah_snark: josiahSnark,
       military_repeat_offenders: militaryRepeatOffenders,
+      hall_of_shame: hallOfShame,
+      hall_of_shame_meta: hosMeta,
     };
 
     console.log(`Sentinel scan complete in ${Date.now() - startTime}ms: ${violations.length} violations, threat=${threatLevel}`);

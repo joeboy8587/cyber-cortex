@@ -61,6 +61,26 @@ interface SentinelReport {
   countermeasures: Countermeasure[];
   josiah_snark?: string | null;
   military_repeat_offenders?: Array<{ callsign: string; prefix: string; appearances: number; first_seen?: string; last_seen?: string; min_altitude?: number }>;
+  hall_of_shame?: HallOfShameEntry[];
+  hall_of_shame_meta?: { window_days: number; total_aircraft: number; total_detections: number; oildale_cluster_pct: number };
+}
+
+interface HallOfShameEntry {
+  rank: number;
+  registration: string;
+  detections: number;
+  avg_altitude_ft: number;
+  min_altitude_ft: number;
+  pct_below_1000ft: number;
+  pct_below_500ft: number;
+  oildale_cluster_pct: number;
+  centroid: { lat: number; lng: number } | null;
+  spread_km: number;
+  classification: 'KCSO' | 'FLYT' | 'SHELL' | 'MEDICAL' | 'MILITARY' | 'UNKNOWN';
+  snark: string;
+  what_it_really_means: string;
+  first_seen: string;
+  last_seen: string;
 }
 
 export function JosiahSentinelMonitor() {

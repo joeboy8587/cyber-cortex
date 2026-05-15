@@ -142,6 +142,80 @@ interface SentinelReport {
   countermeasures: Countermeasure[];
   josiah_snark: string | null;
   military_repeat_offenders: Array<{ callsign: string; prefix: string; appearances: number; first_seen?: string; last_seen?: string; min_altitude?: number }>;
+  hall_of_shame: HallOfShameEntry[];
+  hall_of_shame_meta: { window_days: number; total_aircraft: number; total_detections: number; oildale_cluster_pct: number };
+}
+
+interface HallOfShameEntry {
+  rank: number;
+  registration: string;
+  detections: number;
+  avg_altitude_ft: number;
+  min_altitude_ft: number;
+  pct_below_1000ft: number;
+  pct_below_500ft: number;
+  oildale_cluster_pct: number; // % of detections inside tight Oildale box
+  centroid: { lat: number; lng: number } | null;
+  spread_km: number; // rough max spread of detections
+  classification: 'KCSO' | 'FLYT' | 'SHELL' | 'MEDICAL' | 'MILITARY' | 'UNKNOWN';
+  snark: string;
+  what_it_really_means: string;
+  first_seen: string;
+  last_seen: string;
+}
+
+function classifyTail(reg: string): HallOfShameEntry['classification'] {
+  const r = (reg || '').toUpperCase();
+  if (KCSO_FLEET_REGS.some(k => r.includes(k))) return 'KCSO';
+  if (FLYT_FLEET_REGS.some(k => r.includes(k))) return 'FLYT';
+  if (THREAT_SIGNATURES.shellCompany.some(k => r.includes(k))) return 'SHELL';
+  if (THREAT_SIGNATURES.medicalCover.some(k => r.includes(k))) return 'MEDICAL';
+  if (isMilitaryCallsign(r, r).hit) return 'MILITARY';
+  return 'UNKNOWN';
+}
+
+function generateSnark(e: Omit<HallOfShameEntry, 'snark' | 'what_it_really_means' | 'rank'>): { snark: string; what_it_really_means: string } {
+  const { registration: reg, detections: n, avg_altitude_ft: avg, min_altitude_ft: minA, pct_below_500ft: pBelow500, classification: cls, oildale_cluster_pct: clusterPct } = e;
+  let snark = '';
+  let meaning = '';
+
+  if (cls === 'KCSO' && n > 5000) {
+    snark = '"We have a time-share in your airspace"';
+    meaning = `KCSO asset with ${n.toLocaleString()} detections — institutional, not incidental. ${avg}ft avg = persistent low-altitude presence.`;
+  } else if (cls === 'KCSO') {
+    snark = '"On loan from the Sheriff. Indefinitely."';
+    meaning = `KCSO-owned, ${n.toLocaleString()} hits at ${avg}ft avg — chronic loiter pattern.`;
+  } else if (cls === 'SHELL' || cls === 'FLYT') {
+    if (n > 5000) { snark = '"Shell company, no shame"'; meaning = `Anonymous LLC fleet (${cls}) with ${n.toLocaleString()} detections — the kind of volume that demands a subpoena, not a curiosity.`; }
+    else if (n > 500) { snark = '"Roof inspection? No, harassment."'; meaning = `${cls} tail at ${avg}ft avg over ${n.toLocaleString()} passes — no commercial rationale fits.`; }
+    else if (n > 100) { snark = '"We\'re not touching the chimney. Yet."'; meaning = `Lower-volume ${cls} asset — sub-500ft loiter pattern (${pBelow500.toFixed(0)}% below 500ft).`; }
+    else { snark = '"The quiet sibling. Still creepy."'; meaning = `Low-volume ${cls} but clustered: ${clusterPct.toFixed(0)}% of hits inside Oildale box.`; }
+  } else if (cls === 'MEDICAL') {
+    snark = '"Medical cover story, executed."';
+    meaning = `Air-ambulance branding, ${n.toLocaleString()} hits, ${avg}ft avg — Hammer-Anvil pattern candidate.`;
+  } else if (cls === 'MILITARY') {
+    snark = '"Posse Comitatus has thoughts."';
+    meaning = `Military callsign repeating over civilian AOI — ${n.toLocaleString()} appearances at ${avg}ft avg.`;
+  } else if (avg < 600 && n > 100) {
+    snark = '"We can read your texts through the window"';
+    meaning = `${reg}: ${n.toLocaleString()} hits at ${avg}ft avg — well below any commercial profile.`;
+  } else if (n > 200) {
+    snark = '"Frequent flyer. No miles earned."';
+    meaning = `${n.toLocaleString()} detections in 90 days — repeat presence, ${avg}ft avg.`;
+  } else {
+    snark = '"Noted. Watching."';
+    meaning = `${n.toLocaleString()} hits, ${avg}ft avg — under threshold but logged.`;
+  }
+  if (minA < 0) { snark += ' [SPOOFED ALT]'; meaning += ` Min altitude ${minA}ft = ADS-B spoofing event.`; }
+  return { snark, what_it_really_means: meaning };
+}
+
+function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371;
+  const toRad = (x: number) => x * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
 // Helper: run with overall timeout

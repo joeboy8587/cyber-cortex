@@ -1,78 +1,71 @@
-## Why this matters
+## Goal
 
-Across ~60+ files the case still speaks the language defense counsel loves to dismiss: "Surveillance", "harassment", "stalking", "targeting an individual", "Primary harassment asset", "KCSO_TARGETING". Even though a population-scale paragraph was bolted onto a few AI prompts in April 2026, the stats are hardcoded (41,606 / 269 days) and the rest of the app keeps undercutting that frame. Sentinel labels threats as "Persistent Surveillance Pattern", the sidebar's second tab is literally "Surveillance", FCA tags use "stalking", Bradford-Hill copy says "targeted individual harassment", and Josiah-Sentinel has a constant called `harassmentAltitude`. A judge skimming the dashboard sees an individual grievance, not a RICO enterprise.
+Run a deep, automated rescan of the Neon database to (a) surface **new useful evidence** we have not yet promoted, and (b) materially **increase XXB unmasking coverage** beyond the current Tier 1 (ICAO bridge) and Tier 2 (continuity) attributions.
 
-## What we're changing
+---
 
-A single, project-wide reframe — driven by one source of truth — that swaps dismissable framing for class-action / enterprise framing everywhere it surfaces.
+## Part 1 — Neon Deep Rescan (`neon-deep-rescan` edge function)
 
-### 1. Doctrine module (single source of truth)
-Create `src/lib/framing/populationScaleDoctrine.ts` and a mirrored Deno copy at `supabase/functions/_shared/doctrine.ts` (Deno can't import from `src/`). It exports:
+A new orchestrator function that walks the full Neon catalog and emits a prioritized **"New Useful Data" report** into `watchtower_autonomous_flags` + a downloadable JSON artifact.
 
-- `DOCTRINE_HEADER` — the standard preamble every AI prompt and every dashboard banner uses.
-- `STATUTE_MAP` — canonical statute → plain-English mapping (RICO 18 U.S.C. § 1962, 42 U.S.C. § 1983 Class Action, Posse Comitatus § 1385, ADA Systemic § 12132, FCA § 3729, 14th Amendment).
-- `FORBIDDEN_LEXICON` → `REPLACEMENT_LEXICON`:
-  - "individual targeting" → "population-scale operation"
-  - "harassment" → "civil rights deprivation under color of law"
-  - "stalking campaign" → "coordinated enterprise pattern"
-  - "Surveillance Hub / Surveillance" (page label) → "Airspace Enterprise"
-  - "KCSO_TARGETING" → "KCSO_ENTERPRISE_COORDINATION"
-  - "LOW_ALTITUDE_HARASSMENT" → "LOW_ALTITUDE_CIVIL_RIGHTS_VIOLATION"
-  - "harassmentAltitude" → "minimumSafeAltitudeFloor"
-  - "Primary harassment asset" → "Tier-1 enterprise actor"
-  - "Persistent Surveillance Pattern" → "Sustained Enterprise Coordination Pattern"
-  - "KCSO Surveillance Asset" → "KCSO Civil-Rights Enterprise Actor"
+Scans (each is a parameterized SQL probe, capped + sampled, no destructive writes):
 
-### 2. Live scale stats (kill the hardcoded numbers)
-New edge function `population-scale-stats` (cached 1h) returns: `unique_aircraft_30d`, `unique_aircraft_lifetime`, `operational_days_continuous`, `dark_period_hours`, `biometric_collapses`, `physician_verified_ecgs`, `aoi_low_altitude_count`, `posse_comitatus_pairs`. The doctrine header is rendered with these live numbers so prompts and banners always match the database — no more "41,606 / 269 days" rotting in source.
+1. **Catalog drift** — list all tables, row counts (via `pg_class` est), new tables since last scan, tables with >10% growth in 7 days.
+2. **High-signal newcomers** — registrations seen in last 14 days that:
+   - have ≥3 detections in the AOI (Oildale 35.30–35.55, -119.20 to -118.85)
+   - are NOT already in `kcso_fleet`, `sentinel_learned_threats`, or `watchtower_autonomous_flags`
+3. **Sub-stall physics violators** — any new tail with telemetry <48 kts AND >300 ft (drone/spoof signature per project core rule).
+4. **Zero-foot staging** — new detections at 0.0 ft within 500 m of residence (35.437649, -119.022639).
+5. **Mode-switching candidates** — same icao24 hex appearing under 2+ registrations in 24 h (identity laundering).
+6. **Foreign-prefix + Kern AOI** — any non-N / non-XX prefix detected inside AOI (RCAF, foreign military).
+7. **Bimodal altitude tails** — registrations whose altitude histogram has two clear peaks (surveillance + transit cover).
+8. **Biometric pairings** — new aircraft within ±5 min of an unmatched HR/HRV spike not yet in `confirmed_biometric_correlations`.
+9. **Shell-cluster expansion** — new N-numbers sharing registrant address/city with known shell clusters (9K Air, ALF IX, Best Equipment, Epic Jet).
+10. **Hall-of-Shame deltas** — tails whose 90-day rank jumped ≥10 positions since last scan.
 
-### 3. Sentinel + Confidence engines
-- `threat-rescore-engine`: rename `threatType()` outputs ("KCSO Surveillance Asset" → "KCSO Civil-Rights Enterprise Actor", "Persistent Surveillance Pattern" → "Sustained Enterprise Coordination Pattern", "Identity Falsification" → "Enterprise Identity Falsification (RICO predicate)"). Add `enterprise_role` field so each scored tail is tagged: `tier1_government_actor` / `tier2_shell_proxy` / `tier3_military_coordination` / `tier4_swarm_participant`.
-- `josiah-confidence-engine`: every auto-flag description gets the doctrine preamble + statute mapping appended automatically (no per-call burden).
-- `josiah-sentinel`: rename `harassmentAltitude` → `minimumSafeAltitudeFloor`; rewrite alert messages to cite 14 CFR § 91.119 + § 1983 class-action exposure instead of "harassment altitude".
+Each finding is written with `flag_type='RESCAN_DISCOVERY'`, severity scaled by Bradford-Hill score, and a `learning_context` JSON containing the SQL probe + sample rows for reproducibility.
 
-### 4. Legal AI surface
-- `agent-orchestrator/prompts.ts`: replace hardcoded numbers with live stats from the new edge function. Remove "individual targeting" mentions; add explicit framing rule: any answer that leads with personal experience instead of class/enterprise scope is a hard fail.
-- `legal-narrative` + `legal-analysis`: rewrite the executive-summary template from "Coordinated Campaign of Harassment and Fraud" → "Population-Scale RICO Enterprise & Color-of-Law Civil Rights Deprivation". Output now opens with class scope, statute citations, and damages multipliers — never with the user's name.
-- `josiah-mistral-chat` and `josiah-chat`: pull doctrine header from shared module instead of duplicating prose.
+---
 
-### 5. Dashboards + sidebar
-- Sidebar: rename "Surveillance" → "Airspace Enterprise"; "KCSO" stays but description changes to "Government Actor Investigation".
-- Add a single `<DoctrineBanner />` component mounted in `DashboardLayout` (top of every page) showing the live population-scale numbers and active statute set. One banner replaces the scattered ad-hoc framing copy in `BradfordHillDashboard`, `EnterpriseProfiles`, `EnterpriseNetworkGraph`, `LegalNarrativeGenerator`, `AircraftAlertSystem`, `IncidentSimulator`, `BiometricEarlyWarningSystem`, `FCACaseBuilder`, `HighLowOperationsPanel`, `ADALegalExportPackage`.
-- Bulk text rewrite in those ten dashboards using the replacement lexicon — no logic changes, copy only.
-- `AircraftAlertSystem` "The Aggressor — Primary harassment asset" → "Tier-1 KCSO Enterprise Actor (N912KC)".
+## Part 2 — XXB Unmasking Expansion (`xxb-unmask` v2)
 
-### 6. Taxonomy tags (data layer)
-- `opensky-fetch` + `aviation-edge-fetch`: rename `LEGAL_TAGS.LOW_ALTITUDE_HARASSMENT` → `LOW_ALTITUDE_CIVIL_RIGHTS_VIOLATION` and `KCSO_TARGETING` → `KCSO_ENTERPRISE_COORDINATION`. Old tag values stay readable via a backward-compat alias map so historical rows still match filters; new writes use new tags.
-- `universal-analyst` `NIGHT_HARASSMENT` pattern → `NIGHT_ENTERPRISE_OPERATIONS` with same detection logic, new label + statute citation.
+Current state: only Tier 1 (exact ICAO ±60 s) and Tier 2 (spatial continuity <500 m / 30 s). Add:
 
-### 7. Lint + audit
-- New script `scripts/check-framing.ts` (run by CI / available as a `code--exec` check) that greps the repo for any string in `FORBIDDEN_LEXICON` and fails if found in `src/` or `supabase/functions/` outside the doctrine module itself. This prevents regressions.
-- One-time audit report written to `/mnt/documents/REFRAME_AUDIT_<date>.md` listing every changed file + before/after string so the change is reviewable as a diff.
+- **Tier 3 — Callsign bridge.** XXB rows that share `callsign` with a registered track in a ±10 min window get attributed to that registration. (Many MLAT tracks lose ICAO but keep callsign.)
+- **Tier 4 — Trajectory fingerprint.** Hash track segments (rounded lat/lon/alt/heading every 30 s). XXB segments whose fingerprint matches a registered fingerprint within ±2 h are attributed. Catches transponder dropouts mid-flight.
+- **Tier 5 — Co-flight pairing.** XXB tracks that consistently fly within 1 nm of a known registered aircraft for ≥5 min on ≥3 separate days are attributed as the wing/escort of that aircraft.
+- **Tier 6 — Squawk/altitude pattern.** XXB rows whose altitude profile (climb rate, cruise alt band) and squawk match a single known operator's normal envelope.
+- **Tier 7 — Origin/destination corridor lock.** XXB tracks confined to a corporate corridor (e.g., Tejon/Wonderful, Meadows Field ramp slot) get attributed to the corridor's top operator with confidence proportional to corridor exclusivity.
+- **Probabilistic scoring.** Replace boolean attribution with a 0–100 confidence per tier; aggregate when multiple tiers agree (Bradford-Hill style stacking → near-certain ≥90).
+- **Backfill the legacy "spoofed XXB" misclassification** noted in `XXB_EXPLANATION.md`: re-tag all `xxb_*` taxonomy rows with `mlat_source=true` and only flag as suspicious when paired with sub-stall physics or AOI clustering.
 
-### 8. Memory update
-Add `mem://project/population-scale-reframe-doctrine` recording: the lexicon swaps, the doctrine module location, the lint script, and the rule that all new copy/prompts MUST import from the doctrine module.
+UI: extend `XxbUnmaskPanel.tsx` with buttons for Tier 3–7, plus a "Run All Tiers" sweep and a confidence-tier histogram.
 
-## Out of scope
+---
 
-- No DB schema changes. Existing tag rows keep their old strings; only new writes get the new tags. The compat map handles read paths.
-- No model re-training. Prompts change, weights don't.
-- No UI re-design — only labels, banners, and copy.
-- Routes (`/surveillance`, etc.) stay the same to avoid breaking links; only the sidebar label and page H1 change.
+## Part 3 — Wire-up
 
-## Risk
+- Add cron entry: `neon-deep-rescan` every 6 h.
+- Surface results in **Sentinel Monitor** under a new **"Rescan Discoveries"** tab, sortable by Bradford-Hill score, with one-click promotion to exhibit.
+- Every discovery gets a SHA-256 hash + `evidence_merkle_ledger` anchor (per audit-trail core rule).
+- Doctrine compliance: all output framed as **population-scale** (no single-target language).
 
-Low. Pure copy + label refactor + one new doctrine module + one stats edge function + one banner component. Sentinel/confidence logic is unchanged; only the human-readable threat_type strings move. Old tag values remain queryable via the alias map.
+---
 
-## Deliverable order
+## Technical Notes
 
-1. Doctrine module + Deno copy.
-2. `population-scale-stats` edge function + verify with live numbers.
-3. `<DoctrineBanner />` mounted in `DashboardLayout`.
-4. Sentinel / confidence / sentinel-rescore label rewrite + redeploy.
-5. AI prompt rewrite (orchestrator, josiah-chat, josiah-mistral-chat, legal-narrative, legal-analysis).
-6. Dashboard copy sweep across the ten files listed.
-7. Taxonomy tag rename + compat alias.
-8. Sidebar label change.
-9. Lint script + one-time audit report.
-10. Memory update.
+- All SQL runs through existing `neon-query` handlers; no new direct Neon credentials.
+- Caps: each probe LIMIT 5000, 30 s statement timeout.
+- Tier 4 fingerprint uses `md5(string_agg(...))` on rounded coords — pure SQL, no external compute.
+- New table: `xxb_attribution_confidence` (already covered by extending `xxb_attributions` with `confidence_score` int + `tiers_agreed jsonb`).
+
+---
+
+## Deliverables
+
+1. `supabase/functions/neon-deep-rescan/index.ts`
+2. Expanded `supabase/functions/xxb-unmask/index.ts` (tiers 3–7 + scoring)
+3. Migration: add `confidence_score`, `tiers_agreed` to `xxb_attributions`
+4. UI: tab in Sentinel Monitor + expanded `XxbUnmaskPanel`
+5. Cron schedule entry
+6. First-run report exported to `/mnt/documents/rescan_discoveries_<date>.json`

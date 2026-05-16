@@ -74,22 +74,64 @@ export function XxbUnmaskPanel() {
           <Button size="sm" variant="outline" disabled={!!busy} onClick={() => call("init")}>
             {busy === "init" && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}1. Init Table
           </Button>
-          <Button size="sm" variant="outline" disabled={!!busy} onClick={() => call("tier1_icao", { dry_run: true })}>
-            Preview Tier 1
-          </Button>
-          <Button size="sm" disabled={!!busy} onClick={() => call("tier1_icao", { batch_size: 50000 })}>
+          <Button size="sm" disabled={!!busy} onClick={() => call("tier1_icao", { batch_size: 25000 })}>
             {busy === "tier1_icao" && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
-            Run Tier 1 (ICAO Bridge)
+            T1 · ICAO Bridge
           </Button>
-          <Button size="sm" variant="outline" disabled={!!busy} onClick={() => call("tier2_continuity", { dry_run: true })}>
-            Preview Tier 2
-          </Button>
-          <Button size="sm" disabled={!!busy} onClick={() => call("tier2_continuity", { batch_size: 50000 })}>
+          <Button size="sm" disabled={!!busy} onClick={() => call("tier2_continuity", { batch_size: 25000 })}>
             {busy === "tier2_continuity" && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
-            Run Tier 2 (Continuity)
+            T2 · Continuity
+          </Button>
+          <Button size="sm" disabled={!!busy} onClick={() => call("tier3_callsign", { batch_size: 25000 })}>
+            {busy === "tier3_callsign" && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+            T3 · Callsign
+          </Button>
+          <Button size="sm" disabled={!!busy} onClick={() => call("tier4_fingerprint", { batch_size: 25000 })}>
+            {busy === "tier4_fingerprint" && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+            T4 · Fingerprint
+          </Button>
+          <Button size="sm" disabled={!!busy} onClick={() => call("tier5_coflight", { batch_size: 25000 })}>
+            {busy === "tier5_coflight" && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+            T5 · Co-flight
+          </Button>
+          <Button size="sm" disabled={!!busy} onClick={() => call("tier6_envelope", { batch_size: 25000 })}>
+            {busy === "tier6_envelope" && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+            T6 · Envelope
+          </Button>
+          <Button size="sm" disabled={!!busy} onClick={() => call("tier7_corridor", { batch_size: 5000 })}>
+            {busy === "tier7_corridor" && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+            T7 · Corridor
+          </Button>
+          <Button size="sm" variant="default" disabled={!!busy} onClick={() => call("run_all", { batch_size: 15000 })}>
+            {busy === "run_all" && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+            ▶ Run All Tiers
+          </Button>
+          <Button size="sm" variant="secondary" disabled={!!busy} onClick={() => call("consensus")}>
+            Consensus
           </Button>
           <Button size="sm" variant="secondary" disabled={!!busy} onClick={() => call("stats")}>
-            <ShieldCheck className="h-3 w-3 mr-1" /> Refresh Stats
+            <ShieldCheck className="h-3 w-3 mr-1" /> Stats
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!!busy}
+            onClick={async () => {
+              setBusy("deep_rescan");
+              try {
+                const { data, error } = await supabase.functions.invoke("neon-deep-rescan", { body: {} });
+                if (error) throw error;
+                setLastResult({ action: "neon-deep-rescan", ...data });
+                toast({ title: "Deep rescan complete", description: `Flags written: ${data?.flags_written ?? 0}` });
+              } catch (e: any) {
+                toast({ title: "Deep rescan failed", description: e?.message ?? String(e), variant: "destructive" });
+              } finally {
+                setBusy(null);
+              }
+            }}
+          >
+            {busy === "deep_rescan" && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+            🔭 Deep Rescan Neon DB
           </Button>
         </div>
 

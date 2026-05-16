@@ -45,13 +45,13 @@ const PROBES: Probe[] = [
     name: "catalog_drift",
     run: async (sql) => {
       const tables = await sql`
-        SELECT schemaname, relname AS table_name, n_live_tup::bigint AS est_rows,
+        SELECT s.schemaname, s.relname AS table_name, s.n_live_tup::bigint AS est_rows,
                pg_size_pretty(pg_relation_size(c.oid)) AS size
         FROM pg_class c
         JOIN pg_namespace n ON n.oid = c.relnamespace
         JOIN pg_stat_user_tables s ON s.relid = c.oid
-        WHERE schemaname IN ('public','quarantine')
-        ORDER BY n_live_tup DESC LIMIT 100
+        WHERE s.schemaname IN ('public','quarantine')
+        ORDER BY s.n_live_tup DESC LIMIT 100
       `;
       return { table_count: tables.length, top_tables: tables.slice(0, 30) };
     },

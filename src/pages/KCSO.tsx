@@ -14,6 +14,7 @@ import { MilitaryGovBehavioralAlignment } from "@/components/dashboard/MilitaryG
 import { XXBInvestigator } from "@/components/dashboard/XXBInvestigator";
 import { XXBEvidenceDashboard } from "@/components/dashboard/XXBEvidenceDashboard";
 import { XXBTaxonomyPanel } from "@/components/dashboard/XXBTaxonomyPanel";
+import { SchemaIntegrityPanel } from "@/components/dashboard/SchemaIntegrityPanel";
 
 export default function KCSO() {
   return (
@@ -33,6 +34,11 @@ export default function KCSO() {
             </p>
           </div>
         </div>
+
+        {/* Schema Integrity — Josiah 2026-05-16 audit */}
+        <section>
+          <SchemaIntegrityPanel />
+        </section>
 
         {/* Evidence Matrix */}
         <section>

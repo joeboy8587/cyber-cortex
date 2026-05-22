@@ -267,7 +267,25 @@ export function LiveAlertBanner({
 
   const criticalCount = alerts.filter(a => a.threat_level === 'critical').length;
   const highCount = alerts.filter(a => a.threat_level === 'high').length;
-  const shellCount = alerts.filter(a => a.flagged_reasons.some(r => r.includes('SHELL'))).length;
+  // Count UNIQUE tails (not operators) flagged as shell-linked
+  const shellTails = new Set(
+    alerts
+      .filter(a => a.flagged_reasons.some(r => r.startsWith('SHELL')))
+      .map(a => a.registration.toUpperCase())
+  );
+  const shellCount = shellTails.size;
+
+  // Enterprise coordination: multi-shell + state-actor co-occurrence in same scan
+  const uniqueShellOperators = new Set(
+    alerts
+      .filter(a => a.flagged_reasons.some(r => r.startsWith('SHELL')))
+      .map(a => (a.entity || '').toUpperCase())
+      .filter(Boolean)
+  );
+  const lawEnforcementPresent = alerts.some(a => a.flagged_reasons.includes('LAW_ENFORCEMENT'));
+  const enterpriseCoordination =
+    shellTails.size >= 2 && uniqueShellOperators.size >= 2 && lawEnforcementPresent;
+  const enterpriseCritical = enterpriseCoordination; // escalates banner to CRITICAL
 
   if (alerts.length === 0) {
     return (

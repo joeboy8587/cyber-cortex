@@ -27,6 +27,7 @@ import { NullIcaoForensicPanel } from "@/components/dashboard/NullIcaoForensicPa
 import CrossCallsignTracker from "@/components/dashboard/CrossCallsignTracker";
 import F24RadarUploader from "@/components/dashboard/F24RadarUploader";
 import FAARegistryUploader from "@/components/dashboard/FAARegistryUploader";
+import FAARulesGeofencePanel from "@/components/dashboard/FAARulesGeofencePanel";
 import { AutonomousWatchtower } from "@/components/dashboard/AutonomousWatchtower";
 import UnmaskHQSystem from "@/components/dashboard/UnmaskHQSystem";
 import ForensicTrajectoryPanel from "@/components/dashboard/ForensicTrajectoryPanel";
@@ -177,6 +178,9 @@ export default function Surveillance() {
             </section>
             <section>
               <AutonomousWatchtower />
+            </section>
+            <section>
+              <FAARulesGeofencePanel />
             </section>
             <section>
               <UnmaskHQSystem />

@@ -53,6 +53,7 @@ export function SentinelDrillDown({ initialRegistration = '', windowMinutes = 30
   const { customQuery } = useNeonDatabase();
   const [registration, setRegistration] = useState(normalizeRegistration(initialRegistration));
   const [hours, setHours] = useState(24);
+  const [dedupeByMinute, setDedupeByMinute] = useState(true);
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState<DetectionRow[]>([]);
   const [queryMode, setQueryMode] = useState<string>('');

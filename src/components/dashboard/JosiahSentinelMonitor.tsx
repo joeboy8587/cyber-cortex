@@ -416,7 +416,9 @@ ${report.ai_synthesis ? `
                 <div>
                   <div className="text-2xl font-bold">THREAT LEVEL: {report.threat_level}</div>
                   <div className="text-sm opacity-90">
-                    {report.detections_analyzed} detections analyzed • {report.violations.length} violations • Last scan: {new Date(report.scan_timestamp).toLocaleString()}
+                    {report.detections_analyzed.toLocaleString()} unique aircraft-minutes
+                    {report.raw_pings != null ? ` (from ${report.raw_pings.toLocaleString()} raw pings, ${report.dedupe?.inflation_factor ?? '?'}× inflation)` : ''}
+                    {' • '}{report.violations.length} violations • Last scan: {new Date(report.scan_timestamp).toLocaleString()}
                   </div>
                 </div>
               </div>

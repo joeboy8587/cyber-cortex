@@ -13,6 +13,7 @@ import { MedicalBehavioralAlignment } from "@/components/dashboard/MedicalBehavi
 import { SafetyMonitoringPanel } from "@/components/dashboard/SafetyMonitoringPanel";
 import { NullHypothesisPanel } from "@/components/dashboard/NullHypothesisPanel";
 import { BiometricArchivePanel } from "@/components/dashboard/BiometricArchivePanel";
+import { BiometricSourceBanner } from "@/components/dashboard/BiometricSourceBanner";
 
 export default function Biometrics() {
   return (
@@ -32,6 +33,11 @@ export default function Biometrics() {
             </p>
           </div>
         </div>
+
+        {/* Canonical source-of-truth banner */}
+        <section>
+          <BiometricSourceBanner />
+        </section>
 
         {/* 🔥 Full Biometric Archive - 305K+ Records */}
         <section>

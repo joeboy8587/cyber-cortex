@@ -38,6 +38,27 @@ const MONITORED_PATTERNS = [
   { pattern: /^N8274E$/i, entity: 'Christiansen Aviation', priority: 'critical' },
 ];
 
+// Law enforcement / state actors — NEVER tag as shell
+const LAW_ENFORCEMENT_PATTERNS = [
+  /^N\d+HP$/i,        // CHP
+  /^N9\d{2}KC$/i,     // KCSO
+];
+const LAW_ENFORCEMENT_ENTITIES = ['CHP', 'KCSO', 'CALIFORNIA HIGHWAY PATROL', 'KERN COUNTY SHERIFF'];
+
+// Known shell / proxy operators (entity-name match, applied per tail)
+const SHELL_OPERATOR_KEYWORDS = ['ALF IX', 'AERO EQUITIES', 'FF22', '9K AIR', 'BEST EQUIPMENT', 'CHRISTIANSEN'];
+
+const isLawEnforcement = (reg: string, entity: string): boolean => {
+  if (LAW_ENFORCEMENT_PATTERNS.some(p => p.test(reg))) return true;
+  const e = (entity || '').toUpperCase();
+  return LAW_ENFORCEMENT_ENTITIES.some(le => e.includes(le));
+};
+
+const isShellOperator = (entity: string): boolean => {
+  const e = (entity || '').toUpperCase();
+  return SHELL_OPERATOR_KEYWORDS.some(k => e.includes(k));
+};
+
 const CRITICAL_REGISTRATIONS = ['N912KC', 'N913KC', 'N743AM', 'N139HP', 'N156HP', 'N202HP', 'N8274E'];
 
 export function LiveAlertBanner({

@@ -379,6 +379,33 @@ serve(async (req) => {
 
     console.log(`Detections loaded: ${recentDetections.length} in ${Date.now() - startTime}ms`);
 
+    // ========== STEP 1.5: DEDUPE METRICS (anti-inflation) ==========
+    // Single source: live_flight_detections_rows. We collapse pings to one row per
+    // (registration, minute) so "184 pings" doesn't masquerade as "184 aircraft".
+    const minuteKeys = new Set<string>();
+    const tailsSeen = new Set<string>();
+    for (const d of recentDetections) {
+      const reg = String(d.registration || d.callsign || '').toUpperCase();
+      if (!reg) continue;
+      tailsSeen.add(reg);
+      const ts = d.detection_timestamp ? new Date(d.detection_timestamp) : null;
+      if (!ts || Number.isNaN(ts.getTime())) continue;
+      const minute = ts.toISOString().slice(0, 16); // YYYY-MM-DDTHH:MM
+      minuteKeys.add(`${reg}@${minute}`);
+    }
+    const dedupeMetrics: DedupeMetrics = {
+      raw_pings: recentDetections.length,
+      unique_aircraft_minutes: minuteKeys.size,
+      unique_aircraft: tailsSeen.size,
+      inflation_factor: minuteKeys.size > 0 ? Math.round((recentDetections.length / minuteKeys.size) * 10) / 10 : 0,
+      source_table: 'live_flight_detections_rows (Neon)',
+      notes: `Counts shown are UNIQUE aircraft-minutes (one row per tail per minute). Raw ADS-B/MLAT pings: ${recentDetections.length}. A loitering aircraft can emit dozens of pings per minute; the deduped figure is the legally defensible "detection" count.`,
+    };
+    if (dedupeMetrics.inflation_factor >= 3) {
+      proactiveAlerts.push(`📊 Anti-inflation guard: ${dedupeMetrics.raw_pings} raw pings → ${dedupeMetrics.unique_aircraft_minutes} unique aircraft-minutes (${dedupeMetrics.unique_aircraft} tails). Inflation factor ${dedupeMetrics.inflation_factor}× — report uses deduped numbers.`);
+    }
+
+
     // ========== STEP 2: LOW ALTITUDE VIOLATIONS ==========
     const lowAltitudeViolations = recentDetections.filter((d: any) => {
       const alt = parseInt(d.altitude || '99999');

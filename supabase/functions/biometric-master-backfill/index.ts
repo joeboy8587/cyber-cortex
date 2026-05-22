@@ -22,7 +22,7 @@ SELECT
   'confirmed_biometric_correlations'::text,
   c.id::text,
   c.id::text,
-  c.biometric_timestamp,
+  c.biometric_timestamp::timestamptz,
   (c.biometric_timestamp::timestamptz) AT TIME ZONE 'America/Los_Angeles',
   'WHOOP'::text,
   NULLIF(c.heart_rate::text,'')::numeric,
@@ -33,7 +33,7 @@ SELECT
     WHEN NULLIF(c.stress_score::text,'')::numeric >= 50 THEN 'medium'
     ELSE 'low'
   END,
-  c.aircraft_timestamp,
+  c.aircraft_timestamp::timestamptz,
   (c.aircraft_timestamp::timestamptz) AT TIME ZONE 'America/Los_Angeles',
   c.aircraft_registration,
   c.aircraft_callsign,

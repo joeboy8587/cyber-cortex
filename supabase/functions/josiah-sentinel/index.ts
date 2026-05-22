@@ -511,26 +511,47 @@ serve(async (req) => {
       proactiveAlerts.push(`🚨 HAMMER-ANVIL COORDINATION: Medical cover + KCSO simultaneous activity.`);
     }
 
-    // ========== STEP 6: FLEET CONVERGENCE ==========
-    const hourlyGroups = new Map<string, Set<string>>();
+    // ========== STEP 6: FLEET CONVERGENCE (with altitude breakdown per hour) ==========
+    const hourlyGroups = new Map<string, { tails: Set<string>; minAlt: Map<string, number> }>();
     for (const detection of recentDetections) {
       const ts = (detection as any).detection_timestamp;
       const parsedTs = ts ? new Date(ts) : null;
       if (!parsedTs || Number.isNaN(parsedTs.getTime())) continue;
       const hour = parsedTs.toISOString().slice(0, 13);
-      if (!hourlyGroups.has(hour)) hourlyGroups.set(hour, new Set());
-      if (detection.registration) hourlyGroups.get(hour)!.add(detection.registration);
-    }
-    for (const [hour, aircraft] of hourlyGroups) {
-      if (aircraft.size >= adaptedConvergenceMin) {
-        violations.push({
-          type: 'FLEET_CONVERGENCE', severity: aircraft.size >= 4 ? 'critical' : 'high',
-          registration: `${aircraft.size} aircraft`,
-          details: `Fleet convergence: ${aircraft.size} unique aircraft in same hour`,
-          timestamp: hour + ':00:00Z', relatedAircraft: Array.from(aircraft)
-        });
+      if (!hourlyGroups.has(hour)) hourlyGroups.set(hour, { tails: new Set(), minAlt: new Map() });
+      const g = hourlyGroups.get(hour)!;
+      const reg = detection.registration || detection.callsign;
+      if (!reg) continue;
+      g.tails.add(reg);
+      const alt = Number(detection.altitude || 0);
+      if (alt > 0) {
+        const prev = g.minAlt.get(reg);
+        if (prev === undefined || alt < prev) g.minAlt.set(reg, alt);
       }
     }
+    const convergenceBreakdown: Array<{ hour: string; total_aircraft: number; buckets: AltitudeBucket }> = [];
+    for (const [hour, { tails, minAlt }] of hourlyGroups) {
+      if (tails.size < adaptedConvergenceMin) continue;
+      const buckets: AltitudeBucket = { below_500: 0, b_500_1000: 0, b_1000_2000: 0, above_2000: 0 };
+      for (const reg of tails) {
+        const a = minAlt.get(reg);
+        if (a === undefined) { buckets.above_2000 += 1; continue; }
+        if (a < 500) buckets.below_500 += 1;
+        else if (a < 1000) buckets.b_500_1000 += 1;
+        else if (a < 2000) buckets.b_1000_2000 += 1;
+        else buckets.above_2000 += 1;
+      }
+      convergenceBreakdown.push({ hour, total_aircraft: tails.size, buckets });
+      const lowCount = buckets.below_500 + buckets.b_500_1000;
+      const altDetail = `${buckets.below_500} <500ft · ${buckets.b_500_1000} 500-1000ft · ${buckets.b_1000_2000} 1000-2000ft · ${buckets.above_2000} >2000ft`;
+      violations.push({
+        type: 'FLEET_CONVERGENCE', severity: tails.size >= 4 ? 'critical' : 'high',
+        registration: `${tails.size} aircraft`,
+        details: `Fleet convergence: ${tails.size} unique aircraft in same hour — ${lowCount} below 1,000ft (${altDetail})`,
+        timestamp: hour + ':00:00Z', relatedAircraft: Array.from(tails)
+      });
+    }
+
 
     // ========== STEP 7: NIGHT OPS ==========
     const nightOps = recentDetections.filter((d: any) => {

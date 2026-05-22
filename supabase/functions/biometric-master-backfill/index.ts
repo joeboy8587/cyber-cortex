@@ -55,7 +55,7 @@ SELECT
   c.sha256_hash,
   'imported_from_confirmed_biometric_correlations'::text,
   jsonb_build_object('analysis_method', c.analysis_method, 'human_verified', c.human_verified::text),
-  COALESCE(c.created_at, NOW()),
+  COALESCE(c.created_at::timestamptz, NOW()),
   NOW()
 FROM confirmed_biometric_correlations c
 WHERE c.biometric_timestamp IS NOT NULL
@@ -134,7 +134,7 @@ SELECT
   u.sha256_hash,
   'imported_from_unified_biometric_events'::text,
   COALESCE(u.metadata, '{}'::jsonb),
-  COALESCE(u.import_timestamp, NOW()),
+  COALESCE(u.import_timestamp::timestamptz, NOW()),
   NOW()
 FROM unified_biometric_events u
 WHERE u.event_timestamp IS NOT NULL

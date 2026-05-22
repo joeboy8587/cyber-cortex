@@ -38,6 +38,27 @@ const MONITORED_PATTERNS = [
   { pattern: /^N8274E$/i, entity: 'Christiansen Aviation', priority: 'critical' },
 ];
 
+// Law enforcement / state actors — NEVER tag as shell
+const LAW_ENFORCEMENT_PATTERNS = [
+  /^N\d+HP$/i,        // CHP
+  /^N9\d{2}KC$/i,     // KCSO
+];
+const LAW_ENFORCEMENT_ENTITIES = ['CHP', 'KCSO', 'CALIFORNIA HIGHWAY PATROL', 'KERN COUNTY SHERIFF'];
+
+// Known shell / proxy operators (entity-name match, applied per tail)
+const SHELL_OPERATOR_KEYWORDS = ['ALF IX', 'AERO EQUITIES', 'FF22', '9K AIR', 'BEST EQUIPMENT', 'CHRISTIANSEN'];
+
+const isLawEnforcement = (reg: string, entity: string): boolean => {
+  if (LAW_ENFORCEMENT_PATTERNS.some(p => p.test(reg))) return true;
+  const e = (entity || '').toUpperCase();
+  return LAW_ENFORCEMENT_ENTITIES.some(le => e.includes(le));
+};
+
+const isShellOperator = (entity: string): boolean => {
+  const e = (entity || '').toUpperCase();
+  return SHELL_OPERATOR_KEYWORDS.some(k => e.includes(k));
+};
+
 const CRITICAL_REGISTRATIONS = ['N912KC', 'N913KC', 'N743AM', 'N139HP', 'N156HP', 'N202HP', 'N8274E'];
 
 export function LiveAlertBanner({
@@ -88,12 +109,27 @@ export function LiveAlertBanner({
     const shellAutoDetected = Boolean(flight.shellAutoDetected ?? flight.shell_auto_detected);
     const shellDetectionReason = flight.shellDetectionReason || flight.shell_detection_reason || '';
 
-    // Shell company auto-detection takes precedence as high-risk signal
-    if (shellAutoDetected) {
+    const lawEnforcement = isLawEnforcement(reg, ownerOperator);
+
+    // Shell company auto-detection — SUPPRESSED for law enforcement to protect credibility
+    if (shellAutoDetected && !lawEnforcement) {
       threat_level = 'high';
       reasons.push('SHELL_COMPANY_AUTO_DETECTED');
       if (shellDetectionReason) reasons.push(`SHELL_REASON:${shellDetectionReason}`);
       entity = ownerOperator || 'Shell Company Network';
+    }
+
+    // Entity-name shell match (per tail, not per operator)
+    if (!lawEnforcement && isShellOperator(ownerOperator)) {
+      if (threat_level === 'medium') threat_level = 'high';
+      if (!reasons.some(r => r.startsWith('SHELL'))) reasons.push('SHELL_LINKED');
+      entity = ownerOperator;
+    }
+
+    // Law enforcement tagging — STATE_ACTOR, not shell
+    if (lawEnforcement) {
+      reasons.push('LAW_ENFORCEMENT');
+      reasons.push('STATE_ACTOR');
     }
 
     // Check critical registrations
@@ -231,7 +267,25 @@ export function LiveAlertBanner({
 
   const criticalCount = alerts.filter(a => a.threat_level === 'critical').length;
   const highCount = alerts.filter(a => a.threat_level === 'high').length;
-  const shellCount = alerts.filter(a => a.flagged_reasons.some(r => r.includes('SHELL'))).length;
+  // Count UNIQUE tails (not operators) flagged as shell-linked
+  const shellTails = new Set(
+    alerts
+      .filter(a => a.flagged_reasons.some(r => r.startsWith('SHELL')))
+      .map(a => a.registration.toUpperCase())
+  );
+  const shellCount = shellTails.size;
+
+  // Enterprise coordination: multi-shell + state-actor co-occurrence in same scan
+  const uniqueShellOperators = new Set(
+    alerts
+      .filter(a => a.flagged_reasons.some(r => r.startsWith('SHELL')))
+      .map(a => (a.entity || '').toUpperCase())
+      .filter(Boolean)
+  );
+  const lawEnforcementPresent = alerts.some(a => a.flagged_reasons.includes('LAW_ENFORCEMENT'));
+  const enterpriseCoordination =
+    shellTails.size >= 2 && uniqueShellOperators.size >= 2 && lawEnforcementPresent;
+  const enterpriseCritical = enterpriseCoordination; // escalates banner to CRITICAL
 
   if (alerts.length === 0) {
     return (
@@ -256,18 +310,30 @@ export function LiveAlertBanner({
       <div 
         className={cn(
           "rounded-lg border-2 overflow-hidden transition-all",
-          criticalCount > 0 
+          (criticalCount > 0 || enterpriseCritical)
             ? "bg-destructive/20 border-destructive animate-pulse" 
             : "bg-orange-500/20 border-orange-500"
         )}
       >
+        {/* Enterprise coordination banner — escalates to CRITICAL */}
+        {enterpriseCritical && (
+          <div className="px-3 py-2 border-b border-destructive/40 bg-destructive/20">
+            <div className="flex items-center gap-2 text-xs">
+              <Badge variant="destructive" className="animate-pulse">ENTERPRISE_COORDINATION • CRITICAL</Badge>
+              <span className="text-foreground/80">
+                {shellTails.size} shell tails across {uniqueShellOperators.size} operators + state-actor overwatch detected in same scan
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* Header */}
         {shellCount > 0 && (
           <div className="px-3 py-2 border-b border-primary/30 bg-primary/10">
             <div className="flex items-center gap-2 text-xs">
               <Badge variant="outline" className="border-primary/40 text-primary">SHELL COMPANY ALERTS</Badge>
               <span className="text-muted-foreground">
-                {shellCount} shell-linked aircraft detected in current scan
+                {shellCount} shell-linked aircraft (by tail) across {uniqueShellOperators.size} operator{uniqueShellOperators.size === 1 ? '' : 's'}
               </span>
             </div>
           </div>

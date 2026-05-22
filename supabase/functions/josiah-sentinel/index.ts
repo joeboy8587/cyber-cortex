@@ -754,26 +754,49 @@ serve(async (req) => {
       try {
         historicalPatterns = await withTimeout(
           sql.unsafe(`
-            WITH repeat_offenders AS (
-              SELECT registration, COUNT(*)::int as count, AVG(altitude::numeric) as avg_altitude, MAX(detection_timestamp) as last_seen
+            WITH base AS (
+              SELECT registration,
+                     date_trunc('minute', detection_timestamp) AS minute_bucket,
+                     date_trunc('day',    detection_timestamp) AS day_bucket,
+                     NULLIF(altitude::text,'')::numeric AS alt,
+                     taxonomy_tag,
+                     detection_timestamp
               FROM live_flight_detections_rows
-              WHERE detection_timestamp > NOW() - INTERVAL '90 days' AND registration IS NOT NULL
-              GROUP BY registration HAVING COUNT(*) > 50
-              ORDER BY COUNT(*) DESC LIMIT 20
+              WHERE detection_timestamp > NOW() - INTERVAL '90 days'
+                AND registration IS NOT NULL AND registration <> ''
+                AND latitude  BETWEEN ${GEO_LAT_MIN} AND ${GEO_LAT_MAX}
+                AND longitude BETWEEN ${GEO_LON_MIN} AND ${GEO_LON_MAX}
+                AND COALESCE(taxonomy_tag,'') <> 'normal_traffic'
+            ),
+            repeat_offenders AS (
+              SELECT registration,
+                     COUNT(DISTINCT minute_bucket)::int AS count,
+                     COUNT(DISTINCT day_bucket)::int    AS unique_days,
+                     AVG(NULLIF(alt,0))                 AS avg_altitude,
+                     MAX(detection_timestamp)           AS last_seen
+              FROM base
+              GROUP BY registration
+              HAVING COUNT(DISTINCT minute_bucket) > 50
+              ORDER BY 2 DESC LIMIT 20
             ),
             low_altitude_patterns AS (
-              SELECT registration, COUNT(*)::int as count, AVG(altitude::numeric) as avg_altitude
-              FROM live_flight_detections_rows
-              WHERE altitude::numeric < 2000 AND altitude::numeric > 0 AND detection_timestamp > NOW() - INTERVAL '90 days'
-              GROUP BY registration HAVING COUNT(*) > 10
-              ORDER BY COUNT(*) DESC LIMIT 10
+              SELECT registration,
+                     COUNT(DISTINCT minute_bucket)::int AS count,
+                     COUNT(DISTINCT day_bucket)::int    AS unique_days,
+                     AVG(NULLIF(alt,0))                 AS avg_altitude
+              FROM base
+              WHERE alt > 0 AND alt < 2000
+              GROUP BY registration
+              HAVING COUNT(DISTINCT minute_bucket) > 10
+              ORDER BY 2 DESC LIMIT 10
             )
-            SELECT 'repeat_offender' as pattern_type, registration, count, avg_altitude, last_seen FROM repeat_offenders
+            SELECT 'repeat_offender' AS pattern_type, registration, count, unique_days, avg_altitude, last_seen FROM repeat_offenders
             UNION ALL
-            SELECT 'low_altitude_pattern' as pattern_type, registration, count, avg_altitude, NULL as last_seen FROM low_altitude_patterns
+            SELECT 'low_altitude_pattern' AS pattern_type, registration, count, unique_days, avg_altitude, NULL AS last_seen FROM low_altitude_patterns
           `),
           15000, "historical_patterns_query"
         );
+
       } catch (e) {
         console.warn("Historical patterns query failed, using in-memory fallback:", e instanceof Error ? e.message : e);
       }

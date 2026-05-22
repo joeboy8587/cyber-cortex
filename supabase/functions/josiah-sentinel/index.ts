@@ -1115,7 +1115,9 @@ REGISTRATION | ACTION | PRIORITY (critical/high/medium)`;
     const report: SentinelReport = {
       scan_timestamp: new Date().toISOString(),
       window_minutes: windowMinutes,
-      detections_analyzed: recentDetections.length,
+      detections_analyzed: dedupeMetrics.unique_aircraft_minutes,
+      raw_pings: dedupeMetrics.raw_pings,
+      dedupe: dedupeMetrics,
       violations, learned_patterns: learnedPatterns,
       proactive_alerts: proactiveAlerts,
       ai_synthesis: aiSynthesis,
@@ -1126,6 +1128,7 @@ REGISTRATION | ACTION | PRIORITY (critical/high/medium)`;
       military_repeat_offenders: militaryRepeatOffenders,
       hall_of_shame: hallOfShame,
       hall_of_shame_meta: hosMeta,
+      convergence_altitude_breakdown: convergenceBreakdown,
     };
 
     console.log(`Sentinel scan complete in ${Date.now() - startTime}ms: ${violations.length} violations, threat=${threatLevel}`);

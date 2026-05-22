@@ -109,12 +109,27 @@ export function LiveAlertBanner({
     const shellAutoDetected = Boolean(flight.shellAutoDetected ?? flight.shell_auto_detected);
     const shellDetectionReason = flight.shellDetectionReason || flight.shell_detection_reason || '';
 
-    // Shell company auto-detection takes precedence as high-risk signal
-    if (shellAutoDetected) {
+    const lawEnforcement = isLawEnforcement(reg, ownerOperator);
+
+    // Shell company auto-detection — SUPPRESSED for law enforcement to protect credibility
+    if (shellAutoDetected && !lawEnforcement) {
       threat_level = 'high';
       reasons.push('SHELL_COMPANY_AUTO_DETECTED');
       if (shellDetectionReason) reasons.push(`SHELL_REASON:${shellDetectionReason}`);
       entity = ownerOperator || 'Shell Company Network';
+    }
+
+    // Entity-name shell match (per tail, not per operator)
+    if (!lawEnforcement && isShellOperator(ownerOperator)) {
+      if (threat_level === 'medium') threat_level = 'high';
+      if (!reasons.some(r => r.startsWith('SHELL'))) reasons.push('SHELL_LINKED');
+      entity = ownerOperator;
+    }
+
+    // Law enforcement tagging — STATE_ACTOR, not shell
+    if (lawEnforcement) {
+      reasons.push('LAW_ENFORCEMENT');
+      reasons.push('STATE_ACTOR');
     }
 
     // Check critical registrations

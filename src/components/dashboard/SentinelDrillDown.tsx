@@ -204,6 +204,10 @@ export function SentinelDrillDown({ initialRegistration = '', windowMinutes = 30
             <option value={720}>Last 30d</option>
             <option value={2160}>Last 90d</option>
           </select>
+          <label className="flex items-center gap-1 text-xs cursor-pointer select-none">
+            <input type="checkbox" checked={dedupeByMinute} onChange={e => setDedupeByMinute(e.target.checked)} />
+            Dedupe / min
+          </label>
           <Button size="sm" onClick={() => run()} disabled={loading}>
             {loading ? <RefreshCw className="h-4 w-4 mr-1 animate-spin" /> : <Plane className="h-4 w-4 mr-1" />}
             Drill Down

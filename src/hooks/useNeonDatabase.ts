@@ -248,6 +248,21 @@ export function useNeonDatabase() {
   }, [queryDatabase]);
 
   const customQuery = useCallback(async (query: string) => {
+    // Legacy-biometric guardrail: warn if this query targets a deprecated
+    // biometric source. See useBiometricMaster.ts for the canonical fetcher.
+    const DEPRECATED = [
+      'biometric_events', 'unified_biometric_events', 'biometrics_unified',
+      'confirmed_biometric_correlations', 'biometric_data', 'biometric_data_rows',
+      'biometric_correlations', 'biometric_correlations_rows',
+    ];
+    const lower = query.toLowerCase();
+    const hit = DEPRECATED.find(t => new RegExp(`\\b${t}\\b`).test(lower));
+    if (hit && !lower.includes('watchtower_biometrics_master')) {
+      console.warn(
+        `[BiometricGuardrail] Query targets deprecated table "${hit}". ` +
+        `Migrate to watchtower_biometrics_master via useBiometricMaster() once backfilled.`
+      );
+    }
     return queryDatabase('customQuery', { query });
   }, [queryDatabase]);
 

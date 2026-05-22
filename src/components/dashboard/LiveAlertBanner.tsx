@@ -310,18 +310,30 @@ export function LiveAlertBanner({
       <div 
         className={cn(
           "rounded-lg border-2 overflow-hidden transition-all",
-          criticalCount > 0 
+          (criticalCount > 0 || enterpriseCritical)
             ? "bg-destructive/20 border-destructive animate-pulse" 
             : "bg-orange-500/20 border-orange-500"
         )}
       >
+        {/* Enterprise coordination banner — escalates to CRITICAL */}
+        {enterpriseCritical && (
+          <div className="px-3 py-2 border-b border-destructive/40 bg-destructive/20">
+            <div className="flex items-center gap-2 text-xs">
+              <Badge variant="destructive" className="animate-pulse">ENTERPRISE_COORDINATION • CRITICAL</Badge>
+              <span className="text-foreground/80">
+                {shellTails.size} shell tails across {uniqueShellOperators.size} operators + state-actor overwatch detected in same scan
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* Header */}
         {shellCount > 0 && (
           <div className="px-3 py-2 border-b border-primary/30 bg-primary/10">
             <div className="flex items-center gap-2 text-xs">
               <Badge variant="outline" className="border-primary/40 text-primary">SHELL COMPANY ALERTS</Badge>
               <span className="text-muted-foreground">
-                {shellCount} shell-linked aircraft detected in current scan
+                {shellCount} shell-linked aircraft (by tail) across {uniqueShellOperators.size} operator{uniqueShellOperators.size === 1 ? '' : 's'}
               </span>
             </div>
           </div>

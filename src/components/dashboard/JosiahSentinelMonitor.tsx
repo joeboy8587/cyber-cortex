@@ -48,10 +48,22 @@ interface Countermeasure {
   status: string;
 }
 
+interface DedupeMetrics {
+  raw_pings: number;
+  unique_aircraft_minutes: number;
+  unique_aircraft: number;
+  inflation_factor: number;
+  source_table: string;
+  notes: string;
+}
+interface AltitudeBucket { below_500: number; b_500_1000: number; b_1000_2000: number; above_2000: number }
+
 interface SentinelReport {
   scan_timestamp: string;
   window_minutes: number;
   detections_analyzed: number;
+  raw_pings?: number;
+  dedupe?: DedupeMetrics;
   violations: LiveViolation[];
   learned_patterns: LearnedPattern[];
   proactive_alerts: string[];
@@ -63,6 +75,7 @@ interface SentinelReport {
   military_repeat_offenders?: Array<{ callsign: string; prefix: string; appearances: number; first_seen?: string; last_seen?: string; min_altitude?: number }>;
   hall_of_shame?: HallOfShameEntry[];
   hall_of_shame_meta?: { window_days: number; total_aircraft: number; total_detections: number; oildale_cluster_pct: number };
+  convergence_altitude_breakdown?: Array<{ hour: string; total_aircraft: number; buckets: AltitudeBucket }>;
 }
 
 interface HallOfShameEntry {
@@ -278,12 +291,19 @@ export function JosiahSentinelMonitor() {
 <div class="threat-banner">⚠️ THREAT LEVEL: ${report.threat_level} — ${report.violations.filter(v => v.severity === 'critical').length} CRITICAL VIOLATIONS</div>
 
 <div class="stats">
-  <div class="stat"><div class="stat-value">${report.detections_analyzed}</div><div class="stat-label">Detections Analyzed</div></div>
+  <div class="stat"><div class="stat-value">${report.detections_analyzed}</div><div class="stat-label">Unique Aircraft-Minutes</div></div>
+  <div class="stat"><div class="stat-value">${report.dedupe?.unique_aircraft ?? '—'}</div><div class="stat-label">Unique Tails</div></div>
+  <div class="stat"><div class="stat-value">${report.raw_pings ?? '—'}</div><div class="stat-label">Raw Pings</div></div>
   <div class="stat"><div class="stat-value">${report.violations.length}</div><div class="stat-label">Violations</div></div>
   <div class="stat"><div class="stat-value">${report.violations.filter(v => v.severity === 'critical').length}</div><div class="stat-label">Critical</div></div>
   <div class="stat"><div class="stat-value">${(report.countermeasures || []).length}</div><div class="stat-label">Countermeasures</div></div>
-  <div class="stat"><div class="stat-value">${(report.learned_patterns || []).length}</div><div class="stat-label">Patterns</div></div>
 </div>
+
+${report.dedupe ? `
+<div class="synthesis"><strong>📊 Counting Methodology (anti-inflation disclaimer):</strong><br/>
+${report.dedupe.notes}<br/>
+<strong>Inflation factor:</strong> ${report.dedupe.inflation_factor}× &nbsp;|&nbsp; <strong>Source table:</strong> ${report.dedupe.source_table} (single source, no cross-table joins).
+</div>` : ''}
 
 <h2>1. ACTIVE VIOLATIONS (${report.violations.length})</h2>
 <table>
@@ -296,13 +316,25 @@ ${report.proactive_alerts && report.proactive_alerts.length > 0 ? `
 <ul>${report.proactive_alerts.map(a => `<li>${a}</li>`).join('')}</ul>
 ` : ''}
 
+${report.convergence_altitude_breakdown && report.convergence_altitude_breakdown.length > 0 ? `
+<h2>2.1 FLEET CONVERGENCE — ALTITUDE DISTRIBUTION</h2>
+<table>
+  <tr><th>Hour (UTC)</th><th>Total Aircraft</th><th>&lt;500ft</th><th>500–1000ft</th><th>1000–2000ft</th><th>&gt;2000ft</th><th>Below 1000ft %</th></tr>
+  ${report.convergence_altitude_breakdown.map(b => {
+    const low = b.buckets.below_500 + b.buckets.b_500_1000;
+    const pct = b.total_aircraft > 0 ? Math.round(100 * low / b.total_aircraft) : 0;
+    return `<tr><td>${b.hour}:00</td><td>${b.total_aircraft}</td><td>${b.buckets.below_500}</td><td>${b.buckets.b_500_1000}</td><td>${b.buckets.b_1000_2000}</td><td>${b.buckets.above_2000}</td><td><strong>${pct}%</strong></td></tr>`;
+  }).join('')}
+</table>
+` : ''}
+
 <h2>3. AI COUNTERMEASURE RECOMMENDATIONS (${(report.countermeasures || []).length})</h2>
 <table>
   <tr><th>#</th><th>Registration</th><th>Priority</th><th>Escalation</th><th>Total Violations</th><th>Recommended Action</th><th>Status</th></tr>
   ${countermeasuresHTML || '<tr><td colspan="7">No countermeasures generated</td></tr>'}
 </table>
 
-<h2>4. LEARNED PATTERNS (90-DAY ANALYSIS)</h2>
+<h2>4. LEARNED PATTERNS (90-DAY ANALYSIS — DEDUPED BY MINUTE, AOI-FILTERED)</h2>
 <table>
   <tr><th>#</th><th>Pattern Type</th><th>Confidence</th><th>Evidence Count</th><th>Description</th></tr>
   ${patternsHTML || '<tr><td colspan="5">No patterns detected</td></tr>'}
@@ -315,6 +347,7 @@ ${report.ai_synthesis ? `
 
 <div class="footer">
   <p>JOSIAH SENTINEL AUTONOMOUS THREAT ASSESSMENT | Scan ID: ${report.scan_timestamp}</p>
+  <p><strong>Source of truth:</strong> ${report.dedupe?.source_table || 'live_flight_detections_rows'} — single Neon table, no cross-table union. Counts are unique (registration, minute) tuples.</p>
   <p>This report is generated from live telemetry analysis and constitutes evidentiary documentation.</p>
   <p>Chain of custody: Auto-generated by AI sentinel system — no human modification post-generation.</p>
 </div>
@@ -383,7 +416,9 @@ ${report.ai_synthesis ? `
                 <div>
                   <div className="text-2xl font-bold">THREAT LEVEL: {report.threat_level}</div>
                   <div className="text-sm opacity-90">
-                    {report.detections_analyzed} detections analyzed • {report.violations.length} violations • Last scan: {new Date(report.scan_timestamp).toLocaleString()}
+                    {report.detections_analyzed.toLocaleString()} unique aircraft-minutes
+                    {report.raw_pings != null ? ` (from ${report.raw_pings.toLocaleString()} raw pings, ${report.dedupe?.inflation_factor ?? '?'}× inflation)` : ''}
+                    {' • '}{report.violations.length} violations • Last scan: {new Date(report.scan_timestamp).toLocaleString()}
                   </div>
                 </div>
               </div>

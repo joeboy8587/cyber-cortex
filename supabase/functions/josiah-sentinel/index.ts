@@ -129,10 +129,23 @@ interface Countermeasure {
   status: string;
 }
 
+interface DedupeMetrics {
+  raw_pings: number;            // raw ADS-B/MLAT rows pulled
+  unique_aircraft_minutes: number; // one row per (registration, minute) — the honest "detection" count
+  unique_aircraft: number;      // distinct tails in window
+  inflation_factor: number;     // raw_pings / unique_aircraft_minutes
+  source_table: string;         // single source-of-truth table fed into the scan
+  notes: string;                // plain-language disclaimer for legal record
+}
+
+interface AltitudeBucket { below_500: number; b_500_1000: number; b_1000_2000: number; above_2000: number }
+
 interface SentinelReport {
   scan_timestamp: string;
   window_minutes: number;
-  detections_analyzed: number;
+  detections_analyzed: number;        // == unique_aircraft_minutes (honest number)
+  raw_pings: number;                  // raw ping count for transparency
+  dedupe: DedupeMetrics;
   violations: LiveViolation[];
   learned_patterns: LearnedPattern[];
   proactive_alerts: string[];
@@ -144,6 +157,7 @@ interface SentinelReport {
   military_repeat_offenders: Array<{ callsign: string; prefix: string; appearances: number; first_seen?: string; last_seen?: string; min_altitude?: number }>;
   hall_of_shame: HallOfShameEntry[];
   hall_of_shame_meta: { window_days: number; total_aircraft: number; total_detections: number; oildale_cluster_pct: number };
+  convergence_altitude_breakdown?: Array<{ hour: string; total_aircraft: number; buckets: AltitudeBucket }>;
 }
 
 interface HallOfShameEntry {
@@ -365,6 +379,33 @@ serve(async (req) => {
 
     console.log(`Detections loaded: ${recentDetections.length} in ${Date.now() - startTime}ms`);
 
+    // ========== STEP 1.5: DEDUPE METRICS (anti-inflation) ==========
+    // Single source: live_flight_detections_rows. We collapse pings to one row per
+    // (registration, minute) so "184 pings" doesn't masquerade as "184 aircraft".
+    const minuteKeys = new Set<string>();
+    const tailsSeen = new Set<string>();
+    for (const d of recentDetections) {
+      const reg = String(d.registration || d.callsign || '').toUpperCase();
+      if (!reg) continue;
+      tailsSeen.add(reg);
+      const ts = d.detection_timestamp ? new Date(d.detection_timestamp) : null;
+      if (!ts || Number.isNaN(ts.getTime())) continue;
+      const minute = ts.toISOString().slice(0, 16); // YYYY-MM-DDTHH:MM
+      minuteKeys.add(`${reg}@${minute}`);
+    }
+    const dedupeMetrics: DedupeMetrics = {
+      raw_pings: recentDetections.length,
+      unique_aircraft_minutes: minuteKeys.size,
+      unique_aircraft: tailsSeen.size,
+      inflation_factor: minuteKeys.size > 0 ? Math.round((recentDetections.length / minuteKeys.size) * 10) / 10 : 0,
+      source_table: 'live_flight_detections_rows (Neon)',
+      notes: `Counts shown are UNIQUE aircraft-minutes (one row per tail per minute). Raw ADS-B/MLAT pings: ${recentDetections.length}. A loitering aircraft can emit dozens of pings per minute; the deduped figure is the legally defensible "detection" count.`,
+    };
+    if (dedupeMetrics.inflation_factor >= 3) {
+      proactiveAlerts.push(`📊 Anti-inflation guard: ${dedupeMetrics.raw_pings} raw pings → ${dedupeMetrics.unique_aircraft_minutes} unique aircraft-minutes (${dedupeMetrics.unique_aircraft} tails). Inflation factor ${dedupeMetrics.inflation_factor}× — report uses deduped numbers.`);
+    }
+
+
     // ========== STEP 2: LOW ALTITUDE VIOLATIONS ==========
     const lowAltitudeViolations = recentDetections.filter((d: any) => {
       const alt = parseInt(d.altitude || '99999');
@@ -470,26 +511,47 @@ serve(async (req) => {
       proactiveAlerts.push(`🚨 HAMMER-ANVIL COORDINATION: Medical cover + KCSO simultaneous activity.`);
     }
 
-    // ========== STEP 6: FLEET CONVERGENCE ==========
-    const hourlyGroups = new Map<string, Set<string>>();
+    // ========== STEP 6: FLEET CONVERGENCE (with altitude breakdown per hour) ==========
+    const hourlyGroups = new Map<string, { tails: Set<string>; minAlt: Map<string, number> }>();
     for (const detection of recentDetections) {
       const ts = (detection as any).detection_timestamp;
       const parsedTs = ts ? new Date(ts) : null;
       if (!parsedTs || Number.isNaN(parsedTs.getTime())) continue;
       const hour = parsedTs.toISOString().slice(0, 13);
-      if (!hourlyGroups.has(hour)) hourlyGroups.set(hour, new Set());
-      if (detection.registration) hourlyGroups.get(hour)!.add(detection.registration);
-    }
-    for (const [hour, aircraft] of hourlyGroups) {
-      if (aircraft.size >= adaptedConvergenceMin) {
-        violations.push({
-          type: 'FLEET_CONVERGENCE', severity: aircraft.size >= 4 ? 'critical' : 'high',
-          registration: `${aircraft.size} aircraft`,
-          details: `Fleet convergence: ${aircraft.size} unique aircraft in same hour`,
-          timestamp: hour + ':00:00Z', relatedAircraft: Array.from(aircraft)
-        });
+      if (!hourlyGroups.has(hour)) hourlyGroups.set(hour, { tails: new Set(), minAlt: new Map() });
+      const g = hourlyGroups.get(hour)!;
+      const reg = detection.registration || detection.callsign;
+      if (!reg) continue;
+      g.tails.add(reg);
+      const alt = Number(detection.altitude || 0);
+      if (alt > 0) {
+        const prev = g.minAlt.get(reg);
+        if (prev === undefined || alt < prev) g.minAlt.set(reg, alt);
       }
     }
+    const convergenceBreakdown: Array<{ hour: string; total_aircraft: number; buckets: AltitudeBucket }> = [];
+    for (const [hour, { tails, minAlt }] of hourlyGroups) {
+      if (tails.size < adaptedConvergenceMin) continue;
+      const buckets: AltitudeBucket = { below_500: 0, b_500_1000: 0, b_1000_2000: 0, above_2000: 0 };
+      for (const reg of tails) {
+        const a = minAlt.get(reg);
+        if (a === undefined) { buckets.above_2000 += 1; continue; }
+        if (a < 500) buckets.below_500 += 1;
+        else if (a < 1000) buckets.b_500_1000 += 1;
+        else if (a < 2000) buckets.b_1000_2000 += 1;
+        else buckets.above_2000 += 1;
+      }
+      convergenceBreakdown.push({ hour, total_aircraft: tails.size, buckets });
+      const lowCount = buckets.below_500 + buckets.b_500_1000;
+      const altDetail = `${buckets.below_500} <500ft · ${buckets.b_500_1000} 500-1000ft · ${buckets.b_1000_2000} 1000-2000ft · ${buckets.above_2000} >2000ft`;
+      violations.push({
+        type: 'FLEET_CONVERGENCE', severity: tails.size >= 4 ? 'critical' : 'high',
+        registration: `${tails.size} aircraft`,
+        details: `Fleet convergence: ${tails.size} unique aircraft in same hour — ${lowCount} below 1,000ft (${altDetail})`,
+        timestamp: hour + ':00:00Z', relatedAircraft: Array.from(tails)
+      });
+    }
+
 
     // ========== STEP 7: NIGHT OPS ==========
     const nightOps = recentDetections.filter((d: any) => {
@@ -692,26 +754,49 @@ serve(async (req) => {
       try {
         historicalPatterns = await withTimeout(
           sql.unsafe(`
-            WITH repeat_offenders AS (
-              SELECT registration, COUNT(*)::int as count, AVG(altitude::numeric) as avg_altitude, MAX(detection_timestamp) as last_seen
+            WITH base AS (
+              SELECT registration,
+                     date_trunc('minute', detection_timestamp) AS minute_bucket,
+                     date_trunc('day',    detection_timestamp) AS day_bucket,
+                     NULLIF(altitude::text,'')::numeric AS alt,
+                     taxonomy_tag,
+                     detection_timestamp
               FROM live_flight_detections_rows
-              WHERE detection_timestamp > NOW() - INTERVAL '90 days' AND registration IS NOT NULL
-              GROUP BY registration HAVING COUNT(*) > 50
-              ORDER BY COUNT(*) DESC LIMIT 20
+              WHERE detection_timestamp > NOW() - INTERVAL '90 days'
+                AND registration IS NOT NULL AND registration <> ''
+                AND latitude  BETWEEN ${GEO_LAT_MIN} AND ${GEO_LAT_MAX}
+                AND longitude BETWEEN ${GEO_LON_MIN} AND ${GEO_LON_MAX}
+                AND COALESCE(taxonomy_tag,'') <> 'normal_traffic'
+            ),
+            repeat_offenders AS (
+              SELECT registration,
+                     COUNT(DISTINCT minute_bucket)::int AS count,
+                     COUNT(DISTINCT day_bucket)::int    AS unique_days,
+                     AVG(NULLIF(alt,0))                 AS avg_altitude,
+                     MAX(detection_timestamp)           AS last_seen
+              FROM base
+              GROUP BY registration
+              HAVING COUNT(DISTINCT minute_bucket) > 50
+              ORDER BY 2 DESC LIMIT 20
             ),
             low_altitude_patterns AS (
-              SELECT registration, COUNT(*)::int as count, AVG(altitude::numeric) as avg_altitude
-              FROM live_flight_detections_rows
-              WHERE altitude::numeric < 2000 AND altitude::numeric > 0 AND detection_timestamp > NOW() - INTERVAL '90 days'
-              GROUP BY registration HAVING COUNT(*) > 10
-              ORDER BY COUNT(*) DESC LIMIT 10
+              SELECT registration,
+                     COUNT(DISTINCT minute_bucket)::int AS count,
+                     COUNT(DISTINCT day_bucket)::int    AS unique_days,
+                     AVG(NULLIF(alt,0))                 AS avg_altitude
+              FROM base
+              WHERE alt > 0 AND alt < 2000
+              GROUP BY registration
+              HAVING COUNT(DISTINCT minute_bucket) > 10
+              ORDER BY 2 DESC LIMIT 10
             )
-            SELECT 'repeat_offender' as pattern_type, registration, count, avg_altitude, last_seen FROM repeat_offenders
+            SELECT 'repeat_offender' AS pattern_type, registration, count, unique_days, avg_altitude, last_seen FROM repeat_offenders
             UNION ALL
-            SELECT 'low_altitude_pattern' as pattern_type, registration, count, avg_altitude, NULL as last_seen FROM low_altitude_patterns
+            SELECT 'low_altitude_pattern' AS pattern_type, registration, count, unique_days, avg_altitude, NULL AS last_seen FROM low_altitude_patterns
           `),
           15000, "historical_patterns_query"
         );
+
       } catch (e) {
         console.warn("Historical patterns query failed, using in-memory fallback:", e instanceof Error ? e.message : e);
       }
@@ -1030,7 +1115,9 @@ REGISTRATION | ACTION | PRIORITY (critical/high/medium)`;
     const report: SentinelReport = {
       scan_timestamp: new Date().toISOString(),
       window_minutes: windowMinutes,
-      detections_analyzed: recentDetections.length,
+      detections_analyzed: dedupeMetrics.unique_aircraft_minutes,
+      raw_pings: dedupeMetrics.raw_pings,
+      dedupe: dedupeMetrics,
       violations, learned_patterns: learnedPatterns,
       proactive_alerts: proactiveAlerts,
       ai_synthesis: aiSynthesis,
@@ -1041,6 +1128,7 @@ REGISTRATION | ACTION | PRIORITY (critical/high/medium)`;
       military_repeat_offenders: militaryRepeatOffenders,
       hall_of_shame: hallOfShame,
       hall_of_shame_meta: hosMeta,
+      convergence_altitude_breakdown: convergenceBreakdown,
     };
 
     console.log(`Sentinel scan complete in ${Date.now() - startTime}ms: ${violations.length} violations, threat=${threatLevel}`);

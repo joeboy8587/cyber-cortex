@@ -53,6 +53,7 @@ export function SentinelDrillDown({ initialRegistration = '', windowMinutes = 30
   const { customQuery } = useNeonDatabase();
   const [registration, setRegistration] = useState(normalizeRegistration(initialRegistration));
   const [hours, setHours] = useState(24);
+  const [dedupeByMinute, setDedupeByMinute] = useState(true);
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState<DetectionRow[]>([]);
   const [queryMode, setQueryMode] = useState<string>('');
@@ -81,28 +82,40 @@ export function SentinelDrillDown({ initialRegistration = '', windowMinutes = 30
       const selectColumns = `detection_timestamp, registration, icao_code AS icao24, callsign,
                  altitude, speed, latitude, longitude,
                  flagged, flagged_reasons, threat_score`;
-      const loadRows = (extraWhere: string) => customQuery(`
-          SELECT ${selectColumns}
-          FROM live_flight_detections_rows
-          WHERE ${baseWhere}
-            ${extraWhere}
-          ORDER BY detection_timestamp DESC
-          LIMIT 500
-        `);
+      const loadRows = (extraWhere: string) => customQuery(
+        dedupeByMinute
+          ? `SELECT DISTINCT ON (date_trunc('minute', detection_timestamp))
+                    ${selectColumns}
+             FROM live_flight_detections_rows
+             WHERE ${baseWhere}
+               ${extraWhere}
+             ORDER BY date_trunc('minute', detection_timestamp) DESC, detection_timestamp DESC
+             LIMIT 500`
+          : `SELECT ${selectColumns}
+             FROM live_flight_detections_rows
+             WHERE ${baseWhere}
+               ${extraWhere}
+             ORDER BY detection_timestamp DESC
+             LIMIT 500`
+      );
 
       let mode = refTs ? `Around selected violation (${safeHours}h lookback)` : `Last ${safeHours}h`;
+      mode += dedupeByMinute ? ' • deduped by minute' : ' • raw pings';
       let detRes = await loadRows(timeClause);
       let dets = extractNeonData<DetectionRow>(detRes);
 
       if (dets.length === 0) {
         detRes = await loadRows('');
         dets = extractNeonData<DetectionRow>(detRes);
-        mode = 'Latest archived detections';
+        mode = (dedupeByMinute ? 'Latest archived (deduped/min)' : 'Latest archived raw pings');
       }
 
-      const summaryWhere = mode === 'Latest archived detections' ? '' : timeClause;
+      const summaryWhere = mode.startsWith('Latest archived') ? '' : timeClause;
+      const countExpr = dedupeByMinute
+        ? "COUNT(DISTINCT date_trunc('minute', detection_timestamp))"
+        : 'COUNT(*)';
       const sumRes = await customQuery(`
-        SELECT COUNT(*) as total,
+        SELECT ${countExpr} as total,
                MIN(altitude) as min_alt, MAX(altitude) as max_alt,
                MIN(speed) as min_spd,
                MIN(detection_timestamp) as first, MAX(detection_timestamp) as last
@@ -128,7 +141,7 @@ export function SentinelDrillDown({ initialRegistration = '', windowMinutes = 30
     } finally {
       setLoading(false);
     }
-  }, [registration, hours, customQuery, referenceTimestamp]);
+  }, [registration, hours, customQuery, referenceTimestamp, dedupeByMinute]);
 
   useEffect(() => {
     const next = normalizeRegistration(initialRegistration);
@@ -191,6 +204,10 @@ export function SentinelDrillDown({ initialRegistration = '', windowMinutes = 30
             <option value={720}>Last 30d</option>
             <option value={2160}>Last 90d</option>
           </select>
+          <label className="flex items-center gap-1 text-xs cursor-pointer select-none">
+            <input type="checkbox" checked={dedupeByMinute} onChange={e => setDedupeByMinute(e.target.checked)} />
+            Dedupe / min
+          </label>
           <Button size="sm" onClick={() => run()} disabled={loading}>
             {loading ? <RefreshCw className="h-4 w-4 mr-1 animate-spin" /> : <Plane className="h-4 w-4 mr-1" />}
             Drill Down

@@ -141,7 +141,7 @@ export function SentinelDrillDown({ initialRegistration = '', windowMinutes = 30
     } finally {
       setLoading(false);
     }
-  }, [registration, hours, customQuery, referenceTimestamp]);
+  }, [registration, hours, customQuery, referenceTimestamp, dedupeByMinute]);
 
   useEffect(() => {
     const next = normalizeRegistration(initialRegistration);

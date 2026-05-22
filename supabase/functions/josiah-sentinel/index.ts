@@ -129,10 +129,23 @@ interface Countermeasure {
   status: string;
 }
 
+interface DedupeMetrics {
+  raw_pings: number;            // raw ADS-B/MLAT rows pulled
+  unique_aircraft_minutes: number; // one row per (registration, minute) — the honest "detection" count
+  unique_aircraft: number;      // distinct tails in window
+  inflation_factor: number;     // raw_pings / unique_aircraft_minutes
+  source_table: string;         // single source-of-truth table fed into the scan
+  notes: string;                // plain-language disclaimer for legal record
+}
+
+interface AltitudeBucket { below_500: number; b_500_1000: number; b_1000_2000: number; above_2000: number }
+
 interface SentinelReport {
   scan_timestamp: string;
   window_minutes: number;
-  detections_analyzed: number;
+  detections_analyzed: number;        // == unique_aircraft_minutes (honest number)
+  raw_pings: number;                  // raw ping count for transparency
+  dedupe: DedupeMetrics;
   violations: LiveViolation[];
   learned_patterns: LearnedPattern[];
   proactive_alerts: string[];
@@ -144,6 +157,7 @@ interface SentinelReport {
   military_repeat_offenders: Array<{ callsign: string; prefix: string; appearances: number; first_seen?: string; last_seen?: string; min_altitude?: number }>;
   hall_of_shame: HallOfShameEntry[];
   hall_of_shame_meta: { window_days: number; total_aircraft: number; total_detections: number; oildale_cluster_pct: number };
+  convergence_altitude_breakdown?: Array<{ hour: string; total_aircraft: number; buckets: AltitudeBucket }>;
 }
 
 interface HallOfShameEntry {

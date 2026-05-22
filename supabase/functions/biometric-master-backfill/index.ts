@@ -51,7 +51,7 @@ SELECT
     WHEN NULLIF(c.heart_rate::text,'')::numeric > 90  THEN 'medium'
     ELSE 'low'
   END,
-  c.evidence_hash,
+  NULL::text,
   c.sha256_hash,
   'imported_from_confirmed_biometric_correlations'::text,
   jsonb_build_object('analysis_method', c.analysis_method, 'human_verified', c.human_verified::text),

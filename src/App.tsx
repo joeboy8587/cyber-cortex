@@ -141,6 +141,11 @@ const App = () => (
                 <EntityResolution />
               </ProtectedRoute>
             } />
+            <Route path="/sentinel-v2" element={
+              <ProtectedRoute>
+                <SentinelV2 />
+              </ProtectedRoute>
+            } />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>

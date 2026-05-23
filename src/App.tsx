@@ -24,6 +24,7 @@ import DroneDetection from "./pages/DroneDetection";
 import CaseFiles from "./pages/CaseFiles";
 import UniversalAnalyst from "./pages/UniversalAnalyst";
 import EntityResolution from "./pages/EntityResolution";
+import SentinelV2 from "./pages/SentinelV2";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 2, staleTime: 5000 } },

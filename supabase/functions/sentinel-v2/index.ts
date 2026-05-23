@@ -16,7 +16,8 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const AOI = { lat: 35.437649, lng: -119.022639 };
+// Primary AOI = user's residence (Oildale). Updated per user request 2026-05-23.
+const AOI = { lat: 35.4377286, lng: -119.0252189 };
 
 const SHELL_KEYWORDS = ["ALF IX", "9K AIR", "BEST EQUIPMENT", "BEST AVIATION", "LBBO", "RESIDCO", "EPIC JET", "MEADOWS"];
 const MEDICAL_COVER_KEYWORDS = ["AIR METHODS", "MERCY AIR", "REACH", "GUARDIAN", "HALO FLIGHT"];

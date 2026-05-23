@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Download, Play, FileText, ShieldAlert, Hash, ChevronRight, ChevronDown, Network } from "lucide-react";
+import { Download, Play, FileText, ShieldAlert, Hash, ChevronRight, ChevronDown, Network, MapPin, Crosshair } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 interface Justification {
@@ -188,6 +188,9 @@ Joseph
     download(body, `${ymd}_FAA_FOIA_${v.registration}_${(v.airspace_class || "X")}.txt`, "text/plain");
   };
 
+  const AOI = { lat: 35.4377286, lng: -119.0252189, label: "My Residence (Oildale)" };
+  const AOI_NEAR_FT = 2000; // highlight threshold for "AT MY AOI"
+
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center gap-3">
@@ -199,6 +202,18 @@ Joseph
           </p>
         </div>
       </div>
+
+      <Card className="p-3 border-primary/40 bg-primary/5">
+        <div className="flex items-center gap-3 flex-wrap text-sm">
+          <Crosshair className="w-4 h-4 text-primary" />
+          <span className="font-semibold">My AOI:</span>
+          <span>{AOI.label}</span>
+          <Badge variant="outline" className="font-mono">{AOI.lat.toFixed(7)}, {AOI.lng.toFixed(7)}</Badge>
+          <span className="text-xs text-muted-foreground">
+            Detections within {AOI_NEAR_FT.toLocaleString()} ft are tagged <strong>AT MY AOI</strong>.
+          </span>
+        </div>
+      </Card>
 
       <Card className="p-4">
         <div className="flex items-end gap-4 flex-wrap">
@@ -223,9 +238,10 @@ Joseph
 
       {summary && (
         <Card className="p-4 space-y-3">
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-6 gap-4">
             <Stat label="Detections" value={summary.detections_evaluated} />
             <Stat label="Violations" value={summary.violations_found} />
+            <Stat label="At My AOI" value={violations.filter(v => v.distance_to_aoi_ft <= AOI_NEAR_FT).length} />
             <Stat label="Critical" value={summary.severity_breakdown.critical || 0} />
             <Stat label="Network-driven" value={summary.driver_breakdown.multimodal_network || 0} />
             <Stat label="FAR-only" value={summary.driver_breakdown.far_citation_only || 0} />
@@ -250,8 +266,12 @@ Joseph
             const isOpen = expanded.has(v.row_sha256);
             const j = v.justification;
             const isNetworkDriven = j.flag_driver === "multimodal_network";
+            const atAoi = v.distance_to_aoi_ft <= AOI_NEAR_FT;
             return (
-              <Card key={v.row_sha256} className="overflow-hidden">
+              <Card
+                key={v.row_sha256}
+                className={`overflow-hidden ${atAoi ? "border-primary border-2 bg-primary/5" : ""}`}
+              >
                 <button
                   onClick={() => toggle(v.row_sha256)}
                   className="w-full p-3 flex items-center gap-3 hover:bg-muted/30 text-left"
@@ -263,6 +283,11 @@ Joseph
                     {isNetworkDriven && <Network className="w-3 h-3 mr-1" />}
                     T{j.network.tier === 9 ? "?" : j.network.tier}
                   </Badge>
+                  {atAoi && (
+                    <Badge className="bg-primary text-primary-foreground gap-1">
+                      <MapPin className="w-3 h-3" /> AT MY AOI · {v.distance_to_aoi_ft.toLocaleString()}ft
+                    </Badge>
+                  )}
                   <span className="font-mono text-xs">{v.altitude_ft}ft</span>
                   <span className="font-mono text-xs text-muted-foreground">{v.speed_kts}kt</span>
                   <span className="flex-1 text-sm font-semibold">{j.primary_label}</span>

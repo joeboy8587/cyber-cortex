@@ -44,40 +44,41 @@ export function ChronoBiometricDigest() {
         body: {
           action: 'customQuery',
           query: `
+            -- Canonical source: watchtower_biometrics_master (54,645+ rows)
             SELECT 
-              DATE(b.measurement_timestamp) as event_date,
-              b.id::text as id,
-              b.measurement_timestamp as biometric_timestamp,
-              b.heart_rate,
-              b.hrv,
-              b.stress_level::text as stress_level,
-              f.registration as aircraft_id,
-              f.callsign,
-              f.altitude,
-              ROUND(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp)) / 60.0, 1) as time_diff_minutes,
+              DATE(biometric_timestamp_utc) as event_date,
+              id::text as id,
+              biometric_timestamp_utc as biometric_timestamp,
+              heart_rate_bpm  AS heart_rate,
+              hrv_ms          AS hrv,
+              stress_level::text as stress_level,
+              aircraft_registration as aircraft_id,
+              aircraft_callsign     as callsign,
+              altitude_ft           as altitude,
+              time_offset_minutes   as time_diff_minutes,
               CASE 
-                WHEN b.heart_rate > 100 AND COALESCE(b.hrv, 100) < 40 THEN 'Tachycardia + Low HRV'
-                WHEN b.heart_rate > 110 THEN 'Severe Tachycardia'
-                WHEN b.heart_rate > 100 THEN 'Elevated HR'
-                WHEN COALESCE(b.hrv, 100) < 40 THEN 'Stress Response'
+                WHEN heart_rate_bpm > 100 AND COALESCE(hrv_ms, 100) < 40 THEN 'Tachycardia + Low HRV'
+                WHEN heart_rate_bpm > 110 THEN 'Severe Tachycardia'
+                WHEN heart_rate_bpm > 100 THEN 'Elevated HR'
+                WHEN COALESCE(hrv_ms, 100) < 40 THEN 'Stress Response'
                 ELSE NULL
               END as harm_indicators,
-              CASE 
-                WHEN b.heart_rate > 110 AND f.altitude < 1000 THEN 9.0
-                WHEN b.heart_rate > 100 AND f.altitude < 1500 THEN 8.0
-                WHEN b.heart_rate > 100 THEN 7.0
-                WHEN f.altitude < 1000 THEN 6.5
-                ELSE 5.0
-              END as bradford_hill_score
-            FROM biometric_monitoring b
-            JOIN live_flight_detections_rows f 
-              ON ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= 300
-            WHERE b.measurement_timestamp IS NOT NULL
-              AND b.heart_rate IS NOT NULL
-              AND b.heart_rate >= 40 AND b.heart_rate <= 220
-              AND f.registration IS NOT NULL
-              AND b.heart_rate > 90
-            ORDER BY b.measurement_timestamp DESC
+              COALESCE(bradford_hill_score,
+                CASE 
+                  WHEN heart_rate_bpm > 110 AND altitude_ft < 1000 THEN 9.0
+                  WHEN heart_rate_bpm > 100 AND altitude_ft < 1500 THEN 8.0
+                  WHEN heart_rate_bpm > 100 THEN 7.0
+                  WHEN altitude_ft < 1000 THEN 6.5
+                  ELSE 5.0
+                END
+              ) as bradford_hill_score
+            FROM watchtower_biometrics_master
+            WHERE biometric_timestamp_utc IS NOT NULL
+              AND heart_rate_bpm IS NOT NULL
+              AND heart_rate_bpm BETWEEN 40 AND 220
+              AND aircraft_registration IS NOT NULL
+              AND heart_rate_bpm > 90
+            ORDER BY biometric_timestamp_utc DESC
             LIMIT 1000
           `
         }

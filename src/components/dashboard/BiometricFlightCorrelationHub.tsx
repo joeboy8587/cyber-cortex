@@ -49,20 +49,26 @@ export function BiometricFlightCorrelationHub() {
   const loadCorrelations = useCallback(async () => {
     setLoading(true);
     try {
-      // Load correlations and verified ECGs in parallel - using correct table: confirmed_biometric_correlations_rows_1
+      // Canonical source: watchtower_biometrics_master (54,645+ rows, court-ready)
       const [correlationResult, ecgResult, statsResult] = await Promise.all([
         supabase.functions.invoke('neon-query', {
           body: {
             action: 'customQuery',
             query: `
               SELECT 
-                id, created_at as timestamp, aircraft_registration, 
-                correlation_score, threat_level,
-                heart_rate, stress_score, 
-                aircraft_altitude as altitude_at_detection,
-                time_offset_minutes, josiah_assessment as notes
-              FROM confirmed_biometric_correlations_rows_1
-              ORDER BY created_at DESC
+                id,
+                biometric_timestamp_utc as timestamp,
+                aircraft_registration,
+                COALESCE(correlation_strength, threat_score, 0) as correlation_score,
+                threat_level,
+                heart_rate_bpm as heart_rate,
+                stress_score,
+                altitude_ft as altitude_at_detection,
+                time_offset_minutes,
+                notes
+              FROM watchtower_biometrics_master
+              WHERE aircraft_registration IS NOT NULL
+              ORDER BY biometric_timestamp_utc DESC NULLS LAST
               LIMIT 100
             `
           }
@@ -83,10 +89,10 @@ export function BiometricFlightCorrelationHub() {
             query: `
               SELECT 
                 COUNT(*) as total,
-                COUNT(*) FILTER (WHERE threat_level = 'critical' OR CAST(correlation_score AS INTEGER) >= 90) as critical_count,
-                COUNT(*) FILTER (WHERE threat_level = 'high' OR (CAST(correlation_score AS INTEGER) >= 70 AND CAST(correlation_score AS INTEGER) < 90)) as high_count,
-                AVG(CAST(correlation_score AS FLOAT) / 10) as avg_bh
-              FROM confirmed_biometric_correlations_rows_1
+                COUNT(*) FILTER (WHERE threat_level = 'critical' OR COALESCE(correlation_strength, threat_score, 0) >= 90) as critical_count,
+                COUNT(*) FILTER (WHERE threat_level = 'high'     OR (COALESCE(correlation_strength, threat_score, 0) >= 70 AND COALESCE(correlation_strength, threat_score, 0) < 90)) as high_count,
+                AVG(COALESCE(bradford_hill_score, COALESCE(correlation_strength, threat_score, 0) / 10.0)) as avg_bh
+              FROM watchtower_biometrics_master
             `
           }
         })

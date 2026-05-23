@@ -54,23 +54,24 @@ export function BiometricBattleMap() {
     setIsLoading(true);
 
     try {
-      // Fetch recent biometric events with location approximation
+      // Canonical source: watchtower_biometrics_master (54,645+ rows, court-ready)
       const { data: biometrics } = await supabase.functions.invoke("neon-query", {
         body: {
           action: "customQuery",
           query: `
             SELECT 
               id,
-              heart_rate,
-              hrv,
-              stress_level,
-              measurement_timestamp,
-              source
-            FROM biometric_monitoring
-            WHERE measurement_timestamp > NOW() - INTERVAL '24 hours'
-              AND heart_rate > 80
-            ORDER BY measurement_timestamp DESC
-            LIMIT 50
+              heart_rate_bpm  AS heart_rate,
+              hrv_ms          AS hrv,
+              stress_score    AS stress_level,
+              biometric_timestamp_utc AS measurement_timestamp,
+              biometric_source AS source,
+              latitude,
+              longitude
+            FROM watchtower_biometrics_master
+            WHERE heart_rate_bpm > 80
+            ORDER BY biometric_timestamp_utc DESC NULLS LAST
+            LIMIT 200
           `
         }
       });

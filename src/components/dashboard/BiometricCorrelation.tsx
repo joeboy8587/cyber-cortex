@@ -208,44 +208,44 @@ export function BiometricCorrelation() {
       setBiometricSources(sourceResults);
       const totalBio = sourceResults.reduce((sum, s) => sum + s.record_count, 0);
 
-      // Fetch live correlations with simplified join query - removed non-existent operator column
+      // Canonical source: watchtower_biometrics_master (pre-correlated, 54,645+ rows)
       const { data: corrData, error: corrError } = await supabase.functions.invoke("neon-query", {
         body: {
           action: "customQuery",
           query: `
             SELECT 
-              b.id::text as biometric_id,
-              b.measurement_timestamp as biometric_timestamp,
-              b.heart_rate,
-              b.hrv,
-              b.stress_level::text as stress_level,
+              id::text as biometric_id,
+              biometric_timestamp_utc as biometric_timestamp,
+              heart_rate_bpm as heart_rate,
+              hrv_ms as hrv,
+              stress_level::text as stress_level,
               CASE 
-                WHEN b.heart_rate > 100 AND COALESCE(b.hrv, 100) < 40 THEN 'Elevated HR, Low HRV, Tachycardia'
-                WHEN b.heart_rate > 100 THEN 'Elevated HR, Tachycardia'
-                WHEN COALESCE(b.hrv, 100) < 40 THEN 'Low HRV, Stress Response'
+                WHEN heart_rate_bpm > 100 AND COALESCE(hrv_ms, 100) < 40 THEN 'Elevated HR, Low HRV, Tachycardia'
+                WHEN heart_rate_bpm > 100 THEN 'Elevated HR, Tachycardia'
+                WHEN COALESCE(hrv_ms, 100) < 40 THEN 'Low HRV, Stress Response'
                 ELSE NULL
               END as harm_indicators,
-              f.registration as aircraft_id,
-              f.callsign,
-              f.altitude,
-              NULL as operator,
-              ROUND(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp)) / 60.0, 1) as time_diff_minutes,
-              CASE 
-                WHEN ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= 60 THEN 80
-                WHEN ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= 120 THEN 75
-                WHEN ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= 180 THEN 70
-                WHEN ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= 300 THEN 65
-                ELSE 50
-              END as correlation_strength,
-              'biometric_monitoring' as source_table
-            FROM biometric_monitoring b
-            JOIN live_flight_detections_rows f 
-              ON ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) <= ${timeWindow * 60}
-            WHERE b.measurement_timestamp IS NOT NULL
-              AND b.heart_rate IS NOT NULL
-              AND b.heart_rate >= 40 AND b.heart_rate <= 220
-              AND f.registration IS NOT NULL
-            ORDER BY correlation_strength DESC, ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.measurement_timestamp))) ASC
+              aircraft_registration as aircraft_id,
+              aircraft_callsign as callsign,
+              altitude_ft as altitude,
+              aircraft_operator as operator,
+              time_offset_minutes as time_diff_minutes,
+              COALESCE(correlation_strength,
+                CASE 
+                  WHEN ABS(COALESCE(time_offset_minutes, 999)) <= 1 THEN 80
+                  WHEN ABS(COALESCE(time_offset_minutes, 999)) <= 2 THEN 75
+                  WHEN ABS(COALESCE(time_offset_minutes, 999)) <= 3 THEN 70
+                  WHEN ABS(COALESCE(time_offset_minutes, 999)) <= 5 THEN 65
+                  ELSE 50
+                END
+              ) as correlation_strength,
+              'watchtower_biometrics_master' as source_table
+            FROM watchtower_biometrics_master
+            WHERE biometric_timestamp_utc IS NOT NULL
+              AND heart_rate_bpm BETWEEN 40 AND 220
+              AND aircraft_registration IS NOT NULL
+              AND ABS(COALESCE(time_offset_minutes, 0)) <= ${timeWindow}
+            ORDER BY correlation_strength DESC NULLS LAST, ABS(COALESCE(time_offset_minutes, 999)) ASC
             LIMIT 500
           `
         }

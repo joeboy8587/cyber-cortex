@@ -23,11 +23,11 @@ export function BradfordHillDashboard() {
 
   const fetchCriteriaScores = async () => {
     try {
-      // Fetch biometric event counts
+      // Canonical source: watchtower_biometrics_master (court-ready)
       const { data: biometricData } = await supabase.functions.invoke("neon-query", {
         body: {
           action: "customQuery",
-          query: `SELECT COUNT(*) as total FROM biometric_monitoring`
+          query: `SELECT COUNT(*) as total FROM watchtower_biometrics_master`
         }
       });
 

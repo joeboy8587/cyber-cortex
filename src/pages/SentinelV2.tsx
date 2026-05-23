@@ -238,9 +238,10 @@ Joseph
 
       {summary && (
         <Card className="p-4 space-y-3">
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-6 gap-4">
             <Stat label="Detections" value={summary.detections_evaluated} />
             <Stat label="Violations" value={summary.violations_found} />
+            <Stat label="At My AOI" value={violations.filter(v => v.distance_to_aoi_ft <= AOI_NEAR_FT).length} />
             <Stat label="Critical" value={summary.severity_breakdown.critical || 0} />
             <Stat label="Network-driven" value={summary.driver_breakdown.multimodal_network || 0} />
             <Stat label="FAR-only" value={summary.driver_breakdown.far_citation_only || 0} />

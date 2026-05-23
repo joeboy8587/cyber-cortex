@@ -188,6 +188,9 @@ Joseph
     download(body, `${ymd}_FAA_FOIA_${v.registration}_${(v.airspace_class || "X")}.txt`, "text/plain");
   };
 
+  const AOI = { lat: 35.4377286, lng: -119.0252189, label: "My Residence (Oildale)" };
+  const AOI_NEAR_FT = 2000; // highlight threshold for "AT MY AOI"
+
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center gap-3">
@@ -199,6 +202,18 @@ Joseph
           </p>
         </div>
       </div>
+
+      <Card className="p-3 border-primary/40 bg-primary/5">
+        <div className="flex items-center gap-3 flex-wrap text-sm">
+          <Crosshair className="w-4 h-4 text-primary" />
+          <span className="font-semibold">My AOI:</span>
+          <span>{AOI.label}</span>
+          <Badge variant="outline" className="font-mono">{AOI.lat.toFixed(7)}, {AOI.lng.toFixed(7)}</Badge>
+          <span className="text-xs text-muted-foreground">
+            Detections within {AOI_NEAR_FT.toLocaleString()} ft are tagged <strong>AT MY AOI</strong>.
+          </span>
+        </div>
+      </Card>
 
       <Card className="p-4">
         <div className="flex items-end gap-4 flex-wrap">

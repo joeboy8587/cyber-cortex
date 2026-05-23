@@ -144,48 +144,51 @@ serve(async (req) => {
     if (!neonUrl) throw new Error("NEON_DATABASE_URL not configured");
     sql = postgres(neonUrl, { ssl: "require", max: 3, idle_timeout: 20, connect_timeout: 10 });
 
-    // 1. Pull AOI-window detections (bbox prefilter, then haversine via PostGIS)
+    // 1+2. Detections + smallest containing airspace polygon in ONE PostGIS LATERAL join.
     const padDeg = (radiusM / 111_000) * 1.3;
-    const detections = await sql`
-      SELECT registration, callsign, icao24,
-        altitude::numeric AS altitude, speed::numeric AS speed,
-        latitude::numeric AS latitude, longitude::numeric AS longitude,
-        detection_timestamp
-      FROM live_flight_detections_rows
-      WHERE detection_timestamp > NOW() - (${lookbackHours} || ' hours')::interval
-        AND latitude BETWEEN ${AOI.lat - padDeg} AND ${AOI.lat + padDeg}
-        AND longitude BETWEEN ${AOI.lng - padDeg / Math.cos(AOI.lat * Math.PI / 180)}
-                          AND ${AOI.lng + padDeg / Math.cos(AOI.lat * Math.PI / 180)}
-        AND registration IS NOT NULL AND registration <> ''
-        AND altitude IS NOT NULL
-      ORDER BY detection_timestamp DESC
-      LIMIT ${limit}
+    const rows = await sql`
+      WITH d AS (
+        SELECT registration, callsign, icao24,
+          altitude::numeric AS altitude, speed::numeric AS speed,
+          latitude::numeric AS latitude, longitude::numeric AS longitude,
+          detection_timestamp
+        FROM live_flight_detections_rows
+        WHERE detection_timestamp > NOW() - (${lookbackHours} || ' hours')::interval
+          AND latitude BETWEEN ${AOI.lat - padDeg} AND ${AOI.lat + padDeg}
+          AND longitude BETWEEN ${AOI.lng - padDeg / Math.cos(AOI.lat * Math.PI / 180)}
+                            AND ${AOI.lng + padDeg / Math.cos(AOI.lat * Math.PI / 180)}
+          AND registration IS NOT NULL AND registration <> ''
+          AND altitude IS NOT NULL
+        ORDER BY detection_timestamp DESC
+        LIMIT ${limit}
+      )
+      SELECT d.*,
+        a.name AS as_name, a.class_label AS as_class, a.airspace_type AS as_type,
+        a.lower_val_ft AS as_floor, a.upper_val_ft AS as_ceiling
+      FROM d
+      LEFT JOIN LATERAL (
+        SELECT name, class_label, airspace_type, lower_val_ft, upper_val_ft
+        FROM faa_airspace
+        WHERE ST_Contains(geom, ST_SetSRID(ST_MakePoint(d.longitude::float8, d.latitude::float8), 4326))
+          AND (lower_val_ft IS NULL OR d.altitude >= lower_val_ft)
+          AND (upper_val_ft IS NULL OR upper_val_ft < 0 OR d.altitude <= upper_val_ft)
+        ORDER BY COALESCE(upper_val_ft, 99999) - COALESCE(lower_val_ft, 0) ASC
+        LIMIT 1
+      ) a ON true
     `;
 
-    // 2. For each detection, find smallest containing airspace polygon
     const violations: any[] = [];
-    for (const d of detections) {
+    for (const d of rows) {
       const lat = Number(d.latitude), lng = Number(d.longitude);
       const alt = Number(d.altitude), spd = Number(d.speed) || 0;
-
-      // distance from AOI in meters (haversine)
-      const R = 6_371_000;
-      const toRad = (x: number) => x * Math.PI / 180;
+      const R = 6_371_000, toRad = (x: number) => x * Math.PI / 180;
       const dLat = toRad(lat - AOI.lat), dLng = toRad(lng - AOI.lng);
       const ha = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(AOI.lat)) * Math.cos(toRad(lat)) * Math.sin(dLng / 2) ** 2;
       const dist_m = 2 * R * Math.asin(Math.sqrt(ha));
 
-      // smallest airspace polygon containing point at this altitude
-      const airspaces = await sql`
-        SELECT name, class_label, airspace_type, lower_val_ft, upper_val_ft
-        FROM faa_airspace
-        WHERE ST_Contains(geom, ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326))
-          AND (lower_val_ft IS NULL OR ${alt} >= lower_val_ft)
-          AND (upper_val_ft IS NULL OR upper_val_ft < 0 OR ${alt} <= upper_val_ft)
-        ORDER BY COALESCE(upper_val_ft, 99999) - COALESCE(lower_val_ft, 0) ASC
-        LIMIT 1
-      `;
-      const a = airspaces[0] || { name: "uncontrolled", class_label: "G", airspace_type: "CLASS", lower_val_ft: 0, upper_val_ft: 1200 };
+      const a = d.as_name
+        ? { name: d.as_name, class_label: d.as_class, airspace_type: d.as_type, lower_val_ft: d.as_floor, upper_val_ft: d.as_ceiling }
+        : { name: "uncontrolled", class_label: "G", airspace_type: "CLASS", lower_val_ft: 0, upper_val_ft: 1200 };
       const c = cite(a, alt, spd, dist_m);
       if (!c) continue;
 
@@ -213,6 +216,7 @@ serve(async (req) => {
         row_sha256: await sha256(rowJson),
       });
     }
+    const detectionsEvaluated = rows.length;
 
     const batchJson = JSON.stringify(violations.map(v => v.row_sha256).sort());
     const batchSha = await sha256(batchJson);

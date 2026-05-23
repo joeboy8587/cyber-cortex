@@ -231,7 +231,7 @@ serve(async (req) => {
         started_at: startedAt,
         finished_at: new Date().toISOString(),
         aoi: AOI, radius_m: radiusM, lookback_hours: lookbackHours,
-        detections_evaluated: detections.length,
+        detections_evaluated: detectionsEvaluated,
         violations_found: violations.length,
         severity_breakdown: severityCounts,
         far_breakdown: farCounts,

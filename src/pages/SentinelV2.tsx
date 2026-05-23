@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Download, Play, FileText, ShieldAlert, Hash, ChevronRight, ChevronDown, Network } from "lucide-react";
+import { Download, Play, FileText, ShieldAlert, Hash, ChevronRight, ChevronDown, Network, MapPin, Crosshair } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 interface Justification {

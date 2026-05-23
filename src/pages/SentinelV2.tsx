@@ -265,8 +265,12 @@ Joseph
             const isOpen = expanded.has(v.row_sha256);
             const j = v.justification;
             const isNetworkDriven = j.flag_driver === "multimodal_network";
+            const atAoi = v.distance_to_aoi_ft <= AOI_NEAR_FT;
             return (
-              <Card key={v.row_sha256} className="overflow-hidden">
+              <Card
+                key={v.row_sha256}
+                className={`overflow-hidden ${atAoi ? "border-primary border-2 bg-primary/5" : ""}`}
+              >
                 <button
                   onClick={() => toggle(v.row_sha256)}
                   className="w-full p-3 flex items-center gap-3 hover:bg-muted/30 text-left"
@@ -278,6 +282,11 @@ Joseph
                     {isNetworkDriven && <Network className="w-3 h-3 mr-1" />}
                     T{j.network.tier === 9 ? "?" : j.network.tier}
                   </Badge>
+                  {atAoi && (
+                    <Badge className="bg-primary text-primary-foreground gap-1">
+                      <MapPin className="w-3 h-3" /> AT MY AOI · {v.distance_to_aoi_ft.toLocaleString()}ft
+                    </Badge>
+                  )}
                   <span className="font-mono text-xs">{v.altitude_ft}ft</span>
                   <span className="font-mono text-xs text-muted-foreground">{v.speed_kts}kt</span>
                   <span className="flex-1 text-sm font-semibold">{j.primary_label}</span>

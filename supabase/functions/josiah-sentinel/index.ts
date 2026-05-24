@@ -421,9 +421,12 @@ serve(async (req) => {
       else if (alt < THREAT_SIGNATURES.minimumSafeAltitudeFloor) severity = 'high';
 
       violations.push({
-        type: 'LOW_ALTITUDE_CIVIL_RIGHTS_VIOLATION', severity,
+        type: severity === 'critical' ? 'FAR_91_119_VIOLATION' : 'PATTERN_ANOMALY_LOW_ALTITUDE',
+        severity,
         registration: detection.registration || detection.callsign || 'UNKNOWN',
-        details: `Aircraft at ${alt}ft — ${severity === 'critical' ? 'critical 14 CFR § 91.119 violation (color-of-law exposure)' : 'below FAA minimum safe altitude — § 1983 class-action exposure'}`,
+        details: severity === 'critical'
+          ? `Aircraft at ${alt}ft — 14 CFR § 91.119 minimum safe altitude breach (congested-area floor 1,000ft / 500ft other).`
+          : `Aircraft at ${alt}ft — PATTERN ANOMALY: below FAR § 91.119 floor within AOI. Network-context correlation required for prosecution.`,
         timestamp: detection.detection_timestamp, altitude: alt,
         coordinates: detection.latitude && detection.longitude ? 
           { lat: parseFloat(detection.latitude), lng: parseFloat(detection.longitude) } : undefined

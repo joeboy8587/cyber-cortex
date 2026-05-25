@@ -269,12 +269,21 @@ async function handleBackfillHashes(neonUrl: string, body: any) {
   const { maxTables = 10, batchSize = 5000, tableFilter } = body;
   const t0 = Date.now();
 
-  // Find tables with `id` but no `sha256_hash`
+  // Enable pgcrypto once (idempotent)
+  try { await neonQuery(neonUrl, `CREATE EXTENSION IF NOT EXISTS pgcrypto`); } catch (_) {}
+
+  // BASE TABLES ONLY (skip views) with `id` but no `sha256_hash`
+  const baseTables = await neonQuery(neonUrl,
+    `SELECT table_name FROM information_schema.tables
+     WHERE table_schema='public' AND table_type='BASE TABLE'`);
+  const baseSet = new Set((baseTables as any[]).map(r => r.table_name));
+
   const cols = await neonQuery(neonUrl,
     `SELECT table_name, column_name FROM information_schema.columns
      WHERE table_schema='public' AND column_name IN ('id','sha256_hash')`);
   const m = new Map<string, { hasId: boolean; hasSha: boolean }>();
   for (const c of cols as any[]) {
+    if (!baseSet.has(c.table_name)) continue;
     if (!m.has(c.table_name)) m.set(c.table_name, { hasId: false, hasSha: false });
     const e = m.get(c.table_name)!;
     if (c.column_name === 'id') e.hasId = true;
@@ -296,14 +305,10 @@ async function handleBackfillHashes(neonUrl: string, body: any) {
       break;
     }
     try {
-      // Add column
       await neonQuery(neonUrl, `ALTER TABLE "${tableName}" ADD COLUMN IF NOT EXISTS sha256_hash TEXT`);
-      // Populate with deterministic hash of full row
       const upd = await neonQuery(neonUrl,
         `WITH batch AS (
-           SELECT ctid FROM "${tableName}"
-           WHERE sha256_hash IS NULL
-           LIMIT ${batchSize}
+           SELECT ctid FROM "${tableName}" WHERE sha256_hash IS NULL LIMIT ${batchSize}
          )
          UPDATE "${tableName}" t
          SET sha256_hash = encode(digest(row_to_json(t)::text, 'sha256'), 'hex')
@@ -318,17 +323,7 @@ async function handleBackfillHashes(neonUrl: string, body: any) {
       console.log(`hashed +${updated} ${tableName}, remaining=${r}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      // pgcrypto may be missing — fallback to md5
-      if (msg.includes('digest') || msg.includes('pgcrypto')) {
-        try {
-          await neonQuery(neonUrl, `CREATE EXTENSION IF NOT EXISTS pgcrypto`);
-          results.push({ table: tableName, status: 'retry_after_pgcrypto' });
-        } catch {
-          results.push({ table: tableName, status: 'error', error: msg });
-        }
-      } else {
-        results.push({ table: tableName, status: 'error', error: msg });
-      }
+      results.push({ table: tableName, status: 'error', error: msg.slice(0, 200) });
     }
   }
 

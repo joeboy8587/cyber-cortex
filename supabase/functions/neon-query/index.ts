@@ -180,8 +180,29 @@ async function getHandler7() {
   if (!_handleAction7) { const mod = await import("./handlers7.ts"); _handleAction7 = mod.handleAction7; }
   return _handleAction7;
 }
+// Handler8 lives in sibling edge function `neon-query-h8` to keep this
+// function's parse size small. We proxy via HTTP rather than dynamic import.
 async function getHandler8() {
-  if (!_handleAction8) { const mod = await import("./handlers8.ts"); _handleAction8 = mod.handleAction8; }
+  if (_handleAction8) return _handleAction8;
+  _handleAction8 = async (action: string, body: Record<string, any>, _sql: any) => {
+    const supabaseUrl = Deno.env.get('SUPABASE_URL');
+    const anonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
+    if (!supabaseUrl) throw new Error('SUPABASE_URL not configured for sibling proxy');
+    const res = await fetch(`${supabaseUrl}/functions/v1/neon-query-h8`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${anonKey}`,
+        'apikey': anonKey,
+      },
+      body: JSON.stringify({ ...body, action }),
+    });
+    const text = await res.text();
+    let parsed: any;
+    try { parsed = text ? JSON.parse(text) : null; } catch { parsed = { error: text }; }
+    if (!res.ok) throw new Error(parsed?.error || `neon-query-h8 returned ${res.status}`);
+    return parsed;
+  };
   return _handleAction8;
 }
 

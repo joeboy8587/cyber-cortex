@@ -45,6 +45,7 @@ Deno.serve(async (req) => {
       case "verify": return await handleVerify(supabase, batchSize);
       case "stats": return await handleStats(supabase);
       case "neonCoverage": return await handleNeonCoverage(supabase, neonUrl);
+      case "backfillHashes": return await handleBackfillHashes(neonUrl, body);
       default: return json({ error: "Unknown action" }, 400);
     }
   } catch (err) {
@@ -261,4 +262,75 @@ async function handleNeonCoverage(supabase: any, neonUrl: string) {
   const totalAnchored = coverage.reduce((s, t) => s + t.anchored, 0);
   return json({ totalNeonTables: coverage.length, anchorableTables: coverage.filter(t => t.hasId).length, totalRows, totalAnchored,
     overallCoverage: totalRows > 0 ? Number(((totalAnchored / totalRows) * 100).toFixed(4)) : 0, tables: coverage.slice(0, 50) });
+}
+
+// ─── BACKFILL HASHES: add sha256_hash to tables missing it, then populate ─────
+async function handleBackfillHashes(neonUrl: string, body: any) {
+  const { maxTables = 10, batchSize = 5000, tableFilter } = body;
+  const t0 = Date.now();
+
+  // Enable pgcrypto once (idempotent)
+  try { await neonQuery(neonUrl, `CREATE EXTENSION IF NOT EXISTS pgcrypto`); } catch (_) {}
+
+  // BASE TABLES ONLY (skip views) with `id` but no `sha256_hash`
+  const baseTables = await neonQuery(neonUrl,
+    `SELECT table_name FROM information_schema.tables
+     WHERE table_schema='public' AND table_type='BASE TABLE'`);
+  const baseSet = new Set((baseTables as any[]).map(r => r.table_name));
+
+  const cols = await neonQuery(neonUrl,
+    `SELECT table_name, column_name FROM information_schema.columns
+     WHERE table_schema='public' AND column_name IN ('id','sha256_hash')`);
+  const m = new Map<string, { hasId: boolean; hasSha: boolean }>();
+  for (const c of cols as any[]) {
+    if (!baseSet.has(c.table_name)) continue;
+    if (!m.has(c.table_name)) m.set(c.table_name, { hasId: false, hasSha: false });
+    const e = m.get(c.table_name)!;
+    if (c.column_name === 'id') e.hasId = true;
+    if (c.column_name === 'sha256_hash') e.hasSha = true;
+  }
+
+  const targets: string[] = [];
+  for (const [name, info] of m.entries()) {
+    if (tableFilter && name !== tableFilter) continue;
+    if (name.startsWith('pg_') || name.startsWith('_')) continue;
+    if (info.hasId && !info.hasSha) targets.push(name);
+  }
+
+  const results: any[] = [];
+  let done = 0;
+  for (const tableName of targets) {
+    if (done >= maxTables || Date.now() - t0 > 45000) {
+      results.push({ table: 'TIMEOUT', status: 'budget_reached' });
+      break;
+    }
+    try {
+      await neonQuery(neonUrl, `ALTER TABLE "${tableName}" ADD COLUMN IF NOT EXISTS sha256_hash TEXT`);
+      const upd = await neonQuery(neonUrl,
+        `WITH batch AS (
+           SELECT ctid FROM "${tableName}" WHERE sha256_hash IS NULL LIMIT ${batchSize}
+         )
+         UPDATE "${tableName}" t
+         SET sha256_hash = encode(digest(row_to_json(t)::text, 'sha256'), 'hex')
+         FROM batch WHERE t.ctid = batch.ctid
+         RETURNING 1`);
+      const updated = Array.isArray(upd) ? upd.length : 0;
+      const remaining = await neonQuery(neonUrl,
+        `SELECT COUNT(*)::int AS n FROM "${tableName}" WHERE sha256_hash IS NULL`);
+      const r = (remaining as any[])[0]?.n ?? 0;
+      results.push({ table: tableName, status: 'hashed', updated, remaining: r });
+      done++;
+      console.log(`hashed +${updated} ${tableName}, remaining=${r}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      results.push({ table: tableName, status: 'error', error: msg.slice(0, 200) });
+    }
+  }
+
+  return json({
+    candidatesFound: targets.length,
+    tablesProcessed: done,
+    elapsedMs: Date.now() - t0,
+    results,
+  });
 }

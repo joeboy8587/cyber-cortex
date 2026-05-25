@@ -45,6 +45,7 @@ Deno.serve(async (req) => {
       case "verify": return await handleVerify(supabase, batchSize);
       case "stats": return await handleStats(supabase);
       case "neonCoverage": return await handleNeonCoverage(supabase, neonUrl);
+      case "backfillHashes": return await handleBackfillHashes(neonUrl, body);
       default: return json({ error: "Unknown action" }, 400);
     }
   } catch (err) {

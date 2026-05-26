@@ -271,6 +271,67 @@ serve(async (req) => {
     
     const SUPABASE_DB_URL = Deno.env.get("SUPABASE_DB_URL");
     sbSql = SUPABASE_DB_URL ? postgres(SUPABASE_DB_URL, { ssl: "require", max: 1, idle_timeout: 10, connect_timeout: 10 }) : null;
+
+    // ===== ONE-OFF: RECOMPUTE LEARNED THREATS FROM SOURCE OF TRUTH =====
+    // Fixes counter-inflation by replacing accumulated total_violations with
+    // true 90-day unique-aircraft-minute counts pulled fresh from Neon.
+    if (payload?.action === 'recomputeLearnedThreats' && sbSql) {
+      try {
+        const rows: any[] = await sbSql`SELECT registration, threat_type, total_violations FROM sentinel_learned_threats`;
+        const regs = Array.from(new Set(rows.map((r: any) => String(r.registration || '').toUpperCase()).filter(Boolean)));
+        const trueCounts = new Map<string, number>();
+        const BATCH = 200;
+        for (let i = 0; i < regs.length; i += BATCH) {
+          const slice = regs.slice(i, i + BATCH);
+          const countRows: any[] = await withTimeout(
+            sql`
+              SELECT UPPER(registration) AS reg,
+                     COUNT(DISTINCT (UPPER(registration) || '|' || date_trunc('minute', detection_timestamp)::text))::int AS uniq
+              FROM live_flight_detections_rows
+              WHERE UPPER(registration) = ANY(${slice})
+                AND detection_timestamp > NOW() - INTERVAL '90 days'
+                AND latitude BETWEEN 34.50 AND 36.30
+                AND longitude BETWEEN -120.10 AND -118.00
+              GROUP BY UPPER(registration)
+            `,
+            20000, "recompute_counts"
+          );
+          for (const r of countRows) trueCounts.set(String(r.reg).toUpperCase(), Number(r.uniq) || 0);
+        }
+        let updated = 0, deflatedTotal = 0, inflatedBefore = 0;
+        for (const r of rows) {
+          const reg = String(r.registration || '').toUpperCase();
+          const before = Number(r.total_violations) || 0;
+          const truth = trueCounts.get(reg) ?? 0;
+          inflatedBefore += before;
+          deflatedTotal += truth;
+          const newLevel = calcEscalationLevel(truth);
+          await sbSql`UPDATE sentinel_learned_threats
+                      SET total_violations = ${truth},
+                          escalation_level = ${newLevel},
+                          updated_at = NOW()
+                      WHERE registration = ${r.registration} AND threat_type = ${r.threat_type}`;
+          updated++;
+        }
+        return new Response(JSON.stringify({
+          success: true,
+          action: 'recomputeLearnedThreats',
+          rows_updated: updated,
+          unique_tails: regs.length,
+          inflated_total_before: inflatedBefore,
+          true_total_after: deflatedTotal,
+          inflation_factor: deflatedTotal > 0 ? Math.round((inflatedBefore / deflatedTotal) * 100) / 100 : null,
+          notes: "total_violations now equals unique aircraft-minutes over last 90 days in Kern AOI, recomputed from live_flight_detections_rows.",
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ success: false, error: String(e?.message || e) }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      } finally {
+        try { await sql?.end(); } catch {}
+        try { await sbSql?.end(); } catch {}
+      }
+    }
+    
     
     const violations: LiveViolation[] = [];
     const learnedPatterns: LearnedPattern[] = [];

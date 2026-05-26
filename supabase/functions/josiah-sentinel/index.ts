@@ -271,6 +271,67 @@ serve(async (req) => {
     
     const SUPABASE_DB_URL = Deno.env.get("SUPABASE_DB_URL");
     sbSql = SUPABASE_DB_URL ? postgres(SUPABASE_DB_URL, { ssl: "require", max: 1, idle_timeout: 10, connect_timeout: 10 }) : null;
+
+    // ===== ONE-OFF: RECOMPUTE LEARNED THREATS FROM SOURCE OF TRUTH =====
+    // Fixes counter-inflation by replacing accumulated total_violations with
+    // true 90-day unique-aircraft-minute counts pulled fresh from Neon.
+    if (payload?.action === 'recomputeLearnedThreats' && sbSql) {
+      try {
+        const rows: any[] = await sbSql`SELECT registration, threat_type, total_violations FROM sentinel_learned_threats`;
+        const regs = Array.from(new Set(rows.map((r: any) => String(r.registration || '').toUpperCase()).filter(Boolean)));
+        const trueCounts = new Map<string, number>();
+        const BATCH = 200;
+        for (let i = 0; i < regs.length; i += BATCH) {
+          const slice = regs.slice(i, i + BATCH);
+          const countRows: any[] = await withTimeout(
+            sql`
+              SELECT UPPER(registration) AS reg,
+                     COUNT(DISTINCT (UPPER(registration) || '|' || date_trunc('minute', detection_timestamp)::text))::int AS uniq
+              FROM live_flight_detections_rows
+              WHERE UPPER(registration) = ANY(${slice})
+                AND detection_timestamp > NOW() - INTERVAL '90 days'
+                AND latitude BETWEEN 34.50 AND 36.30
+                AND longitude BETWEEN -120.10 AND -118.00
+              GROUP BY UPPER(registration)
+            `,
+            20000, "recompute_counts"
+          );
+          for (const r of countRows) trueCounts.set(String(r.reg).toUpperCase(), Number(r.uniq) || 0);
+        }
+        let updated = 0, deflatedTotal = 0, inflatedBefore = 0;
+        for (const r of rows) {
+          const reg = String(r.registration || '').toUpperCase();
+          const before = Number(r.total_violations) || 0;
+          const truth = trueCounts.get(reg) ?? 0;
+          inflatedBefore += before;
+          deflatedTotal += truth;
+          const newLevel = calcEscalationLevel(truth);
+          await sbSql`UPDATE sentinel_learned_threats
+                      SET total_violations = ${truth},
+                          escalation_level = ${newLevel},
+                          updated_at = NOW()
+                      WHERE registration = ${r.registration} AND threat_type = ${r.threat_type}`;
+          updated++;
+        }
+        return new Response(JSON.stringify({
+          success: true,
+          action: 'recomputeLearnedThreats',
+          rows_updated: updated,
+          unique_tails: regs.length,
+          inflated_total_before: inflatedBefore,
+          true_total_after: deflatedTotal,
+          inflation_factor: deflatedTotal > 0 ? Math.round((inflatedBefore / deflatedTotal) * 100) / 100 : null,
+          notes: "total_violations now equals unique aircraft-minutes over last 90 days in Kern AOI, recomputed from live_flight_detections_rows.",
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ success: false, error: String(e?.message || e) }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      } finally {
+        try { await sql?.end(); } catch {}
+        try { await sbSql?.end(); } catch {}
+      }
+    }
+    
     
     const violations: LiveViolation[] = [];
     const learnedPatterns: LearnedPattern[] = [];
@@ -911,20 +972,49 @@ Write 4-7 short punchy paragraphs. Highlight the worst offenders by name. Mock c
       if (v.altitude) entry.altitudes.push(v.altitude);
     }
 
+    // === DEDUPED COUNTER (no compounding) ===
+    // Compute TRUE 90-day unique-aircraft-minute counts from Neon for every violating tail,
+    // then SET (not increment) total_violations so repeated scans never inflate the number.
     const escalationAlerts: string[] = [];
     if (sbSql) {
-      for (const [, entry] of violationMap) {
-        if (entry.reg === 'UNKNOWN' || entry.reg.includes(',') || entry.reg.includes(' aircraft')) continue;
+      const candidates = [...violationMap.values()].filter(e =>
+        e.reg && e.reg !== 'UNKNOWN' && !e.reg.includes(',') && !e.reg.includes(' aircraft')
+      );
+      const regs = Array.from(new Set(candidates.map(e => e.reg)));
+      const trueCounts = new Map<string, number>();
+      if (regs.length > 0) {
+        try {
+          const countRows: any[] = await withTimeout(
+            sql`
+              SELECT UPPER(registration) AS reg,
+                     COUNT(DISTINCT (UPPER(registration) || '|' || date_trunc('minute', detection_timestamp)::text))::int AS uniq
+              FROM live_flight_detections_rows
+              WHERE UPPER(registration) = ANY(${regs.map(r => r.toUpperCase())})
+                AND detection_timestamp > NOW() - INTERVAL '90 days'
+                AND latitude BETWEEN 34.50 AND 36.30
+                AND longitude BETWEEN -120.10 AND -118.00
+              GROUP BY UPPER(registration)
+            `,
+            10000, "true_violation_counts"
+          );
+          for (const r of countRows) trueCounts.set(String(r.reg).toUpperCase(), Number(r.uniq) || 0);
+        } catch (e) { console.warn("True-count query failed:", e instanceof Error ? e.message : e); }
+      }
+
+      for (const entry of candidates) {
         const avgAlt = entry.altitudes.length > 0 ? entry.altitudes.reduce((a, b) => a + b, 0) / entry.altitudes.length : null;
+        // Authoritative count = unique aircraft-minutes in last 90d from Neon source.
+        // Fall back to current scan count only if Neon query failed.
+        const trueCount = trueCounts.get(entry.reg.toUpperCase()) ?? entry.count;
         try {
           const safeAvgAlt = avgAlt ?? 0;
           const hasAlt = avgAlt !== null;
           const upsertResult = await withTimeout(
             sbSql`INSERT INTO sentinel_learned_threats (registration, threat_type, total_violations, avg_altitude, last_seen, updated_at)
-              VALUES (${entry.reg}, ${entry.type}, ${entry.count}, ${hasAlt ? safeAvgAlt : null}::double precision, NOW(), NOW())
+              VALUES (${entry.reg}, ${entry.type}, ${trueCount}, ${hasAlt ? safeAvgAlt : null}::double precision, NOW(), NOW())
               ON CONFLICT (registration, threat_type) DO UPDATE SET
-                total_violations = sentinel_learned_threats.total_violations + ${entry.count},
-                avg_altitude = CASE WHEN ${hasAlt} THEN COALESCE((sentinel_learned_threats.avg_altitude + ${safeAvgAlt}::double precision) / 2, ${safeAvgAlt}::double precision) ELSE sentinel_learned_threats.avg_altitude END,
+                total_violations = ${trueCount},
+                avg_altitude = CASE WHEN ${hasAlt} THEN ${safeAvgAlt}::double precision ELSE sentinel_learned_threats.avg_altitude END,
                 last_seen = NOW(), updated_at = NOW()
               RETURNING total_violations, escalation_level`,
             5000, "upsert_threat"
@@ -933,11 +1023,13 @@ Write 4-7 short punchy paragraphs. Highlight the worst offenders by name. Mock c
             const totalV = Number(upsertResult[0].total_violations);
             const oldLevel = Number(upsertResult[0].escalation_level);
             const newLevel = calcEscalationLevel(totalV);
-            if (newLevel > oldLevel) {
+            if (newLevel !== oldLevel) {
               try {
                 await sbSql`UPDATE sentinel_learned_threats SET escalation_level = ${newLevel}, updated_at = NOW() WHERE registration = ${entry.reg} AND threat_type = ${entry.type}`;
               } catch { /* ignore */ }
-              escalationAlerts.push(`🔺 ESCALATION: ${entry.reg} promoted to Level ${newLevel} (${totalV} total violations)`);
+              if (newLevel > oldLevel) {
+                escalationAlerts.push(`🔺 ESCALATION: ${entry.reg} promoted to Level ${newLevel} (${totalV.toLocaleString()} unique aircraft-minutes / 90d)`);
+              }
             }
           }
         } catch (e) { console.warn("Upsert threat error:", e instanceof Error ? e.message : e); }

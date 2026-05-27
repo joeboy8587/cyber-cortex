@@ -712,12 +712,15 @@ Deno.serve(async (req) => {
 
     } catch (error) {
       console.error('Neon query error:', error);
-      if (error instanceof Error && (error.message.includes('Connection') || error.message.includes('timeout') || error.message.includes('FATAL'))) {
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      if (msg.includes('Connection') || msg.includes('timeout') || msg.includes('FATAL') || msg.includes('budget')) {
         _sql = null;
         _sqlReady = null;
       }
-      return new Response(JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      const isBudget = msg.includes('exceeded') && msg.includes('budget');
+      return new Response(JSON.stringify({ error: msg, code: isBudget ? 'BUDGET_EXCEEDED' : undefined }), { status: isBudget ? 504 : 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
+
   } catch (outerError) {
     console.error('Outer error:', outerError);
     return new Response(JSON.stringify({ error: 'Internal server error' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });

@@ -699,8 +699,16 @@ Deno.serve(async (req) => {
           break;
         }
       }
+      })();
+
+      try {
+        result = await Promise.race([work, budgetPromise]);
+      } finally {
+        clearBudget();
+      }
 
       return new Response(JSON.stringify(result), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+
 
     } catch (error) {
       console.error('Neon query error:', error);

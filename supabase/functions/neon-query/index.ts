@@ -307,7 +307,23 @@ Deno.serve(async (req) => {
       const sql = await getConnection();
       let result: unknown;
 
+      // Hard request budget: ensure we always reply before the platform's
+      // 150s IDLE_TIMEOUT so the client gets a parseable JSON error instead
+      // of a 504 BOOT/IDLE crash. 120s leaves ~30s headroom.
+      const REQUEST_BUDGET_MS = 120000;
+      let budgetTimer: number | undefined;
+      const budgetPromise = new Promise<never>((_, reject) => {
+        budgetTimer = setTimeout(
+          () => reject(new Error(`Request exceeded ${REQUEST_BUDGET_MS / 1000}s budget for action="${action}"`)),
+          REQUEST_BUDGET_MS,
+        ) as unknown as number;
+      });
+      const clearBudget = () => { if (budgetTimer !== undefined) clearTimeout(budgetTimer); };
+
+
+      const work = (async () => {
       switch (action) {
+
         case 'getTables': {
           result = await sql`
             SELECT n.nspname as schemaname, c.relname as tablename, c.reltuples::bigint as row_count
@@ -683,17 +699,28 @@ Deno.serve(async (req) => {
           break;
         }
       }
+      })();
+
+      try {
+        result = await Promise.race([work, budgetPromise]);
+      } finally {
+        clearBudget();
+      }
 
       return new Response(JSON.stringify(result), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
+
     } catch (error) {
       console.error('Neon query error:', error);
-      if (error instanceof Error && (error.message.includes('Connection') || error.message.includes('timeout') || error.message.includes('FATAL'))) {
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      if (msg.includes('Connection') || msg.includes('timeout') || msg.includes('FATAL') || msg.includes('budget')) {
         _sql = null;
         _sqlReady = null;
       }
-      return new Response(JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      const isBudget = msg.includes('exceeded') && msg.includes('budget');
+      return new Response(JSON.stringify({ error: msg, code: isBudget ? 'BUDGET_EXCEEDED' : undefined }), { status: isBudget ? 504 : 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
+
   } catch (outerError) {
     console.error('Outer error:', outerError);
     return new Response(JSON.stringify({ error: 'Internal server error' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });

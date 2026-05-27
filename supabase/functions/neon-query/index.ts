@@ -307,6 +307,20 @@ Deno.serve(async (req) => {
       const sql = await getConnection();
       let result: unknown;
 
+      // Hard request budget: ensure we always reply before the platform's
+      // 150s IDLE_TIMEOUT so the client gets a parseable JSON error instead
+      // of a 504 BOOT/IDLE crash. 120s leaves ~30s headroom.
+      const REQUEST_BUDGET_MS = 120000;
+      let budgetTimer: number | undefined;
+      const budgetPromise = new Promise<never>((_, reject) => {
+        budgetTimer = setTimeout(
+          () => reject(new Error(`Request exceeded ${REQUEST_BUDGET_MS / 1000}s budget for action="${action}"`)),
+          REQUEST_BUDGET_MS,
+        ) as unknown as number;
+      });
+      const clearBudget = () => { if (budgetTimer !== undefined) clearTimeout(budgetTimer); };
+
+
       switch (action) {
         case 'getTables': {
           result = await sql`

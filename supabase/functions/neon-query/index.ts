@@ -321,7 +321,9 @@ Deno.serve(async (req) => {
       const clearBudget = () => { if (budgetTimer !== undefined) clearTimeout(budgetTimer); };
 
 
+      const work = (async () => {
       switch (action) {
+
         case 'getTables': {
           result = await sql`
             SELECT n.nspname as schemaname, c.relname as tablename, c.reltuples::bigint as row_count

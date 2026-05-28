@@ -58,6 +58,11 @@ export default function Josiah() {
           <LayeredDeceptionPanel />
         </section>
 
+        {/* Watchtower 2.2 — Darkness Audit + Tactical Handoff + Deep Dive */}
+        <section>
+          <Watchtower22Panel />
+        </section>
+
         {/* Memory & Pattern Insights */}
         <section>
           <JosiahMemoryInsights />

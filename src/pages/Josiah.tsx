@@ -17,6 +17,7 @@ import { AdversarialDebatePanel } from "@/components/dashboard/AdversarialDebate
 import { JosiahTrainingPanel } from "@/components/dashboard/JosiahTrainingPanel";
 import { JosiahRAGPanel } from "@/components/dashboard/JosiahRAGPanel";
 import { LayeredDeceptionPanel } from "@/components/dashboard/LayeredDeceptionPanel";
+import { Watchtower22Panel } from "@/components/dashboard/Watchtower22Panel";
 
 export default function Josiah() {
   return (

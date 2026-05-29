@@ -577,205 +577,296 @@ export async function handleAction2(action: string, body: Record<string, any>, s
     }
 
     // ============== FORENSIC TRAJECTORY & VIOLATIONS ==============
+    // NOTE: per-source queries with try/catch + per-statement timeouts so a
+    // single slow scan can't kill the whole panel. Returns partial data plus
+    // an `errors` array the client can surface.
     case 'getAircraftTrajectory': {
       const { registration, timeWindow = '90 days', limit: trajLimit = 500 } = body;
       if (!registration) return { error: 'Registration is required' };
-      const safeReg = registration.replace(/[^a-zA-Z0-9]/g, '');
-      const lim = parseInt(String(trajLimit));
+      const safeReg = String(registration).replace(/[^a-zA-Z0-9]/g, '');
+      const lim = Math.min(parseInt(String(trajLimit)) || 500, 2000);
+      const safeWindow = String(timeWindow).replace(/[^a-zA-Z0-9 ]/g, '');
+      const errors: { source: string; error: string }[] = [];
+      const points: any[] = [];
+
+      try { await sql.unsafe(`SET statement_timeout = '20s'`); } catch { /* ignore */ }
+
+      // 1. live_flight_detections_rows (has index on registration)
       try {
-        const trajectory = await sql.unsafe(`
-          WITH combined AS (
-            SELECT registration, COALESCE(detection_timestamp, created_at) as event_time,
-              COALESCE(altitude, 0) as altitude, COALESCE(speed, 0) as speed,
-              latitude, longitude, COALESCE(heading, 0) as heading,
-              COALESCE(icao_code, '') as hex, COALESCE(callsign, '') as callsign,
-              COALESCE(threat_score, 0) as raw_threat_score, COALESCE(flagged, false) as is_flagged,
-              flagged_reasons, taxonomy_tag, 'live_flight_detections_rows' as source_table
-            FROM live_flight_detections_rows
-            WHERE registration = '${safeReg}'
-              AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${timeWindow}'
-              AND COALESCE(altitude, 0) > 0
-
-            UNION ALL
-
-            SELECT registration, detection_timestamp as event_time,
-              COALESCE(altitude, 0) as altitude, COALESCE(speed, 0) as speed,
-              latitude, longitude, COALESCE(heading, 0) as heading,
-              COALESCE(icao_code, '') as hex, COALESCE(callsign, '') as callsign,
-              0 as raw_threat_score, false as is_flagged,
-              NULL as flagged_reasons, taxonomy_tag, 'unfilterd_detections' as source_table
-            FROM unfilterd_detections
-            WHERE registration = '${safeReg}'
-              AND detection_timestamp > NOW() - INTERVAL '${timeWindow}'
-              AND COALESCE(altitude, 0) > 0
-
-            UNION ALL
-
-            SELECT COALESCE(flight, hex) as registration, COALESCE(flagged_at, created_at) as event_time,
-              COALESCE(alt, 0) as altitude, 0 as speed,
-              lat as latitude, lon as longitude, 0 as heading,
-              COALESCE(hex, '') as hex, COALESCE(flight, '') as callsign,
-              0 as raw_threat_score, true as is_flagged,
-              reason as flagged_reasons, NULL as taxonomy_tag, 'flagged_aircraft_rows_rows' as source_table
-            FROM flagged_aircraft_rows_rows
-            WHERE (flight = '${safeReg}' OR hex = '${safeReg}')
-              AND COALESCE(flagged_at, created_at) > NOW() - INTERVAL '${timeWindow}'
-              AND COALESCE(alt, 0) > 0
-          ),
-          scored AS (
-            SELECT *,
-              -- Derived physics-based threat score (ACED fallback when source = 0)
-              CASE
-                WHEN altitude > 0 AND altitude < 500 THEN 90
-                WHEN altitude >= 500 AND altitude < 1000 THEN 70
-                WHEN altitude >= 1000 AND altitude < 1500 THEN 45
-                WHEN speed > 0 AND speed < 48 AND altitude < 2000 THEN 80
-                ELSE 0
-              END as derived_threat_score
-            FROM combined
-          )
-          SELECT *,
-            GREATEST(raw_threat_score, derived_threat_score) as threat_score,
-            CASE
-              WHEN GREATEST(raw_threat_score, derived_threat_score) >= 85
-                OR (altitude > 0 AND altitude < 500) THEN 'CRITICAL'
-              WHEN GREATEST(raw_threat_score, derived_threat_score) >= 60
-                OR (altitude >= 500 AND altitude < 1000) THEN 'WARNING'
-              WHEN GREATEST(raw_threat_score, derived_threat_score) >= 35
-                OR (altitude >= 1000 AND altitude < 1500) THEN 'CAUTION'
-              ELSE 'NORMAL'
-            END as violation_severity
-          FROM scored
-          ORDER BY event_time ASC
+        const rows = await sql.unsafe(`
+          SELECT registration,
+                 COALESCE(detection_timestamp, created_at) AS event_time,
+                 COALESCE(altitude, 0) AS altitude,
+                 COALESCE(speed, 0) AS speed,
+                 latitude, longitude,
+                 COALESCE(heading, 0) AS heading,
+                 COALESCE(icao_code, '') AS hex,
+                 COALESCE(callsign, '') AS callsign,
+                 COALESCE(threat_score, 0) AS raw_threat_score,
+                 COALESCE(flagged, false) AS is_flagged,
+                 flagged_reasons, taxonomy_tag,
+                 'live_flight_detections_rows' AS source_table
+          FROM live_flight_detections_rows
+          WHERE registration = '${safeReg}'
+            AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${safeWindow}'
+            AND COALESCE(altitude, 0) > 0
+          ORDER BY COALESCE(detection_timestamp, created_at) DESC
           LIMIT ${lim}
         `);
-        return { data: trajectory, registration: safeReg, count: trajectory.length, sources: ['live_flight_detections_rows', 'unfilterd_detections', 'flagged_aircraft_rows_rows'] };
+        points.push(...(rows as any[]));
       } catch (e) {
-        return { error: (e as Error).message };
+        errors.push({ source: 'live_flight_detections_rows', error: (e as Error).message });
       }
+
+      // 2. unfilterd_detections (may be slow — keep tight limit)
+      try {
+        const rows = await sql.unsafe(`
+          SELECT registration, detection_timestamp AS event_time,
+                 COALESCE(altitude, 0) AS altitude,
+                 COALESCE(speed, 0) AS speed,
+                 latitude, longitude,
+                 COALESCE(heading, 0) AS heading,
+                 COALESCE(icao_code, '') AS hex,
+                 COALESCE(callsign, '') AS callsign,
+                 0 AS raw_threat_score, false AS is_flagged,
+                 NULL AS flagged_reasons, taxonomy_tag,
+                 'unfilterd_detections' AS source_table
+          FROM unfilterd_detections
+          WHERE registration = '${safeReg}'
+            AND detection_timestamp > NOW() - INTERVAL '${safeWindow}'
+            AND COALESCE(altitude, 0) > 0
+          ORDER BY detection_timestamp DESC
+          LIMIT ${lim}
+        `);
+        points.push(...(rows as any[]));
+      } catch (e) {
+        errors.push({ source: 'unfilterd_detections', error: (e as Error).message });
+      }
+
+      // 3. flagged_aircraft_rows_rows
+      try {
+        const rows = await sql.unsafe(`
+          SELECT COALESCE(flight, hex) AS registration,
+                 COALESCE(flagged_at, created_at) AS event_time,
+                 COALESCE(alt, 0) AS altitude, 0 AS speed,
+                 lat AS latitude, lon AS longitude, 0 AS heading,
+                 COALESCE(hex, '') AS hex, COALESCE(flight, '') AS callsign,
+                 0 AS raw_threat_score, true AS is_flagged,
+                 reason AS flagged_reasons, NULL AS taxonomy_tag,
+                 'flagged_aircraft_rows_rows' AS source_table
+          FROM flagged_aircraft_rows_rows
+          WHERE (flight = '${safeReg}' OR hex = '${safeReg}')
+            AND COALESCE(flagged_at, created_at) > NOW() - INTERVAL '${safeWindow}'
+            AND COALESCE(alt, 0) > 0
+          ORDER BY COALESCE(flagged_at, created_at) DESC
+          LIMIT ${lim}
+        `);
+        points.push(...(rows as any[]));
+      } catch (e) {
+        errors.push({ source: 'flagged_aircraft_rows_rows', error: (e as Error).message });
+      }
+
+      // Score + sort + cap
+      const scored = points.map((p) => {
+        const altitude = Number(p.altitude) || 0;
+        const speed = Number(p.speed) || 0;
+        const raw = Number(p.raw_threat_score) || 0;
+        let derived = 0;
+        if (altitude > 0 && altitude < 500) derived = 90;
+        else if (altitude < 1000) derived = 70;
+        else if (altitude < 1500) derived = 45;
+        else if (speed > 0 && speed < 48 && altitude < 2000) derived = 80;
+        const threat = Math.max(raw, derived);
+        let severity = 'NORMAL';
+        if (threat >= 85 || (altitude > 0 && altitude < 500)) severity = 'CRITICAL';
+        else if (threat >= 60 || (altitude >= 500 && altitude < 1000)) severity = 'WARNING';
+        else if (threat >= 35 || (altitude >= 1000 && altitude < 1500)) severity = 'CAUTION';
+        return { ...p, threat_score: threat, violation_severity: severity };
+      })
+      .sort((a, b) => new Date(a.event_time).getTime() - new Date(b.event_time).getTime())
+      .slice(0, lim);
+
+      return { data: scored, registration: safeReg, count: scored.length, errors,
+        sources_ok: 3 - errors.length, sources: ['live_flight_detections_rows', 'unfilterd_detections', 'flagged_aircraft_rows_rows'] };
     }
 
     case 'getAltitudeViolations': {
       const { timeWindow: vioWindow = '90 days', minAltitude = 0, maxAltitude = 1000, limit: vioLimit = 200 } = body;
-      const minAlt = parseInt(String(minAltitude));
-      const maxAlt = parseInt(String(maxAltitude));
-      const lim = parseInt(String(vioLimit));
+      const minAlt = parseInt(String(minAltitude)) || 0;
+      const maxAlt = parseInt(String(maxAltitude)) || 1000;
+      const lim = Math.min(parseInt(String(vioLimit)) || 200, 500);
+      const safeWindow = String(vioWindow).replace(/[^a-zA-Z0-9 ]/g, '');
+      const errors: { source: string; error: string }[] = [];
+      const rows: any[] = [];
+
+      try { await sql.unsafe(`SET statement_timeout = '20s'`); } catch { /* ignore */ }
+
+      const perSource = Math.max(lim, 200);
+
       try {
-        const violations = await sql.unsafe(`
-          WITH combined AS (
-            SELECT registration, COALESCE(detection_timestamp, created_at) as event_time,
-              COALESCE(altitude, 0) as altitude, COALESCE(speed, 0) as speed,
-              latitude, longitude, COALESCE(threat_score, 0) as raw_threat_score,
-              flagged_reasons, taxonomy_tag
-            FROM live_flight_detections_rows
-            WHERE COALESCE(altitude, 0) > ${minAlt} AND COALESCE(altitude, 0) < ${maxAlt}
-              AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${vioWindow}'
-            UNION ALL
-            SELECT registration, detection_timestamp as event_time,
-              COALESCE(altitude, 0) as altitude, COALESCE(speed, 0) as speed,
-              latitude, longitude, 0 as raw_threat_score,
-              NULL as flagged_reasons, taxonomy_tag
-            FROM unfilterd_detections
-            WHERE COALESCE(altitude, 0) > ${minAlt} AND COALESCE(altitude, 0) < ${maxAlt}
-              AND detection_timestamp > NOW() - INTERVAL '${vioWindow}'
-            UNION ALL
-            SELECT COALESCE(flight, hex) as registration, COALESCE(flagged_at, created_at) as event_time,
-              COALESCE(alt, 0) as altitude, 0 as speed,
-              lat as latitude, lon as longitude, 0 as raw_threat_score,
-              reason as flagged_reasons, NULL as taxonomy_tag
-            FROM flagged_aircraft_rows_rows
-            WHERE COALESCE(alt, 0) > ${minAlt} AND COALESCE(alt, 0) < ${maxAlt}
-              AND COALESCE(flagged_at, created_at) > NOW() - INTERVAL '${vioWindow}'
-          ),
-          scored AS (
-            SELECT *,
-              -- ACED physics-derived threat score (fallback when source row stored 0)
-              CASE
-                WHEN altitude > 0 AND altitude < 500 THEN 90
-                WHEN altitude >= 500 AND altitude < 1000 THEN 70
-                WHEN altitude >= 1000 AND altitude < 1500 THEN 45
-                WHEN speed > 0 AND speed < 48 AND altitude < 2000 THEN 80
-                ELSE 0
-              END as derived_threat_score
-            FROM combined
-          )
-          SELECT *,
-            GREATEST(raw_threat_score, derived_threat_score) as threat_score,
-            CASE 
-              WHEN altitude < 500 THEN 'CRITICAL: 91.119 Violation (<500ft)'
-              WHEN altitude < 1000 THEN 'WARNING: Low Altitude (<1000ft)'
-              ELSE 'CAUTION'
-            END as violation_severity
-          FROM scored ORDER BY event_time DESC LIMIT ${lim}
+        const r = await sql.unsafe(`
+          SELECT registration, COALESCE(detection_timestamp, created_at) AS event_time,
+                 COALESCE(altitude, 0) AS altitude, COALESCE(speed, 0) AS speed,
+                 latitude, longitude, COALESCE(threat_score, 0) AS raw_threat_score,
+                 flagged_reasons, taxonomy_tag
+          FROM live_flight_detections_rows
+          WHERE COALESCE(altitude, 0) > ${minAlt} AND COALESCE(altitude, 0) < ${maxAlt}
+            AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${safeWindow}'
+          ORDER BY COALESCE(detection_timestamp, created_at) DESC
+          LIMIT ${perSource}
         `);
+        rows.push(...(r as any[]));
+      } catch (e) { errors.push({ source: 'live_flight_detections_rows', error: (e as Error).message }); }
 
-        const stats = await sql.unsafe(`
-          WITH combined AS (
-            SELECT COALESCE(altitude, 0) as altitude, registration FROM live_flight_detections_rows
-            WHERE COALESCE(altitude, 0) > 0 AND COALESCE(altitude, 0) < 1000
-              AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${vioWindow}'
-            UNION ALL
-            SELECT COALESCE(altitude, 0) as altitude, registration FROM unfilterd_detections
-            WHERE COALESCE(altitude, 0) > 0 AND COALESCE(altitude, 0) < 1000
-              AND detection_timestamp > NOW() - INTERVAL '${vioWindow}'
-            UNION ALL
-            SELECT COALESCE(alt, 0) as altitude, COALESCE(flight, hex) as registration FROM flagged_aircraft_rows_rows
-            WHERE COALESCE(alt, 0) > 0 AND COALESCE(alt, 0) < 1000
-              AND COALESCE(flagged_at, created_at) > NOW() - INTERVAL '${vioWindow}'
-          )
-          SELECT COUNT(*) as total_violations, COUNT(DISTINCT registration) as unique_aircraft,
-            COUNT(*) FILTER (WHERE altitude < 500) as critical_count,
-            COUNT(*) FILTER (WHERE altitude >= 500 AND altitude < 1000) as warning_count,
-            MIN(altitude) as min_altitude, AVG(altitude)::int as avg_altitude
-          FROM combined
+      try {
+        const r = await sql.unsafe(`
+          SELECT registration, detection_timestamp AS event_time,
+                 COALESCE(altitude, 0) AS altitude, COALESCE(speed, 0) AS speed,
+                 latitude, longitude, 0 AS raw_threat_score,
+                 NULL AS flagged_reasons, taxonomy_tag
+          FROM unfilterd_detections
+          WHERE COALESCE(altitude, 0) > ${minAlt} AND COALESCE(altitude, 0) < ${maxAlt}
+            AND detection_timestamp > NOW() - INTERVAL '${safeWindow}'
+          ORDER BY detection_timestamp DESC
+          LIMIT ${perSource}
         `);
+        rows.push(...(r as any[]));
+      } catch (e) { errors.push({ source: 'unfilterd_detections', error: (e as Error).message }); }
 
-        return { data: violations, stats: stats[0] || {}, count: violations.length,
-          sources: ['live_flight_detections_rows', 'unfilterd_detections', 'flagged_aircraft_rows_rows'] };
-      } catch (e) {
-        return { error: (e as Error).message };
-      }
+      try {
+        const r = await sql.unsafe(`
+          SELECT COALESCE(flight, hex) AS registration, COALESCE(flagged_at, created_at) AS event_time,
+                 COALESCE(alt, 0) AS altitude, 0 AS speed,
+                 lat AS latitude, lon AS longitude, 0 AS raw_threat_score,
+                 reason AS flagged_reasons, NULL AS taxonomy_tag
+          FROM flagged_aircraft_rows_rows
+          WHERE COALESCE(alt, 0) > ${minAlt} AND COALESCE(alt, 0) < ${maxAlt}
+            AND COALESCE(flagged_at, created_at) > NOW() - INTERVAL '${safeWindow}'
+          ORDER BY COALESCE(flagged_at, created_at) DESC
+          LIMIT ${perSource}
+        `);
+        rows.push(...(r as any[]));
+      } catch (e) { errors.push({ source: 'flagged_aircraft_rows_rows', error: (e as Error).message }); }
+
+      const scored = rows.map((r) => {
+        const altitude = Number(r.altitude) || 0;
+        const speed = Number(r.speed) || 0;
+        let derived = 0;
+        if (altitude > 0 && altitude < 500) derived = 90;
+        else if (altitude < 1000) derived = 70;
+        else if (altitude < 1500) derived = 45;
+        else if (speed > 0 && speed < 48 && altitude < 2000) derived = 80;
+        const threat = Math.max(Number(r.raw_threat_score) || 0, derived);
+        let severity = 'CAUTION';
+        if (altitude < 500) severity = 'CRITICAL: 91.119 Violation (<500ft)';
+        else if (altitude < 1000) severity = 'WARNING: Low Altitude (<1000ft)';
+        return { ...r, threat_score: threat, violation_severity: severity };
+      })
+      .sort((a, b) => new Date(b.event_time).getTime() - new Date(a.event_time).getTime())
+      .slice(0, lim);
+
+      // Stats are computed from the rows we successfully fetched (avoids
+      // another expensive scan). Includes a sample_only flag.
+      const uniq = new Set(rows.map((r) => r.registration).filter(Boolean));
+      const alts = rows.map((r) => Number(r.altitude) || 0).filter((a) => a > 0);
+      const stats = {
+        total_violations: rows.length,
+        unique_aircraft: uniq.size,
+        critical_count: rows.filter((r) => Number(r.altitude) < 500).length,
+        warning_count: rows.filter((r) => Number(r.altitude) >= 500 && Number(r.altitude) < 1000).length,
+        min_altitude: alts.length ? Math.min(...alts) : 0,
+        avg_altitude: alts.length ? Math.round(alts.reduce((s, a) => s + a, 0) / alts.length) : 0,
+        sample_only: errors.length > 0 || rows.length >= perSource * 3,
+      };
+
+      return { data: scored, stats, count: scored.length, errors,
+        sources: ['live_flight_detections_rows', 'unfilterd_detections', 'flagged_aircraft_rows_rows'] };
     }
 
     case 'getViolationAircraft': {
       const { timeWindow: vaWindow = '90 days' } = body;
-      try {
-        const aircraft = await sql.unsafe(`
-          WITH combined AS (
-            SELECT registration, COALESCE(altitude, 0) as altitude,
-              COALESCE(detection_timestamp, created_at) as event_time, taxonomy_tag
-            FROM live_flight_detections_rows
-            WHERE COALESCE(altitude, 0) > 0 AND COALESCE(altitude, 0) < 1000
-              AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${vaWindow}'
-              AND registration IS NOT NULL AND registration != ''
-            UNION ALL
-            SELECT registration, COALESCE(altitude, 0) as altitude,
-              detection_timestamp as event_time, taxonomy_tag
-            FROM unfilterd_detections
-            WHERE COALESCE(altitude, 0) > 0 AND COALESCE(altitude, 0) < 1000
-              AND detection_timestamp > NOW() - INTERVAL '${vaWindow}'
-              AND registration IS NOT NULL AND registration != ''
-            UNION ALL
-            SELECT COALESCE(flight, hex) as registration, COALESCE(alt, 0) as altitude,
-              COALESCE(flagged_at, created_at) as event_time, NULL as taxonomy_tag
-            FROM flagged_aircraft_rows_rows
-            WHERE COALESCE(alt, 0) > 0 AND COALESCE(alt, 0) < 1000
-              AND COALESCE(flagged_at, created_at) > NOW() - INTERVAL '${vaWindow}'
-              AND (flight IS NOT NULL AND flight != '' OR hex IS NOT NULL AND hex != '')
-          )
-          SELECT registration, COUNT(*) as violation_count,
-            COUNT(*) FILTER (WHERE altitude < 500) as critical_violations,
-            MIN(altitude) as min_altitude, AVG(altitude)::int as avg_violation_altitude,
-            MIN(event_time) as first_violation, MAX(event_time) as last_violation,
-            (array_agg(taxonomy_tag ORDER BY event_time DESC))[1] as taxonomy_tag
-          FROM combined GROUP BY registration
-          ORDER BY violation_count DESC LIMIT 50
-        `);
-        return { data: aircraft, sources: ['live_flight_detections_rows', 'unfilterd_detections', 'flagged_aircraft_rows_rows'] };
-      } catch (e) {
-        return { error: (e as Error).message };
-      }
+      const safeWindow = String(vaWindow).replace(/[^a-zA-Z0-9 ]/g, '');
+      const errors: { source: string; error: string }[] = [];
+      const agg = new Map<string, any>();
+
+      try { await sql.unsafe(`SET statement_timeout = '20s'`); } catch { /* ignore */ }
+
+      const mergeRow = (reg: string, altitude: number, eventTime: string, tag: string | null) => {
+        if (!reg) return;
+        const cur = agg.get(reg) || {
+          registration: reg, violation_count: 0, critical_violations: 0,
+          min_altitude: altitude, sum_alt: 0, first_violation: eventTime,
+          last_violation: eventTime, taxonomy_tag: tag,
+        };
+        cur.violation_count += 1;
+        if (altitude < 500) cur.critical_violations += 1;
+        cur.min_altitude = Math.min(cur.min_altitude, altitude);
+        cur.sum_alt += altitude;
+        if (new Date(eventTime) < new Date(cur.first_violation)) cur.first_violation = eventTime;
+        if (new Date(eventTime) > new Date(cur.last_violation)) { cur.last_violation = eventTime; cur.taxonomy_tag = tag || cur.taxonomy_tag; }
+        agg.set(reg, cur);
+      };
+
+      const fetchSource = async (label: string, query: string) => {
+        try {
+          const rows = await sql.unsafe(query) as any[];
+          rows.forEach((r) => mergeRow(String(r.registration || ''), Number(r.altitude) || 0,
+            String(r.event_time), r.taxonomy_tag ?? null));
+        } catch (e) {
+          errors.push({ source: label, error: (e as Error).message });
+        }
+      };
+
+      await fetchSource('live_flight_detections_rows', `
+        SELECT registration, COALESCE(altitude, 0) AS altitude,
+               COALESCE(detection_timestamp, created_at) AS event_time, taxonomy_tag
+        FROM live_flight_detections_rows
+        WHERE COALESCE(altitude, 0) > 0 AND COALESCE(altitude, 0) < 1000
+          AND COALESCE(detection_timestamp, created_at) > NOW() - INTERVAL '${safeWindow}'
+          AND registration IS NOT NULL AND registration != ''
+        ORDER BY COALESCE(detection_timestamp, created_at) DESC
+        LIMIT 5000
+      `);
+      await fetchSource('unfilterd_detections', `
+        SELECT registration, COALESCE(altitude, 0) AS altitude,
+               detection_timestamp AS event_time, taxonomy_tag
+        FROM unfilterd_detections
+        WHERE COALESCE(altitude, 0) > 0 AND COALESCE(altitude, 0) < 1000
+          AND detection_timestamp > NOW() - INTERVAL '${safeWindow}'
+          AND registration IS NOT NULL AND registration != ''
+        ORDER BY detection_timestamp DESC
+        LIMIT 5000
+      `);
+      await fetchSource('flagged_aircraft_rows_rows', `
+        SELECT COALESCE(flight, hex) AS registration, COALESCE(alt, 0) AS altitude,
+               COALESCE(flagged_at, created_at) AS event_time, NULL AS taxonomy_tag
+        FROM flagged_aircraft_rows_rows
+        WHERE COALESCE(alt, 0) > 0 AND COALESCE(alt, 0) < 1000
+          AND COALESCE(flagged_at, created_at) > NOW() - INTERVAL '${safeWindow}'
+          AND ((flight IS NOT NULL AND flight != '') OR (hex IS NOT NULL AND hex != ''))
+        ORDER BY COALESCE(flagged_at, created_at) DESC
+        LIMIT 5000
+      `);
+
+      const aircraft = Array.from(agg.values())
+        .map((a) => ({
+          registration: a.registration,
+          violation_count: a.violation_count,
+          critical_violations: a.critical_violations,
+          min_altitude: a.min_altitude,
+          avg_violation_altitude: Math.round(a.sum_alt / Math.max(a.violation_count, 1)),
+          first_violation: a.first_violation,
+          last_violation: a.last_violation,
+          taxonomy_tag: a.taxonomy_tag,
+        }))
+        .sort((a, b) => b.violation_count - a.violation_count)
+        .slice(0, 50);
+
+      return { data: aircraft, errors,
+        sources: ['live_flight_detections_rows', 'unfilterd_detections', 'flagged_aircraft_rows_rows'] };
     }
+
+
 
     // ============== FORENSIC COLUMN DRIFT REPAIR ==============
     // Handles 4 documented drift patterns surfaced by the audit:

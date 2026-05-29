@@ -95,11 +95,18 @@ export default function ForensicTrajectoryPanel() {
         registration: registration.trim().toUpperCase(),
         timeWindow,
       });
-      const data = result?.data || result || [];
-      setTrajectory(Array.isArray(data) ? data : []);
-      toast.success(`Loaded ${Array.isArray(data) ? data.length : 0} trajectory points for ${registration.toUpperCase()}`);
+      if (result?.error) throw new Error(result.error);
+      const data = Array.isArray(result?.data) ? result.data : [];
+      setTrajectory(data);
+      if (Array.isArray(result?.errors) && result.errors.length > 0) {
+        toast.warning(`Loaded ${data.length} points — ${result.errors.length} source(s) failed: ${result.errors.map((e: any) => e.source).join(', ')}`);
+      } else {
+        toast.success(`Loaded ${data.length} trajectory points for ${registration.toUpperCase()}`);
+      }
     } catch (e) {
-      toast.error('Failed to load trajectory');
+      const msg = e instanceof Error ? e.message : 'Unknown error';
+      toast.error(`Trajectory failed: ${msg}`);
+      setTrajectory([]);
     } finally {
       setIsLoading(false);
     }
@@ -112,16 +119,24 @@ export default function ForensicTrajectoryPanel() {
         queryDatabase('getAltitudeViolations', { timeWindow }),
         queryDatabase('getViolationAircraft', { timeWindow }),
       ]);
+      if (vioResult?.error) throw new Error(vioResult.error);
       setViolations(Array.isArray(vioResult?.data) ? vioResult.data : []);
       setViolationStats(vioResult?.stats || null);
       setViolationAircraft(Array.isArray(aircraftResult?.data) ? aircraftResult.data : []);
-      toast.success('Violation evidence log loaded');
+      const errs = [...(vioResult?.errors || []), ...(aircraftResult?.errors || [])];
+      if (errs.length > 0) {
+        toast.warning(`Partial load — ${errs.length} source(s) failed: ${errs.map((e: any) => e.source).join(', ')}`);
+      } else {
+        toast.success('Violation evidence log loaded');
+      }
     } catch (e) {
-      toast.error('Failed to load violations');
+      const msg = e instanceof Error ? e.message : 'Unknown error';
+      toast.error(`Violations failed: ${msg}`);
     } finally {
       setIsLoading(false);
     }
   }, [timeWindow, queryDatabase]);
+
 
   // Store ref for auto-loading
   loadViolationsRef.current = loadViolations;

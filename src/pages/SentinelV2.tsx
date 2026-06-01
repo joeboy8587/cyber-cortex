@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Download, Play, FileText, ShieldAlert, Hash, ChevronRight, ChevronDown, Network, MapPin, Crosshair } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { DataIntegrityConsole } from "@/components/dashboard/DataIntegrityConsole";
 
 interface Justification {
   primary_label: string;
@@ -214,6 +215,8 @@ Joseph
           </span>
         </div>
       </Card>
+
+      <DataIntegrityConsole />
 
       <Card className="p-4">
         <div className="flex items-end gap-4 flex-wrap">

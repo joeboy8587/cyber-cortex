@@ -702,7 +702,10 @@ Deno.serve(async (req) => {
       })();
 
       try {
-        result = await Promise.race([work, budgetPromise]);
+        // `work` sets `result` via side-effect and resolves to undefined.
+        // Do NOT reassign `result` from the race or we clobber the real
+        // value and return an empty 200 body to the client.
+        await Promise.race([work, budgetPromise]);
       } finally {
         clearBudget();
       }

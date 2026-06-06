@@ -123,6 +123,12 @@ const navigationItems = [
     icon: Fingerprint,
     description: "Canonical Index → Exhibits"
   },
+  {
+    title: "Data Health",
+    url: "/data-health",
+    icon: HeartPulse,
+    description: "Neon Inventory & Pipeline Coverage"
+  },
 ];
 
 export function AppSidebar() {

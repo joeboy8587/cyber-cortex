@@ -18,7 +18,8 @@ import {
   Ghost,
   FolderOpen,
   ScanEye,
-  Fingerprint
+  Fingerprint,
+  HeartPulse
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useAuth } from "@/hooks/useAuth";

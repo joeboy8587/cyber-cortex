@@ -131,9 +131,9 @@ export default function NeonDataHealth() {
             {/* Top KPIs */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <StatCard label="Tables" value={fmtNum(report.summary.total_tables)} icon={<Database className="w-4 h-4" />} />
-              <StatCard label="Active (24h)" value={fmtNum(report.summary.tables_with_24h_activity)} icon={<Activity className="w-4 h-4" />} status="success" />
+              <StatCard label="Active (24h)" value={fmtNum(report.summary.tables_with_24h_activity)} icon={<Activity className="w-4 h-4" />} variant="success" />
               <StatCard label="Total Size" value={fmtBytes(report.summary.total_bytes)} icon={<HardDrive className="w-4 h-4" />} />
-              <StatCard label="FAA Coverage" value={`${enrichPct}%`} icon={<Plane className="w-4 h-4" />} status={enrichPct > 80 ? "success" : "warning"} />
+              <StatCard label="FAA Coverage" value={`${enrichPct}%`} icon={<Plane className="w-4 h-4" />} variant={enrichPct > 80 ? "success" : "warning"} />
             </div>
 
             <Tabs defaultValue="pipeline">

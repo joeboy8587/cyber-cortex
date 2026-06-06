@@ -147,6 +147,11 @@ const App = () => (
                 <SentinelV2 />
               </ProtectedRoute>
             } />
+            <Route path="/data-health" element={
+              <ProtectedRoute>
+                <NeonDataHealth />
+              </ProtectedRoute>
+            } />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>

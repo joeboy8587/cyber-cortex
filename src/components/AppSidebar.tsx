@@ -18,7 +18,8 @@ import {
   Ghost,
   FolderOpen,
   ScanEye,
-  Fingerprint
+  Fingerprint,
+  HeartPulse
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useAuth } from "@/hooks/useAuth";
@@ -121,6 +122,12 @@ const navigationItems = [
     url: "/entities", 
     icon: Fingerprint,
     description: "Canonical Index → Exhibits"
+  },
+  {
+    title: "Data Health",
+    url: "/data-health",
+    icon: HeartPulse,
+    description: "Neon Inventory & Pipeline Coverage"
   },
 ];
 

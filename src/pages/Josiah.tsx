@@ -18,6 +18,7 @@ import { JosiahTrainingPanel } from "@/components/dashboard/JosiahTrainingPanel"
 import { JosiahRAGPanel } from "@/components/dashboard/JosiahRAGPanel";
 import { LayeredDeceptionPanel } from "@/components/dashboard/LayeredDeceptionPanel";
 import { Watchtower22Panel } from "@/components/dashboard/Watchtower22Panel";
+import { SkepticConsole } from "@/components/dashboard/SkepticConsole";
 
 export default function Josiah() {
   return (
@@ -61,6 +62,11 @@ export default function Josiah() {
         {/* Watchtower 2.2 — Darkness Audit + Tactical Handoff + Deep Dive */}
         <section>
           <Watchtower22Panel />
+        </section>
+
+        {/* Skeptic Engine — Adversarial Hypothesis Challenger (Phase 1) */}
+        <section>
+          <SkepticConsole />
         </section>
 
         {/* Memory & Pattern Insights */}

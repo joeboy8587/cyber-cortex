@@ -64,6 +64,11 @@ export default function Josiah() {
           <Watchtower22Panel />
         </section>
 
+        {/* Skeptic Engine — Adversarial Hypothesis Challenger (Phase 1) */}
+        <section>
+          <SkepticConsole />
+        </section>
+
         {/* Memory & Pattern Insights */}
         <section>
           <JosiahMemoryInsights />

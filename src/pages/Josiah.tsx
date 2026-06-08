@@ -19,6 +19,7 @@ import { JosiahRAGPanel } from "@/components/dashboard/JosiahRAGPanel";
 import { LayeredDeceptionPanel } from "@/components/dashboard/LayeredDeceptionPanel";
 import { Watchtower22Panel } from "@/components/dashboard/Watchtower22Panel";
 import { SkepticConsole } from "@/components/dashboard/SkepticConsole";
+import { CorpusReasonerPanel } from "@/components/dashboard/CorpusReasonerPanel";
 
 export default function Josiah() {
   return (
@@ -67,6 +68,11 @@ export default function Josiah() {
         {/* Skeptic Engine — Adversarial Hypothesis Challenger (Phase 1) */}
         <section>
           <SkepticConsole />
+        </section>
+
+        {/* Corpus Reasoner — 4-lens grounded retrieval (Phase 2) */}
+        <section>
+          <CorpusReasonerPanel />
         </section>
 
         {/* Memory & Pattern Insights */}

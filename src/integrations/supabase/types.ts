@@ -1106,6 +1106,39 @@ export type Database = {
           },
         ]
       }
+      reasoning_outputs: {
+        Row: {
+          bayes_factor: number | null
+          bradford_score: number | null
+          content_hash: string
+          created_at: string
+          detection_ref: string
+          id: string
+          module: string
+          payload: Json
+        }
+        Insert: {
+          bayes_factor?: number | null
+          bradford_score?: number | null
+          content_hash: string
+          created_at?: string
+          detection_ref: string
+          id?: string
+          module: string
+          payload: Json
+        }
+        Update: {
+          bayes_factor?: number | null
+          bradford_score?: number | null
+          content_hash?: string
+          created_at?: string
+          detection_ref?: string
+          id?: string
+          module?: string
+          payload?: Json
+        }
+        Relationships: []
+      }
       sentinel_learned_threats: {
         Row: {
           ai_threat_profile: string | null

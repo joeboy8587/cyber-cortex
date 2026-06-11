@@ -82,6 +82,11 @@ export default function Josiah() {
           <ProsecutionTimelinePanel />
         </section>
 
+        {/* Pinecone Vector Search — all indexes */}
+        <section>
+          <PineconeSearchPanel />
+        </section>
+
         {/* Memory & Pattern Insights */}
         <section>
           <JosiahMemoryInsights />

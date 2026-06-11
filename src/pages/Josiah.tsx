@@ -21,6 +21,7 @@ import { Watchtower22Panel } from "@/components/dashboard/Watchtower22Panel";
 import { SkepticConsole } from "@/components/dashboard/SkepticConsole";
 import { CorpusReasonerPanel } from "@/components/dashboard/CorpusReasonerPanel";
 import { ProsecutionTimelinePanel } from "@/components/dashboard/ProsecutionTimelinePanel";
+import { PineconeSearchPanel } from "@/components/dashboard/PineconeSearchPanel";
 
 export default function Josiah() {
   return (

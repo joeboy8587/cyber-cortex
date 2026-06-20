@@ -5,7 +5,7 @@ import { Client } from "https://deno.land/x/postgres@v0.17.0/mod.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-r[...]",
 };
 
 type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
@@ -36,7 +36,7 @@ function fail(message: string, status = 400, details?: Json) {
   });
 }
 
-async function getNeonClient(timeoutMs = 8000) {
+async function getNeonClient(timeoutMs = 15000) {
   const neonUrl = Deno.env.get("NEON_DATABASE_URL");
   if (!neonUrl) throw new Error("NEON_DATABASE_URL not configured");
   
@@ -47,6 +47,7 @@ async function getNeonClient(timeoutMs = 8000) {
     setTimeout(() => reject(new Error("Neon connection timeout")), timeoutMs)
   );
   await Promise.race([client.connect(), connectTimeout]);
+  // Set a longer timeout for Neon queries to avoid statement timeouts
   await client.queryObject(`SET statement_timeout = '${timeoutMs}ms'`);
   return client;
 }
@@ -91,7 +92,7 @@ serve(async (req) => {
       let totalBiometrics = 0;
       
       try {
-        const neon = await getNeonClient(6000);
+        const neon = await getNeonClient(15000);
         
         // Use reltuples estimate for large tables to avoid timeout
         const flightCount = await neon.queryObject<{ count: string }>(
@@ -187,7 +188,7 @@ serve(async (req) => {
     }
 
     if (action === "backfillFlights") {
-      const batchSize = typeof params.batchSize === "number" ? Math.min(params.batchSize, 10000) : 2000;
+      const batchSize = typeof params.batchSize === "number" ? Math.min(params.batchSize, 5000) : 2000;
       const cursor = typeof params.cursor === "string" ? params.cursor : null;
       
       // Create job record
@@ -207,16 +208,29 @@ serve(async (req) => {
       const jobId = jobRes.data.job_id;
 
       try {
-        const neon = await getNeonClient();
+        const neon = await getNeonClient(15000);
         
-        // Get existing linked IDs to avoid duplicates
-        const existingLinks = await supabase
-          .from("evidence_chain_links")
-          .select("source_id")
-          .eq("source_table", "live_flight_detections_rows")
-          .limit(10000);
+        // Get existing linked IDs in smaller batches to avoid timeout
+        const linkedIds = new Set<string>();
+        let offset = 0;
+        const linkBatchSize = 5000;
         
-        const linkedIds = new Set((existingLinks.data || []).map(l => l.source_id));
+        let hasMore = true;
+        while (hasMore) {
+          const existingLinks = await supabase
+            .from("evidence_chain_links")
+            .select("source_id")
+            .eq("source_table", "live_flight_detections_rows")
+            .range(offset, offset + linkBatchSize - 1);
+          
+          if (existingLinks.data && existingLinks.data.length > 0) {
+            existingLinks.data.forEach(l => linkedIds.add(l.source_id));
+            offset += linkBatchSize;
+            hasMore = existingLinks.data.length === linkBatchSize;
+          } else {
+            hasMore = false;
+          }
+        }
         
         // Get flights from Neon with cursor pagination
         const cursorClause = cursor ? `AND id > '${cursor}'` : '';
@@ -315,7 +329,7 @@ serve(async (req) => {
     }
 
     if (action === "backfillBiometrics") {
-      const batchSize = typeof params.batchSize === "number" ? Math.min(params.batchSize, 10000) : 2000;
+      const batchSize = typeof params.batchSize === "number" ? Math.min(params.batchSize, 5000) : 2000;
       const cursor = typeof params.cursor === "string" ? params.cursor : null;
       
       const jobRes = await supabase
@@ -334,16 +348,29 @@ serve(async (req) => {
       const jobId = jobRes.data.job_id;
 
       try {
-        const neon = await getNeonClient();
+        const neon = await getNeonClient(15000);
         
-        // Get existing linked IDs to avoid duplicates
-        const existingLinks = await supabase
-          .from("evidence_chain_links")
-          .select("source_id")
-          .eq("source_table", "biometric_monitoring")
-          .limit(10000);
+        // Get existing linked IDs in smaller batches to avoid timeout
+        const linkedIds = new Set<string>();
+        let offset = 0;
+        const linkBatchSize = 5000;
         
-        const linkedIds = new Set((existingLinks.data || []).map(l => l.source_id));
+        let hasMore = true;
+        while (hasMore) {
+          const existingLinks = await supabase
+            .from("evidence_chain_links")
+            .select("source_id")
+            .eq("source_table", "biometric_monitoring")
+            .range(offset, offset + linkBatchSize - 1);
+          
+          if (existingLinks.data && existingLinks.data.length > 0) {
+            existingLinks.data.forEach(l => linkedIds.add(l.source_id));
+            offset += linkBatchSize;
+            hasMore = existingLinks.data.length === linkBatchSize;
+          } else {
+            hasMore = false;
+          }
+        }
         
         const cursorClause = cursor ? `AND id > ${cursor}` : '';
         const bioResult = await neon.queryObject<{
@@ -452,7 +479,7 @@ serve(async (req) => {
       const jobId = jobRes.data.job_id;
 
       try {
-        const neon = await getNeonClient();
+        const neon = await getNeonClient(15000);
         
         const josiahResult = await neon.queryObject<{
           id: string;
@@ -544,7 +571,7 @@ serve(async (req) => {
     if (action === "turboBackfill") {
       const targetTable = typeof params.table === "string" ? params.table : "live_flight_detections_rows";
       const cursor = typeof params.cursor === "string" ? params.cursor : null;
-      const batchSize = typeof params.batchSize === "number" ? Math.min(params.batchSize, 5000) : 2000;
+      const batchSize = typeof params.batchSize === "number" ? Math.min(params.batchSize, 3000) : 2000;
       
       const jobRes = await supabase
         .from("correlation_job_status")
@@ -562,20 +589,32 @@ serve(async (req) => {
       const jobId = jobRes.data.job_id;
 
       try {
-        const neon = await getNeonClient();
+        const neon = await getNeonClient(20000);
 
-        // Get a sample of already-linked IDs for this table to use in exclusion
-        // We'll fetch linked IDs in batches and use NOT IN to exclude them
+        // Get linked IDs in batches instead of all at once
         console.log(`[turboBackfill] Fetching linked IDs for ${targetTable}...`);
         
-        // Get linked IDs from Supabase (sample up to 50k)
-        const linkedIdsResult = await supabase
-          .from("evidence_chain_links")
-          .select("source_id")
-          .eq("source_table", targetTable)
-          .limit(50000);
+        const linkedIdSet = new Set<string>();
+        let offset = 0;
+        const linkBatchSize = 5000;
         
-        const linkedIdSet = new Set((linkedIdsResult.data || []).map(r => r.source_id));
+        let hasMore = true;
+        while (hasMore) {
+          const linkedIdsResult = await supabase
+            .from("evidence_chain_links")
+            .select("source_id")
+            .eq("source_table", targetTable)
+            .range(offset, offset + linkBatchSize - 1);
+          
+          if (linkedIdsResult.data && linkedIdsResult.data.length > 0) {
+            linkedIdsResult.data.forEach(r => linkedIdSet.add(r.source_id));
+            offset += linkBatchSize;
+            hasMore = linkedIdsResult.data.length === linkBatchSize;
+          } else {
+            hasMore = false;
+          }
+        }
+        
         console.log(`[turboBackfill] Found ${linkedIdSet.size} already-linked IDs`);
 
         // Build query that excludes already-linked records using cursor for pagination
@@ -879,7 +918,7 @@ serve(async (req) => {
       // 1. Get high-confidence verified events
       const eventsRes = await supabase
         .from("master_forensic_events")
-        .select("forensic_event_id, event_timestamp, event_type, primary_entity_id, primary_entity_type, confidence_score, bradford_hill_score, factor_count, is_physical_verified, summary, chain_of_custody_hash, geo_lat, geo_lng")
+        .select("forensic_event_id, event_timestamp, event_type, primary_entity_id, primary_entity_type, confidence_score, bradford_hill_score, factor_count, is_physical_verified, summary, chain_[...]")
         .gte("bradford_hill_score", minBH)
         .order("bradford_hill_score", { ascending: false })
         .limit(limit);

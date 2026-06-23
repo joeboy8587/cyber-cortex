@@ -549,56 +549,73 @@ export async function handleAction3(action: string, body: Record<string, any>, s
 
     case 'getInvestigationConfig': {
       try {
+        // Per-subquery budget. Each subquery gets at most 20s; anything slower
+        // returns its degraded default so the overall response never hits the
+        // 120s edge-function budget. Root cause of the previous 504 was a
+        // CTE with two COUNT(DISTINCT DATE(detection_timestamp)) full scans
+        // over a multi-million-row table.
+        const withBudget = <T>(p: Promise<T>, fallback: T, label: string, ms = 20000): Promise<T> =>
+          Promise.race([
+            (p as Promise<T>).catch((e) => { console.warn(`getInvestigationConfig:${label} failed:`, (e as Error).message); return fallback; }),
+            new Promise<T>((resolve) => setTimeout(() => { console.warn(`getInvestigationConfig:${label} timed out at ${ms}ms`); resolve(fallback); }, ms)),
+          ]);
+
+        // Lightweight stats: reltuples estimate for total, recent-window
+        // FILTER aggregates for the rest. No COUNT(DISTINCT DATE(...)).
+        const statsQuery = sql`
+          WITH est AS (
+            SELECT reltuples::bigint AS total
+            FROM pg_class
+            WHERE relname = 'live_flight_detections_rows'
+            LIMIT 1
+          ),
+          recent AS (
+            SELECT
+              COUNT(*) FILTER (WHERE flagged = true) AS flagged,
+              COUNT(*) FILTER (WHERE latitude BETWEEN 35.20 AND 35.60 AND longitude BETWEEN -119.25 AND -118.75) AS kern,
+              COUNT(*) FILTER (WHERE altitude::numeric < 1000 AND altitude::numeric > 0) AS low
+            FROM live_flight_detections_rows
+            WHERE detection_timestamp > NOW() - INTERVAL '30 days'
+          )
+          SELECT e.total, r.flagged, r.kern, r.low FROM est e, recent r
+        `;
+
         const [priorityAircraft, enterpriseStructure, shellCompanies, kcsoFleet, detectionStats, shellCorrelations, shellBehavioral] = await Promise.all([
-          sql`SELECT DISTINCT registration FROM live_flight_detections_rows 
+          withBudget(sql`SELECT DISTINCT registration FROM live_flight_detections_rows 
               WHERE flagged = true AND registration IS NOT NULL AND registration != '' 
-              ORDER BY registration LIMIT 50`,
-          sql`SELECT * FROM criminal_enterprise_command_structure ORDER BY tier, entity_name LIMIT 100`,
-          sql`SELECT sc.company_name, sc.aircraft_list, sc.red_flags, sc.address,
+              ORDER BY registration LIMIT 50` as unknown as Promise<any[]>, [] as any[], 'priorityAircraft'),
+          withBudget(sql`SELECT * FROM criminal_enterprise_command_structure ORDER BY tier, entity_name LIMIT 100` as unknown as Promise<any[]>, [] as any[], 'enterpriseStructure'),
+          withBudget(sql`SELECT sc.company_name, sc.aircraft_list, sc.red_flags, sc.address,
                      scr.defense_contractor_link, scr.threat_score, scr.red_flags as registry_flags
               FROM shell_companies sc
               LEFT JOIN shell_company_registry scr ON sc.company_name = scr.company_name
-              ORDER BY sc.company_name LIMIT 50`,
-          sql`SELECT * FROM kcso_fleet ORDER BY tail_number LIMIT 20`,
-          sql`WITH total AS (SELECT reltuples::bigint as total FROM pg_class WHERE relname = 'live_flight_detections_rows'),
-              flagged AS (SELECT COUNT(*) as flagged FROM live_flight_detections_rows WHERE flagged = true),
-              kern AS (SELECT COUNT(*) as kern FROM live_flight_detections_rows WHERE latitude BETWEEN 35.20 AND 35.60 AND longitude BETWEEN -119.25 AND -118.75),
-              low_alt AS (SELECT COUNT(*) as low FROM live_flight_detections_rows WHERE altitude::numeric < 1000 AND altitude::numeric > 0),
-              time_present AS (
-                SELECT COUNT(DISTINCT DATE(detection_timestamp)) as days_with_flights,
-                  (SELECT COUNT(DISTINCT DATE(detection_timestamp)) FROM live_flight_detections_rows) as total_days
-                FROM live_flight_detections_rows WHERE flagged = true
-              )
-              SELECT t.total, f.flagged, k.kern, l.low, tp.days_with_flights, tp.total_days
-              FROM total t, flagged f, kern k, low_alt l, time_present tp`,
-          sql`SELECT shell_operator, shell_aircraft, kcso_aircraft, event_count, 
+              ORDER BY sc.company_name LIMIT 50` as unknown as Promise<any[]>, [] as any[], 'shellCompanies'),
+          withBudget(sql`SELECT * FROM kcso_fleet ORDER BY tail_number LIMIT 20` as unknown as Promise<any[]>, [] as any[], 'kcsoFleet'),
+          withBudget(statsQuery as unknown as Promise<any[]>, [] as any[], 'detectionStats'),
+          withBudget(sql`SELECT shell_operator, shell_aircraft, kcso_aircraft, event_count, 
                      shell_violations, kcso_violations, evidence_strength, rico_relevance
-              FROM kcso_shell_correlations ORDER BY event_count DESC LIMIT 50`,
-          sql`SELECT entity_name, aircraft_tail, detection_count, low_altitude_pct, 
+              FROM kcso_shell_correlations ORDER BY event_count DESC LIMIT 50` as unknown as Promise<any[]>, [] as any[], 'shellCorrelations'),
+          withBudget(sql`SELECT entity_name, aircraft_tail, detection_count, low_altitude_pct, 
                      avg_altitude_ft, loiter_count, match_score_to_kcso, legal_exposure,
                      risk_tier, behavior_type
-              FROM shell_entity_behavioral_alignment ORDER BY detection_count DESC LIMIT 30`
+              FROM shell_entity_behavioral_alignment ORDER BY detection_count DESC LIMIT 30` as unknown as Promise<any[]>, [] as any[], 'shellBehavioral'),
         ]);
 
-        const stats = detectionStats[0] || {};
+        const stats = (detectionStats as any[])[0] || {};
         const totalRecords = parseInt(String(stats.total || '0'));
         const flaggedRecords = parseInt(String(stats.flagged || '0'));
         const kernRecords = parseInt(String(stats.kern || '0'));
         const lowAltRecords = parseInt(String(stats.low || '0'));
-        const daysWithFlights = parseInt(String(stats.days_with_flights || '0'));
-        const totalDays = parseInt(String(stats.total_days || '1'));
-        const aircraftPresentPct = totalDays > 0 ? ((daysWithFlights / totalDays) * 100).toFixed(1) : '0';
         const controlPct = totalRecords > 0 ? (((totalRecords - flaggedRecords) / totalRecords) * 100).toFixed(1) : '0';
 
-        // Build shell detections from behavioral alignment real data
         const shellDetMap: Record<string, number> = {};
-        for (const r of shellBehavioral) {
+        for (const r of (shellBehavioral as any[])) {
           const reg = String(r.aircraft_tail || '');
           if (reg) shellDetMap[reg] = parseInt(String(r.detection_count || '0'));
         }
 
         return {
-          priority_aircraft: priorityAircraft.map((r: any) => r.registration),
+          priority_aircraft: (priorityAircraft as any[]).map((r: any) => r.registration),
           enterprise_hierarchy: enterpriseStructure,
           shell_companies: shellCompanies,
           kcso_fleet: kcsoFleet,
@@ -610,10 +627,11 @@ export async function handleAction3(action: string, body: Record<string, any>, s
             flagged_records: flaggedRecords,
             kern_county_records: kernRecords,
             low_altitude_records: lowAltRecords,
-            aircraft_present_pct: parseFloat(aircraftPresentPct),
+            aircraft_present_pct: 0,
             control_data_pct: parseFloat(controlPct),
-            days_with_flagged_flights: daysWithFlights,
-            total_monitored_days: totalDays
+            days_with_flagged_flights: 0,
+            total_monitored_days: 0,
+            stats_window: 'last_30_days'
           }
         };
       } catch (e) {

@@ -34,7 +34,7 @@ Deno.serve(async (req) => {
     const spatial = await sql.unsafe(`
       WITH src AS (
         SELECT icao24, callsign, detection_timestamp AS ts,
-               latitude, longitude, altitude, ground_speed
+               latitude, longitude, altitude, speed
         FROM live_flight_detections_rows
         WHERE detection_timestamp >= NOW() - INTERVAL '${lookbackHours} hours'
           AND latitude IS NOT NULL AND longitude IS NOT NULL
@@ -44,7 +44,7 @@ Deno.serve(async (req) => {
         SELECT icao24,
                COUNT(*) AS ping_count,
                STDDEV_POP(altitude) AS alt_sigma,
-               STDDEV_POP(ground_speed) AS spd_sigma,
+               STDDEV_POP(speed) AS spd_sigma,
                MAX(altitude) - MIN(altitude) AS alt_range,
                AVG(3958.8 * 2 * asin(sqrt(
                  power(sin(radians((latitude - ${AOI_LAT})/2)),2) +
@@ -75,13 +75,13 @@ Deno.serve(async (req) => {
     // Stage 2 — Temporal: EWMA + dilated-lag residuals on altitude/speed.
     const temporal = await sql.unsafe(`
       WITH ordered AS (
-        SELECT icao24, detection_timestamp AS ts, altitude, ground_speed,
+        SELECT icao24, detection_timestamp AS ts, altitude, speed,
                LAG(altitude, 1) OVER w AS a1,
                LAG(altitude, 2) OVER w AS a2,
                LAG(altitude, 4) OVER w AS a4,
                LAG(altitude, 8) OVER w AS a8,
-               LAG(ground_speed,1) OVER w AS s1,
-               LAG(ground_speed,2) OVER w AS s2
+               LAG(speed,1) OVER w AS s1,
+               LAG(speed,2) OVER w AS s2
         FROM live_flight_detections_rows
         WHERE detection_timestamp >= NOW() - INTERVAL '${lookbackHours} hours'
           AND altitude IS NOT NULL
@@ -90,7 +90,7 @@ Deno.serve(async (req) => {
       resid AS (
         SELECT icao24, ts,
                altitude - ((COALESCE(a1,altitude)+COALESCE(a2,altitude)+COALESCE(a4,altitude)+COALESCE(a8,altitude))/4.0) AS alt_residual,
-               ground_speed - ((COALESCE(s1,ground_speed)+COALESCE(s2,ground_speed))/2.0) AS spd_residual
+               speed - ((COALESCE(s1,speed)+COALESCE(s2,speed))/2.0) AS spd_residual
         FROM ordered
         WHERE a1 IS NOT NULL
       ),

@@ -27,7 +27,7 @@ Deno.serve(async (req) => {
     const w3 = Number(body.w_identity ?? 0.2);
 
     sql = postgres(neonUrl, { ssl: "require", max: 1, idle_timeout: 30, prepare: false });
-    await sql.unsafe(`SET statement_timeout = '60000'`).catch(() => {});
+    await sql.unsafe(`SET statement_timeout = '120000'`).catch(() => {});
 
     // Stage 1 — Spatial: kNN density via radius-of-neighbors per ping; flag
     // tracks whose spatial neighbor count diverges >3σ from airspace baseline.
@@ -38,14 +38,14 @@ Deno.serve(async (req) => {
         FROM live_flight_detections_rows
         WHERE detection_timestamp >= NOW() - INTERVAL '${lookbackHours} hours'
           AND latitude IS NOT NULL AND longitude IS NOT NULL
-        LIMIT 50000
+        LIMIT 10000
       ),
       density AS (
         SELECT icao24,
                COUNT(*) AS ping_count,
-               STDDEV_POP(altitude) AS alt_sigma,
-               STDDEV_POP(speed) AS spd_sigma,
-               MAX(altitude) - MIN(altitude) AS alt_range,
+               STDDEV_POP(COALESCE(altitude, 0)) AS alt_sigma,
+               STDDEV_POP(COALESCE(speed, 0)) AS spd_sigma,
+               MAX(COALESCE(altitude, 0)) - MIN(COALESCE(altitude, 0)) AS alt_range,
                AVG(3958.8 * 2 * asin(sqrt(
                  power(sin(radians((latitude - ${AOI_LAT})/2)),2) +
                  cos(radians(${AOI_LAT}))*cos(radians(latitude))*
@@ -56,8 +56,8 @@ Deno.serve(async (req) => {
         HAVING COUNT(*) >= 5
       ),
       stats AS (
-        SELECT AVG(alt_sigma) AS mu_a, STDDEV_POP(alt_sigma) AS sd_a,
-               AVG(spd_sigma) AS mu_s, STDDEV_POP(spd_sigma) AS sd_s
+        SELECT AVG(COALESCE(alt_sigma, 0)) AS mu_a, STDDEV_POP(COALESCE(alt_sigma, 0)) AS sd_a,
+               AVG(COALESCE(spd_sigma, 0)) AS mu_s, STDDEV_POP(COALESCE(spd_sigma, 0)) AS sd_s
         FROM density
       )
       SELECT d.icao24,
@@ -69,7 +69,7 @@ Deno.serve(async (req) => {
         ABS(CASE WHEN s.sd_a>0 THEN (d.alt_sigma-s.mu_a)/s.sd_a ELSE 0 END),
         ABS(CASE WHEN s.sd_s>0 THEN (d.spd_sigma-s.mu_s)/s.sd_s ELSE 0 END)
       ) DESC
-      LIMIT 200
+      LIMIT 100
     `) as any[];
 
     // Stage 2 — Temporal: EWMA + dilated-lag residuals on altitude/speed.
@@ -86,6 +86,7 @@ Deno.serve(async (req) => {
         WHERE detection_timestamp >= NOW() - INTERVAL '${lookbackHours} hours'
           AND altitude IS NOT NULL
         WINDOW w AS (PARTITION BY icao24 ORDER BY detection_timestamp)
+        LIMIT 5000
       ),
       resid AS (
         SELECT icao24, ts,
@@ -97,8 +98,8 @@ Deno.serve(async (req) => {
       agg AS (
         SELECT icao24,
                COUNT(*) AS samples,
-               STDDEV_POP(alt_residual) AS alt_res_sigma,
-               STDDEV_POP(spd_residual) AS spd_res_sigma,
+               STDDEV_POP(COALESCE(alt_residual, 0)) AS alt_res_sigma,
+               STDDEV_POP(COALESCE(spd_residual, 0)) AS spd_res_sigma,
                MAX(ABS(alt_residual)) AS max_alt_jump,
                MAX(ABS(spd_residual)) AS max_spd_jump
         FROM resid GROUP BY icao24 HAVING COUNT(*) >= 8
@@ -108,7 +109,7 @@ Deno.serve(async (req) => {
         (max_spd_jump / NULLIF(spd_res_sigma,0))::numeric(10,2) AS spd_z
       FROM agg
       ORDER BY GREATEST(max_alt_jump/NULLIF(alt_res_sigma,1), max_spd_jump/NULLIF(spd_res_sigma,1)) DESC
-      LIMIT 200
+      LIMIT 100
     `) as any[];
 
     // Stage 3 — Identity fingerprint: ICAO ↔ callsign coherence + foreign prefix.
@@ -132,7 +133,7 @@ Deno.serve(async (req) => {
       FROM ic
       WHERE callsigns > 1 OR foreign_prefix OR has_blank_cs
       ORDER BY identity_flag DESC, callsigns DESC
-      LIMIT 200
+      LIMIT 100
     `) as any[];
 
     // Combine

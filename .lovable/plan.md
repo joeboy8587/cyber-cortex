@@ -1,109 +1,50 @@
-# Watchtower Reasoning Engine: From Detector to Investigator
+## Goal
+Use the KCSO Air Support Manual + ADS-B anomaly-detection paper + the 1,000+ Neon tables to harden Sentinel and surface WTPR cases on the Josiah dashboard — non-technical, one-click promotion.
 
-Add four reasoning modules on top of the existing detection pipeline. The detector keeps doing its job (math, baselines, hashes). These modules add adversarial challenge, legal grounding, causal narrative, and network reasoning — surfaced through new UI panels on the Josiah page. Nothing replaces existing logic; everything is additive and gated by Bayes thresholds so weak signals self-downgrade.
+## Pillar 1 — KCSO Policy Violation Engine
+- Ingest `Air_Support_Policies.pdf` into `rag_documents` / `rag_chunks` with `document_type='policy'`, `tags=['kcso','air-support','rulebook']`, chunked by section code (A-100, B-401, etc.).
+- New edge function `policy-violation-scan`: for each KCSO flight (icao starts `AE`/registered to KCSO fleet), evaluate deterministic SQL rules derived from the manual:
+  - B-401: Night VFR <2000ft AGL in mountainous terrain → violation
+  - B-1102: Executive transport without filed manifest → violation
+  - C-100 / helicopter ops: sustained hover <500ft AGL outside SAR window → violation
+  - A-401: SAR claim with no concurrent CAD incident → violation
+  - Prisoner-transport (B-1209/1214) cross-county without log → violation
+- Writes results to new `policy_violations` table (icao, ts, rule_code, rule_title, severity, evidence_json, sha256).
+- Bradford-Hill/Exhibit promotion rule: any `severity >= high` row auto-promotes to Tier-2 exhibit citing the manual section.
 
-## Guardrails (apply to all phases)
+## Pillar 2 — 3-Stage ADS-B ML Pipeline (SQL-only, paper-based)
+Implemented as Neon views + edge function `sentinel-ml-score`:
+- **Stage 1 — Spatial GCN proxy**: SQL window function building per-icao kNN over `lat/lon/alt` at each timestamp; flag when a track's neighbor-graph density or velocity-divergence z-score > 3σ vs airspace baseline.
+- **Stage 2 — Temporal WaveNet proxy**: rolling 20-step prediction of speed/altitude/heading using EWMA + dilated lag features (lags 1,2,4,8). Residual > 3σ = temporal anomaly. Captures jamming/spoofing/replay per Table 7 of the paper.
+- **Stage 3 — RF/Identity fingerprint**: cross-check ICAO ↔ callsign ↔ registry tuple against `aircraft_registry` + `entity_registry`; mismatch / foreign-prefix recycling / ghost ICAO = identity anomaly (re-uses existing `layered-deception-detector` signals).
+- Combined score `sentinel_ml_score = w1*spatial + w2*temporal + w3*identity` written to `sentinel_learned_threats`.
 
-- No personality training. The modules learn **method**, not voice. System prompts enforce: active voice, specific citations, adversarial-first, legal grounding, institutional (not individual) framing.
-- Every hypothesis published to the feed must carry a Bayes factor, a Bradford Hill score, and a rejected-null record. Below threshold → auto-downgrade to `UNRESOLVED_ANOMALY — HUMAN REVIEW`.
-- All outputs hashed (SHA-256) and written to `reasoning_audit` table for chain of custody.
-- No new tables in Neon without a migration; all reasoning artifacts live in a single `reasoning_outputs` table keyed by detection_id + module.
+## Pillar 3 — Neon Table Auto-Discovery (1,000+)
+- New edge function `neon-schema-crawl`: queries `information_schema.columns`, scores each table by presence of forensic join keys (`icao`, `timestamp/ts`, `lat`, `lon`, `callsign`, `case_id`, `whoop_*`).
+- Writes to new `discovered_evidence_sources` table: schema, table_name, row_estimate, score, join_keys[], last_crawled.
+- New `EvidenceSourcesPanel` on Josiah: searchable list, "Add to investigation" button registers the table with the cross-modal stitcher.
 
-## Phase 1 — Skeptic Engine (Adversarial Hypothesis)
+## Pillar 4 — WTPR Case System Panel
+- New edge function `wtpr-cases` (list, filter, drill-down via Neon).
+- New `WTPRCasePanel` on Josiah: filters (status, severity, date), timeline, evidence count, one-click "Promote to Exhibit" + "Open in Case Builder".
 
-New edge function: `skeptic-engine`
+## UI changes (Josiah dashboard)
+- Add four sections under existing panels: `PolicyViolationPanel`, `SentinelMLPanel`, `EvidenceSourcesPanel`, `WTPRCasePanel`.
+- Add inline `<PolicyBadge code="B-401" />` component rendered wherever Sentinel flag rows already show (SkepticConsole, ProsecutionTimelinePanel).
 
-- Input: a hypothesis row (e.g. `STARING_PATTERN`, `MEDICAL_COVER_ASSET`) with its evidence bundle.
-- Generates 3 null hypotheses via Lovable AI (gemini-2.5-flash) using a fixed adversarial prompt template.
-- For each null, runs targeted Neon queries to pull counter-evidence (flight school proximity, pipeline contracts, hobby-flight patterns, etc.).
-- Computes a Bayes factor: P(evidence | H1) / P(evidence | H0). Threshold 10 → survives; 3–10 → weak; <3 → reject.
-- Writes result to `reasoning_outputs` (module='skeptic'). Updates the source detection's `confidence_adjusted` field.
+## Technical details
+- Migrations: `policy_violations`, `discovered_evidence_sources` (both with grants + RLS, investigator/admin read, service_role full).
+- All ML stays in SQL/Deno — no Python, no model training. Weights `w1=0.4, w2=0.4, w3=0.2` (tunable later).
+- Policy PDF ingested via existing RAG pipeline; chunk size 800 chars, overlap 150, embedded with `google/gemini-embedding-001`.
+- All new edge functions: zod validation, corsHeaders, 20s `withBudget` wrapper, JWT verify via existing pattern.
+- Inline `PolicyBadge` is presentational only — reads from `policy_violations` via existing supabase client hook.
 
-UI: `SkepticConsole.tsx` on Josiah page — table of recent hypotheses with their null rebuttals, Bayes factors, and survives/rejected badge. One-click "Re-challenge" button per row.
+## Ship order
+1. Migration (policy_violations + discovered_evidence_sources)
+2. Policy ingest + `policy-violation-scan` function
+3. `neon-schema-crawl` + EvidenceSourcesPanel
+4. `sentinel-ml-score` + SentinelMLPanel
+5. `wtpr-cases` + WTPRCasePanel
+6. PolicyBadge inline + Josiah page wiring
 
-## Phase 2 — Corpus Reasoner (RAG-Grounded Detections)
-
-Extend the existing `rag-query` pipeline. Add `corpus-reasoner` edge function.
-
-- Trigger: any detection that survives Skeptic Engine with Bayes > 10.
-- For each detection, runs 4 parallel embedding queries against existing pgvector chunks:
-  1. Operator / LLC identity (registry + SOS embeddings)
-  2. Regulatory citation (14 CFR, Part 91, Part 107)
-  3. Tactical doctrine (KCSO baseline, surveillance staging patterns)
-  4. Precedent (prior anomaly vectors from `watchtower-evidence`)
-- Synthesizes a 4-line grounded brief: "N790FA at 775 ft — 350 ft below KCSO patrol baseline — 14 CFR § 91.119 floor 1,000 ft — ALF IX LLC registered Chicago, IL — no pipeline contracts found."
-- Writes to `reasoning_outputs` (module='corpus').
-
-UI: enrich existing `JosiahSentinelMonitor` and `Watchtower22Panel` cards with a "Grounded Context" expandable section pulled from the new column. No new page.
-
-## Phase 3 — Narrative Synthesizer (Bradford Hill Auto-Scorer)
-
-New edge function: `bradford-hill-synthesizer`. Builds on existing `BradfordHillDashboard`.
-
-- Input: a four-factor correlation lock (aircraft + biometric + temporal + proximity).
-- Computes per-criterion scores deterministically from SQL (strength, consistency, specificity, temporality, gradient, plausibility, coherence, experiment, analogy) — no AI hallucination at this layer.
-- Generates the prosecution timeline narrative via Lovable AI **only** as a final wrapper, fed the deterministic table as ground truth. Prompt forbids new facts, only sequencing.
-- Output: a markdown timeline + 9-criterion table, hashed and stored.
-
-UI: new `ProsecutionTimelinePanel.tsx` on Josiah page. Lists generated timelines with overall Bradford Hill score, expandable to full table + narrative. Export to `/mnt/documents/watchtower/` as MD with SHA-256 footer.
-
-## Phase 4 — Institutional Profiler (Network Graph)
-
-New edge function: `institutional-profiler`.
-
-- Pulls the 50 shell-network candidates already detected in `sentinel-data-integrity`.
-- Builds an in-memory graph (nodes: aircraft, LLCs, addresses, counties; edges: registration, co-detection, temporal coordination).
-- Runs Louvain community detection + betweenness centrality (lightweight, pure-JS — `graphology` via esm.sh).
-- Outputs: community clusters ("Bakersfield Shell Cluster"), bridge nodes (N124WD-class entities linking gov ↔ private), centrality scores.
-
-UI: new `InstitutionalProfilerPanel.tsx` on Josiah page. Force-directed graph (react-force-graph-2d) with cluster coloring, sidebar list of bridge entities, click-to-drill into shell registry.
-
-## Files (new)
-
-```text
-supabase/functions/skeptic-engine/index.ts
-supabase/functions/corpus-reasoner/index.ts
-supabase/functions/bradford-hill-synthesizer/index.ts
-supabase/functions/institutional-profiler/index.ts
-src/components/dashboard/SkepticConsole.tsx
-src/components/dashboard/ProsecutionTimelinePanel.tsx
-src/components/dashboard/InstitutionalProfilerPanel.tsx
-```
-
-## Files (modified)
-
-```text
-src/pages/Josiah.tsx                              (mount 3 new panels)
-src/components/dashboard/JosiahSentinelMonitor.tsx (grounded-context section)
-src/components/dashboard/Watchtower22Panel.tsx     (grounded-context section)
-supabase/migrations/<ts>_reasoning_outputs.sql     (new table + grants + RLS)
-```
-
-## Migration
-
-```sql
-CREATE TABLE public.reasoning_outputs (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  detection_ref text NOT NULL,
-  module text NOT NULL,           -- skeptic | corpus | bradford | profiler
-  payload jsonb NOT NULL,
-  bayes_factor numeric,
-  bradford_score numeric,
-  content_hash text NOT NULL,
-  created_at timestamptz NOT NULL DEFAULT now()
-);
-GRANT SELECT, INSERT ON public.reasoning_outputs TO authenticated;
-GRANT ALL ON public.reasoning_outputs TO service_role;
-ALTER TABLE public.reasoning_outputs ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "auth read" ON public.reasoning_outputs FOR SELECT TO authenticated USING (true);
-CREATE POLICY "auth insert" ON public.reasoning_outputs FOR INSERT TO authenticated WITH CHECK (true);
-```
-
-## Shipping order
-
-1. Migration + Phase 1 (Skeptic) — single deploy, validate Bayes math against 5 known hypotheses.
-2. Phase 2 (Corpus) — wires into existing panels, lowest UI risk.
-3. Phase 3 (Bradford) — new panel, deterministic-first.
-4. Phase 4 (Profiler) — graph panel last (heaviest UI).
-
-Each phase ships independently; you confirm before the next rolls.
+Approve and I roll all six in sequence.

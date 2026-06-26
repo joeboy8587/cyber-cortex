@@ -22,6 +22,10 @@ import { SkepticConsole } from "@/components/dashboard/SkepticConsole";
 import { CorpusReasonerPanel } from "@/components/dashboard/CorpusReasonerPanel";
 import { ProsecutionTimelinePanel } from "@/components/dashboard/ProsecutionTimelinePanel";
 import { PineconeSearchPanel } from "@/components/dashboard/PineconeSearchPanel";
+import { PolicyViolationPanel } from "@/components/dashboard/PolicyViolationPanel";
+import { SentinelMLPanel } from "@/components/dashboard/SentinelMLPanel";
+import { EvidenceSourcesPanel } from "@/components/dashboard/EvidenceSourcesPanel";
+import { WTPRCasePanel } from "@/components/dashboard/WTPRCasePanel";
 
 export default function Josiah() {
   return (
@@ -51,6 +55,27 @@ export default function Josiah() {
         <section>
           <JosiahRAGPanel />
         </section>
+
+        {/* NEW: KCSO Air Support Policy Violation Engine */}
+        <section>
+          <PolicyViolationPanel />
+        </section>
+
+        {/* NEW: Sentinel ML — 3-stage ADS-B anomaly framework (SQL-only) */}
+        <section>
+          <SentinelMLPanel />
+        </section>
+
+        {/* NEW: Evidence Source Registry — auto-discovered Neon tables */}
+        <section>
+          <EvidenceSourcesPanel />
+        </section>
+
+        {/* NEW: WTPR Case System */}
+        <section>
+          <WTPRCasePanel />
+        </section>
+
 
         {/* Sentinel Monitor - Primary AI */}
         <section>

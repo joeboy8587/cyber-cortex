@@ -375,6 +375,45 @@ export type Database = {
         }
         Relationships: []
       }
+      discovered_evidence_sources: {
+        Row: {
+          added_to_investigation: boolean
+          column_summary: Json
+          created_at: string
+          forensic_score: number
+          id: string
+          join_keys: string[]
+          last_crawled: string
+          row_estimate: number
+          schema_name: string
+          table_name: string
+        }
+        Insert: {
+          added_to_investigation?: boolean
+          column_summary?: Json
+          created_at?: string
+          forensic_score?: number
+          id?: string
+          join_keys?: string[]
+          last_crawled?: string
+          row_estimate?: number
+          schema_name: string
+          table_name: string
+        }
+        Update: {
+          added_to_investigation?: boolean
+          column_summary?: Json
+          created_at?: string
+          forensic_score?: number
+          id?: string
+          join_keys?: string[]
+          last_crawled?: string
+          row_estimate?: number
+          schema_name?: string
+          table_name?: string
+        }
+        Relationships: []
+      }
       entity_registry: {
         Row: {
           aliases: string[] | null
@@ -884,6 +923,54 @@ export type Database = {
           source_b?: string | null
           value_a?: string | null
           value_b?: string | null
+        }
+        Relationships: []
+      }
+      policy_violations: {
+        Row: {
+          callsign: string | null
+          created_at: string
+          detected_at: string
+          evidence: Json
+          icao: string
+          id: string
+          manual_section: string | null
+          promoted_exhibit_id: string | null
+          rule_code: string
+          rule_title: string
+          severity: string
+          sha256: string | null
+          source_table: string | null
+        }
+        Insert: {
+          callsign?: string | null
+          created_at?: string
+          detected_at: string
+          evidence?: Json
+          icao: string
+          id?: string
+          manual_section?: string | null
+          promoted_exhibit_id?: string | null
+          rule_code: string
+          rule_title: string
+          severity: string
+          sha256?: string | null
+          source_table?: string | null
+        }
+        Update: {
+          callsign?: string | null
+          created_at?: string
+          detected_at?: string
+          evidence?: Json
+          icao?: string
+          id?: string
+          manual_section?: string | null
+          promoted_exhibit_id?: string | null
+          rule_code?: string
+          rule_title?: string
+          severity?: string
+          sha256?: string | null
+          source_table?: string | null
         }
         Relationships: []
       }

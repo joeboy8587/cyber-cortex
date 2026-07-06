@@ -17,6 +17,16 @@ const FORENSIC_KEYS: Record<string, number> = {
   case_id: 7, exhibit_id: 7, sha256: 5,
   whoop_user_id: 7, heart_rate: 6, hrv: 6, hr: 4,
   operator: 4, owner: 4, faa_n_number: 6, n_number: 5,
+  // FAA regulatory family — boost so they surface at the top of the panel
+  citation: 8, far: 8, cfr: 7, regulation: 6, airspace: 6, class_letter: 5,
+};
+
+// Table-name boosts (added on top of column-based score)
+const TABLE_BOOSTS: Record<string, number> = {
+  faa_regulations: 25, faa_registration_master: 20, faa_airspace: 18,
+  faa_airspace_classification: 18, faa_validated_violations: 22,
+  faa_aircraft_ref: 15, faa_master: 15, faa_aircraft_registry: 15,
+  policy_violations: 18, schema_wiring_report: 10,
 };
 
 Deno.serve(async (req) => {

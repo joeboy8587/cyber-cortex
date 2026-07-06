@@ -164,6 +164,7 @@ Deno.serve(async (req) => {
         WHERE ${isXxb("registration")}
           AND icao_code ~ '^[0-9a-fA-F]{6}$'
           AND UPPER(icao_code) NOT IN ('XXB','XXA','XXC')
+          ${RECENT}
           AND NOT EXISTS (
             SELECT 1 FROM public.xxb_attributions a
             WHERE a.xxb_record_id = ${source.includes('.') ? 'live_flight_detections_rows' : source}.id::text

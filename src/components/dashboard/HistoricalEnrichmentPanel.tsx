@@ -56,11 +56,15 @@ export function HistoricalEnrichmentPanel() {
   const analyzeHistoricalData = async () => {
     setLoading(true);
     try {
+      // Last 90 days keeps the aggregate under Neon's statement timeout.
+      // The edge function also hard-caps windows to 180 days server-side.
+      const end = new Date();
+      const start = new Date(end.getTime() - 90 * 24 * 3600 * 1000);
       const { data, error } = await supabase.functions.invoke('historical-biometric-enrichment', {
-        body: { 
+        body: {
           action: 'analyze',
-          startDate: '2021-01-01',
-          endDate: '2026-12-31'
+          startDate: start.toISOString(),
+          endDate: end.toISOString(),
         }
       });
 

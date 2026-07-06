@@ -591,6 +591,7 @@ Deno.serve(async (req) => {
           WHERE ${isXxb("registration")}
             AND latitude BETWEEN ${cor.bbox_min_lat} AND ${cor.bbox_max_lat}
             AND longitude BETWEEN ${cor.bbox_min_lng} AND ${cor.bbox_max_lng}
+            ${RECENT}
             AND NOT EXISTS (
               SELECT 1 FROM public.xxb_attributions a
               WHERE a.xxb_record_id = ${source}.id::text

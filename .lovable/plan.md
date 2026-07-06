@@ -1,50 +1,88 @@
+# Plan: FAR-Based Low-Altitude Classifier + Schema Wiring Audit
+
 ## Goal
-Use the KCSO Air Support Manual + ADS-B anomaly-detection paper + the 1,000+ Neon tables to harden Sentinel and surface WTPR cases on the Josiah dashboard — non-technical, one-click promotion.
+1. Any aircraft below 1000 ft flows through a **FAR classifier** that consults `public.faa_regulations` and cites the specific rule violated (91.119, 91.155, 91.13, etc.) — no blanket exclusions.
+2. Full audit of the 1,000+ Neon tables to catch UI components and edge functions pointing at renamed/dropped columns (root cause of the recent 504s and the `ground_speed` breakage).
+3. Surface the new FAA tables (`faa_regulations`, `faa_registration_master`, `faa_airspace`, `faa_validated_violations`, etc.) in the Evidence Sources panel so they can be added to investigations.
 
-## Pillar 1 — KCSO Policy Violation Engine
-- Ingest `Air_Support_Policies.pdf` into `rag_documents` / `rag_chunks` with `document_type='policy'`, `tags=['kcso','air-support','rulebook']`, chunked by section code (A-100, B-401, etc.).
-- New edge function `policy-violation-scan`: for each KCSO flight (icao starts `AE`/registered to KCSO fleet), evaluate deterministic SQL rules derived from the manual:
-  - B-401: Night VFR <2000ft AGL in mountainous terrain → violation
-  - B-1102: Executive transport without filed manifest → violation
-  - C-100 / helicopter ops: sustained hover <500ft AGL outside SAR window → violation
-  - A-401: SAR claim with no concurrent CAD incident → violation
-  - Prisoner-transport (B-1209/1214) cross-county without log → violation
-- Writes results to new `policy_violations` table (icao, ts, rule_code, rule_title, severity, evidence_json, sha256).
-- Bradford-Hill/Exhibit promotion rule: any `severity >= high` row auto-promotes to Tier-2 exhibit citing the manual section.
+---
 
-## Pillar 2 — 3-Stage ADS-B ML Pipeline (SQL-only, paper-based)
-Implemented as Neon views + edge function `sentinel-ml-score`:
-- **Stage 1 — Spatial GCN proxy**: SQL window function building per-icao kNN over `lat/lon/alt` at each timestamp; flag when a track's neighbor-graph density or velocity-divergence z-score > 3σ vs airspace baseline.
-- **Stage 2 — Temporal WaveNet proxy**: rolling 20-step prediction of speed/altitude/heading using EWMA + dilated lag features (lags 1,2,4,8). Residual > 3σ = temporal anomaly. Captures jamming/spoofing/replay per Table 7 of the paper.
-- **Stage 3 — RF/Identity fingerprint**: cross-check ICAO ↔ callsign ↔ registry tuple against `aircraft_registry` + `entity_registry`; mismatch / foreign-prefix recycling / ghost ICAO = identity anomaly (re-uses existing `layered-deception-detector` signals).
-- Combined score `sentinel_ml_score = w1*spatial + w2*temporal + w3*identity` written to `sentinel_learned_threats`.
+## Part 1 — FAR Low-Altitude Classifier
 
-## Pillar 3 — Neon Table Auto-Discovery (1,000+)
-- New edge function `neon-schema-crawl`: queries `information_schema.columns`, scores each table by presence of forensic join keys (`icao`, `timestamp/ts`, `lat`, `lon`, `callsign`, `case_id`, `whoop_*`).
-- Writes to new `discovered_evidence_sources` table: schema, table_name, row_estimate, score, join_keys[], last_crawled.
-- New `EvidenceSourcesPanel` on Josiah: searchable list, "Add to investigation" button registers the table with the cross-modal stitcher.
+### New edge function: `far-classifier`
+Input: detection row(s) with `icao`, `lat`, `lon`, `altitude`, `ground_speed`, `timestamp`.
+Logic (SQL-only, deterministic):
 
-## Pillar 4 — WTPR Case System Panel
-- New edge function `wtpr-cases` (list, filter, drill-down via Neon).
-- New `WTPRCasePanel` on Josiah: filters (status, severity, date), timeline, evidence count, one-click "Promote to Exhibit" + "Open in Case Builder".
+1. **Altitude gate**: `altitude < 1000` → enter classifier. Anything ≥1000ft returns `severity=none`.
+2. **Airspace lookup**: join `public.faa_airspace` / `faa_airspace_classification` by lat/lon radius → determine Class B/C/D/E/G.
+3. **Regulation match**: join `public.faa_regulations` for the applicable FAR:
+   - **91.119(a)** — general minimum safe altitude (anywhere)
+   - **91.119(b)** — congested area <1000ft AGL over people/structures (AOI = Oildale residential)
+   - **91.119(c)** — non-congested <500ft AGL / <500ft from person, vessel, structure
+   - **91.155** — VFR cloud clearance / visibility if night
+   - **91.13** — careless/reckless (fallback when multiple violations stack)
+   - **91.209** — position lights after sunset
+4. **Aircraft enrichment**: join `faa_registration_master` + `aircraft_registry` for owner/operator, stall speed, category.
+5. **Severity**:
+   - `<500ft` over Oildale AOI → **CRITICAL** (91.119(c) + 91.119(b))
+   - `500–1000ft` → **HIGH** (91.119(b) or 91.119(a))
+   - Night + no position lights (via speed/altitude pattern) → escalate one tier
+6. **Output**: writes to `policy_violations` with `rule_source='FAR'`, `citation`, `far_text` from `faa_regulations`, SHA-256 hash of the row, and links back to the detection.
 
-## UI changes (Josiah dashboard)
-- Add four sections under existing panels: `PolicyViolationPanel`, `SentinelMLPanel`, `EvidenceSourcesPanel`, `WTPRCasePanel`.
-- Add inline `<PolicyBadge code="B-401" />` component rendered wherever Sentinel flag rows already show (SkepticConsole, ProsecutionTimelinePanel).
+### UI wiring
+- **Live Monitor / Sentinel feed**: red pulse badge on any row with `altitude < 1000`, showing FAR citation from the classifier output (badge component: `<FARBadge cfr="91.119(b)" />`).
+- **`SentinelMLPanel`**: hard override — if `altitude < 1000`, `sentinel_ml_score` is floored at CRITICAL regardless of spatial/temporal/identity subscores.
+- **`PolicyViolationPanel`**: new tab "FAR Violations" filtered by `rule_source='FAR'`.
 
-## Technical details
-- Migrations: `policy_violations`, `discovered_evidence_sources` (both with grants + RLS, investigator/admin read, service_role full).
-- All ML stays in SQL/Deno — no Python, no model training. Weights `w1=0.4, w2=0.4, w3=0.2` (tunable later).
-- Policy PDF ingested via existing RAG pipeline; chunk size 800 chars, overlap 150, embedded with `google/gemini-embedding-001`.
-- All new edge functions: zod validation, corsHeaders, 20s `withBudget` wrapper, JWT verify via existing pattern.
-- Inline `PolicyBadge` is presentational only — reads from `policy_violations` via existing supabase client hook.
+---
+
+## Part 2 — Full Schema Wiring Audit
+
+### New edge function: `schema-wiring-audit`
+- Enumerates every column in every `public.*` table via `information_schema.columns`.
+- Greps the deployed edge-function source and `src/` for `SELECT ... FROM <table>` and column references.
+- Produces `schema_wiring_report` rows: `{ ui_file | edge_function, table, column_ref, status: 'ok' | 'missing_column' | 'renamed' | 'dropped_table' }`.
+
+### New UI: `SchemaWiringPanel` (on Josiah / Data Health)
+- Report table sorted by severity (broken > warning > ok).
+- One-click "Auto-fix" for the common patterns:
+  - Column renamed (e.g. `ground_speed` → `gs` or `speed`) → swap in source.
+  - Table replaced (e.g. `live_flight_detections` → `live_flight_detections_rows`) → swap.
+- Manual list for anything ambiguous.
+
+### Auto-fix pass this turn
+Run the audit once and patch the obvious breakages that caused the 504s:
+- `neon-query` handlers referencing dropped columns
+- Any `sentinel-*` function referencing `ground_speed`, old detection tables, or missing biometric columns
+
+---
+
+## Part 3 — Evidence Sources refresh
+
+- Re-run `neon-schema-crawl` (already-built function) to pick up all new tables.
+- Boost forensic score for FAA family (`faa_regulations`, `faa_registration_master`, `faa_airspace`, `faa_validated_violations`, `faa_aircraft_ref`, `faa_master`) so they surface at the top of `EvidenceSourcesPanel`.
+- Add a "FAA Regulatory" quick-filter chip on the panel.
+
+---
+
+## Deliverables
+- `supabase/functions/far-classifier/index.ts` (new)
+- `supabase/functions/schema-wiring-audit/index.ts` (new)
+- `src/components/dashboard/FARBadge.tsx` (new)
+- `src/components/dashboard/SchemaWiringPanel.tsx` (new)
+- Migration: `schema_wiring_report` table + boost columns on `discovered_evidence_sources`; add `rule_source`, `citation`, `far_text` to `policy_violations` if not present.
+- Wire FAR badge into Live Monitor and Sentinel feed
+- Auto-fix pass on stale column refs found by the audit
+- Redeploy affected edge functions
+
+## Out of scope
+- No changes to raw universe tables (immutable audit policy)
+- No exclusions for MEDEVAC / approaches — user chose strict rule
+- No new ML training (SQL-only, consistent with prior pillar)
 
 ## Ship order
-1. Migration (policy_violations + discovered_evidence_sources)
-2. Policy ingest + `policy-violation-scan` function
-3. `neon-schema-crawl` + EvidenceSourcesPanel
-4. `sentinel-ml-score` + SentinelMLPanel
-5. `wtpr-cases` + WTPRCasePanel
-6. PolicyBadge inline + Josiah page wiring
-
-Approve and I roll all six in sequence.
+1. Migration
+2. `far-classifier` + `FARBadge` + Live Monitor wiring
+3. `schema-wiring-audit` + `SchemaWiringPanel`
+4. Auto-fix pass → redeploy
+5. `neon-schema-crawl` refresh + EvidenceSourcesPanel FAA chip

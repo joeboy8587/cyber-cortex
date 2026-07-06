@@ -928,45 +928,63 @@ export type Database = {
       }
       policy_violations: {
         Row: {
+          altitude_ft: number | null
           callsign: string | null
+          citation: string | null
           created_at: string
           detected_at: string
           evidence: Json
+          far_text: string | null
           icao: string
           id: string
+          lat: number | null
+          lon: number | null
           manual_section: string | null
           promoted_exhibit_id: string | null
           rule_code: string
+          rule_source: string | null
           rule_title: string
           severity: string
           sha256: string | null
           source_table: string | null
         }
         Insert: {
+          altitude_ft?: number | null
           callsign?: string | null
+          citation?: string | null
           created_at?: string
           detected_at: string
           evidence?: Json
+          far_text?: string | null
           icao: string
           id?: string
+          lat?: number | null
+          lon?: number | null
           manual_section?: string | null
           promoted_exhibit_id?: string | null
           rule_code: string
+          rule_source?: string | null
           rule_title: string
           severity: string
           sha256?: string | null
           source_table?: string | null
         }
         Update: {
+          altitude_ft?: number | null
           callsign?: string | null
+          citation?: string | null
           created_at?: string
           detected_at?: string
           evidence?: Json
+          far_text?: string | null
           icao?: string
           id?: string
+          lat?: number | null
+          lon?: number | null
           manual_section?: string | null
           promoted_exhibit_id?: string | null
           rule_code?: string
+          rule_source?: string | null
           rule_title?: string
           severity?: string
           sha256?: string | null
@@ -1223,6 +1241,45 @@ export type Database = {
           id?: string
           module?: string
           payload?: Json
+        }
+        Relationships: []
+      }
+      schema_wiring_report: {
+        Row: {
+          column_ref: string | null
+          created_at: string
+          id: string
+          scanned_at: string
+          severity: string
+          source_path: string
+          source_type: string
+          status: string
+          suggested_fix: string | null
+          table_name: string
+        }
+        Insert: {
+          column_ref?: string | null
+          created_at?: string
+          id?: string
+          scanned_at?: string
+          severity?: string
+          source_path: string
+          source_type: string
+          status: string
+          suggested_fix?: string | null
+          table_name: string
+        }
+        Update: {
+          column_ref?: string | null
+          created_at?: string
+          id?: string
+          scanned_at?: string
+          severity?: string
+          source_path?: string
+          source_type?: string
+          status?: string
+          suggested_fix?: string | null
+          table_name?: string
         }
         Relationships: []
       }

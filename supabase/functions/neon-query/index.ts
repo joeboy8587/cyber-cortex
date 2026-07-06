@@ -616,7 +616,74 @@ Deno.serve(async (req) => {
           if (!normalizedDDL.startsWith('CREATE INDEX') && !normalizedDDL.startsWith('CREATE UNIQUE INDEX')) {
             throw new Error('Only CREATE INDEX statements are allowed');
           }
-          result = await sql.unsafe(query);
+          const timeoutMs = Number(body.timeoutMs) || 600000;
+          const reserved = await sql.reserve();
+          try {
+            await reserved.unsafe(`SET statement_timeout = ${timeoutMs}`);
+            await reserved.unsafe(`SET lock_timeout = 5000`);
+            result = await reserved.unsafe(query);
+          } finally { reserved.release(); }
+          break;
+        }
+
+        case 'dropIndex': {
+          const name = String(body.indexName || '').replace(/[^a-zA-Z0-9_]/g, '');
+          if (!name) throw new Error('indexName is required');
+          const concurrent = body.concurrent === false ? '' : 'CONCURRENTLY';
+          const timeoutMs = Number(body.timeoutMs) || 300000;
+          const reserved = await sql.reserve();
+          try {
+            await reserved.unsafe(`SET statement_timeout = ${timeoutMs}`);
+            result = await reserved.unsafe(`DROP INDEX ${concurrent} IF EXISTS ${name}`);
+          } finally { reserved.release(); }
+          break;
+        }
+
+        case 'vacuum': {
+          const tbl = String(body.table || '').replace(/[^a-zA-Z0-9_]/g, '');
+          if (!tbl) throw new Error('table is required');
+          const mode = body.full === true ? 'FULL' : '';
+          const analyze = body.analyze === false ? '' : 'ANALYZE';
+          const timeoutMs = Number(body.timeoutMs) || 600000;
+          const reserved = await sql.reserve();
+          try {
+            await reserved.unsafe(`SET statement_timeout = ${timeoutMs}`);
+            result = await reserved.unsafe(`VACUUM ${mode} ${analyze} ${tbl}`.replace(/\s+/g,' ').trim());
+          } finally { reserved.release(); }
+          break;
+        }
+
+        case 'refreshMatView': {
+          const view = String(body.view || '').replace(/[^a-zA-Z0-9_]/g, '');
+          if (!view) throw new Error('view is required');
+          const concurrent = body.concurrent === true ? 'CONCURRENTLY' : '';
+          const timeoutMs = Number(body.timeoutMs) || 600000;
+          try {
+            const reserved = await sql.reserve();
+            try {
+              await reserved.unsafe(`SET statement_timeout = ${timeoutMs}`);
+              result = await reserved.unsafe(`REFRESH MATERIALIZED VIEW ${concurrent} ${view}`.replace(/\s+/g,' ').trim());
+            } finally { reserved.release(); }
+          } catch (e) {
+            const err = e as any;
+            result = { ok: false, code: String(err?.code || ''), error: String(err?.message || 'refresh failed') };
+          }
+          break;
+        }
+
+        case 'alterColumnType': {
+          const tbl = String(body.table || '').replace(/[^a-zA-Z0-9_]/g, '');
+          const col = String(body.column || '').replace(/[^a-zA-Z0-9_]/g, '');
+          const newType = String(body.newType || '');
+          const allowedTypes = ['numeric(10,2)','numeric','double precision','bigint','integer','text'];
+          if (!tbl || !col) throw new Error('table and column are required');
+          if (!allowedTypes.includes(newType.toLowerCase())) throw new Error('newType not allowed');
+          const timeoutMs = Number(body.timeoutMs) || 600000;
+          const reserved = await sql.reserve();
+          try {
+            await reserved.unsafe(`SET statement_timeout = ${timeoutMs}`);
+            result = await reserved.unsafe(`ALTER TABLE ${tbl} ALTER COLUMN ${col} TYPE ${newType} USING ${col}::${newType}`);
+          } finally { reserved.release(); }
           break;
         }
 

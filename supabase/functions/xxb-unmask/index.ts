@@ -58,9 +58,18 @@ Deno.serve(async (req) => {
   try { body = await req.json(); } catch { /* ignore */ }
 
   const action: string = body.action || "stats";
-  const batchSize: number = Math.min(Math.max(Number(body.batch_size) || 25_000, 500), 200_000);
+  // Lower default batch to keep Neon queries under the statement timeout.
+  const batchSize: number = Math.min(Math.max(Number(body.batch_size) || 2_500, 200), 50_000);
   const dryRun: boolean = !!body.dry_run;
   const source: string = body.source_table || "live_flight_detections_rows";
+  // Recent-only window for XXB candidates — full-history scans time out.
+  const windowDays: number = Math.min(Math.max(Number(body.window_days) || 7, 1), 60);
+  const RECENT = `AND detection_timestamp > now() - interval '${windowDays} days'`;
+  // Safe integer altitude for the xxb_attributions.xxb_alt column (integer).
+  const intAlt = (v: unknown) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.round(n) : null;
+  };
 
   const sql = postgres(NEON_URL, {
     ssl: "require",

@@ -197,7 +197,7 @@ Deno.serve(async (req) => {
              attributed_icao24, attributed_reg, attribution_tier, attribution_method,
              bridge_record_id, bridge_table, time_delta_sec, confidence, evidence_refs)
           VALUES
-            (${r.id}, ${source}, ${r.detection_timestamp}, ${r.latitude}, ${r.longitude}, ${r.altitude},
+            (${r.id}, ${source}, ${r.detection_timestamp}, ${r.latitude}, ${r.longitude}, ${intAlt(r.altitude)},
              ${r.icao24.toLowerCase()}, ${b.registration}, 1, 'icao_bridge',
              ${b.id}, ${source}, ${dt}, 1.00,
              ${sql.json({ method: "exact_hex_match_within_60s" })})
@@ -254,7 +254,7 @@ Deno.serve(async (req) => {
              attributed_icao24, attributed_reg, attribution_tier, attribution_method,
              bridge_record_id, bridge_table, time_delta_sec, space_delta_m, confidence, evidence_refs)
           VALUES
-            (${c.xid}, ${source}, ${c.xts}, ${c.xlat}, ${c.xlng}, ${c.xalt},
+            (${c.xid}, ${source}, ${c.xts}, ${c.xlat}, ${c.xlng}, ${intAlt(c.xalt)},
              ${c.ricao}, ${c.registration}, 2, 'track_continuity',
              ${c.rid}, ${source}, ${c.dt_sec}, ${c.dist_m}, 0.95,
              ${sql.json({ method: "kinematic_continuity_500m_30s" })})
@@ -308,7 +308,7 @@ Deno.serve(async (req) => {
              attributed_icao24, attributed_reg, attribution_tier, attribution_method,
              bridge_record_id, bridge_table, time_delta_sec, confidence, evidence_refs)
           VALUES
-            (${c.xid}, ${source}, ${c.xts}, ${c.xlat}, ${c.xlng}, ${c.xalt},
+            (${c.xid}, ${source}, ${c.xts}, ${c.xlat}, ${c.xlng}, ${intAlt(c.xalt)},
              ${c.ricao}, ${c.registration}, 3, 'callsign_bridge',
              ${c.rid}, ${source}, ${c.dt_sec}, 0.85,
              ${sql.json({ method: "shared_callsign_10min", callsign: c.xcs })})
@@ -378,7 +378,7 @@ Deno.serve(async (req) => {
              attributed_icao24, attributed_reg, attribution_tier, attribution_method,
              bridge_record_id, bridge_table, time_delta_sec, confidence, evidence_refs)
           VALUES
-            (${c.xid}, ${source}, ${c.xts}, ${c.xlat}, ${c.xlng}, ${c.xalt},
+            (${c.xid}, ${source}, ${c.xts}, ${c.xlat}, ${c.xlng}, ${intAlt(c.xalt)},
              ${c.ricao}, ${c.registration}, 4, 'trajectory_fingerprint',
              ${c.rid}, ${source}, ${c.dt_sec}, 0.80,
              ${sql.json({ method: "md5_seg_match_30s_200ft_2h" })})
@@ -441,7 +441,7 @@ Deno.serve(async (req) => {
                attributed_icao24, attributed_reg, attribution_tier, attribution_method,
                confidence, evidence_refs)
             VALUES
-              (${xid}, ${source}, ${c.sample_ts}, ${c.sample_lat}, ${c.sample_lng}, ${c.sample_alt},
+              (${xid}, ${source}, ${c.sample_ts}, ${c.sample_lat}, ${c.sample_lng}, ${intAlt(c.sample_alt)},
                ${c.ricao}, ${c.registration}, 5, 'coflight_pairing',
                0.75,
                ${sql.json({ method: "coflight_1nm_5min_3day", distinct_days: c.distinct_days, hits: c.hits })})
@@ -551,7 +551,7 @@ Deno.serve(async (req) => {
              attributed_icao24, attributed_reg, attribution_tier, attribution_method,
              confidence, evidence_refs)
           VALUES
-            (${c.xid}, ${source}, ${c.xts}, ${c.xlat}, ${c.xlng}, ${c.xalt},
+            (${c.xid}, ${source}, ${c.xts}, ${c.xlat}, ${c.xlng}, ${intAlt(c.xalt)},
              ${c.ricao}, ${c.registration}, 6, 'operator_envelope',
              0.55,
              ${sql.json({ method: "altitude_squawk_envelope_unique" })})
@@ -609,7 +609,7 @@ Deno.serve(async (req) => {
                 (xxb_record_id, source_table, xxb_timestamp, xxb_lat, xxb_lng, xxb_alt,
                  attributed_reg, attribution_tier, attribution_method, confidence, evidence_refs)
               VALUES
-                (${r.xid}, ${source}, ${r.xts}, ${r.xlat}, ${r.xlng}, ${r.xalt},
+                (${r.xid}, ${source}, ${r.xts}, ${r.xlat}, ${r.xlng}, ${intAlt(r.xalt)},
                  ${dominant}, 7, 'corridor_lock', 0.45,
                  ${sql.json({ method: "corridor_bbox_lock", corridor: cor.corridor_name, owner: cor.corporate_owner })})
               ON CONFLICT DO NOTHING

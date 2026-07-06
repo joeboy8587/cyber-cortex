@@ -26,6 +26,8 @@ import { PolicyViolationPanel } from "@/components/dashboard/PolicyViolationPane
 import { SentinelMLPanel } from "@/components/dashboard/SentinelMLPanel";
 import { EvidenceSourcesPanel } from "@/components/dashboard/EvidenceSourcesPanel";
 import { WTPRCasePanel } from "@/components/dashboard/WTPRCasePanel";
+import { FARClassifierPanel } from "@/components/dashboard/FARClassifierPanel";
+import { SchemaWiringPanel } from "@/components/dashboard/SchemaWiringPanel";
 
 export default function Josiah() {
   return (
@@ -59,6 +61,16 @@ export default function Josiah() {
         {/* NEW: KCSO Air Support Policy Violation Engine */}
         <section>
           <PolicyViolationPanel />
+        </section>
+
+        {/* NEW: FAR Low-Altitude Classifier — any aircraft < 1000 ft cited under 14 CFR Part 91 */}
+        <section>
+          <FARClassifierPanel />
+        </section>
+
+        {/* NEW: Schema Wiring Audit — catch broken table/column references before they 5xx */}
+        <section>
+          <SchemaWiringPanel />
         </section>
 
         {/* NEW: Sentinel ML — 3-stage ADS-B anomaly framework (SQL-only) */}

@@ -620,6 +620,47 @@ Deno.serve(async (req) => {
           break;
         }
 
+        case 'dropIndex': {
+          const name = String(body.indexName || '').replace(/[^a-zA-Z0-9_]/g, '');
+          if (!name) throw new Error('indexName is required');
+          const concurrent = body.concurrent === false ? '' : 'CONCURRENTLY';
+          result = await sql.unsafe(`DROP INDEX ${concurrent} IF EXISTS ${name}`);
+          break;
+        }
+
+        case 'vacuum': {
+          const tbl = String(body.table || '').replace(/[^a-zA-Z0-9_]/g, '');
+          if (!tbl) throw new Error('table is required');
+          const mode = body.full === true ? 'FULL' : '';
+          const analyze = body.analyze === false ? '' : 'ANALYZE';
+          result = await sql.unsafe(`VACUUM ${mode} ${analyze} ${tbl}`.replace(/\s+/g,' ').trim());
+          break;
+        }
+
+        case 'refreshMatView': {
+          const view = String(body.view || '').replace(/[^a-zA-Z0-9_]/g, '');
+          if (!view) throw new Error('view is required');
+          const concurrent = body.concurrent === true ? 'CONCURRENTLY' : '';
+          try {
+            result = await sql.unsafe(`REFRESH MATERIALIZED VIEW ${concurrent} ${view}`.replace(/\s+/g,' ').trim());
+          } catch (e) {
+            const err = e as any;
+            result = { ok: false, code: String(err?.code || ''), error: String(err?.message || 'refresh failed') };
+          }
+          break;
+        }
+
+        case 'alterColumnType': {
+          const tbl = String(body.table || '').replace(/[^a-zA-Z0-9_]/g, '');
+          const col = String(body.column || '').replace(/[^a-zA-Z0-9_]/g, '');
+          const newType = String(body.newType || '');
+          const allowedTypes = ['numeric(10,2)','numeric','double precision','bigint','integer','text'];
+          if (!tbl || !col) throw new Error('table and column are required');
+          if (!allowedTypes.includes(newType.toLowerCase())) throw new Error('newType not allowed');
+          result = await sql.unsafe(`ALTER TABLE ${tbl} ALTER COLUMN ${col} TYPE ${newType} USING ${col}::${newType}`);
+          break;
+        }
+
         case 'dropTrigger': {
           const triggerName = body.triggerName;
           const triggerTable = body.triggerTable;

@@ -275,6 +275,7 @@ Deno.serve(async (req) => {
           FROM ${source}
           WHERE ${isXxb("registration")}
             AND callsign IS NOT NULL AND length(trim(callsign)) > 2
+            ${RECENT}
             AND NOT EXISTS (
               SELECT 1 FROM public.xxb_attributions a
               WHERE a.xxb_record_id = ${source}.id::text

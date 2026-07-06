@@ -37,10 +37,15 @@ function calculateBradfordHillScore(c: {
   return score;
 }
 
-// Default to last 90 days to keep Neon queries under statement timeout
+// Default to last 90 days, and hard-cap any client-supplied window to 180 days
+// so aggregate queries stay under Neon's statement timeout.
+const MAX_WINDOW_MS = 180 * 24 * 3600 * 1000;
 function defaultRange(startDate?: string, endDate?: string) {
   const end = endDate ? new Date(endDate) : new Date();
-  const start = startDate ? new Date(startDate) : new Date(end.getTime() - 90 * 24 * 3600 * 1000);
+  let start = startDate ? new Date(startDate) : new Date(end.getTime() - 90 * 24 * 3600 * 1000);
+  if (end.getTime() - start.getTime() > MAX_WINDOW_MS) {
+    start = new Date(end.getTime() - MAX_WINDOW_MS);
+  }
   return { start: start.toISOString(), end: end.toISOString() };
 }
 

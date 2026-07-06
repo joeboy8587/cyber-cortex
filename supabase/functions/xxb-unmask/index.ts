@@ -521,6 +521,7 @@ Deno.serve(async (req) => {
                    longitude AS xlng, altitude AS xalt
             FROM ${source}
             WHERE ${isXxb("registration")} AND altitude IS NOT NULL
+              ${RECENT}
               AND NOT EXISTS (
                 SELECT 1 FROM public.xxb_attributions a
                 WHERE a.xxb_record_id = ${source}.id::text

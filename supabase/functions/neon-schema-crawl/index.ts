@@ -109,6 +109,7 @@ Deno.serve(async (req) => {
           if (!matchedKeys.includes(key)) matchedKeys.push(key);
         }
       }
+      score += TABLE_BOOSTS[t.table_name.toLowerCase()] || 0;
       if (score === 0) continue; // skip noise
       upserts.push({
         schema_name: t.table_schema,

@@ -73,11 +73,9 @@ export function ChronoBiometricDigest() {
                 END
               ) as bradford_hill_score
             FROM watchtower_biometrics_master
-            WHERE biometric_timestamp_utc IS NOT NULL
-              AND heart_rate_bpm IS NOT NULL
-              AND heart_rate_bpm BETWEEN 40 AND 220
+            WHERE biometric_timestamp_utc > now() - interval '90 days'
+              AND heart_rate_bpm BETWEEN 91 AND 220
               AND aircraft_registration IS NOT NULL
-              AND heart_rate_bpm > 90
             ORDER BY biometric_timestamp_utc DESC
             LIMIT 1000
           `

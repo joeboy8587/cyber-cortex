@@ -58,9 +58,18 @@ Deno.serve(async (req) => {
   try { body = await req.json(); } catch { /* ignore */ }
 
   const action: string = body.action || "stats";
-  const batchSize: number = Math.min(Math.max(Number(body.batch_size) || 25_000, 500), 200_000);
+  // Lower default batch to keep Neon queries under the statement timeout.
+  const batchSize: number = Math.min(Math.max(Number(body.batch_size) || 2_500, 200), 50_000);
   const dryRun: boolean = !!body.dry_run;
   const source: string = body.source_table || "live_flight_detections_rows";
+  // Recent-only window for XXB candidates — full-history scans time out.
+  const windowDays: number = Math.min(Math.max(Number(body.window_days) || 7, 1), 60);
+  const RECENT = `AND detection_timestamp > now() - interval '${windowDays} days'`;
+  // Safe integer altitude for the xxb_attributions.xxb_alt column (integer).
+  const intAlt = (v: unknown) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.round(n) : null;
+  };
 
   const sql = postgres(NEON_URL, {
     ssl: "require",
@@ -155,6 +164,7 @@ Deno.serve(async (req) => {
         WHERE ${isXxb("registration")}
           AND icao_code ~ '^[0-9a-fA-F]{6}$'
           AND UPPER(icao_code) NOT IN ('XXB','XXA','XXC')
+          ${RECENT}
           AND NOT EXISTS (
             SELECT 1 FROM public.xxb_attributions a
             WHERE a.xxb_record_id = ${source.includes('.') ? 'live_flight_detections_rows' : source}.id::text
@@ -187,7 +197,7 @@ Deno.serve(async (req) => {
              attributed_icao24, attributed_reg, attribution_tier, attribution_method,
              bridge_record_id, bridge_table, time_delta_sec, confidence, evidence_refs)
           VALUES
-            (${r.id}, ${source}, ${r.detection_timestamp}, ${r.latitude}, ${r.longitude}, ${r.altitude},
+            (${r.id}, ${source}, ${r.detection_timestamp}, ${r.latitude}, ${r.longitude}, ${intAlt(r.altitude)},
              ${r.icao24.toLowerCase()}, ${b.registration}, 1, 'icao_bridge',
              ${b.id}, ${source}, ${dt}, 1.00,
              ${sql.json({ method: "exact_hex_match_within_60s" })})
@@ -207,6 +217,7 @@ Deno.serve(async (req) => {
           FROM ${source}
           WHERE ${isXxb("registration")}
             AND latitude IS NOT NULL AND longitude IS NOT NULL
+            ${RECENT}
             AND NOT EXISTS (
               SELECT 1 FROM public.xxb_attributions a
               WHERE a.xxb_record_id = ${source}.id::text
@@ -243,7 +254,7 @@ Deno.serve(async (req) => {
              attributed_icao24, attributed_reg, attribution_tier, attribution_method,
              bridge_record_id, bridge_table, time_delta_sec, space_delta_m, confidence, evidence_refs)
           VALUES
-            (${c.xid}, ${source}, ${c.xts}, ${c.xlat}, ${c.xlng}, ${c.xalt},
+            (${c.xid}, ${source}, ${c.xts}, ${c.xlat}, ${c.xlng}, ${intAlt(c.xalt)},
              ${c.ricao}, ${c.registration}, 2, 'track_continuity',
              ${c.rid}, ${source}, ${c.dt_sec}, ${c.dist_m}, 0.95,
              ${sql.json({ method: "kinematic_continuity_500m_30s" })})
@@ -264,6 +275,7 @@ Deno.serve(async (req) => {
           FROM ${source}
           WHERE ${isXxb("registration")}
             AND callsign IS NOT NULL AND length(trim(callsign)) > 2
+            ${RECENT}
             AND NOT EXISTS (
               SELECT 1 FROM public.xxb_attributions a
               WHERE a.xxb_record_id = ${source}.id::text
@@ -296,7 +308,7 @@ Deno.serve(async (req) => {
              attributed_icao24, attributed_reg, attribution_tier, attribution_method,
              bridge_record_id, bridge_table, time_delta_sec, confidence, evidence_refs)
           VALUES
-            (${c.xid}, ${source}, ${c.xts}, ${c.xlat}, ${c.xlng}, ${c.xalt},
+            (${c.xid}, ${source}, ${c.xts}, ${c.xlat}, ${c.xlng}, ${intAlt(c.xalt)},
              ${c.ricao}, ${c.registration}, 3, 'callsign_bridge',
              ${c.rid}, ${source}, ${c.dt_sec}, 0.85,
              ${sql.json({ method: "shared_callsign_10min", callsign: c.xcs })})
@@ -366,7 +378,7 @@ Deno.serve(async (req) => {
              attributed_icao24, attributed_reg, attribution_tier, attribution_method,
              bridge_record_id, bridge_table, time_delta_sec, confidence, evidence_refs)
           VALUES
-            (${c.xid}, ${source}, ${c.xts}, ${c.xlat}, ${c.xlng}, ${c.xalt},
+            (${c.xid}, ${source}, ${c.xts}, ${c.xlat}, ${c.xlng}, ${intAlt(c.xalt)},
              ${c.ricao}, ${c.registration}, 4, 'trajectory_fingerprint',
              ${c.rid}, ${source}, ${c.dt_sec}, 0.80,
              ${sql.json({ method: "md5_seg_match_30s_200ft_2h" })})
@@ -429,7 +441,7 @@ Deno.serve(async (req) => {
                attributed_icao24, attributed_reg, attribution_tier, attribution_method,
                confidence, evidence_refs)
             VALUES
-              (${xid}, ${source}, ${c.sample_ts}, ${c.sample_lat}, ${c.sample_lng}, ${c.sample_alt},
+              (${xid}, ${source}, ${c.sample_ts}, ${c.sample_lat}, ${c.sample_lng}, ${intAlt(c.sample_alt)},
                ${c.ricao}, ${c.registration}, 5, 'coflight_pairing',
                0.75,
                ${sql.json({ method: "coflight_1nm_5min_3day", distinct_days: c.distinct_days, hits: c.hits })})
@@ -471,6 +483,7 @@ Deno.serve(async (req) => {
           FROM ${source}
           WHERE ${isXxb("registration")}
             AND altitude IS NOT NULL
+            ${RECENT}
             AND NOT EXISTS (
               SELECT 1 FROM public.xxb_attributions a
               WHERE a.xxb_record_id = ${source}.id::text
@@ -508,6 +521,7 @@ Deno.serve(async (req) => {
                    longitude AS xlng, altitude AS xalt
             FROM ${source}
             WHERE ${isXxb("registration")} AND altitude IS NOT NULL
+              ${RECENT}
               AND NOT EXISTS (
                 SELECT 1 FROM public.xxb_attributions a
                 WHERE a.xxb_record_id = ${source}.id::text
@@ -537,7 +551,7 @@ Deno.serve(async (req) => {
              attributed_icao24, attributed_reg, attribution_tier, attribution_method,
              confidence, evidence_refs)
           VALUES
-            (${c.xid}, ${source}, ${c.xts}, ${c.xlat}, ${c.xlng}, ${c.xalt},
+            (${c.xid}, ${source}, ${c.xts}, ${c.xlat}, ${c.xlng}, ${intAlt(c.xalt)},
              ${c.ricao}, ${c.registration}, 6, 'operator_envelope',
              0.55,
              ${sql.json({ method: "altitude_squawk_envelope_unique" })})
@@ -577,6 +591,7 @@ Deno.serve(async (req) => {
           WHERE ${isXxb("registration")}
             AND latitude BETWEEN ${cor.bbox_min_lat} AND ${cor.bbox_max_lat}
             AND longitude BETWEEN ${cor.bbox_min_lng} AND ${cor.bbox_max_lng}
+            ${RECENT}
             AND NOT EXISTS (
               SELECT 1 FROM public.xxb_attributions a
               WHERE a.xxb_record_id = ${source}.id::text
@@ -594,7 +609,7 @@ Deno.serve(async (req) => {
                 (xxb_record_id, source_table, xxb_timestamp, xxb_lat, xxb_lng, xxb_alt,
                  attributed_reg, attribution_tier, attribution_method, confidence, evidence_refs)
               VALUES
-                (${r.xid}, ${source}, ${r.xts}, ${r.xlat}, ${r.xlng}, ${r.xalt},
+                (${r.xid}, ${source}, ${r.xts}, ${r.xlat}, ${r.xlng}, ${intAlt(r.xalt)},
                  ${dominant}, 7, 'corridor_lock', 0.45,
                  ${sql.json({ method: "corridor_bbox_lock", corridor: cor.corridor_name, owner: cor.corporate_owner })})
               ON CONFLICT DO NOTHING

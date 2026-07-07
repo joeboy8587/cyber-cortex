@@ -3,6 +3,7 @@ import { EntityIndexTable } from "@/components/entity-resolution/EntityIndexTabl
 import { OperatorRescorePanel } from "@/components/entity-resolution/OperatorRescorePanel";
 import { NetworkExtractsPanel } from "@/components/entity-resolution/NetworkExtractsPanel";
 import { JosiahConfidencePanel } from "@/components/entity-resolution/JosiahConfidencePanel";
+import { RegistrantOsintPanel } from "@/components/entity-resolution/RegistrantOsintPanel";
 
 export default function EntityResolution() {
   return (
@@ -15,6 +16,7 @@ export default function EntityResolution() {
           </p>
         </header>
         <OperatorRescorePanel />
+        <RegistrantOsintPanel />
         <JosiahConfidencePanel />
         <NetworkExtractsPanel />
         <EntityIndexTable />

@@ -48,24 +48,51 @@ serve(async (req) => {
   try {
     await sql.unsafe(`SET statement_timeout = '20s'`).catch(() => {});
 
-    // Pull rollups from mv_entities (cheap; < 100k rows even on huge fleets)
-    let ent: any[] = await sql`
-      SELECT entity_id, detections, avg_alt, min_alt, avg_spd, min_spd,
-             sub_stall_pings, low_alt_pings, night_pings
-      FROM mv_entities
-      WHERE detections >= ${minDetections}
+    const cols = await sql`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema='public' AND table_name='mv_spacetime'
     `.catch(() => []);
+    const have = new Set(cols.map((r: any) => r.column_name));
+    const tsCol = have.has("ts") ? "ts" : "event_timestamp";
+    const altCol = have.has("altitude") ? "altitude" : "altitude_ft";
+    const spdCol = have.has("speed") ? "speed" : "speed_kts";
+
+    // Pull rollups from mv_entities (cheap; < 100k rows even on huge fleets)
+    let ent: any[] = await sql.unsafe(`
+      SELECT entity_id,
+             COUNT(*)::int AS detections,
+             ROUND(AVG(${altCol})::numeric, 0) AS avg_alt,
+             MIN(${altCol})::numeric AS min_alt,
+             ROUND(AVG(${spdCol})::numeric, 0) AS avg_spd,
+             MIN(${spdCol})::numeric AS min_spd,
+             COUNT(*) FILTER (WHERE ${spdCol} BETWEEN 1 AND 48)::int AS sub_stall_pings,
+             COUNT(*) FILTER (WHERE ${altCol} BETWEEN 1 AND 500)::int AS low_alt_pings,
+             COUNT(*) FILTER (WHERE EXTRACT(HOUR FROM ${tsCol}::timestamp) BETWEEN 0 AND 5)::int AS night_pings
+      FROM mv_spacetime
+      WHERE entity_id IS NOT NULL AND entity_id <> 'SELF'
+      GROUP BY entity_id
+      HAVING COUNT(*) >= ${minDetections}
+    `).catch(() => []);
 
     // Small/live datasets may not have five pings per entity yet. Fall back to
     // all populated entities so the UI returns a useful scan instead of ERR.
     const relaxedThreshold = !ent.length && minDetections > 1;
     if (relaxedThreshold) {
-      ent = await sql`
-        SELECT entity_id, detections, avg_alt, min_alt, avg_spd, min_spd,
-               sub_stall_pings, low_alt_pings, night_pings
-        FROM mv_entities
-        WHERE detections >= 1
-      `.catch(() => []);
+      ent = await sql.unsafe(`
+        SELECT entity_id,
+               COUNT(*)::int AS detections,
+               ROUND(AVG(${altCol})::numeric, 0) AS avg_alt,
+               MIN(${altCol})::numeric AS min_alt,
+               ROUND(AVG(${spdCol})::numeric, 0) AS avg_spd,
+               MIN(${spdCol})::numeric AS min_spd,
+               COUNT(*) FILTER (WHERE ${spdCol} BETWEEN 1 AND 48)::int AS sub_stall_pings,
+               COUNT(*) FILTER (WHERE ${altCol} BETWEEN 1 AND 500)::int AS low_alt_pings,
+               COUNT(*) FILTER (WHERE EXTRACT(HOUR FROM ${tsCol}::timestamp) BETWEEN 0 AND 5)::int AS night_pings
+        FROM mv_spacetime
+        WHERE entity_id IS NOT NULL AND entity_id <> 'SELF'
+        GROUP BY entity_id
+        HAVING COUNT(*) >= 1
+      `).catch(() => []);
     }
 
     if (!ent.length) {
@@ -100,12 +127,12 @@ serve(async (req) => {
       return s[0] && s[0] !== "0" ? Number(s[0]) : 0;
     };
     const expBenford = [30.1, 17.6, 12.5, 9.7, 7.9, 6.7, 5.8, 5.1, 4.6];
-    const altSample: any[] = await sql`
-      SELECT altitude FROM mv_spacetime
-      WHERE altitude > 0 AND ts > NOW() - INTERVAL '120 days'
+    const altSample: any[] = await sql.unsafe(`
+      SELECT ${altCol} AS altitude FROM mv_spacetime
+      WHERE ${altCol} > 0 AND ${tsCol} > NOW() - INTERVAL '120 days'
       ORDER BY ts DESC
       LIMIT 50000
-    `.catch(() => []);
+    `).catch(() => []);
     const counts = new Array(10).fill(0);
     for (const r of altSample) counts[firstDigit(Number(r.altitude))]++;
     const total = counts.slice(1).reduce((a, b) => a + b, 0) || 1;

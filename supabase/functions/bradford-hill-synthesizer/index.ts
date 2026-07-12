@@ -16,7 +16,7 @@ async function neonQ(query: string): Promise<any[]> {
     body: JSON.stringify({ action: 'customQuery', query }),
   });
   const j = await r.json();
-  return j?.data ?? [];
+  return Array.isArray(j) ? j : (j?.data ?? []);
 }
 
 async function sha256(s: string) {
@@ -41,24 +41,50 @@ Deno.serve(async (req) => {
     const icao: string | null = body.icao || null;
 
     // ── Deterministic SQL scoring per criterion ────────────────────────────
+    // Use estimates + bounded sampling so the function returns in seconds on
+    // multi-million-row flight history while still reading real database state.
     const filter = icao ? `WHERE icao_code = '${icao.replace(/'/g, "''")}'` : '';
+    const stats = await neonQ(icao ? `
+      SELECT
+        COUNT(*)::bigint AS total_n,
+        COUNT(DISTINCT icao_code)::int AS uniq_n,
+        COUNT(*) FILTER (WHERE flagged = true)::bigint AS flag_n,
+        COUNT(*) FILTER (WHERE EXTRACT(HOUR FROM detection_timestamp::timestamp) BETWEEN 0 AND 5)::bigint AS night_n,
+        COUNT(*) FILTER (WHERE altitude > 0 AND altitude < 2000)::bigint AS prox_n,
+        (SELECT COUNT(*)::bigint FROM watchtower_biometrics_master) AS bio_n
+      FROM live_flight_detections_rows ${filter}
+    ` : `
+      WITH rel AS (
+        SELECT GREATEST(reltuples, 0)::numeric AS total
+        FROM pg_class
+        WHERE oid = 'public.live_flight_detections_rows'::regclass
+      ),
+      sample AS (
+        SELECT flagged, icao_code, altitude, detection_timestamp
+        FROM live_flight_detections_rows TABLESAMPLE SYSTEM (0.5)
+      ),
+      sample_totals AS (
+        SELECT GREATEST(COUNT(*), 1)::numeric AS sampled FROM sample
+      ),
+      scale AS (
+        SELECT (SELECT total FROM rel) / (SELECT sampled FROM sample_totals) AS factor
+      )
+      SELECT
+        (SELECT total::bigint FROM rel) AS total_n,
+        (SELECT COUNT(DISTINCT icao_code)::int FROM sample WHERE icao_code IS NOT NULL) AS uniq_n,
+        ROUND((SELECT COUNT(*) FROM sample WHERE flagged = true) * (SELECT factor FROM scale))::bigint AS flag_n,
+        ROUND((SELECT COUNT(*) FROM sample WHERE EXTRACT(HOUR FROM detection_timestamp::timestamp) BETWEEN 0 AND 5) * (SELECT factor FROM scale))::bigint AS night_n,
+        ROUND((SELECT COUNT(*) FROM sample WHERE altitude > 0 AND altitude < 2000) * (SELECT factor FROM scale))::bigint AS prox_n,
+        (SELECT COUNT(*)::bigint FROM watchtower_biometrics_master) AS bio_n
+    `);
 
-    const [totalDet, uniqHex, flagged, biometric, nightOps, proximity] = await Promise.all([
-      neonQ(`SELECT COUNT(*)::int AS n FROM live_flight_detections_rows ${filter}`),
-      neonQ(`SELECT COUNT(DISTINCT icao_code)::int AS n FROM live_flight_detections_rows ${filter}`),
-      neonQ(`SELECT COUNT(*)::int AS n FROM live_flight_detections_rows ${filter ? filter + ' AND' : 'WHERE'} flagged = true`),
-      neonQ(`SELECT COUNT(*)::int AS n FROM watchtower_biometrics_master`),
-      neonQ(`SELECT COUNT(*)::int AS n FROM live_flight_detections_rows ${filter ? filter + ' AND' : 'WHERE'} EXTRACT(HOUR FROM timestamp::timestamp) BETWEEN 0 AND 5`),
-      neonQ(`SELECT COUNT(*)::int AS n FROM live_flight_detections_rows ${filter ? filter + ' AND' : 'WHERE'} altitude_feet < 2000`),
-    ]);
-
-    const n = (r: any[]) => Number(r?.[0]?.n ?? 0);
-    const totalN = n(totalDet);
-    const uniqN = n(uniqHex);
-    const flagN = n(flagged);
-    const bioN = n(biometric);
-    const nightN = n(nightOps);
-    const proxN = n(proximity);
+    const row = stats?.[0] ?? {};
+    const totalN = Number(row.total_n ?? 0);
+    const uniqN = Number(row.uniq_n ?? 0);
+    const flagN = Number(row.flag_n ?? 0);
+    const bioN = Number(row.bio_n ?? 0);
+    const nightN = Number(row.night_n ?? 0);
+    const proxN = Number(row.prox_n ?? 0);
 
     const criteria: CriterionScore[] = [
       {

@@ -17,7 +17,7 @@ export function ForceMultiplierPanel() {
     try {
       const { data, error } = await supabase.functions.invoke(fn, { body });
       const payload = error ? { error: error.message } : data;
-      setHistory((h) => [{ kind, ok: !error, payload, ts: new Date().toISOString() }, ...h].slice(0, 8));
+      setHistory((h) => [{ kind, ok: !error && data?.ok !== false, payload, ts: new Date().toISOString() }, ...h].slice(0, 8));
     } catch (e: any) {
       setHistory((h) => [{ kind, ok: false, payload: { error: e.message ?? String(e) }, ts: new Date().toISOString() }, ...h].slice(0, 8));
     } finally {

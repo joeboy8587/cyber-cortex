@@ -65,6 +65,36 @@ serve(async (req) => {
       LIMIT 50000
     `).catch(() => []);
 
+    // If the materialized view is sparse/stale, use a bounded slice of the
+    // live flight cache. This keeps PageRank useful without scanning millions
+    // of rows or blocking the request.
+    if (!edges.length) {
+      edges = await sql.unsafe(`
+        WITH recent AS (
+          SELECT COALESCE(registration, icao_code, callsign) AS entity_id,
+                 date_trunc('minute', detection_timestamp::timestamp)
+                   - (EXTRACT(MINUTE FROM detection_timestamp::timestamp)::int % 10) * INTERVAL '1 minute' AS tb,
+                 ROUND((latitude * 20)::numeric)::int AS gx,
+                 ROUND((longitude * 20)::numeric)::int AS gy
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() - INTERVAL '24 hours'
+            AND latitude BETWEEN 35.20 AND 35.60
+            AND longitude BETWEEN -119.25 AND -118.75
+            AND COALESCE(registration, icao_code, callsign) IS NOT NULL
+          ORDER BY detection_timestamp DESC
+          LIMIT 5000
+        )
+        SELECT a.entity_id AS src, b.entity_id AS dst, COUNT(*)::int AS w
+        FROM recent a
+        JOIN recent b
+          ON a.tb = b.tb AND a.gx = b.gx AND a.gy = b.gy
+         AND a.entity_id < b.entity_id
+        GROUP BY a.entity_id, b.entity_id
+        HAVING COUNT(*) >= 1
+        LIMIT 50000
+      `).catch(() => []);
+    }
+
     // Sparse live snapshots often do not produce same-cell edges. Fall back to
     // biometric co-correlation edges, which are already bounded by ±5 minutes.
     if (!edges.length) {

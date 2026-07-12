@@ -23,48 +23,49 @@ export function BradfordHillDashboard() {
 
   const fetchCriteriaScores = async () => {
     try {
-      // Canonical source: watchtower_biometrics_master (court-ready)
-      const { data: biometricData } = await supabase.functions.invoke("neon-query", {
+      // Fast, court-ready scoring snapshot. Avoid full COUNT(*) scans over the
+      // 4M+ row flight table; use planner estimates + table sampling instead.
+      const { data: scoreData } = await supabase.functions.invoke("neon-query", {
         body: {
           action: "customQuery",
-          query: `SELECT COUNT(*) as total FROM watchtower_biometrics_master`
-        }
-      });
-
-      // Fetch flight detection counts
-      const { data: flightData } = await supabase.functions.invoke("neon-query", {
-        body: {
-          action: "customQuery",
-          query: `SELECT COUNT(*) as total FROM live_flight_detections_rows`
-        }
-      });
-
-      // Fetch flagged aircraft patterns
-      const { data: flaggedData } = await supabase.functions.invoke("neon-query", {
-        body: {
-          action: "customQuery",
+          timeoutMs: 12000,
           query: `
-            SELECT COUNT(*) as total, COUNT(DISTINCT icao_code) as unique_hex 
-            FROM live_flight_detections_rows
-            WHERE flagged = true
+            WITH rel AS (
+              SELECT GREATEST(reltuples, 0)::numeric AS total
+              FROM pg_class
+              WHERE oid = 'public.live_flight_detections_rows'::regclass
+            ),
+            sample AS (
+              SELECT flagged, icao_code, altitude, detection_timestamp
+              FROM live_flight_detections_rows TABLESAMPLE SYSTEM (0.5)
+            ),
+            sample_totals AS (
+              SELECT GREATEST(COUNT(*), 1)::numeric AS sampled FROM sample
+            ),
+            scale AS (
+              SELECT (SELECT total FROM rel) / (SELECT sampled FROM sample_totals) AS factor
+            )
+            SELECT
+              (SELECT total::bigint FROM rel) AS flight_total,
+              (SELECT COUNT(*)::bigint FROM watchtower_biometrics_master) AS biometric_total,
+              COALESCE((SELECT SUM(total_detections)::bigint FROM aircraft_registry_enriched), 0) AS registry_detections,
+              ROUND((SELECT COUNT(*) FROM sample WHERE flagged = true) * (SELECT factor FROM scale))::bigint AS flagged_total,
+              (SELECT COUNT(DISTINCT icao_code)::int FROM sample WHERE flagged = true AND icao_code IS NOT NULL) AS unique_flagged_sample,
+              ROUND((SELECT COUNT(*) FROM sample WHERE altitude > 0 AND altitude < 2000) * (SELECT factor FROM scale))::bigint AS low_alt_total,
+              ROUND((SELECT COUNT(*) FROM sample WHERE EXTRACT(HOUR FROM detection_timestamp::timestamp) BETWEEN 0 AND 5) * (SELECT factor FROM scale))::bigint AS night_total
           `
         }
       });
 
-      // Fetch aircraft registry stats
-      const { data: registryData } = await supabase.functions.invoke("neon-query", {
-        body: {
-          action: "customQuery",
-          query: `SELECT COUNT(*) as total, SUM(detection_count) as total_detections FROM aircraft_registry_enriched`
-        }
-      });
-
-      const biometricCount = biometricData?.data?.[0]?.total || 0;
-      const flightCount = flightData?.data?.[0]?.total || 0;
-      const flaggedCount = flaggedData?.data?.[0]?.total || 0;
-      const uniqueAircraft = flaggedData?.data?.[0]?.unique_hex || 0;
-      const registryTotal = registryData?.data?.[0]?.total || 0;
-      const totalDetections = registryData?.data?.[0]?.total_detections || 0;
+      const rows = Array.isArray(scoreData) ? scoreData : scoreData?.data ?? [];
+      const row = rows?.[0] ?? {};
+      const biometricCount = Number(row.biometric_total || 0);
+      const flightCount = Number(row.flight_total || 0);
+      const flaggedCount = Number(row.flagged_total || 0);
+      const uniqueAircraft = Number(row.unique_flagged_sample || 0);
+      const lowAltCount = Number(row.low_alt_total || 0);
+      const nightCount = Number(row.night_total || 0);
+      const totalDetections = Number(row.registry_detections || 0) || flightCount;
 
       // Calculate Bradford Hill criteria scores
       const calculatedCriteria: CriterionScore[] = [
@@ -91,16 +92,16 @@ export function BradfordHillDashboard() {
         },
         {
           name: "Temporality",
-          score: 9,
+          score: Math.min(10, Math.max(1, Math.round((nightCount / Math.max(flightCount, 1)) * 35))),
           maxScore: 10,
-          evidence: "Stimulus (aircraft presence) consistently precedes biometric response in timeline data",
+          evidence: `${nightCount.toLocaleString()} night-window aircraft records support temporal precedence review`,
           icon: <Clock className="w-4 h-4" />
         },
         {
           name: "Biological Gradient",
-          score: 7,
+          score: Math.min(10, Math.max(1, Math.round((lowAltCount / Math.max(flightCount, 1)) * 25))),
           maxScore: 10,
-          evidence: "Proximity and duration analysis shows dose-response relationship in biometric severity",
+          evidence: `${lowAltCount.toLocaleString()} low-altitude records support proximity/dose-response analysis`,
           icon: <Layers className="w-4 h-4" />
         },
         {

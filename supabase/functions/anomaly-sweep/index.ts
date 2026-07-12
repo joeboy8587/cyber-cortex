@@ -130,7 +130,7 @@ serve(async (req) => {
     const altSample: any[] = await sql.unsafe(`
       SELECT ${altCol} AS altitude FROM mv_spacetime
       WHERE ${altCol} > 0 AND ${tsCol} > NOW() - INTERVAL '120 days'
-      ORDER BY ts DESC
+      ORDER BY ${tsCol} DESC
       LIMIT 50000
     `).catch(() => []);
     const counts = new Array(10).fill(0);

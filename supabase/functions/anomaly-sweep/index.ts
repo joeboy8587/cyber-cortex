@@ -58,7 +58,8 @@ serve(async (req) => {
 
     // Small/live datasets may not have five pings per entity yet. Fall back to
     // all populated entities so the UI returns a useful scan instead of ERR.
-    if (!ent.length && minDetections > 1) {
+    const relaxedThreshold = !ent.length && minDetections > 1;
+    if (relaxedThreshold) {
       ent = await sql`
         SELECT entity_id, detections, avg_alt, min_alt, avg_spd, min_spd,
                sub_stall_pings, low_alt_pings, night_pings
@@ -68,7 +69,8 @@ serve(async (req) => {
     }
 
     if (!ent.length) {
-      return new Response(JSON.stringify({ error: "mv_entities empty — run materialized-views createUnified first" }), { status: 412, headers: cors });
+      await sql.end();
+      return json({ ok: false, status: "needs_unified_views", error: "mv_entities is empty. Run Build Unified Views first, then View Stats." });
     }
 
     // Robust z-scores on alt + speed minimums (low = anomalous)
@@ -136,7 +138,7 @@ serve(async (req) => {
         top: scored.slice(0, 20),
         benford_chi_squared: Math.round(benfordChi * 100) / 100,
         benford_verdict: benfordChi > 15.5 ? "DEVIATION (possible spoof / fabrication)" : "consistent with natural data",
-        note: minDetections > ent.length ? "Small unified view scan completed with relaxed entity threshold." : undefined,
+        note: relaxedThreshold ? "Small unified view scan completed with relaxed entity threshold." : undefined,
       });
   } catch (e) {
     try { await sql.end(); } catch {}

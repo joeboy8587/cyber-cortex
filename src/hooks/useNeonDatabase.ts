@@ -151,6 +151,13 @@ export function useNeonDatabase() {
             throw new Error(msg);
           }
 
+          if (action === 'customQuery' && data?.nonFatal) {
+            const value = data.data ?? [];
+            cacheRef.current.set(key, { at: Date.now(), value });
+            setConnectionStatus('connected');
+            return value;
+          }
+
           if (data?.error) {
             const msg = String(data.error);
 

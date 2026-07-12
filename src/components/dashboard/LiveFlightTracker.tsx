@@ -46,6 +46,7 @@ export function LiveFlightTracker() {
   const [apiConnected, setApiConnected] = useState<boolean | null>(null);
   const [activeSource, setActiveSource] = useState<string>('—');
   const [dataSource, setDataSource] = useState<'all' | 'live' | 'surveillance'>('all');
+  const [faaClassifier, setFaaClassifier] = useState<{ status: string; matched?: number; ghosts?: number; mismatches?: number } | null>(null);
 
   // Fetch live flights from OpenSky Network API (FREE) - focused on Kern County
   const fetchFromOpenSky = useCallback(async () => {
@@ -133,6 +134,13 @@ export function LiveFlightTracker() {
           aircraft_type_desc: f.aircraftTypeDesc || '',
           shell_auto_detected: f.shellAutoDetected || false,
           shell_detection_reason: f.shellDetectionReason || '',
+          faa_n_number: f.faaNNumber || null,
+          faa_mode_s_hex: f.faaModeSHex || null,
+          faa_registrant_name: f.faaRegistrantName || f.ownerOperator || null,
+          faa_registrant_city: f.faaRegistrantCity || null,
+          faa_registrant_state: f.faaRegistrantState || null,
+          faa_status: f.faaStatus || null,
+          faa_identity_status: f.faaIdentityStatus || null,
         }));
       
       // Combine: API flights first (fresher), then DB flights not already in API set
@@ -192,6 +200,28 @@ export function LiveFlightTracker() {
     }
   }, [fetchFromOpenSky, dataSource]);
 
+  const runFaaClassifier = useCallback(async () => {
+    setFaaClassifier({ status: 'running' });
+    try {
+      const { data, error } = await supabase.functions.invoke('neon-faa-enrich', {
+        body: { action: 'buildAndAudit' }
+      });
+      if (error) throw error;
+      const health = data?.join_health_unified || {};
+      setFaaClassifier({
+        status: 'ok',
+        matched: Number(health.regs_matched || 0),
+        ghosts: Number(health.ghosts || 0),
+        mismatches: Number(health.mismatches || 0),
+      });
+      toast.success('FAA classifier refreshed');
+      fetchLiveFlights();
+    } catch (e: any) {
+      setFaaClassifier({ status: 'error' });
+      toast.error(e.message || 'FAA classifier failed');
+    }
+  }, [fetchLiveFlights]);
+
   useEffect(() => {
     fetchLiveFlights();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -244,6 +274,10 @@ export function LiveFlightTracker() {
             <Button size="sm" variant="outline" onClick={fetchLiveFlights} disabled={loading || dbLoading}>
               <RefreshCw className={`w-4 h-4 mr-1 ${loading ? 'animate-spin' : ''}`} />
               Refresh
+            </Button>
+            <Button size="sm" variant="outline" onClick={runFaaClassifier} disabled={faaClassifier?.status === 'running'}>
+              <Database className={`w-4 h-4 mr-1 ${faaClassifier?.status === 'running' ? 'animate-pulse' : ''}`} />
+              FAA Classifier
             </Button>
             
             {/* Data source filter */}
@@ -322,6 +356,11 @@ export function LiveFlightTracker() {
               <Database className="w-3 h-3" />
               {dbConnected ? 'DB OK' : dbConnected === false ? 'DB Error' : 'DB...'}
             </Badge>
+            {faaClassifier?.status === 'ok' && (
+              <Badge variant="outline" className="gap-1 border-primary/50 text-primary">
+                FAA {faaClassifier.matched} matched · {faaClassifier.mismatches} mismatch · {faaClassifier.ghosts} ghost
+              </Badge>
+            )}
             <span className="text-xs text-muted-foreground">
               {lastUpdate.toLocaleTimeString()}
             </span>
@@ -404,6 +443,11 @@ export function LiveFlightTracker() {
                         FLAGGED
                       </Badge>
                     )}
+                    {flight.faa_identity_status && (
+                      <Badge variant={flight.faa_identity_status === 'IDENTITY_CONFIRMED' ? 'outline' : 'destructive'}>
+                        {flight.faa_identity_status === 'IDENTITY_CONFIRMED' ? 'FAA MATCH' : flight.faa_identity_status}
+                      </Badge>
+                    )}
                     {getThreatBadge(flight.threat_level)}
                   </div>
                 </div>
@@ -427,7 +471,7 @@ export function LiveFlightTracker() {
                   </div>
                 </div>
                 {/* Rich ADS-B data row */}
-                {(flight.owner_operator || flight.aircraft_type || flight.shell_auto_detected) && (
+                {(flight.owner_operator || flight.aircraft_type || flight.shell_auto_detected || flight.faa_registrant_name) && (
                   <div className="mt-1.5 flex flex-wrap gap-1.5 text-xs">
                     {flight.owner_operator && (
                       <span className={`px-1.5 py-0.5 rounded font-mono ${flight.shell_auto_detected ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30' : 'bg-muted text-muted-foreground'}`}>
@@ -443,6 +487,11 @@ export function LiveFlightTracker() {
                       <Badge variant="outline" className="text-purple-400 border-purple-500/50 text-[10px] h-5">
                         🕵 SHELL DETECTED
                       </Badge>
+                    )}
+                    {flight.faa_registrant_name && (
+                      <span className="px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-mono">
+                        FAA {flight.faa_registrant_name}{flight.faa_registrant_state ? ` · ${flight.faa_registrant_state}` : ''}
+                      </span>
                     )}
                   </div>
                 )}

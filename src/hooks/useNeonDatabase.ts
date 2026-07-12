@@ -69,6 +69,13 @@ export interface UnifiedFlight {
   shell_auto_detected?: boolean;
   shell_detection_reason?: string;
   vertical_rate?: number;
+  faa_n_number?: string | null;
+  faa_mode_s_hex?: string | null;
+  faa_registrant_name?: string | null;
+  faa_registrant_city?: string | null;
+  faa_registrant_state?: string | null;
+  faa_status?: string | null;
+  faa_identity_status?: string | null;
 }
 
 const MAX_RETRIES = 3;

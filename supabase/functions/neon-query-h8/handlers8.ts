@@ -7,21 +7,35 @@ export async function handleAction8(action: string, body: Record<string, any>, s
     case 'getKernCountyFlights': {
       const limitCount = body.limit || 100;
       return await sql.unsafe(`
-        SELECT COALESCE(icao_code,'') as hex, COALESCE(registration,'') as registration, COALESCE(callsign,'') as callsign,
-          COALESCE(altitude,0) as altitude, COALESCE(speed,0) as speed, latitude, longitude,
-          COALESCE(heading,0) as heading, COALESCE(detection_timestamp,created_at) as event_time,
-          taxonomy_tag, COALESCE(threat_score,0) as threat_score, COALESCE(flagged,false) as is_flagged,
-          flagged_reasons, 'live_detection' as data_source,
-          CASE WHEN taxonomy_tag IN ('tier1_priority','xxb_tier1_priority','tier0_kcso','xxb_tier0_kcso','xxb_kcso','xxb_kcso_shell') THEN 'critical'
-            WHEN taxonomy_tag IN ('tier2_shell','xxb_tier2_shell','xxb_shell') THEN 'high'
-            WHEN taxonomy_tag IN ('military_asset','xxb_military') THEN 'high'
-            WHEN taxonomy_tag IN ('medical_air','xxb_medical_air') THEN 'medium'
-            WHEN altitude < 1500 AND altitude > 0 THEN 'medium' ELSE 'normal' END as threat_level,
-          CASE WHEN taxonomy_tag IN ('military_asset','xxb_military') OR registration ~ '^[0-9]{2}-[0-9]{5}$' THEN true ELSE false END as is_military
-        FROM live_flight_detections_rows
-        WHERE latitude BETWEEN 35.20 AND 35.60 AND longitude BETWEEN -119.25 AND -118.75
-          AND latitude IS NOT NULL AND longitude IS NOT NULL
-        ORDER BY detection_timestamp DESC NULLS LAST LIMIT ${limitCount}
+        SELECT COALESCE(d.icao_code,'') as hex, COALESCE(d.registration,'') as registration, COALESCE(d.callsign,'') as callsign,
+          COALESCE(d.altitude,0) as altitude, COALESCE(d.speed,0) as speed, d.latitude, d.longitude,
+          COALESCE(d.heading,0) as heading, COALESCE(d.detection_timestamp,d.created_at) as event_time,
+          d.taxonomy_tag, COALESCE(d.threat_score,0) as threat_score, COALESCE(d.flagged,false) as is_flagged,
+          d.flagged_reasons, 'live_detection' as data_source,
+          CASE WHEN d.taxonomy_tag IN ('tier1_priority','xxb_tier1_priority','tier0_kcso','xxb_tier0_kcso','xxb_kcso','xxb_kcso_shell') THEN 'critical'
+            WHEN d.taxonomy_tag IN ('tier2_shell','xxb_tier2_shell','xxb_shell') THEN 'high'
+            WHEN d.taxonomy_tag IN ('military_asset','xxb_military') THEN 'high'
+            WHEN d.taxonomy_tag IN ('medical_air','xxb_medical_air') THEN 'medium'
+            WHEN d.altitude < 1500 AND d.altitude > 0 THEN 'medium' ELSE 'normal' END as threat_level,
+          CASE WHEN d.taxonomy_tag IN ('military_asset','xxb_military') OR d.registration ~ '^[0-9]{2}-[0-9]{5}$' THEN true ELSE false END as is_military,
+          COALESCE(d.owner_operator, f.registrant_name, d.registered_owner) as owner_operator,
+          COALESCE(d.aircraft_type, f.aircraft_manufacturer || ' ' || f.aircraft_model) as aircraft_type,
+          f.n_number as faa_n_number,
+          f.mode_s_hex as faa_mode_s_hex,
+          f.registrant_name as faa_registrant_name,
+          f.registrant_city as faa_registrant_city,
+          f.registrant_state as faa_registrant_state,
+          f.status as faa_status,
+          CASE
+            WHEN f.n_number IS NULL THEN 'UNREGISTERED_OR_GHOST'
+            WHEN d.icao_code IS NOT NULL AND f.mode_s_hex IS NOT NULL AND UPPER(f.mode_s_hex) <> UPPER(d.icao_code) THEN 'ICAO_FAA_MISMATCH'
+            ELSE 'IDENTITY_CONFIRMED'
+          END as faa_identity_status
+        FROM live_flight_detections_rows d
+        LEFT JOIN faa_aircraft_registry f ON UPPER(f.n_number) = UPPER(d.registration)
+        WHERE d.latitude BETWEEN 35.20 AND 35.60 AND d.longitude BETWEEN -119.25 AND -118.75
+          AND d.latitude IS NOT NULL AND d.longitude IS NOT NULL
+        ORDER BY d.detection_timestamp DESC NULLS LAST LIMIT ${limitCount}
       `);
     }
 

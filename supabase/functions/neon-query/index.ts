@@ -209,6 +209,31 @@ async function getHandler8() {
 const VERSION = "2.13.0";
 console.log(`neon-query v${VERSION} booting...`);
 
+const DEFAULT_CUSTOM_QUERY_TIMEOUT_MS = 18000;
+const MAX_CUSTOM_QUERY_TIMEOUT_MS = 24000;
+
+function parseTimeoutMs(value: unknown): number {
+  const requested = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(requested) || requested <= 0) return DEFAULT_CUSTOM_QUERY_TIMEOUT_MS;
+  return Math.max(1000, Math.min(Math.floor(requested), MAX_CUSTOM_QUERY_TIMEOUT_MS));
+}
+
+async function runCustomQueryWithTimeout(sql: any, query: string, timeoutMs: number) {
+  let timer: number | undefined;
+  try {
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`customQuery exceeded ${Math.round(timeoutMs / 1000)}s safety window`)),
+        timeoutMs,
+      ) as unknown as number;
+    });
+
+    return await Promise.race([sql.unsafe(query), timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
@@ -429,7 +454,7 @@ Deno.serve(async (req) => {
           const hasDangerousKeywords = /\b(INSERT|UPDATE|DELETE|DROP|TRUNCATE|ALTER|CREATE|GRANT|REVOKE)\b/i.test(query);
           if (!isSelectQuery || hasDangerousKeywords) throw new Error('Only SELECT queries are allowed');
           try {
-            result = await sql.unsafe(query);
+            result = await runCustomQueryWithTimeout(sql, query, parseTimeoutMs(body.timeoutMs ?? body.timeout));
           } catch (e) {
             const err = e as any;
             console.warn('customQuery non-fatal database error:', { code: String(err?.code || ''), message: String(err?.message || 'Query failed') });

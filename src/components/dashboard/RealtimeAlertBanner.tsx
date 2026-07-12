@@ -27,17 +27,20 @@ export const RealtimeAlertBanner = () => {
 
   const scan = useCallback(async () => {
     try {
+      // Keep the query cheap: narrow time window + small LIMIT to avoid
+      // 120s edge function budget on the large detections table.
       const { data, error } = await supabase.functions.invoke("neon-query", {
         body: {
           action: "customQuery",
           query: `
             SELECT registration, callsign, altitude, speed, detection_timestamp
             FROM live_flight_detections_rows
-            WHERE detection_timestamp > NOW() - INTERVAL '10 minutes'
+            WHERE detection_timestamp > NOW() - INTERVAL '3 minutes'
               AND registration IS NOT NULL
             ORDER BY detection_timestamp DESC
-            LIMIT 200
+            LIMIT 50
           `,
+          timeout: 15000,
         },
       });
       if (error || !data?.data) return;

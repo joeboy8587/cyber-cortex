@@ -35,17 +35,24 @@ serve(async (req) => {
   try {
     await sql.unsafe(`SET statement_timeout = '20s'`).catch(() => {});
 
+    const cols = await sql`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema='public' AND table_name='mv_spacetime'
+    `.catch(() => []);
+    const have = new Set(cols.map((r: any) => r.column_name));
+    const tsCol = have.has("ts") ? "ts" : "event_timestamp";
+
     // Build edges: pairs co-present in same 0.05° geo cell + 10-min bucket.
     // Cap edge count to keep runtime sane.
-    let edges: any[] = await sql`
+    let edges: any[] = await sql.unsafe(`
       WITH bucketed AS (
         SELECT entity_id,
-               date_trunc('minute', ts)
-                 - (EXTRACT(MINUTE FROM ts)::int % 10) * INTERVAL '1 minute' AS tb,
+               date_trunc('minute', ${tsCol}::timestamp)
+                 - (EXTRACT(MINUTE FROM ${tsCol}::timestamp)::int % 10) * INTERVAL '1 minute' AS tb,
                ROUND((lat * 20)::numeric)::int AS gx,
                ROUND((lng * 20)::numeric)::int AS gy
         FROM mv_spacetime
-        WHERE ts > NOW() - INTERVAL '90 days'
+        WHERE ${tsCol} > NOW() - INTERVAL '90 days'
           AND lat IS NOT NULL AND entity_id IS NOT NULL
       )
       SELECT a.entity_id AS src, b.entity_id AS dst, COUNT(*)::int AS w
@@ -56,7 +63,7 @@ serve(async (req) => {
       GROUP BY a.entity_id, b.entity_id
       HAVING COUNT(*) >= 2
       LIMIT 50000
-    `.catch(() => []);
+    `).catch(() => []);
 
     // Sparse live snapshots often do not produce same-cell edges. Fall back to
     // biometric co-correlation edges, which are already bounded by ±5 minutes.

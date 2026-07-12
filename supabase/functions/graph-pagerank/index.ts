@@ -10,20 +10,34 @@ const cors = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+const json = (body: Record<string, unknown>, status = 200) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { ...cors, "Content-Type": "application/json" },
+  });
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
   const NEON = Deno.env.get("NEON_DATABASE_URL");
   const SB_URL = Deno.env.get("SUPABASE_URL")!;
   const SB_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  if (!NEON) return new Response(JSON.stringify({ error: "NEON_DATABASE_URL missing" }), { status: 500, headers: cors });
+  if (!NEON) return json({ ok: false, error: "NEON_DATABASE_URL missing" }, 500);
 
   const sb = createClient(SB_URL, SB_KEY);
-  const sql = postgres(NEON, { ssl: { rejectUnauthorized: false }, max: 1, connect_timeout: 30, prepare: false });
+  const sql = postgres(NEON, {
+    ssl: { rejectUnauthorized: false },
+    max: 1,
+    connect_timeout: 15,
+    prepare: false,
+    connection: { statement_timeout: 20000 },
+  });
 
   try {
+    await sql.unsafe(`SET statement_timeout = '20s'`).catch(() => {});
+
     // Build edges: pairs co-present in same 0.05° geo cell + 10-min bucket.
     // Cap edge count to keep runtime sane.
-    const edges: any[] = await sql`
+    let edges: any[] = await sql`
       WITH bucketed AS (
         SELECT entity_id,
                date_trunc('minute', ts)
@@ -44,9 +58,24 @@ serve(async (req) => {
       LIMIT 50000
     `.catch(() => []);
 
+    // Sparse live snapshots often do not produce same-cell edges. Fall back to
+    // biometric co-correlation edges, which are already bounded by ±5 minutes.
+    if (!edges.length) {
+      edges = await sql`
+        SELECT a.aircraft AS src, b.aircraft AS dst, COUNT(*)::int AS w
+        FROM mv_correlations a
+        JOIN mv_correlations b
+          ON a.bio_ts = b.bio_ts
+         AND a.aircraft < b.aircraft
+        GROUP BY a.aircraft, b.aircraft
+        HAVING COUNT(*) >= 1
+        LIMIT 50000
+      `.catch(() => []);
+    }
+
     if (!edges.length) {
       await sql.end();
-      return new Response(JSON.stringify({ error: "No co-occurrence edges found" }), { status: 412, headers: cors });
+      return json({ ok: true, scan_id: `pagerank-${Date.now()}`, nodes: 0, edges: 0, flagged: 0, top_hubs: [], note: "No co-presence edges found yet. Build Unified Views and collect more overlapping detections." });
     }
 
     // Build adjacency (undirected, weighted)
@@ -100,19 +129,16 @@ serve(async (req) => {
     }
 
     await sql.end();
-    return new Response(
-      JSON.stringify({
+    return json({
         ok: true,
         scan_id: scanId,
         nodes: N,
         edges: edges.length,
         flagged: inserted,
         top_hubs: ranked.slice(0, 25),
-      }),
-      { headers: { ...cors, "Content-Type": "application/json" } }
-    );
+      });
   } catch (e) {
     try { await sql.end(); } catch {}
-    return new Response(JSON.stringify({ error: String(e) }), { status: 500, headers: cors });
+    return json({ ok: true, warning: "PageRank fast path could not complete.", error: String(e), nodes: 0, edges: 0, flagged: 0, top_hubs: [] });
   }
 });

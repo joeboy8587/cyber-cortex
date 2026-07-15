@@ -50,30 +50,38 @@ export function LegalAnalystAgent() {
     try {
       // Fetch enterprise structure
       setAnalysisProgress(20);
-      const { data: enterprise } = await supabase.functions.invoke("neon-query", {
+      const { data: enterpriseResp } = await supabase.functions.invoke("neon-query", {
         body: {
           action: "customQuery",
           query: `SELECT entity_name, tier, role, legal_exposure 
                   FROM criminal_enterprise_command_structure 
-                  ORDER BY tier LIMIT 30`
+                  ORDER BY tier LIMIT 30`,
+          timeoutMs: 15000
         }
       });
+      const enterprise = Array.isArray(enterpriseResp) ? enterpriseResp : (enterpriseResp?.data ?? []);
 
       setAnalysisProgress(40);
 
-      // Fetch flight violations
-      const { data: flights } = await supabase.functions.invoke("neon-query", {
+      // Fetch flight violations (sampled to avoid statement timeout on multi-M row table)
+      const { data: flightsResp } = await supabase.functions.invoke("neon-query", {
         body: {
           action: "customQuery",
-          query: `SELECT registration, taxonomy_tag, COUNT(*) as count,
-                  MIN(altitude) as min_alt, AVG(altitude) as avg_alt
-                  FROM live_flight_detections_rows
-                  WHERE altitude < 1000
+          query: `WITH sample AS (
+                    SELECT registration, taxonomy_tag, altitude
+                    FROM live_flight_detections_rows TABLESAMPLE SYSTEM (1)
+                    WHERE altitude IS NOT NULL AND altitude < 1000
+                  )
+                  SELECT registration, taxonomy_tag, COUNT(*) as count,
+                         MIN(altitude) as min_alt, AVG(altitude) as avg_alt
+                  FROM sample
                   GROUP BY registration, taxonomy_tag
                   HAVING COUNT(*) > 5
-                  ORDER BY count DESC LIMIT 20`
+                  ORDER BY count DESC LIMIT 20`,
+          timeoutMs: 20000
         }
       });
+      const flights = Array.isArray(flightsResp) ? flightsResp : (flightsResp?.data ?? []);
 
       setAnalysisProgress(60);
 

@@ -19,7 +19,8 @@ import {
   FolderOpen,
   ScanEye,
   Fingerprint,
-  HeartPulse
+  HeartPulse,
+  Fuel
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useAuth } from "@/hooks/useAuth";
@@ -128,6 +129,12 @@ const navigationItems = [
     url: "/data-health",
     icon: HeartPulse,
     description: "Neon Inventory & Pipeline Coverage"
+  },
+  {
+    title: "Tanker Network",
+    url: "/tanker-network",
+    icon: Fuel,
+    description: "KC-135/46/10 → Receivers Graph"
   },
 ];
 

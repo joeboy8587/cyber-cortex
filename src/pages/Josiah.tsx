@@ -28,6 +28,7 @@ import { EvidenceSourcesPanel } from "@/components/dashboard/EvidenceSourcesPane
 import { WTPRCasePanel } from "@/components/dashboard/WTPRCasePanel";
 import { FARClassifierPanel } from "@/components/dashboard/FARClassifierPanel";
 import { SchemaWiringPanel } from "@/components/dashboard/SchemaWiringPanel";
+import { MLFeatureStorePanel } from "@/components/dashboard/MLFeatureStorePanel";
 
 export default function Josiah() {
   return (
@@ -76,6 +77,11 @@ export default function Josiah() {
         {/* NEW: Sentinel ML — 3-stage ADS-B anomaly framework (SQL-only) */}
         <section>
           <SentinelMLPanel />
+        </section>
+
+        {/* NEW: ML Feature Store + Ensemble (Phase 1+2: IForest + XGB surrogates) */}
+        <section>
+          <MLFeatureStorePanel />
         </section>
 
         {/* NEW: Evidence Source Registry — auto-discovered Neon tables */}

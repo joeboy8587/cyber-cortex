@@ -851,9 +851,12 @@ serve(async (req) => {
         details: `${spoofingDetections.length} ADS-B spoofing indicators (hex-allocation validated) — ` +
           spoofRegs.slice(0, 5).map(r => `${r}: ${spoofReasons.get(String(r).toUpperCase()) || 'anomalous telemetry'}`).join(' · '),
         timestamp: new Date().toISOString(), relatedAircraft: spoofRegs as string[]
-
       });
     }
+    if (spoofCleared > 0) {
+      proactiveAlerts.push(`✅ ${spoofCleared} foreign-registered detections cleared by ICAO hex-block validation (legitimate airframes, not spoofing).`);
+    }
+
 
     // ========== STEP 7.4: DRONE SWARM ==========
     const swarmWindowMs = THREAT_SIGNATURES.droneSignatures.swarmTimeWindowMinutes * 60 * 1000;

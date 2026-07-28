@@ -245,8 +245,11 @@ function classifyAircraft(registration: string, callsign: string, altitude: numb
     };
   }
   
-  // Medical air patterns
-  if (/AM|RX|MERCY|LIFE|MED/i.test(reg) || /AM|RX|MERCY|LIFE|MED/i.test(call)) {
+  // Medical air patterns — anchored, not substring (AMX665 is Aeromexico, not medical).
+  const MEDICAL_REG = /^N\d{1,4}(AM|RX|MD)$/;
+  const MEDICAL_CALL = /^(MERCY|LIFE|LIFEGUARD|MEDEVAC|EVAC|CARE|AIRMED|ANGEL|STAR|PHI)\w*/;
+  if (!isScheduledAirlineCallsign(call) && (MEDICAL_REG.test(reg) || MEDICAL_CALL.test(call))) {
+
     const isSuspicious = altitude > 0 && altitude < 2000;
     return {
       taxonomyTag: 'medical_air',

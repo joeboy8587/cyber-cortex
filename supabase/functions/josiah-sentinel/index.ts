@@ -78,6 +78,92 @@ const SHELL_OWNOP_KEYWORDS = [
   'LEASING', 'CHARTER', 'MANAGEMENT', 'SERVICES',
 ];
 
+// ─────────────────────────────────────────────────────────────────────────────
+// CREDIBILITY GUARDS — scheduled commercial overflight must never be scored as
+// tactical activity. The LA–Asia/Mexico transcontinental corridor crosses the
+// Kern AOI nightly at FL180+ and previously produced false CRITICALs.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ICAO 3-letter operating codes of scheduled passenger/cargo carriers.
+const SCHEDULED_AIRLINE_PREFIXES = [
+  'AAL','UAL','DAL','SWA','ASA','JBU','NKS','FFT','HAL','SKW','AAY','RPA','ENY','JIA','EDV',
+  'VOI','AMX','VIV','MXY','ACA','WJA','JZA','TSC',
+  'KAL','AAR','CPA','CSN','CES','CCA','CSG','CSC','SJX','CHH','CQH','EVA','CAL','ANA','JAL',
+  'SIA','THA','MAS','PAL','GIA','QFA','ANZ','FJI','VAU',
+  'BAW','VIR','AFR','DLH','KLM','SWR','IBE','AZA','TAP','SAS','FIN','AUA','EIN','RYR','EZY',
+  'UAE','QTR','ETD','SVA','ELY','THY',
+  'CMP','AVA','LAN','TAM','GLO','AZU','ARG','LPE',
+  'FDX','UPS','GTI','ABX','CKS','ATN','NCA','CLX','GEC','BOX','CAO','CKK','SQC','PAC',
+];
+
+function airlineCallsignPrefix(callsign?: string): string | null {
+  const c = String(callsign || '').toUpperCase().trim();
+  const m = c.match(/^([A-Z]{3})\d/);
+  if (!m) return null;
+  return SCHEDULED_AIRLINE_PREFIXES.includes(m[1]) ? m[1] : null;
+}
+
+// ICAO 24-bit address allocation blocks by registration prefix (ITU country blocks).
+// Used to CLEAR legitimate foreign airframes instead of flagging them on prefix alone.
+const ICAO_HEX_BLOCKS: Array<{ prefixes: string[]; country: string; from: number; to: number }> = [
+  { prefixes: ['N'],                     country: 'United States', from: 0xA00000, to: 0xAFFFFF },
+  { prefixes: ['C-', 'C'],               country: 'Canada',        from: 0xC00000, to: 0xC3FFFF },
+  { prefixes: ['XA', 'XB', 'XC'],        country: 'Mexico',        from: 0x0D0000, to: 0x0D8FFF },
+  { prefixes: ['HL'],                    country: 'South Korea',   from: 0x718000, to: 0x71FFFF },
+  { prefixes: ['B-', 'B'],               country: 'China/Taiwan',  from: 0x780000, to: 0x7BFFFF },
+  { prefixes: ['JA'],                    country: 'Japan',         from: 0x840000, to: 0x87FFFF },
+  { prefixes: ['VH'],                    country: 'Australia',     from: 0x7C0000, to: 0x7FFFFF },
+  { prefixes: ['DQ'],                    country: 'Fiji',          from: 0xC88000, to: 0xC88FFF },
+  { prefixes: ['HP'],                    country: 'Panama',        from: 0x0C2000, to: 0x0C2FFF },
+  { prefixes: ['G-'],                    country: 'United Kingdom',from: 0x400000, to: 0x43FFFF },
+  { prefixes: ['D-'],                    country: 'Germany',       from: 0x3C0000, to: 0x3FFFFF },
+  { prefixes: ['F-'],                    country: 'France',        from: 0x380000, to: 0x3BFFFF },
+  { prefixes: ['PP', 'PR', 'PT', 'PS'],  country: 'Brazil',        from: 0xE40000, to: 0xE7FFFF },
+  { prefixes: ['9V'],                    country: 'Singapore',     from: 0x768000, to: 0x76FFFF },
+  { prefixes: ['A6'],                    country: 'UAE',           from: 0x896000, to: 0x896FFF },
+];
+
+type HexCheck = { status: 'CLEARED' | 'MISMATCH' | 'UNKNOWN'; country: string | null };
+
+function checkHexAllocation(icao24?: string, registration?: string): HexCheck {
+  const hex = String(icao24 || '').trim().toLowerCase();
+  const reg = String(registration || '').toUpperCase().trim();
+  if (!/^[0-9a-f]{6}$/.test(hex) || !reg) return { status: 'UNKNOWN', country: null };
+  const val = parseInt(hex, 16);
+  const block = ICAO_HEX_BLOCKS.find(b =>
+    b.prefixes.some(p => (p.length === 1 ? reg.startsWith(p) && !/^[A-Z]{2}/.test(reg.slice(0, 2)) : reg.startsWith(p)))
+  );
+  if (!block) return { status: 'UNKNOWN', country: null };
+  return val >= block.from && val <= block.to
+    ? { status: 'CLEARED', country: block.country }
+    : { status: 'MISMATCH', country: block.country };
+}
+
+// Kern AOI (user residence, Oildale) — convergence must be geographically anchored.
+const AOI_LAT = 35.4377286;
+const AOI_LNG = -119.0252189;
+const AOI_RADIUS_NM = 5;
+const CONVERGENCE_ALT_CEILING_FT = 3000;
+
+function nmFromAoi(lat: any, lng: any): number | null {
+  const la = Number(lat), lo = Number(lng);
+  if (!Number.isFinite(la) || !Number.isFinite(lo) || (la === 0 && lo === 0)) return null;
+  const R = 3440.065; // nautical miles
+  const dLat = (la - AOI_LAT) * Math.PI / 180;
+  const dLng = (lo - AOI_LNG) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(AOI_LAT * Math.PI / 180) * Math.cos(la * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// A detection is scheduled commercial overflight when a known airline operates it
+// in Class A / high-altitude cruise. Those are excluded from tactical scoring.
+function isScheduledOverflight(d: any): boolean {
+  const alt = Number(d.altitude || 0);
+  return Boolean(airlineCallsignPrefix(d.callsign)) && alt >= 10000;
+}
+
+
 const ESCALATION_THRESHOLDS = [
   { level: 2, minViolations: 10 },
   { level: 3, minViolations: 50 },

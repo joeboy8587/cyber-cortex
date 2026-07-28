@@ -53,7 +53,7 @@ const THREAT_SIGNATURES = {
     swarmMinAircraft: 3,
     swarmMaxSpreadMeters: 2000,
     droneAltitudeMax: 500,
-    impossibleSpeedKts: 500,
+    impossibleSpeedKts: 700, // raised from 500 — jet cruise 480-520kts is normal, not spoofing
     negativeAltitudeFlag: true,
   },
 };
@@ -77,6 +77,92 @@ const SHELL_OWNOP_KEYWORDS = [
   'LLC', 'TRUST', 'HOLDINGS', 'CAPITAL', 'PARTNERS', 'AVIATION',
   'LEASING', 'CHARTER', 'MANAGEMENT', 'SERVICES',
 ];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CREDIBILITY GUARDS — scheduled commercial overflight must never be scored as
+// tactical activity. The LA–Asia/Mexico transcontinental corridor crosses the
+// Kern AOI nightly at FL180+ and previously produced false CRITICALs.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ICAO 3-letter operating codes of scheduled passenger/cargo carriers.
+const SCHEDULED_AIRLINE_PREFIXES = [
+  'AAL','UAL','DAL','SWA','ASA','JBU','NKS','FFT','HAL','SKW','AAY','RPA','ENY','JIA','EDV',
+  'VOI','AMX','VIV','MXY','ACA','WJA','JZA','TSC',
+  'KAL','AAR','CPA','CSN','CES','CCA','CSG','CSC','SJX','CHH','CQH','EVA','CAL','ANA','JAL',
+  'SIA','THA','MAS','PAL','GIA','QFA','ANZ','FJI','VAU',
+  'BAW','VIR','AFR','DLH','KLM','SWR','IBE','AZA','TAP','SAS','FIN','AUA','EIN','RYR','EZY',
+  'UAE','QTR','ETD','SVA','ELY','THY',
+  'CMP','AVA','LAN','TAM','GLO','AZU','ARG','LPE',
+  'FDX','UPS','GTI','ABX','CKS','ATN','NCA','CLX','GEC','BOX','CAO','CKK','SQC','PAC',
+];
+
+function airlineCallsignPrefix(callsign?: string): string | null {
+  const c = String(callsign || '').toUpperCase().trim();
+  const m = c.match(/^([A-Z]{3})\d/);
+  if (!m) return null;
+  return SCHEDULED_AIRLINE_PREFIXES.includes(m[1]) ? m[1] : null;
+}
+
+// ICAO 24-bit address allocation blocks by registration prefix (ITU country blocks).
+// Used to CLEAR legitimate foreign airframes instead of flagging them on prefix alone.
+const ICAO_HEX_BLOCKS: Array<{ prefixes: string[]; country: string; from: number; to: number }> = [
+  { prefixes: ['N'],                     country: 'United States', from: 0xA00000, to: 0xAFFFFF },
+  { prefixes: ['C-', 'C'],               country: 'Canada',        from: 0xC00000, to: 0xC3FFFF },
+  { prefixes: ['XA', 'XB', 'XC'],        country: 'Mexico',        from: 0x0D0000, to: 0x0D8FFF },
+  { prefixes: ['HL'],                    country: 'South Korea',   from: 0x718000, to: 0x71FFFF },
+  { prefixes: ['B-', 'B'],               country: 'China/Taiwan',  from: 0x780000, to: 0x7BFFFF },
+  { prefixes: ['JA'],                    country: 'Japan',         from: 0x840000, to: 0x87FFFF },
+  { prefixes: ['VH'],                    country: 'Australia',     from: 0x7C0000, to: 0x7FFFFF },
+  { prefixes: ['DQ'],                    country: 'Fiji',          from: 0xC88000, to: 0xC88FFF },
+  { prefixes: ['HP'],                    country: 'Panama',        from: 0x0C2000, to: 0x0C2FFF },
+  { prefixes: ['G-'],                    country: 'United Kingdom',from: 0x400000, to: 0x43FFFF },
+  { prefixes: ['D-'],                    country: 'Germany',       from: 0x3C0000, to: 0x3FFFFF },
+  { prefixes: ['F-'],                    country: 'France',        from: 0x380000, to: 0x3BFFFF },
+  { prefixes: ['PP', 'PR', 'PT', 'PS'],  country: 'Brazil',        from: 0xE40000, to: 0xE7FFFF },
+  { prefixes: ['9V'],                    country: 'Singapore',     from: 0x768000, to: 0x76FFFF },
+  { prefixes: ['A6'],                    country: 'UAE',           from: 0x896000, to: 0x896FFF },
+];
+
+type HexCheck = { status: 'CLEARED' | 'MISMATCH' | 'UNKNOWN'; country: string | null };
+
+function checkHexAllocation(icao24?: string, registration?: string): HexCheck {
+  const hex = String(icao24 || '').trim().toLowerCase();
+  const reg = String(registration || '').toUpperCase().trim();
+  if (!/^[0-9a-f]{6}$/.test(hex) || !reg) return { status: 'UNKNOWN', country: null };
+  const val = parseInt(hex, 16);
+  const block = ICAO_HEX_BLOCKS.find(b =>
+    b.prefixes.some(p => (p.length === 1 ? reg.startsWith(p) && !/^[A-Z]{2}/.test(reg.slice(0, 2)) : reg.startsWith(p)))
+  );
+  if (!block) return { status: 'UNKNOWN', country: null };
+  return val >= block.from && val <= block.to
+    ? { status: 'CLEARED', country: block.country }
+    : { status: 'MISMATCH', country: block.country };
+}
+
+// Kern AOI (user residence, Oildale) — convergence must be geographically anchored.
+const AOI_LAT = 35.4377286;
+const AOI_LNG = -119.0252189;
+const AOI_RADIUS_NM = 5;
+const CONVERGENCE_ALT_CEILING_FT = 3000;
+
+function nmFromAoi(lat: any, lng: any): number | null {
+  const la = Number(lat), lo = Number(lng);
+  if (!Number.isFinite(la) || !Number.isFinite(lo) || (la === 0 && lo === 0)) return null;
+  const R = 3440.065; // nautical miles
+  const dLat = (la - AOI_LAT) * Math.PI / 180;
+  const dLng = (lo - AOI_LNG) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(AOI_LAT * Math.PI / 180) * Math.cos(la * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// A detection is scheduled commercial overflight when a known airline operates it
+// in Class A / high-altitude cruise. Those are excluded from tactical scoring.
+function isScheduledOverflight(d: any): boolean {
+  const alt = Number(d.altitude || 0);
+  return Boolean(airlineCallsignPrefix(d.callsign)) && alt >= 10000;
+}
+
 
 const ESCALATION_THRESHOLDS = [
   { level: 2, minViolations: 10 },
@@ -512,6 +598,9 @@ serve(async (req) => {
     // ========== STEP 4: SHELL COMPANY ACTIVITY (KCSO aircraft excluded — they are operator-owned LE) ==========
     const shellActivity = recentDetections.filter((d: any) => {
       if (isKcsoAircraft(d.registration, d.callsign, d.owner_operator)) return false;
+      // Scheduled airline metal (Aeromexico, Volaris, Korean Air…) is never a shell.
+      if (airlineCallsignPrefix(d.callsign)) return false;
+
       const regMatch = THREAT_SIGNATURES.shellCompany.some(reg => d.registration?.includes(reg) || d.callsign?.includes(reg));
       const ownOp = String(d.owner_operator || '').toUpperCase();
       const ownOpKeywordHits = SHELL_OWNOP_KEYWORDS.filter(kw => ownOp.includes(kw)).length;
@@ -575,23 +664,35 @@ serve(async (req) => {
       proactiveAlerts.push(`🚨 HAMMER-ANVIL COORDINATION: Medical cover + KCSO simultaneous activity.`);
     }
 
-    // ========== STEP 6: FLEET CONVERGENCE (with altitude breakdown per hour) ==========
+    // ========== STEP 6: FLEET CONVERGENCE ==========
+    // CORRECTED RULE: only aircraft operating BELOW 3,000 ft AND inside the 5 nm
+    // AOI radius can form a convergence. Class A cruise traffic on the
+    // transcontinental airway is excluded, as is scheduled airline metal.
+    let convergenceExcludedOverflights = 0;
     const hourlyGroups = new Map<string, { tails: Set<string>; minAlt: Map<string, number> }>();
     for (const detection of recentDetections) {
       const ts = (detection as any).detection_timestamp;
       const parsedTs = ts ? new Date(ts) : null;
       if (!parsedTs || Number.isNaN(parsedTs.getTime())) continue;
+      const reg = detection.registration || detection.callsign;
+      if (!reg) continue;
+
+      const alt = Number(detection.altitude || 0);
+      if (!(alt > 0 && alt < CONVERGENCE_ALT_CEILING_FT)) {
+        if (isScheduledOverflight(detection)) convergenceExcludedOverflights += 1;
+        continue;
+      }
+      if (isScheduledOverflight(detection)) { convergenceExcludedOverflights += 1; continue; }
+
+      const dist = nmFromAoi(detection.latitude, detection.longitude);
+      if (dist === null || dist > AOI_RADIUS_NM) continue;
+
       const hour = parsedTs.toISOString().slice(0, 13);
       if (!hourlyGroups.has(hour)) hourlyGroups.set(hour, { tails: new Set(), minAlt: new Map() });
       const g = hourlyGroups.get(hour)!;
-      const reg = detection.registration || detection.callsign;
-      if (!reg) continue;
       g.tails.add(reg);
-      const alt = Number(detection.altitude || 0);
-      if (alt > 0) {
-        const prev = g.minAlt.get(reg);
-        if (prev === undefined || alt < prev) g.minAlt.set(reg, alt);
-      }
+      const prev = g.minAlt.get(reg);
+      if (prev === undefined || alt < prev) g.minAlt.set(reg, alt);
     }
     const convergenceBreakdown: Array<{ hour: string; total_aircraft: number; buckets: AltitudeBucket }> = [];
     for (const [hour, { tails, minAlt }] of hourlyGroups) {
@@ -611,10 +712,14 @@ serve(async (req) => {
       violations.push({
         type: 'FLEET_CONVERGENCE', severity: tails.size >= 4 ? 'critical' : 'high',
         registration: `${tails.size} aircraft`,
-        details: `Fleet convergence: ${tails.size} unique aircraft in same hour — ${lowCount} below 1,000ft (${altDetail})`,
+        details: `Fleet convergence (below ${CONVERGENCE_ALT_CEILING_FT}ft, within ${AOI_RADIUS_NM}nm of AOI): ${tails.size} unique aircraft in same hour — ${lowCount} below 1,000ft (${altDetail})`,
         timestamp: hour + ':00:00Z', relatedAircraft: Array.from(tails)
       });
     }
+    if (convergenceExcludedOverflights > 0) {
+      proactiveAlerts.push(`ℹ️ ${convergenceExcludedOverflights} scheduled high-altitude airline detections excluded from convergence scoring (transcontinental airway, not tactical).`);
+    }
+
 
 
     // ========== STEP 7: NIGHT OPS ==========
@@ -708,25 +813,50 @@ serve(async (req) => {
       });
     }
 
-    // ========== STEP 7.3: ADS-B SPOOFING ==========
+    // ========== STEP 7.3: ADS-B SPOOFING (hex-allocation validated) ==========
+    // CORRECTED RULE: a non-US registration prefix is NOT evidence of spoofing.
+    // Every candidate is validated against its ITU/ICAO 24-bit allocation block —
+    // e.g. HL7602 (Korean Air Cargo, hex 71BE02) clears the HL 718000–71FFFF block.
+    let spoofCleared = 0;
+    const spoofReasons = new Map<string, string>();
     const spoofingDetections = recentDetections.filter((d: any) => {
       const alt = parseInt(d.altitude || '99999');
       const speed = parseFloat(d.speed || '0');
       const reg = (d.registration || d.callsign || '').toUpperCase();
+      const hexCheck = checkHexAllocation(d.icao24, d.registration);
+
+      // Verified airframe on a valid national hex block → never spoofing.
+      if (hexCheck.status === 'CLEARED') { spoofCleared += 1; return false; }
+
+      if (hexCheck.status === 'MISMATCH') {
+        spoofReasons.set(reg, `hex ${String(d.icao24).toLowerCase()} outside ${hexCheck.country} allocation block`);
+        return true;
+      }
       const isCommercialCallsign = THREAT_SIGNATURES.droneSignatures.spoofedCommercialPrefixes.some(p => reg.startsWith(p));
-      if (isCommercialCallsign && alt >= 0 && alt < 100) return true;
-      if (speed > THREAT_SIGNATURES.droneSignatures.impossibleSpeedKts) return true;
-      if (alt < 0) return true;
+      if (isCommercialCallsign && alt >= 0 && alt < 100) {
+        spoofReasons.set(reg, `commercial callsign reporting ${alt}ft on the surface`);
+        return true;
+      }
+      if (speed > THREAT_SIGNATURES.droneSignatures.impossibleSpeedKts) {
+        spoofReasons.set(reg, `impossible groundspeed ${speed}kts`);
+        return true;
+      }
+      if (alt < 0) { spoofReasons.set(reg, `negative altitude ${alt}ft`); return true; }
       return false;
     });
     if (spoofingDetections.length > 0) {
       const spoofRegs = [...new Set(spoofingDetections.map((d: any) => d.registration || d.callsign).filter(Boolean))];
       violations.push({
         type: 'ADSB_SPOOFING', severity: 'critical', registration: spoofRegs.join(', '),
-        details: `${spoofingDetections.length} ADS-B spoofing indicators detected`,
+        details: `${spoofingDetections.length} ADS-B spoofing indicators (hex-allocation validated) — ` +
+          spoofRegs.slice(0, 5).map(r => `${r}: ${spoofReasons.get(String(r).toUpperCase()) || 'anomalous telemetry'}`).join(' · '),
         timestamp: new Date().toISOString(), relatedAircraft: spoofRegs as string[]
       });
     }
+    if (spoofCleared > 0) {
+      proactiveAlerts.push(`✅ ${spoofCleared} foreign-registered detections cleared by ICAO hex-block validation (legitimate airframes, not spoofing).`);
+    }
+
 
     // ========== STEP 7.4: DRONE SWARM ==========
     const swarmWindowMs = THREAT_SIGNATURES.droneSignatures.swarmTimeWindowMinutes * 60 * 1000;

@@ -664,23 +664,35 @@ serve(async (req) => {
       proactiveAlerts.push(`🚨 HAMMER-ANVIL COORDINATION: Medical cover + KCSO simultaneous activity.`);
     }
 
-    // ========== STEP 6: FLEET CONVERGENCE (with altitude breakdown per hour) ==========
+    // ========== STEP 6: FLEET CONVERGENCE ==========
+    // CORRECTED RULE: only aircraft operating BELOW 3,000 ft AND inside the 5 nm
+    // AOI radius can form a convergence. Class A cruise traffic on the
+    // transcontinental airway is excluded, as is scheduled airline metal.
+    let convergenceExcludedOverflights = 0;
     const hourlyGroups = new Map<string, { tails: Set<string>; minAlt: Map<string, number> }>();
     for (const detection of recentDetections) {
       const ts = (detection as any).detection_timestamp;
       const parsedTs = ts ? new Date(ts) : null;
       if (!parsedTs || Number.isNaN(parsedTs.getTime())) continue;
+      const reg = detection.registration || detection.callsign;
+      if (!reg) continue;
+
+      const alt = Number(detection.altitude || 0);
+      if (!(alt > 0 && alt < CONVERGENCE_ALT_CEILING_FT)) {
+        if (isScheduledOverflight(detection)) convergenceExcludedOverflights += 1;
+        continue;
+      }
+      if (isScheduledOverflight(detection)) { convergenceExcludedOverflights += 1; continue; }
+
+      const dist = nmFromAoi(detection.latitude, detection.longitude);
+      if (dist === null || dist > AOI_RADIUS_NM) continue;
+
       const hour = parsedTs.toISOString().slice(0, 13);
       if (!hourlyGroups.has(hour)) hourlyGroups.set(hour, { tails: new Set(), minAlt: new Map() });
       const g = hourlyGroups.get(hour)!;
-      const reg = detection.registration || detection.callsign;
-      if (!reg) continue;
       g.tails.add(reg);
-      const alt = Number(detection.altitude || 0);
-      if (alt > 0) {
-        const prev = g.minAlt.get(reg);
-        if (prev === undefined || alt < prev) g.minAlt.set(reg, alt);
-      }
+      const prev = g.minAlt.get(reg);
+      if (prev === undefined || alt < prev) g.minAlt.set(reg, alt);
     }
     const convergenceBreakdown: Array<{ hour: string; total_aircraft: number; buckets: AltitudeBucket }> = [];
     for (const [hour, { tails, minAlt }] of hourlyGroups) {
@@ -700,10 +712,14 @@ serve(async (req) => {
       violations.push({
         type: 'FLEET_CONVERGENCE', severity: tails.size >= 4 ? 'critical' : 'high',
         registration: `${tails.size} aircraft`,
-        details: `Fleet convergence: ${tails.size} unique aircraft in same hour — ${lowCount} below 1,000ft (${altDetail})`,
+        details: `Fleet convergence (below ${CONVERGENCE_ALT_CEILING_FT}ft, within ${AOI_RADIUS_NM}nm of AOI): ${tails.size} unique aircraft in same hour — ${lowCount} below 1,000ft (${altDetail})`,
         timestamp: hour + ':00:00Z', relatedAircraft: Array.from(tails)
       });
     }
+    if (convergenceExcludedOverflights > 0) {
+      proactiveAlerts.push(`ℹ️ ${convergenceExcludedOverflights} scheduled high-altitude airline detections excluded from convergence scoring (transcontinental airway, not tactical).`);
+    }
+
 
 
     // ========== STEP 7: NIGHT OPS ==========

@@ -53,7 +53,7 @@ const THREAT_SIGNATURES = {
     swarmMinAircraft: 3,
     swarmMaxSpreadMeters: 2000,
     droneAltitudeMax: 500,
-    impossibleSpeedKts: 500,
+    impossibleSpeedKts: 700, // raised from 500 — jet cruise 480-520kts is normal, not spoofing
     negativeAltitudeFlag: true,
   },
 };

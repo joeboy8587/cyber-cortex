@@ -110,12 +110,41 @@ interface ClassificationResult {
   triggerType: string | null;
 }
 
+// Scheduled airline ICAO operating codes — mainstream carrier metal must never be
+// tagged tier2_shell or medical_air (Aeromexico "AMX" ≠ medical, Volaris "VOI" ≠ shell).
+const SCHEDULED_AIRLINE_PREFIXES = [
+  'AAL','UAL','DAL','SWA','ASA','JBU','NKS','FFT','HAL','SKW','AAY','RPA','ENY','JIA','EDV',
+  'VOI','AMX','VIV','MXY','ACA','WJA','JZA','TSC',
+  'KAL','AAR','CPA','CSN','CES','CCA','CSG','CSC','SJX','CHH','CQH','EVA','CAL','ANA','JAL',
+  'SIA','THA','MAS','PAL','GIA','QFA','ANZ','FJI','VAU',
+  'BAW','VIR','AFR','DLH','KLM','SWR','IBE','AZA','TAP','SAS','FIN','AUA','EIN','RYR','EZY',
+  'UAE','QTR','ETD','SVA','ELY','THY',
+  'CMP','AVA','LAN','TAM','GLO','AZU','ARG','LPE',
+  'FDX','UPS','GTI','ABX','CKS','ATN','NCA','CLX','GEC','BOX','CAO','CKK','SQC','PAC',
+];
+function isScheduledAirlineCallsign(callsign: string): boolean {
+  const m = String(callsign || '').toUpperCase().trim().match(/^([A-Z]{3})\d/);
+  return Boolean(m && SCHEDULED_AIRLINE_PREFIXES.includes(m[1]));
+}
+
 function classifyAircraft(registration: string, callsign: string, altitude: number, speed: number = 0, ownOp: string = ''): ClassificationResult {
   const reg = registration?.toUpperCase() || '';
   const call = callsign?.toUpperCase() || '';
   const flaggedReasons: string[] = [];
   const legalTags: string[] = [];
   let triggerType: string | null = null;
+
+  // Scheduled airline in cruise = transcontinental airway traffic, not tactical.
+  if (isScheduledAirlineCallsign(call) && altitude >= 10000) {
+    return {
+      taxonomyTag: 'normal_traffic', threatScore: 0, tierLevel: 5,
+      flagged: false, flaggedReasons: [],
+      entity: ownOp || 'Scheduled Airline', entityType: 'commercial',
+      legalTags: [], triggerType: null
+    };
+  }
+
+
   
   // TRIGGER 1: AGGRAVATED BREACH
   if (altitude > 0 && altitude <= 500 && speed < 100) {

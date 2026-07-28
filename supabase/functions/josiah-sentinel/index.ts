@@ -813,23 +813,45 @@ serve(async (req) => {
       });
     }
 
-    // ========== STEP 7.3: ADS-B SPOOFING ==========
+    // ========== STEP 7.3: ADS-B SPOOFING (hex-allocation validated) ==========
+    // CORRECTED RULE: a non-US registration prefix is NOT evidence of spoofing.
+    // Every candidate is validated against its ITU/ICAO 24-bit allocation block —
+    // e.g. HL7602 (Korean Air Cargo, hex 71BE02) clears the HL 718000–71FFFF block.
+    let spoofCleared = 0;
+    const spoofReasons = new Map<string, string>();
     const spoofingDetections = recentDetections.filter((d: any) => {
       const alt = parseInt(d.altitude || '99999');
       const speed = parseFloat(d.speed || '0');
       const reg = (d.registration || d.callsign || '').toUpperCase();
+      const hexCheck = checkHexAllocation(d.icao24, d.registration);
+
+      // Verified airframe on a valid national hex block → never spoofing.
+      if (hexCheck.status === 'CLEARED') { spoofCleared += 1; return false; }
+
+      if (hexCheck.status === 'MISMATCH') {
+        spoofReasons.set(reg, `hex ${String(d.icao24).toLowerCase()} outside ${hexCheck.country} allocation block`);
+        return true;
+      }
       const isCommercialCallsign = THREAT_SIGNATURES.droneSignatures.spoofedCommercialPrefixes.some(p => reg.startsWith(p));
-      if (isCommercialCallsign && alt >= 0 && alt < 100) return true;
-      if (speed > THREAT_SIGNATURES.droneSignatures.impossibleSpeedKts) return true;
-      if (alt < 0) return true;
+      if (isCommercialCallsign && alt >= 0 && alt < 100) {
+        spoofReasons.set(reg, `commercial callsign reporting ${alt}ft on the surface`);
+        return true;
+      }
+      if (speed > THREAT_SIGNATURES.droneSignatures.impossibleSpeedKts) {
+        spoofReasons.set(reg, `impossible groundspeed ${speed}kts`);
+        return true;
+      }
+      if (alt < 0) { spoofReasons.set(reg, `negative altitude ${alt}ft`); return true; }
       return false;
     });
     if (spoofingDetections.length > 0) {
       const spoofRegs = [...new Set(spoofingDetections.map((d: any) => d.registration || d.callsign).filter(Boolean))];
       violations.push({
         type: 'ADSB_SPOOFING', severity: 'critical', registration: spoofRegs.join(', '),
-        details: `${spoofingDetections.length} ADS-B spoofing indicators detected`,
+        details: `${spoofingDetections.length} ADS-B spoofing indicators (hex-allocation validated) — ` +
+          spoofRegs.slice(0, 5).map(r => `${r}: ${spoofReasons.get(String(r).toUpperCase()) || 'anomalous telemetry'}`).join(' · '),
         timestamp: new Date().toISOString(), relatedAircraft: spoofRegs as string[]
+
       });
     }
 

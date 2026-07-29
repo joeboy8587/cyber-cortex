@@ -41,6 +41,8 @@ Deno.serve(async (req) => {
     if (action === "buildAndAudit" || action === "build") {
       // Canonical identity view over the FULL FAA registry (faa_master is the
       // authoritative source: 313k rows incl. registrant + Mode-S hex).
+      await sql.unsafe(`DROP VIEW IF EXISTS v_faa_enriched_detections CASCADE`);
+      await sql.unsafe(`DROP VIEW IF EXISTS v_faa_enriched_live_detections CASCADE`);
       await sql.unsafe(`DROP VIEW IF EXISTS v_faa_identity CASCADE`);
       await sql.unsafe(`
         CREATE OR REPLACE VIEW v_faa_identity AS

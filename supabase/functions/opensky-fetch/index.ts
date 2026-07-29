@@ -681,13 +681,79 @@ serve(async (req) => {
         });
 
       console.log(`Transformed ${transformedFlights.length} flights (source: ${dataSource})`);
-      
+
+      // ============ FAA MASTER IDENTITY OVERRIDE ============
+      // Feed "ownOp" strings and N-number prefix heuristics are hints only.
+      // The full FAA registry (faa_master + faa_aircraft_ref) is authoritative.
+      let faaResolved = 0, faaMismatches = 0;
+      if (neonUrl && transformedFlights.length > 0) {
+        let idSql = null;
+        try {
+          idSql = postgres(neonUrl, { ssl: 'require', max: 1, idle_timeout: 5, connect_timeout: 10, connection: { statement_timeout: 10000 } });
+          const idMap = await resolveFaaIdentities(idSql, transformedFlights);
+          for (const flight of transformedFlights as any[]) {
+            const d = decideIdentity(idMap, {
+              registration: flight.registration,
+              hex: flight.hex,
+              ownOp: flight.ownerOperator,
+              aircraftType: flight.aircraftType,
+              aircraftTypeDesc: flight.aircraftTypeDesc,
+              yearManufactured: flight.yearManufactured,
+            });
+            flight.ownerOperator = d.ownerOperator;
+            flight.aircraftType = d.aircraftType;
+            flight.aircraftTypeDesc = d.aircraftTypeDesc;
+            flight.yearManufactured = d.yearManufactured;
+            flight.identitySource = d.identitySource;
+            if (d.identity) {
+              faaResolved++;
+              // Registry-backed entity replaces any prefix-pattern guess.
+              flight.entity = d.identity.registrantName || flight.entity;
+              flight.registrantType = d.identity.registrantType;
+              flight.registrantLocation = [d.identity.city, d.identity.state].filter(Boolean).join(', ');
+              flight.faaVerified = true;
+              // Registry truth also corrects the shell heuristic.
+              const shellFromFaa = detectShellFromOwnOp(d.identity.registrantName || '');
+              flight.shellAutoDetected = shellFromFaa.isShell;
+              flight.shellDetectionReason = shellFromFaa.isShell
+                ? `FAA_REGISTRANT: ${shellFromFaa.reason}`
+                : '';
+              if (d.identity.registrantType === 'Government') {
+                flight.entityType = 'government';
+              }
+              if (d.hexMismatch) {
+                faaMismatches++;
+                flight.flagged = true;
+                flight.flaggedReasons = [
+                  ...(flight.flaggedReasons || []),
+                  `ICAO_FAA_HEX_MISMATCH: adsb=${flight.hex} faa=${d.identity.modeSHex}`,
+                ];
+              }
+              if (d.operatorMismatch) {
+                flight.flaggedReasons = [
+                  ...(flight.flaggedReasons || []),
+                  `OPERATOR_CORRECTED_FROM_FEED: "${d.ownerOperator}" (FAA) vs feed value`,
+                ];
+              }
+            } else {
+              flight.faaVerified = false;
+            }
+          }
+          console.log(`🛩️ FAA master identity: ${faaResolved}/${transformedFlights.length} resolved, ${faaMismatches} hex mismatches`);
+        } catch (e) {
+          console.warn('FAA identity resolution skipped:', e instanceof Error ? e.message : e);
+        } finally {
+          try { await idSql?.end({ timeout: 3 }); } catch { /* ignore */ }
+        }
+      }
+
       // Log shell auto-detections
       const shellDetections = transformedFlights.filter(f => f.shellAutoDetected);
       if (shellDetections.length > 0) {
-        console.log(`🔍 SHELL AUTO-DETECTED: ${shellDetections.length} aircraft via ownOp`);
-        shellDetections.forEach(s => console.log(`  → ${s.registration} | ownOp="${s.ownerOperator}" | ${s.shellDetectionReason}`));
+        console.log(`🔍 SHELL AUTO-DETECTED: ${shellDetections.length} aircraft via FAA registrant`);
+        shellDetections.forEach(s => console.log(`  → ${s.registration} | owner="${s.ownerOperator}" | ${s.shellDetectionReason}`));
       }
+
 
       const stats = {
         total: transformedFlights.length,

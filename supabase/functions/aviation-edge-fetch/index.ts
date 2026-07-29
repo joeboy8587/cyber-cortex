@@ -1,6 +1,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
 import { crypto } from "https://deno.land/std@0.168.0/crypto/mod.ts";
+import { resolveFaaIdentities, decideIdentity } from "../_shared/faaIdentity.ts";
+
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -456,6 +458,38 @@ serve(async (req) => {
           ...classification
         };
       });
+
+
+      // ============ FAA MASTER IDENTITY OVERRIDE ============
+      if (neonUrl && transformedFlights.length > 0) {
+        let idSql = null;
+        try {
+          idSql = postgres(neonUrl, { ssl: 'require', max: 1, idle_timeout: 5, connect_timeout: 10, connection: { statement_timeout: 10000 } });
+          const idMap = await resolveFaaIdentities(idSql, transformedFlights);
+          let resolved = 0;
+          for (const flight of transformedFlights as any[]) {
+            const d = decideIdentity(idMap, { registration: flight.registration, hex: flight.hex });
+            flight.ownerOperator = d.ownerOperator;
+            flight.aircraftType = d.aircraftType;
+            flight.aircraftTypeDesc = d.aircraftTypeDesc;
+            flight.identitySource = d.identitySource;
+            flight.faaVerified = Boolean(d.identity);
+            if (d.identity) {
+              resolved++;
+              flight.entity = d.identity.registrantName || flight.entity;
+              flight.registrantType = d.identity.registrantType;
+              flight.registrantLocation = [d.identity.city, d.identity.state].filter(Boolean).join(', ');
+              if (d.identity.registrantType === 'Government') flight.entityType = 'government';
+            }
+          }
+          console.log(`🛩️ FAA master identity: ${resolved}/${transformedFlights.length} resolved`);
+        } catch (e) {
+          console.warn('FAA identity resolution skipped:', e instanceof Error ? e.message : e);
+        } finally {
+          try { await idSql?.end({ timeout: 3 }); } catch { /* ignore */ }
+        }
+      }
+
 
       // Statistics
       const stats = {

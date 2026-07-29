@@ -39,7 +39,43 @@ Deno.serve(async (req) => {
 
     // ── 1. Build canonical FAA-enriched detection views ────────────────────
     if (action === "buildAndAudit" || action === "build") {
+      // Canonical identity view over the FULL FAA registry (faa_master is the
+      // authoritative source: 313k rows incl. registrant + Mode-S hex).
+      await sql.unsafe(`DROP VIEW IF EXISTS v_faa_enriched_detections CASCADE`);
+      await sql.unsafe(`DROP VIEW IF EXISTS v_faa_enriched_live_detections CASCADE`);
+      await sql.unsafe(`DROP VIEW IF EXISTS v_faa_identity CASCADE`);
+      await sql.unsafe(`
+        CREATE OR REPLACE VIEW v_faa_identity AS
+
+        SELECT
+          'N' || UPPER(TRIM(m.n_number))          AS n_number,
+          UPPER(TRIM(m.mode_s_code_hex))          AS mode_s_hex,
+          NULLIF(TRIM(m.name), '')                AS registrant_name,
+          CASE TRIM(m.type_registrant)
+            WHEN '1' THEN 'Individual' WHEN '2' THEN 'Partnership'
+            WHEN '3' THEN 'Corporation' WHEN '4' THEN 'Co-Owned'
+            WHEN '5' THEN 'Government' WHEN '7' THEN 'LLC'
+            WHEN '8' THEN 'Non-Citizen Corporation' WHEN '9' THEN 'Non-Citizen Co-Owned'
+            ELSE NULL END                          AS registrant_type,
+          NULLIF(TRIM(m.city), '')                AS registrant_city,
+          NULLIF(TRIM(m.state), '')               AS registrant_state,
+          NULLIF(TRIM(m.country), '')             AS registrant_country,
+          NULLIF(TRIM(r.mfr), '')                 AS aircraft_manufacturer,
+          NULLIF(TRIM(r.model), '')               AS aircraft_model,
+          m.type_aircraft,
+          CASE WHEN TRIM(m.year_mfr) ~ '^[0-9]{4}$'
+               THEN TRIM(m.year_mfr)::INT END      AS year_manufactured,
+          TRIM(m.status_code)                     AS status,
+          CASE WHEN TRIM(m.cert_issue_date) ~ '^[0-9]{8}$'
+               THEN to_date(TRIM(m.cert_issue_date), 'YYYYMMDD') END AS certificate_issue_date,
+          CASE WHEN TRIM(m.expiration_date) ~ '^[0-9]{8}$'
+               THEN to_date(TRIM(m.expiration_date), 'YYYYMMDD') END AS expiration_date
+        FROM faa_master m
+        LEFT JOIN faa_aircraft_ref r ON r.code = m.mfr_mdl_code
+      `);
+
       // View over unified_flight_detections
+
       await sql.unsafe(`
         CREATE OR REPLACE VIEW v_faa_enriched_detections AS
         SELECT
@@ -79,8 +115,8 @@ Deno.serve(async (req) => {
             ELSE 'IDENTITY_CONFIRMED'
           END                                 AS identity_status
         FROM unified_flight_detections d
-        LEFT JOIN faa_aircraft_registry f
-          ON UPPER(f.n_number) = UPPER(d.registration)
+        LEFT JOIN v_faa_identity f
+          ON f.n_number = UPPER(d.registration)
         WHERE d.registration IS NOT NULL AND d.registration <> ''
       `);
 
@@ -122,8 +158,8 @@ Deno.serve(async (req) => {
             ELSE 'IDENTITY_CONFIRMED'
           END                                 AS identity_status
         FROM live_flight_detections_rows d
-        LEFT JOIN faa_aircraft_registry f
-          ON UPPER(f.n_number) = UPPER(d.registration)
+        LEFT JOIN v_faa_identity f
+          ON f.n_number = UPPER(d.registration)
         WHERE d.registration IS NOT NULL AND d.registration <> ''
       `);
     }
@@ -159,8 +195,8 @@ Deno.serve(async (req) => {
         COUNT(*)                                             AS detections,
         COUNT(DISTINCT d.icao_hex)                           AS distinct_icao
       FROM unified_flight_detections d
-      LEFT JOIN faa_aircraft_registry f
-        ON UPPER(f.n_number) = UPPER(d.registration)
+      LEFT JOIN v_faa_identity f
+        ON f.n_number = UPPER(d.registration)
       WHERE UPPER(d.registration) ~ '^N[0-9]+AM$'
       GROUP BY UPPER(d.registration)
       ORDER BY detections DESC
@@ -170,7 +206,7 @@ Deno.serve(async (req) => {
       JSON.stringify({
         ok: true,
         action,
-        views_created: ["v_faa_enriched_detections", "v_faa_enriched_live_detections"],
+        views_created: ["v_faa_identity", "v_faa_enriched_detections", "v_faa_enriched_live_detections"],
         join_health_unified: healthUnified[0] ?? null,
         top_unmatched: topUnmatched,
         am_fleet_identity: amFleet,

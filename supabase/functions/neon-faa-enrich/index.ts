@@ -59,10 +59,13 @@ Deno.serve(async (req) => {
           NULLIF(TRIM(r.mfr), '')                 AS aircraft_manufacturer,
           NULLIF(TRIM(r.model), '')               AS aircraft_model,
           m.type_aircraft,
-          NULLIF(TRIM(m.year_mfr), '')            AS year_manufactured,
+          CASE WHEN TRIM(m.year_mfr) ~ '^[0-9]{4}$'
+               THEN TRIM(m.year_mfr)::INT END      AS year_manufactured,
           TRIM(m.status_code)                     AS status,
-          m.cert_issue_date                       AS certificate_issue_date,
-          m.expiration_date
+          CASE WHEN TRIM(m.cert_issue_date) ~ '^[0-9]{8}$'
+               THEN to_date(TRIM(m.cert_issue_date), 'YYYYMMDD') END AS certificate_issue_date,
+          CASE WHEN TRIM(m.expiration_date) ~ '^[0-9]{8}$'
+               THEN to_date(TRIM(m.expiration_date), 'YYYYMMDD') END AS expiration_date
         FROM faa_master m
         LEFT JOIN faa_aircraft_ref r ON r.code = m.mfr_mdl_code
       `);

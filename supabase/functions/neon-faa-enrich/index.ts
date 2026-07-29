@@ -108,8 +108,8 @@ Deno.serve(async (req) => {
             ELSE 'IDENTITY_CONFIRMED'
           END                                 AS identity_status
         FROM unified_flight_detections d
-        LEFT JOIN faa_aircraft_registry f
-          ON UPPER(f.n_number) = UPPER(d.registration)
+        LEFT JOIN v_faa_identity f
+          ON f.n_number = UPPER(d.registration)
         WHERE d.registration IS NOT NULL AND d.registration <> ''
       `);
 
@@ -151,8 +151,8 @@ Deno.serve(async (req) => {
             ELSE 'IDENTITY_CONFIRMED'
           END                                 AS identity_status
         FROM live_flight_detections_rows d
-        LEFT JOIN faa_aircraft_registry f
-          ON UPPER(f.n_number) = UPPER(d.registration)
+        LEFT JOIN v_faa_identity f
+          ON f.n_number = UPPER(d.registration)
         WHERE d.registration IS NOT NULL AND d.registration <> ''
       `);
     }
@@ -188,8 +188,8 @@ Deno.serve(async (req) => {
         COUNT(*)                                             AS detections,
         COUNT(DISTINCT d.icao_hex)                           AS distinct_icao
       FROM unified_flight_detections d
-      LEFT JOIN faa_aircraft_registry f
-        ON UPPER(f.n_number) = UPPER(d.registration)
+      LEFT JOIN v_faa_identity f
+        ON f.n_number = UPPER(d.registration)
       WHERE UPPER(d.registration) ~ '^N[0-9]+AM$'
       GROUP BY UPPER(d.registration)
       ORDER BY detections DESC
@@ -199,7 +199,7 @@ Deno.serve(async (req) => {
       JSON.stringify({
         ok: true,
         action,
-        views_created: ["v_faa_enriched_detections", "v_faa_enriched_live_detections"],
+        views_created: ["v_faa_identity", "v_faa_enriched_detections", "v_faa_enriched_live_detections"],
         join_health_unified: healthUnified[0] ?? null,
         top_unmatched: topUnmatched,
         am_fleet_identity: amFleet,

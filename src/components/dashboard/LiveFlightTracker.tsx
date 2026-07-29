@@ -134,13 +134,22 @@ export function LiveFlightTracker() {
           aircraft_type_desc: f.aircraftTypeDesc || '',
           shell_auto_detected: f.shellAutoDetected || false,
           shell_detection_reason: f.shellDetectionReason || '',
-          faa_n_number: f.faaNNumber || null,
+          faa_n_number: f.faaNNumber || (f.faaVerified ? f.registration : null),
           faa_mode_s_hex: f.faaModeSHex || null,
           faa_registrant_name: f.faaRegistrantName || f.ownerOperator || null,
-          faa_registrant_city: f.faaRegistrantCity || null,
-          faa_registrant_state: f.faaRegistrantState || null,
-          faa_status: f.faaStatus || null,
-          faa_identity_status: f.faaIdentityStatus || null,
+          faa_registrant_city: f.faaRegistrantCity || (f.registrantLocation ? String(f.registrantLocation).split(',')[0] : null),
+          faa_registrant_state: f.faaRegistrantState || (f.registrantLocation ? String(f.registrantLocation).split(',')[1]?.trim() : null),
+          faa_status: f.faaStatus || f.registrantType || null,
+          faa_identity_status:
+            f.faaIdentityStatus ||
+            (f.faaVerified
+              ? (f.flaggedReasons?.some((r: string) => r.includes('ICAO_FAA_HEX_MISMATCH'))
+                  ? 'ICAO_FAA_MISMATCH'
+                  : 'IDENTITY_CONFIRMED')
+              : f.registration
+                ? 'UNREGISTERED_OR_GHOST'
+                : null),
+
         }));
       
       // Combine: API flights first (fresher), then DB flights not already in API set

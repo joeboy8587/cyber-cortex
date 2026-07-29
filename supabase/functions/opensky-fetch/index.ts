@@ -715,11 +715,12 @@ serve(async (req) => {
               flight.registrantLocation = [d.identity.city, d.identity.state].filter(Boolean).join(', ');
               flight.faaVerified = true;
               // Registry truth also corrects the shell heuristic.
+              // Registry truth also corrects the shell heuristic. A bare "LLC" is
+              // not evidence — require a known shell or multiple indicators.
               const shellFromFaa = detectShellFromOwnOp(d.identity.registrantName || '');
-              flight.shellAutoDetected = shellFromFaa.isShell;
-              flight.shellDetectionReason = shellFromFaa.isShell
-                ? `FAA_REGISTRANT: ${shellFromFaa.reason}`
-                : '';
+              const isShell = shellFromFaa.isShell && shellFromFaa.confidence >= 75;
+              flight.shellAutoDetected = isShell;
+              flight.shellDetectionReason = isShell ? `FAA_REGISTRANT: ${shellFromFaa.reason}` : '';
               if (d.identity.registrantType === 'Government') {
                 flight.entityType = 'government';
               }

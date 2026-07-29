@@ -39,7 +39,36 @@ Deno.serve(async (req) => {
 
     // ── 1. Build canonical FAA-enriched detection views ────────────────────
     if (action === "buildAndAudit" || action === "build") {
+      // Canonical identity view over the FULL FAA registry (faa_master is the
+      // authoritative source: 313k rows incl. registrant + Mode-S hex).
+      await sql.unsafe(`
+        CREATE OR REPLACE VIEW v_faa_identity AS
+        SELECT
+          'N' || UPPER(TRIM(m.n_number))          AS n_number,
+          UPPER(TRIM(m.mode_s_code_hex))          AS mode_s_hex,
+          NULLIF(TRIM(m.name), '')                AS registrant_name,
+          CASE TRIM(m.type_registrant)
+            WHEN '1' THEN 'Individual' WHEN '2' THEN 'Partnership'
+            WHEN '3' THEN 'Corporation' WHEN '4' THEN 'Co-Owned'
+            WHEN '5' THEN 'Government' WHEN '7' THEN 'LLC'
+            WHEN '8' THEN 'Non-Citizen Corporation' WHEN '9' THEN 'Non-Citizen Co-Owned'
+            ELSE NULL END                          AS registrant_type,
+          NULLIF(TRIM(m.city), '')                AS registrant_city,
+          NULLIF(TRIM(m.state), '')               AS registrant_state,
+          NULLIF(TRIM(m.country), '')             AS registrant_country,
+          NULLIF(TRIM(r.mfr), '')                 AS aircraft_manufacturer,
+          NULLIF(TRIM(r.model), '')               AS aircraft_model,
+          m.type_aircraft,
+          NULLIF(TRIM(m.year_mfr), '')            AS year_manufactured,
+          TRIM(m.status_code)                     AS status,
+          m.cert_issue_date                       AS certificate_issue_date,
+          m.expiration_date
+        FROM faa_master m
+        LEFT JOIN faa_aircraft_ref r ON r.code = m.mfr_mdl_code
+      `);
+
       // View over unified_flight_detections
+
       await sql.unsafe(`
         CREATE OR REPLACE VIEW v_faa_enriched_detections AS
         SELECT

@@ -455,6 +455,8 @@ serve(async (req) => {
           detected_at: now,
           ...classification
         };
+      });
+
 
       // ============ FAA MASTER IDENTITY OVERRIDE ============
       if (neonUrl && transformedFlights.length > 0) {

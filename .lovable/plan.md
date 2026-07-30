@@ -1,88 +1,57 @@
-# Plan: FAR-Based Low-Altitude Classifier + Schema Wiring Audit
+# Watchtower System & Database Audit — Findings and Improvement Plan
 
-## Goal
-1. Any aircraft below 1000 ft flows through a **FAR classifier** that consults `public.faa_regulations` and cites the specific rule violated (91.119, 91.155, 91.13, etc.) — no blanket exclusions.
-2. Full audit of the 1,000+ Neon tables to catch UI components and edge functions pointing at renamed/dropped columns (root cause of the recent 504s and the `ground_speed` breakage).
-3. Surface the new FAA tables (`faa_regulations`, `faa_registration_master`, `faa_airspace`, `faa_validated_violations`, etc.) in the Evidence Sources panel so they can be added to investigations.
+I ran a live audit of the backend and the command center. Below is what the data actually shows, then what I propose to fix, in priority order.
 
----
+## What the audit found (verified, not assumed)
 
-## Part 1 — FAR Low-Altitude Classifier
+**1. Alert flood — the war room is drowning in duplicates**
+- 145,542 autonomous flags total, but only 23,192 unique signatures. About 84% are repeats of the same finding re-logged on every scan.
+- `PRE_CONFIRMED_PRESENCE` alone is 105,624 flags across just 341 aircraft (~310 per tail).
+- 26,663 flags are marked **critical**. When everything is critical, nothing is.
 
-### New edge function: `far-classifier`
-Input: detection row(s) with `icao`, `lat`, `lon`, `altitude`, `ground_speed`, `timestamp`.
-Logic (SQL-only, deterministic):
+**2. The evidence pipeline has been stalled for months**
+- Master forensic events: last write **May 23**.
+- Merkle chain-of-custody ledger: last anchor **May 25** — nothing since then is cryptographically sealed.
+- Exhibits registry: last update **May 6**, still only 38 exhibits (26 in Tier 1).
+- Unmasked HQ locations: last update **March 24**.
+- Daily flight intelligence reports table: **completely empty (0 rows)**.
 
-1. **Altitude gate**: `altitude < 1000` → enter classifier. Anything ≥1000ft returns `severity=none`.
-2. **Airspace lookup**: join `public.faa_airspace` / `faa_airspace_classification` by lat/lon radius → determine Class B/C/D/E/G.
-3. **Regulation match**: join `public.faa_regulations` for the applicable FAR:
-   - **91.119(a)** — general minimum safe altitude (anywhere)
-   - **91.119(b)** — congested area <1000ft AGL over people/structures (AOI = Oildale residential)
-   - **91.119(c)** — non-congested <500ft AGL / <500ft from person, vessel, structure
-   - **91.155** — VFR cloud clearance / visibility if night
-   - **91.13** — careless/reckless (fallback when multiple violations stack)
-   - **91.209** — position lights after sunset
-4. **Aircraft enrichment**: join `faa_registration_master` + `aircraft_registry` for owner/operator, stall speed, category.
-5. **Severity**:
-   - `<500ft` over Oildale AOI → **CRITICAL** (91.119(c) + 91.119(b))
-   - `500–1000ft` → **HIGH** (91.119(b) or 91.119(a))
-   - Night + no position lights (via speed/altitude pattern) → escalate one tier
-6. **Output**: writes to `policy_violations` with `rule_source='FAR'`, `citation`, `far_text` from `faa_regulations`, SHA-256 hash of the row, and links back to the detection.
+Meanwhile detection and flagging kept running through **July 29**. So months of live surveillance data never made it into court-ready evidence.
 
-### UI wiring
-- **Live Monitor / Sentinel feed**: red pulse badge on any row with `altitude < 1000`, showing FAR citation from the classifier output (badge component: `<FARBadge cfr="91.119(b)" />`).
-- **`SentinelMLPanel`**: hard override — if `altitude < 1000`, `sentinel_ml_score` is floored at CRITICAL regardless of spatial/temporal/identity subscores.
-- **`PolicyViolationPanel`**: new tab "FAR Violations" filtered by `rule_source='FAR'`.
+**3. FAA violation scanning is barely running**
+- `policy_violations` holds only 35 rows, last written July 24 — despite the full FAA registry and FAA regulations tables now being loaded and the "below 1,000 ft is critical" rule being in force.
 
----
+**4. Command center sprawl**
+- 213 dashboard components spread across 21 routes. Many panels overlap (multiple data-quality, archive, and biometric-correlation panels doing near-identical work), which makes the daily workflow hard to follow and slows every page.
 
-## Part 2 — Full Schema Wiring Audit
+## Proposed plan
 
-### New edge function: `schema-wiring-audit`
-- Enumerates every column in every `public.*` table via `information_schema.columns`.
-- Greps the deployed edge-function source and `src/` for `SELECT ... FROM <table>` and column references.
-- Produces `schema_wiring_report` rows: `{ ui_file | edge_function, table, column_ref, status: 'ok' | 'missing_column' | 'renamed' | 'dropped_table' }`.
+### Phase 1 — Stop the alert flood (highest impact)
+- Add deduplication so a repeated finding updates an existing flag (occurrence count + last-seen) instead of creating a new row. No history is destroyed — existing flags stay, they get grouped.
+- Roll the 145k rows into a grouped view: one card per aircraft + finding type, showing "seen 310 times, first/last seen".
+- Re-tier severity so "critical" means something: presence-only findings drop to informational; critical reserved for physics violations, sub-1,000 ft over the AOI, identity mismatches, and biometric-correlated events.
+- Result: the flags panel shows roughly 23k meaningful findings instead of 145k rows, with a genuinely short critical list.
 
-### New UI: `SchemaWiringPanel` (on Josiah / Data Health)
-- Report table sorted by severity (broken > warning > ok).
-- One-click "Auto-fix" for the common patterns:
-  - Column renamed (e.g. `ground_speed` → `gs` or `speed`) → swap in source.
-  - Table replaced (e.g. `live_flight_detections` → `live_flight_detections_rows`) → swap.
-- Manual list for anything ambiguous.
+### Phase 2 — Restart the stalled evidence pipeline
+- Backfill forensic events and re-anchor the Merkle ledger for everything detected since May 23, so the chain of custody is unbroken and current.
+- Re-run the exhibit promotion rules against the last ~3 months of data so qualifying detections are promoted into the exhibit registry automatically.
+- Generate the missing daily intelligence reports for the backlog period and put them on a schedule so they never go empty again.
+- A "pipeline freshness" strip at the top of the dashboard: green/amber/red per stage, so a stall is visible the same day instead of two months later.
 
-### Auto-fix pass this turn
-Run the audit once and patch the obvious breakages that caused the 504s:
-- `neon-query` handlers referencing dropped columns
-- Any `sentinel-*` function referencing `ground_speed`, old detection tables, or missing biometric columns
+### Phase 3 — Turn on full FAA-backed violation scanning
+- Run the violation scanner across the full detection history (not just recent days), citing the FAA regulation and registry-confirmed operator on every hit.
+- Every violation gets its regulation citation, altitude, location, operator identity, and hash — ready to drop straight into a complaint or exhibit.
 
----
+### Phase 4 — Consolidate the command center
+- Merge duplicated panels (data-quality, archive, biometric-correlation families) into single canonical panels.
+- Reorganize the daily workflow around: Today's Critical Findings → Evidence to Promote → Exhibits → Export.
+- Retire dead panels whose backing tables no longer receive data.
 
-## Part 3 — Evidence Sources refresh
+## Technical notes
+- Dedupe uses a stable signature (flag type + registration + normalized description) with an occurrence counter and first/last-seen columns; existing rows are collapsed by a one-time grouping migration, never deleted.
+- Backfills run as chunked background jobs with time-window caps to stay inside edge function budgets (the same pattern already used for biometric enrichment).
+- Merkle re-anchoring appends new sequence numbers; prior chain hashes remain untouched, preserving reproducibility.
+- Freshness strip reads max-timestamp per pipeline table via the existing data-health function.
 
-- Re-run `neon-schema-crawl` (already-built function) to pick up all new tables.
-- Boost forensic score for FAA family (`faa_regulations`, `faa_registration_master`, `faa_airspace`, `faa_validated_violations`, `faa_aircraft_ref`, `faa_master`) so they surface at the top of `EvidenceSourcesPanel`.
-- Add a "FAA Regulatory" quick-filter chip on the panel.
-
----
-
-## Deliverables
-- `supabase/functions/far-classifier/index.ts` (new)
-- `supabase/functions/schema-wiring-audit/index.ts` (new)
-- `src/components/dashboard/FARBadge.tsx` (new)
-- `src/components/dashboard/SchemaWiringPanel.tsx` (new)
-- Migration: `schema_wiring_report` table + boost columns on `discovered_evidence_sources`; add `rule_source`, `citation`, `far_text` to `policy_violations` if not present.
-- Wire FAR badge into Live Monitor and Sentinel feed
-- Auto-fix pass on stale column refs found by the audit
-- Redeploy affected edge functions
-
-## Out of scope
-- No changes to raw universe tables (immutable audit policy)
-- No exclusions for MEDEVAC / approaches — user chose strict rule
-- No new ML training (SQL-only, consistent with prior pillar)
-
-## Ship order
-1. Migration
-2. `far-classifier` + `FARBadge` + Live Monitor wiring
-3. `schema-wiring-audit` + `SchemaWiringPanel`
-4. Auto-fix pass → redeploy
-5. `neon-schema-crawl` refresh + EvidenceSourcesPanel FAA chip
+## Suggested order
+Phase 1 first (immediate daily relief), then Phase 2 (legal exposure — unsealed evidence), then 3, then 4. Each phase is independently shippable.

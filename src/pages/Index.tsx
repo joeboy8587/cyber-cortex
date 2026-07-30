@@ -53,10 +53,22 @@ const Index = () => {
           />
         </section>
 
+        {/* PIPELINE HEALTH — is every evidence stage still receiving data? */}
+        <section>
+          <PipelineFreshnessStrip />
+        </section>
+
+        {/* FINDINGS TRIAGE — de-duplicated, re-tiered alerts */}
+        <section>
+          <FlagTriagePanel />
+        </section>
+
         {/* DAILY TRIAGE — 1-page brief from 20M rows */}
         <section>
           <DailyTriagePanel />
         </section>
+
+
 
         {/* DISCOVERY LAYER — table catalog + entity resolution across 800 tables */}
         <section>

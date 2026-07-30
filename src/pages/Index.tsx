@@ -22,6 +22,8 @@ import { PopulationScaleAnalysis } from "@/components/dashboard/PopulationScaleA
 import { DailyTriagePanel } from "@/components/dashboard/DailyTriagePanel";
 import { ForceMultiplierPanel } from "@/components/dashboard/ForceMultiplierPanel";
 import { TableIntelligencePanel } from "@/components/dashboard/TableIntelligencePanel";
+import { PipelineFreshnessStrip } from "@/components/dashboard/PipelineFreshnessStrip";
+import { FlagTriagePanel } from "@/components/dashboard/FlagTriagePanel";
 
 const Index = () => {
   return (

@@ -1,57 +1,41 @@
-# Watchtower System & Database Audit — Findings and Improvement Plan
+# Aircraft Profile Graph — learned embeddings + interactive network
 
-I ran a live audit of the backend and the command center. Below is what the data actually shows, then what I propose to fix, in priority order.
+Turn the detection archive (live detections, unsealed dumps, FAA identity, flags, violations) into one page that shows **who each aircraft is, who it flies with, and why it matters** — with a learned model behind the scoring, not just rules.
 
-## What the audit found (verified, not assumed)
+## What you get
 
-**1. Alert flood — the war room is drowning in duplicates**
-- 145,542 autonomous flags total, but only 23,192 unique signatures. About 84% are repeats of the same finding re-logged on every scan.
-- `PRE_CONFIRMED_PRESENCE` alone is 105,624 flags across just 341 aircraft (~310 per tail).
-- 26,663 flags are marked **critical**. When everything is critical, nothing is.
+1. **Profile Cards** — one per aircraft: FAA-authoritative operator, fleet siblings, total detections, AOI proximity, night ratio, sub-stall pings, flag history, repeat-offender rank, and a plain-English risk summary.
+2. **Interactive Graph** — drag/zoom canvas where nodes are aircraft, operators/LLCs, and AOI clusters. Edges mean: same registrant, same shell address, co-present in time and space, shared callsign pattern. Click a node to open its profile; click an edge to see the evidence that created it.
+3. **Learned similarity ("neural" layer)** — an autoencoder-style embedding trained on the daily feature vectors already in `ml_features_daily`, so aircraft with the same *behavioral signature* cluster together even when they never share an owner. Surfaces as "behavioral twins of N720CA".
+4. **Repeat-offender ranking** — combines deduplicated flags, policy violations, and graph centrality (PageRank) into one 0–100 score per aircraft and per operator.
+5. **One-click promotion** — any profile or cluster can be pushed to Exhibits with a SHA-256 fingerprint and audit entry, following the existing promotion rules.
 
-**2. The evidence pipeline has been stalled for months**
-- Master forensic events: last write **May 23**.
-- Merkle chain-of-custody ledger: last anchor **May 25** — nothing since then is cryptographically sealed.
-- Exhibits registry: last update **May 6**, still only 38 exhibits (26 in Tier 1).
-- Unmasked HQ locations: last update **March 24**.
-- Daily flight intelligence reports table: **completely empty (0 rows)**.
+## Build order
 
-Meanwhile detection and flagging kept running through **July 29**. So months of live surveillance data never made it into court-ready evidence.
+**Phase A — Profile + graph build (Neon)**
+- New edge function `entity-graph-build`: writes `entity_graph_nodes` and `entity_graph_edges` in Neon from FAA identity, shell registrant matches, spatio-temporal co-presence (same 5nm / ±10 min window), and flag/violation counts. Incremental by date window so it never hits the 120s budget.
+- Reuse `graph-pagerank` to score node centrality on the new edge table.
 
-**3. FAA violation scanning is barely running**
-- `policy_violations` holds only 35 rows, last written July 24 — despite the full FAA registry and FAA regulations tables now being loaded and the "below 1,000 ft is critical" rule being in force.
+**Phase B — Learned embeddings**
+- New edge function `entity-embed`: reads `ml_features_daily`, standardizes features, trains a small linear autoencoder (pure numeric, runs in the function — no GPU/ONNX), stores a 16-dim vector per aircraft in `entity_embeddings`, plus nearest-neighbor lists. Retrainable on demand and nightly.
+- Behavioral-twin edges get added back into the graph, tagged so they're visually distinct from documentary links.
 
-**4. Command center sprawl**
-- 213 dashboard components spread across 21 routes. Many panels overlap (multiple data-quality, archive, and biometric-correlation panels doing near-identical work), which makes the daily workflow hard to follow and slows every page.
+**Phase C — UI**
+- New route `/network-intel` with three regions: graph canvas (left), profile drawer (right), ranked offender table (bottom).
+- Filters: date range, AOI-only, flagged-only, operator search, edge-type toggles.
+- Graph rendered with an existing lightweight force layout in-app (same approach as the tanker network SVG graph, extended for pan/zoom and larger node counts, capped at the top N nodes for performance).
 
-## Proposed plan
-
-### Phase 1 — Stop the alert flood (highest impact)
-- Add deduplication so a repeated finding updates an existing flag (occurrence count + last-seen) instead of creating a new row. No history is destroyed — existing flags stay, they get grouped.
-- Roll the 145k rows into a grouped view: one card per aircraft + finding type, showing "seen 310 times, first/last seen".
-- Re-tier severity so "critical" means something: presence-only findings drop to informational; critical reserved for physics violations, sub-1,000 ft over the AOI, identity mismatches, and biometric-correlated events.
-- Result: the flags panel shows roughly 23k meaningful findings instead of 145k rows, with a genuinely short critical list.
-
-### Phase 2 — Restart the stalled evidence pipeline
-- Backfill forensic events and re-anchor the Merkle ledger for everything detected since May 23, so the chain of custody is unbroken and current.
-- Re-run the exhibit promotion rules against the last ~3 months of data so qualifying detections are promoted into the exhibit registry automatically.
-- Generate the missing daily intelligence reports for the backlog period and put them on a schedule so they never go empty again.
-- A "pipeline freshness" strip at the top of the dashboard: green/amber/red per stage, so a stall is visible the same day instead of two months later.
-
-### Phase 3 — Turn on full FAA-backed violation scanning
-- Run the violation scanner across the full detection history (not just recent days), citing the FAA regulation and registry-confirmed operator on every hit.
-- Every violation gets its regulation citation, altitude, location, operator identity, and hash — ready to drop straight into a complaint or exhibit.
-
-### Phase 4 — Consolidate the command center
-- Merge duplicated panels (data-quality, archive, biometric-correlation families) into single canonical panels.
-- Reorganize the daily workflow around: Today's Critical Findings → Evidence to Promote → Exhibits → Export.
-- Retire dead panels whose backing tables no longer receive data.
+**Phase D — Wiring into the case**
+- "Promote profile to exhibit" and "Promote cluster to exhibit" buttons.
+- Cross-links: profile → Forensic Trajectory, → biometric correlation window, → Sentinel flags.
 
 ## Technical notes
-- Dedupe uses a stable signature (flag type + registration + normalized description) with an occurrence counter and first/last-seen columns; existing rows are collapsed by a one-time grouping migration, never deleted.
-- Backfills run as chunked background jobs with time-window caps to stay inside edge function budgets (the same pattern already used for biometric enrichment).
-- Merkle re-anchoring appends new sequence numbers; prior chain hashes remain untouched, preserving reproducibility.
-- Freshness strip reads max-timestamp per pipeline table via the existing data-health function.
 
-## Suggested order
-Phase 1 first (immediate daily relief), then Phase 2 (legal exposure — unsealed evidence), then 3, then 4. Each phase is independently shippable.
+- All heavy work stays in Neon-backed edge functions with windowed queries and statement timeouts; the UI only reads precomputed node/edge/embedding tables so the page loads fast.
+- The autoencoder is trained in-function on standardized numeric features (no external ML runtime); results are deterministic and hash-stamped so any cluster shown in court can be reproduced.
+- Identity always comes from `v_faa_identity`; feed operator strings are never used as node labels.
+- No raw records are modified or deleted — new tables only.
+
+## Scope note
+
+Phases A and C are the visible payoff and can ship first. Phase B (learned embeddings) adds the "neural" clustering on top and needs `ml_features_daily` rebuilt over the full timeline, which runs as a background job.

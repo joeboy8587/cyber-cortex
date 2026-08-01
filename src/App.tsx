@@ -27,6 +27,7 @@ import EntityResolution from "./pages/EntityResolution";
 import SentinelV2 from "./pages/SentinelV2";
 import NeonDataHealth from "./pages/NeonDataHealth";
 import TankerNetwork from "./pages/TankerNetwork";
+import NetworkIntel from "./pages/NetworkIntel";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 2, staleTime: 5000 } },
@@ -156,6 +157,11 @@ const App = () => (
             <Route path="/tanker-network" element={
               <ProtectedRoute>
                 <TankerNetwork />
+              </ProtectedRoute>
+            } />
+            <Route path="/network-intel" element={
+              <ProtectedRoute>
+                <NetworkIntel />
               </ProtectedRoute>
             } />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}

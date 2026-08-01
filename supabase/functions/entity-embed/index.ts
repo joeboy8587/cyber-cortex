@@ -49,25 +49,65 @@ Deno.serve(async (req) => {
         updated_at timestamptz DEFAULT NOW()
       )`);
 
-    // Per-aircraft averaged feature vector.
-    const rows = await sql.unsafe(`
-      SELECT icao24,
-             ${FEATURES.map((f) => `AVG(COALESCE(${f}, 0))::float8 AS ${f}`).join(", ")},
-             SUM(COALESCE(pings,0))::float8 AS total_pings
-      FROM ml_features_daily
-      WHERE day >= CURRENT_DATE - INTERVAL '${days} days'
-      GROUP BY icao24
-      HAVING SUM(COALESCE(pings,0)) >= 10
-      ORDER BY SUM(COALESCE(pings,0)) DESC
-      LIMIT ${maxAircraft}
-    `) as Array<Record<string, unknown>>;
+    // Per-aircraft averaged feature vector (feature store preferred).
+    let rows: Array<Record<string, unknown>> = [];
+    let source = "ml_features_daily";
+    try {
+      rows = await sql.unsafe(`
+        SELECT icao24,
+               ${FEATURES.map((f) => `AVG(COALESCE(${f}, 0))::float8 AS ${f}`).join(", ")},
+               SUM(COALESCE(pings,0))::float8 AS total_pings
+        FROM ml_features_daily
+        WHERE day >= CURRENT_DATE - INTERVAL '${days} days'
+        GROUP BY icao24
+        HAVING SUM(COALESCE(pings,0)) >= 10
+        ORDER BY SUM(COALESCE(pings,0)) DESC
+        LIMIT ${maxAircraft}
+      `) as Array<Record<string, unknown>>;
+    } catch { rows = []; }
+
+    // Fallback: derive the same feature shape straight from the detection archive.
+    if (rows.length < 20) {
+      source = "live_flight_detections_rows";
+      rows = await sql.unsafe(`
+        WITH base AS (
+          SELECT LOWER(icao24) AS icao24, callsign, detection_timestamp AS ts,
+                 latitude, longitude, altitude, speed
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp >= NOW() - INTERVAL '${days} days'
+            AND icao24 IS NOT NULL AND TRIM(icao24) <> ''
+            AND latitude IS NOT NULL AND longitude IS NOT NULL
+        )
+        SELECT icao24,
+               COUNT(*)::float8 AS pings,
+               COUNT(DISTINCT callsign)::float8 AS distinct_callsigns,
+               COALESCE(MIN(altitude), 0)::float8 AS alt_min,
+               COALESCE(AVG(altitude), 0)::float8 AS alt_avg,
+               COALESCE(STDDEV_POP(altitude), 0)::float8 AS alt_sigma,
+               COALESCE(AVG(speed), 0)::float8 AS spd_avg,
+               COALESCE(STDDEV_POP(speed), 0)::float8 AS spd_sigma,
+               AVG(CASE WHEN speed IS NOT NULL AND speed > 0 AND speed < 48 THEN 1.0 ELSE 0 END)::float8 AS sub_stall_pct,
+               AVG(CASE WHEN altitude IS NOT NULL AND altitude <= 1 THEN 1.0 ELSE 0 END)::float8 AS zero_alt_pct,
+               AVG(CASE WHEN EXTRACT(HOUR FROM ts) < 6 OR EXTRACT(HOUR FROM ts) >= 22 THEN 1.0 ELSE 0 END)::float8 AS night_pct,
+               AVG(CASE WHEN altitude IS NOT NULL AND altitude < 1000 THEN 1.0 ELSE 0 END)::float8 AS low_alt_pct,
+               AVG(CASE WHEN ${HAV} <= 10 THEN 1.0 ELSE 0 END)::float8 AS in_aoi_pct,
+               MIN(${HAV})::float8 AS aoi_min_mi,
+               COUNT(*)::float8 AS total_pings
+        FROM base
+        GROUP BY icao24
+        HAVING COUNT(*) >= 10
+        ORDER BY COUNT(*) DESC
+        LIMIT ${maxAircraft}
+      `) as Array<Record<string, unknown>>;
+    }
 
     if (rows.length < 20) {
       return json({
         ok: false,
-        error: `Only ${rows.length} aircraft in ml_features_daily for the last ${days} days — run the ML Feature Store build first.`,
+        error: `Only ${rows.length} aircraft with enough recent activity to train on — widen the day range.`,
       }, 400);
     }
+
 
     // Standardize.
     const X = rows.map((r) => FEATURES.map((f) => Number(r[f]) || 0));

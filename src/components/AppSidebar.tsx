@@ -136,6 +136,12 @@ const navigationItems = [
     icon: Fuel,
     description: "KC-135/46/10 → Receivers Graph"
   },
+  {
+    title: "Network Intel",
+    url: "/network-intel",
+    icon: Network,
+    description: "Profiles · Graph · Repeat Offenders"
+  },
 ];
 
 export function AppSidebar() {

@@ -1420,12 +1420,16 @@ export type Database = {
           cross_references: Json | null
           description: string
           evidence_summary: Json | null
+          first_seen: string | null
           flag_type: string
           id: string
+          last_seen: string | null
           learning_context: Json | null
+          occurrence_count: number
           registration: string | null
           resolved_reason: string | null
           severity: string
+          signature: string | null
           source_scan_id: string | null
           updated_at: string
         }
@@ -1436,12 +1440,16 @@ export type Database = {
           cross_references?: Json | null
           description: string
           evidence_summary?: Json | null
+          first_seen?: string | null
           flag_type: string
           id?: string
+          last_seen?: string | null
           learning_context?: Json | null
+          occurrence_count?: number
           registration?: string | null
           resolved_reason?: string | null
           severity?: string
+          signature?: string | null
           source_scan_id?: string | null
           updated_at?: string
         }
@@ -1452,12 +1460,16 @@ export type Database = {
           cross_references?: Json | null
           description?: string
           evidence_summary?: Json | null
+          first_seen?: string | null
           flag_type?: string
           id?: string
+          last_seen?: string | null
           learning_context?: Json | null
+          occurrence_count?: number
           registration?: string | null
           resolved_reason?: string | null
           severity?: string
+          signature?: string | null
           source_scan_id?: string | null
           updated_at?: string
         }
@@ -1525,7 +1537,68 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      v_pipeline_freshness: {
+        Row: {
+          latest: string | null
+          row_count: number | null
+          stage: string | null
+        }
+        Relationships: []
+      }
+      v_watchtower_flag_groups: {
+        Row: {
+          confidence_score: number | null
+          created_at: string | null
+          cross_references: Json | null
+          description: string | null
+          effective_severity: string | null
+          evidence_summary: Json | null
+          first_seen: string | null
+          flag_type: string | null
+          id: string | null
+          last_seen: string | null
+          occurrence_count: number | null
+          raw_severity: string | null
+          registration: string | null
+          signature: string | null
+          source_scan_id: string | null
+        }
+        Insert: {
+          confidence_score?: number | null
+          created_at?: string | null
+          cross_references?: Json | null
+          description?: string | null
+          effective_severity?: never
+          evidence_summary?: Json | null
+          first_seen?: never
+          flag_type?: string | null
+          id?: string | null
+          last_seen?: never
+          occurrence_count?: number | null
+          raw_severity?: string | null
+          registration?: string | null
+          signature?: string | null
+          source_scan_id?: string | null
+        }
+        Update: {
+          confidence_score?: number | null
+          created_at?: string | null
+          cross_references?: Json | null
+          description?: string | null
+          effective_severity?: never
+          evidence_summary?: Json | null
+          first_seen?: never
+          flag_type?: string | null
+          id?: string | null
+          last_seen?: never
+          occurrence_count?: number | null
+          raw_severity?: string | null
+          registration?: string | null
+          signature?: string | null
+          source_scan_id?: string | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       has_role: {
@@ -1553,6 +1626,18 @@ export type Database = {
           similarity: number
           tags: string[]
         }[]
+      }
+      wt_effective_severity: {
+        Args: { _flag_type: string; _severity: string }
+        Returns: string
+      }
+      wt_flag_signature: {
+        Args: {
+          _description: string
+          _flag_type: string
+          _registration: string
+        }
+        Returns: string
       }
     }
     Enums: {

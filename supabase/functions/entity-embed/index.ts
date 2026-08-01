@@ -20,6 +20,8 @@ const FEATURES = [
   "low_alt_pct", "in_aoi_pct", "aoi_min_mi",
 ];
 const DIM = 8;
+const AOI_LAT = 35.4377286, AOI_LNG = -119.0252189;
+const HAV = `3958.8 * 2 * asin(sqrt(power(sin(radians((latitude - ${AOI_LAT})/2)),2) + cos(radians(${AOI_LAT})) * cos(radians(latitude)) * power(sin(radians((longitude - ${AOI_LNG})/2)),2)))`;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
@@ -234,7 +236,7 @@ Deno.serve(async (req) => {
       .sort((a, b) => b.recon_error - a.recon_error).slice(0, 20);
 
     return json({
-      ok: true, aircraft: rows.length, features: F, latent_dim: DIM, epochs,
+      ok: true, source, aircraft: rows.length, features: F, latent_dim: DIM, epochs,
       avg_recon_error: +avgMse.toFixed(5), behavior_edges: behaviorEdges,
       model_hash: modelHash, outliers, elapsed_ms: Date.now() - t0,
     });

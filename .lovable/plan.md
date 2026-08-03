@@ -49,7 +49,9 @@ The tanker analysis function queries `live_flight_detections_rows` for columns n
 
 
 ```text
+Phase 0  tanker column fix   -> refueling network graph loads again
 Phase 1  index + vacuum      -> immediate query speedup, ~5 GB reclaimed
+
 Phase 2  tag consolidation   -> panels stop disagreeing
 Phase 3  hash coverage       -> 383 tables / 5.96M rows fingerprinted
 Phase 4  merkle restart      -> unbroken chain of custody, nightly, verified

@@ -28,6 +28,7 @@ import SentinelV2 from "./pages/SentinelV2";
 import NeonDataHealth from "./pages/NeonDataHealth";
 import TankerNetwork from "./pages/TankerNetwork";
 import NetworkIntel from "./pages/NetworkIntel";
+import ArchiveIntegrity from "./pages/ArchiveIntegrity";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 2, staleTime: 5000 } },

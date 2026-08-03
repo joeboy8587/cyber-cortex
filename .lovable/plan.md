@@ -42,10 +42,16 @@
 - Schedule a nightly anchor job plus a chain-verification pass, and surface both on the Evidence Pipeline Health strip so a stall is visible the next day instead of two months later.
 - Add a one-click **Chain Integrity Report** (chain length, verification result, gap list, tip hash) as a court-ready export.
 
+### Phase 0 — Fix the Tanker Refueling Network error (do first, it's small)
+The tanker analysis function queries `live_flight_detections_rows` for columns named `hex` and `event_time`. Neither exists on that table — the real columns are `icao24` / `icao_code` and `detection_timestamp`. Postgres rejects the query, so the function returns a non-2xx error and the page shows an empty graph. Fix: point the query at the correct column names (with the same defensive column-detection the function already uses for aircraft type and operator) and re-run the analysis.
+
 ## Order and effect
 
+
 ```text
+Phase 0  tanker column fix   -> refueling network graph loads again
 Phase 1  index + vacuum      -> immediate query speedup, ~5 GB reclaimed
+
 Phase 2  tag consolidation   -> panels stop disagreeing
 Phase 3  hash coverage       -> 383 tables / 5.96M rows fingerprinted
 Phase 4  merkle restart      -> unbroken chain of custody, nightly, verified

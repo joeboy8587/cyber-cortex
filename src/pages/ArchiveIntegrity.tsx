@@ -191,24 +191,24 @@ export default function ArchiveIntegrity() {
         </header>
 
         <div className="grid gap-4 md:grid-cols-4">
-          <StatCard title="Base tables" value={fmtNum(audit?.totals?.base_tables ?? 0)} icon={<Database className="h-4 w-4" />} />
+          <StatCard label="Base tables" value={fmtNum(audit?.totals?.base_tables ?? 0)} icon={<Database className="h-4 w-4" />} />
           <StatCard
-            title="Index storage"
+            label="Index storage"
             value={fmtBytes(audit?.totals?.index_bytes ?? 0)}
             icon={<HardDrive className="h-4 w-4" />}
-            subtitle={audit ? `${fmtNum(audit.totals.indexes)} indexes · ${audit.reclaimableMb} MB reclaimable` : undefined}
+            trendValue={audit ? `${fmtNum(audit.totals.indexes)} indexes · ${audit.reclaimableMb} MB reclaimable` : undefined}
           />
           <StatCard
-            title="Hash coverage"
+            label="Hash coverage"
             value={`${hashPct}%`}
             icon={<Fingerprint className="h-4 w-4" />}
-            subtitle={coverage ? `${coverage.summary.unhashed_tables} tables unhashed` : undefined}
+            trendValue={coverage ? `${coverage.summary.unhashed_tables} tables unhashed` : undefined}
           />
           <StatCard
-            title="Merkle chain"
+            label="Merkle chain"
             value={fmtNum(merkle?.totalEntries ?? 0)}
             icon={<Link2 className="h-4 w-4" />}
-            subtitle={merkle?.lastEntry ? `last ${new Date(merkle.lastEntry.anchored_at).toLocaleString()}` : undefined}
+            trendValue={merkle?.lastEntry ? `last ${new Date(merkle.lastEntry.anchored_at).toLocaleString()}` : undefined}
           />
         </div>
 

@@ -191,23 +191,23 @@ export default function ArchiveIntegrity() {
         </header>
 
         <div className="grid gap-4 md:grid-cols-4">
-          <StatCard title="Base tables" value={fmtNum(audit?.totals?.base_tables ?? 0)} icon={Database} />
+          <StatCard title="Base tables" value={fmtNum(audit?.totals?.base_tables ?? 0)} icon={<Database className="h-4 w-4" />} />
           <StatCard
             title="Index storage"
             value={fmtBytes(audit?.totals?.index_bytes ?? 0)}
-            icon={HardDrive}
+            icon={<HardDrive className="h-4 w-4" />}
             subtitle={audit ? `${fmtNum(audit.totals.indexes)} indexes · ${audit.reclaimableMb} MB reclaimable` : undefined}
           />
           <StatCard
             title="Hash coverage"
             value={`${hashPct}%`}
-            icon={Fingerprint}
+            icon={<Fingerprint className="h-4 w-4" />}
             subtitle={coverage ? `${coverage.summary.unhashed_tables} tables unhashed` : undefined}
           />
           <StatCard
             title="Merkle chain"
             value={fmtNum(merkle?.totalEntries ?? 0)}
-            icon={Link2}
+            icon={<Link2 className="h-4 w-4" />}
             subtitle={merkle?.lastEntry ? `last ${new Date(merkle.lastEntry.anchored_at).toLocaleString()}` : undefined}
           />
         </div>
@@ -220,7 +220,7 @@ export default function ArchiveIntegrity() {
           </TabsList>
 
           <TabsContent value="indexes" className="space-y-4">
-            <CyberPanel title="Redundant & unused indexes" icon={Gauge}>
+            <CyberPanel title="Redundant & unused indexes" icon={<Gauge className="h-4 w-4" />}>
               <div className="mb-3 flex flex-wrap gap-2">
                 <Button size="sm" onClick={cleanupIndexes} disabled={!!busy || !audit?.recommendedDrops.length}>
                   <Trash2 className="mr-2 h-4 w-4" />
@@ -252,7 +252,7 @@ export default function ArchiveIntegrity() {
               )}
             </CyberPanel>
 
-            <CyberPanel title="Dead-row bloat" icon={AlertTriangle}>
+            <CyberPanel title="Dead-row bloat" icon={<AlertTriangle className="h-4 w-4" />}>
               <div className="space-y-1 text-sm">
                 {(audit?.bloatedTables ?? []).map((t: any) => (
                   <div key={t.table_name} className="flex items-center justify-between rounded border border-border/50 px-3 py-1.5">
@@ -268,7 +268,7 @@ export default function ArchiveIntegrity() {
           </TabsContent>
 
           <TabsContent value="hashes" className="space-y-4">
-            <CyberPanel title="SHA-256 fingerprint coverage" icon={Fingerprint}>
+            <CyberPanel title="SHA-256 fingerprint coverage" icon={<Fingerprint className="h-4 w-4" />}>
               <div className="mb-3">
                 <Button size="sm" onClick={backfillHashes} disabled={!!busy}>
                   <Fingerprint className={`mr-2 h-4 w-4 ${busy === "hash" ? "animate-pulse" : ""}`} /> Backfill hashes
@@ -294,7 +294,7 @@ export default function ArchiveIntegrity() {
           </TabsContent>
 
           <TabsContent value="chain" className="space-y-4">
-            <CyberPanel title="Merkle chain of custody" icon={ShieldCheck}>
+            <CyberPanel title="Merkle chain of custody" icon={<ShieldCheck className="h-4 w-4" />}>
               <div className="mb-3 flex flex-wrap gap-2">
                 <Button size="sm" onClick={anchorChain} disabled={!!busy}>
                   <Link2 className={`mr-2 h-4 w-4 ${busy === "anchor" ? "animate-pulse" : ""}`} /> Anchor new records
@@ -330,7 +330,7 @@ export default function ArchiveIntegrity() {
           </TabsContent>
         </Tabs>
 
-        <CyberPanel title="Activity log" icon={Database}>
+        <CyberPanel title="Activity log" icon={<Database className="h-4 w-4" />}>
           <div className="max-h-56 space-y-1 overflow-auto font-mono text-xs text-muted-foreground">
             {log.length ? log.map((l, i) => <div key={i}>{l}</div>) : <div>No actions yet.</div>}
           </div>

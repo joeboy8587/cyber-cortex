@@ -15,6 +15,7 @@ import {
   GraduationCap,
   MapPin,
   Network,
+  ShieldCheck,
   Ghost,
   FolderOpen,
   ScanEye,

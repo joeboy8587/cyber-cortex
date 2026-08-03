@@ -143,7 +143,14 @@ const navigationItems = [
     icon: Network,
     description: "Profiles · Graph · Repeat Offenders"
   },
+  {
+    title: "Archive Integrity",
+    url: "/archive-integrity",
+    icon: ShieldCheck,
+    description: "Index Health · SHA-256 · Merkle Chain"
+  },
 ];
+
 
 export function AppSidebar() {
   const { state } = useSidebar();

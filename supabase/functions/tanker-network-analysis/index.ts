@@ -51,14 +51,23 @@ Deno.serve(async (req) => {
                    : have.has("aircraft_type") ? "aircraft_type" : "NULL";
     const opCol = have.has("owner_operator") ? "owner_operator"
                  : have.has("faa_registrant_name") ? "faa_registrant_name" : "NULL";
+    // The detection table uses icao24 / icao_code (not "hex") and
+    // detection_timestamp (not "event_time"). Resolve defensively.
+    const hexCol = have.has("icao24") ? "icao24"
+                  : have.has("icao_code") ? "icao_code"
+                  : have.has("hex") ? "hex" : "NULL";
+    const timeCol = have.has("detection_timestamp") ? "detection_timestamp"
+                   : have.has("event_time") ? "event_time" : "created_at";
+    const altCol = have.has("altitude") ? "altitude"
+                  : have.has("altitude_ft") ? "altitude_ft" : "NULL";
 
     // 1) Identify tanker tracks (sampled)
     const tankers = await sql.unsafe(`
-      SELECT hex, callsign, ${typeCol} AS aircraft_type, ${opCol} AS operator,
-             event_time, latitude, longitude, altitude
+      SELECT ${hexCol} AS hex, callsign, ${typeCol} AS aircraft_type, ${opCol} AS operator,
+             ${timeCol} AS event_time, latitude, longitude, ${altCol} AS altitude
       FROM live_flight_detections_rows
-      WHERE event_time >= NOW() - INTERVAL '${days} days'
-        AND altitude >= ${minAltFt}
+      WHERE ${timeCol} >= NOW() - INTERVAL '${days} days'
+        AND ${altCol} >= ${minAltFt}
         AND latitude IS NOT NULL AND longitude IS NOT NULL
         AND (
           ${typeCol} ILIKE 'KC-135%' OR ${typeCol} ILIKE 'KC-46%' OR ${typeCol} ILIKE 'KC-10%'
@@ -67,6 +76,7 @@ Deno.serve(async (req) => {
         )
       LIMIT 5000
     `) as any[];
+
 
     if (tankers.length === 0) {
       return json({ ok: true, nodes: [], edges: [], encounters: [], stats: { tankers: 0, receivers: 0, encounters: 0 } });
@@ -93,8 +103,8 @@ Deno.serve(async (req) => {
     for (const t of sampledTankers) {
       if (encounters.length >= maxEncounters) break;
       const nearby = await sql.unsafe(`
-        SELECT hex, callsign, ${typeCol} AS aircraft_type, ${opCol} AS operator,
-               event_time, latitude, longitude, altitude,
+        SELECT ${hexCol} AS hex, callsign, ${typeCol} AS aircraft_type, ${opCol} AS operator,
+               ${timeCol} AS event_time, latitude, longitude, ${altCol} AS altitude,
                (
                  3440.065 * acos(LEAST(1.0,
                    cos(radians(${t.latitude})) * cos(radians(latitude)) *
@@ -103,13 +113,14 @@ Deno.serve(async (req) => {
                  ))
                ) AS dist_nm
         FROM live_flight_detections_rows
-        WHERE event_time BETWEEN ('${t.event_time.toISOString()}'::timestamptz - INTERVAL '${timeWindowMin} minutes')
-                             AND ('${t.event_time.toISOString()}'::timestamptz + INTERVAL '${timeWindowMin} minutes')
-          AND altitude BETWEEN ${Number(t.altitude) - 3000} AND ${Number(t.altitude) + 3000}
+        WHERE ${timeCol} BETWEEN ('${new Date(t.event_time).toISOString()}'::timestamptz - INTERVAL '${timeWindowMin} minutes')
+                             AND ('${new Date(t.event_time).toISOString()}'::timestamptz + INTERVAL '${timeWindowMin} minutes')
+          AND ${altCol} BETWEEN ${Number(t.altitude) - 3000} AND ${Number(t.altitude) + 3000}
           AND latitude  BETWEEN ${Number(t.latitude) - 0.6}  AND ${Number(t.latitude) + 0.6}
           AND longitude BETWEEN ${Number(t.longitude) - 0.7} AND ${Number(t.longitude) + 0.7}
-          AND hex <> '${(t.hex || "").replace(/'/g, "")}'
+          AND COALESCE(${hexCol}, '') <> '${(t.hex || "").replace(/'/g, "")}'
         LIMIT 20
+
       `).catch(() => []) as any[];
 
       upsertNode(t.hex, t.callsign, t.aircraft_type, t.operator, "tanker");

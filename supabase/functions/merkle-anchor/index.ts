@@ -290,11 +290,13 @@ async function handleBackfillHashes(neonUrl: string, body: any) {
     if (c.column_name === 'sha256_hash') e.hasSha = true;
   }
 
+  // Targets: any base table with an id column that is missing the hash column
+  // OR still has unhashed rows (column added previously but never populated).
   const targets: string[] = [];
   for (const [name, info] of m.entries()) {
     if (tableFilter && name !== tableFilter) continue;
     if (name.startsWith('pg_') || name.startsWith('_')) continue;
-    if (info.hasId && !info.hasSha) targets.push(name);
+    if (info.hasId) targets.push(name);
   }
 
   const results: any[] = [];
@@ -306,26 +308,35 @@ async function handleBackfillHashes(neonUrl: string, body: any) {
     }
     try {
       await neonQuery(neonUrl, `ALTER TABLE "${tableName}" ADD COLUMN IF NOT EXISTS sha256_hash TEXT`);
+      // Cheap probe: skip tables that are already fully hashed.
+      const probe = await neonQuery(neonUrl,
+        `SELECT 1 AS x FROM "${tableName}" WHERE sha256_hash IS NULL LIMIT 1`);
+      if (!Array.isArray(probe) || probe.length === 0) {
+        results.push({ table: tableName, status: 'up-to-date', updated: 0, remaining: 0 });
+        continue;
+      }
+      // pg_catalog.sha256(bytea) — pgcrypto's digest() is not on the search_path here.
       const upd = await neonQuery(neonUrl,
         `WITH batch AS (
            SELECT ctid FROM "${tableName}" WHERE sha256_hash IS NULL LIMIT ${batchSize}
          )
          UPDATE "${tableName}" t
-         SET sha256_hash = encode(digest(row_to_json(t)::text, 'sha256'), 'hex')
+         SET sha256_hash = encode(sha256(convert_to(row_to_json(t)::text, 'UTF8')), 'hex')
          FROM batch WHERE t.ctid = batch.ctid
          RETURNING 1`);
       const updated = Array.isArray(upd) ? upd.length : 0;
-      const remaining = await neonQuery(neonUrl,
-        `SELECT COUNT(*)::int AS n FROM "${tableName}" WHERE sha256_hash IS NULL`);
-      const r = (remaining as any[])[0]?.n ?? 0;
-      results.push({ table: tableName, status: 'hashed', updated, remaining: r });
+      const more = await neonQuery(neonUrl,
+        `SELECT 1 AS x FROM "${tableName}" WHERE sha256_hash IS NULL LIMIT 1`);
+      const remaining = Array.isArray(more) && more.length > 0 ? 'more' : 0;
+      results.push({ table: tableName, status: 'hashed', updated, remaining });
       done++;
-      console.log(`hashed +${updated} ${tableName}, remaining=${r}`);
+      console.log(`hashed +${updated} ${tableName}, remaining=${remaining}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       results.push({ table: tableName, status: 'error', error: msg.slice(0, 200) });
     }
   }
+
 
   return json({
     candidatesFound: targets.length,

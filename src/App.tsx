@@ -165,6 +165,12 @@ const App = () => (
                 <NetworkIntel />
               </ProtectedRoute>
             } />
+            <Route path="/archive-integrity" element={
+              <ProtectedRoute>
+                <ArchiveIntegrity />
+              </ProtectedRoute>
+            } />
+
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>

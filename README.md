@@ -1,73 +1,52 @@
-# Welcome to your Lovable project
+# Cyber-Cortex
 
-## Project info
+Internal command center for The Watchtower Project. Hosted at [cyber-cortex-fawn.vercel.app](https://cyber-cortex-fawn.vercel.app).
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+## What this is
 
-## How can I edit this code?
+Cyber-Cortex is the internal analytics and integrity layer for the Watchtower Project's 35.2M+ record multimodal archive. It is **not** public-facing. It provides operators with tools for aerial surveillance analysis, data integrity verification, and investigative workflows.
 
-There are several ways of editing your application.
+## Tech stack
 
-**Use Lovable**
+- **Frontend**: Vite, React, TypeScript, Tailwind CSS, shadcn/ui
+- **Backend**: Supabase Edge Functions (Deno), Neon Postgres
+- **Deployment**: Vercel (Lovable-managed)
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+## Key pages
 
-Changes made via Lovable will be committed automatically to this repo.
+| Route | Description |
+|-------|-------------|
+| `/sentinel-v2` | Sentinel detection dashboard |
+| `/neon-data-health` | Neon database health monitoring |
+| `/tanker-network` | Aerial tanker network visualization |
+| `/network-intel` | Network intelligence: profiles, graph, repeat offenders |
+| `/archive-integrity` | Index health, SHA-256 hash coverage, Merkle chain of custody |
 
-**Use your preferred IDE**
+## Supabase Edge Functions
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+### `neon-archive-integrity`
+Archive integrity and query speed engine. Actions:
+- `indexAudit` — finds unused/duplicate indexes and bloated tables
+- `indexCleanup` — drops redundant indexes (batch, time-budgeted)
+- `vacuumTables` — VACUUM ANALYZE bloated tables (never FULL, evidence tables stay online)
+- `tagsView` — rebuilds `v_detection_tags` unified tag view
+- `hashCoverage` — reports SHA-256 fingerprint coverage across all base tables
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+### `merkle-anchor`
+Merkle chain of custody anchoring. Actions:
+- `stats` — chain statistics (total entries, unique tables, last/first entry)
+- `backfillHashes` — batch SHA-256 hashing of unhashed rows (skips up-to-date tables)
+- `anchorDeep` — anchors new records into the Merkle chain
+- `verify` — full chain integrity verification
 
-Follow these steps:
+### `tanker-network-analysis`
+Aerial tanker refueling encounter detection. Identifies tanker-receiver pairs by spatial/temporal proximity.
 
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
+## Development
 
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
+```bash
+npm install
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
-
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
-
-**Use GitHub Codespaces**
-
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
-
-## What technologies are used for this project?
-
-This project is built with:
-
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-
-## How can I deploy this project?
-
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
-
-## Can I connect a custom domain to my Lovable project?
-
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+Requires Node.js and npm. Environment variables (NEON_DATABASE_URL, Supabase keys) must be configured.

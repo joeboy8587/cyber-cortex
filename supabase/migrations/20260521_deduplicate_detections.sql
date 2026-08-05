@@ -48,16 +48,22 @@ SELECT
 FROM dups;
 
 -- Step 3: Delete duplicate rows (keep the most recent version)
+-- IMPORTANT: The outer WHERE clause scopes the DELETE to non-NULL rows only.
+-- Without it, rows with NULL in any key column would be silently deleted
+-- because they never appear in the DISTINCT ON subquery (which filters NULLs).
 DELETE FROM public.live_flight_detections_rows
-WHERE id NOT IN (
-  SELECT DISTINCT ON (registration, icao24, detection_timestamp)
-    id
-  FROM public.live_flight_detections_rows
-  WHERE registration IS NOT NULL 
-    AND icao24 IS NOT NULL
-    AND detection_timestamp IS NOT NULL
-  ORDER BY registration, icao24, detection_timestamp, created_at DESC
-);
+WHERE registration IS NOT NULL 
+  AND icao24 IS NOT NULL
+  AND detection_timestamp IS NOT NULL
+  AND id NOT IN (
+    SELECT DISTINCT ON (registration, icao24, detection_timestamp)
+      id
+    FROM public.live_flight_detections_rows
+    WHERE registration IS NOT NULL 
+      AND icao24 IS NOT NULL
+      AND detection_timestamp IS NOT NULL
+    ORDER BY registration, icao24, detection_timestamp, created_at DESC
+  );
 
 -- Step 4: Add unique constraint to prevent future duplicates
 ALTER TABLE public.live_flight_detections_rows

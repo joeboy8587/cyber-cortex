@@ -9,8 +9,8 @@ Cyber-Cortex is the internal analytics and integrity layer for the Watchtower Pr
 ## Tech stack
 
 - **Frontend**: Vite, React, TypeScript, Tailwind CSS, shadcn/ui
-- **Backend**: Supabase Edge Functions (Deno), Neon Postgres
-- **Deployment**: Vercel (Lovable-managed)
+- **Backend**: Supabase Edge Functions (Neon), Neon Postgres
+- **Deployment**: Vercel (static build via `vercel.json`)
 
 ## Key pages
 
@@ -21,6 +21,11 @@ Cyber-Cortex is the internal analytics and integrity layer for the Watchtower Pr
 | `/tanker-network` | Aerial tanker network visualization |
 | `/network-intel` | Network intelligence: profiles, graph, repeat offenders |
 | `/archive-integrity` | Index health, SHA-256 hash coverage, Merkle chain of custody |
+
+## Deployment configuration
+
+- **`vercel.json`** — Configures `@vercel/static-build` to output Vite's `dist/` directory and routes all paths (`/(.*)`) to `/index.html` for SPA client-side routing.
+- **`.npmrc`** — Sets `legacy-peer-deps=true` to avoid peer dependency install failures during Vercel builds.
 
 ## Supabase Edge Functions
 

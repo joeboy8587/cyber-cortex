@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
+import { CountyIntegrityPanel } from "@/components/dashboard/CountyIntegrityPanel";
 import { useToast } from "@/hooks/use-toast";
 import {
   Database, ShieldCheck, Link2, HardDrive, RefreshCw, Trash2,

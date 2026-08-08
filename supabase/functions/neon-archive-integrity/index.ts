@@ -192,6 +192,76 @@ async function handleVacuum(neonUrl: string, body: any) {
   return json({ results });
 }
 
+// ─── COUNTY INTEGRITY (coordinate-derived, additive) ──────────────────
+// The legacy `county_classification` column is a stale partial backfill.
+// Truth comes from lat/lon tested against real county polygons, stored in
+// the side table `detection_county_map` — the original column is never touched.
+async function handleCountyStats(neonUrl: string) {
+  const [totals, byCounty, mismatch] = await Promise.all([
+    neonQuery(
+      neonUrl,
+      `SELECT (SELECT count(*) FROM live_flight_detections_rows)::bigint AS total_rows,
+              (SELECT count(*) FROM detection_county_map)::bigint AS derived_rows,
+              (SELECT count(*) FROM detection_county_map WHERE county_source='no_position')::bigint AS no_position`,
+    ),
+    neonQuery(
+      neonUrl,
+      `SELECT county_derived AS county, count(*)::bigint AS rows
+       FROM detection_county_map GROUP BY 1 ORDER BY 2 DESC LIMIT 25`,
+    ),
+    neonQuery(
+      neonUrl,
+      `SELECT count(*)::bigint AS disagreements
+       FROM detection_county_map m
+       JOIN live_flight_detections_rows d ON d.id = m.detection_id
+       WHERE m.county_derived IS NOT NULL
+         AND m.county_derived <> 'Outside_AOI'
+         AND d.county_classification IS DISTINCT FROM m.county_derived`,
+    ),
+  ]);
+  const legacy = await neonQuery(
+    neonUrl,
+    `SELECT COALESCE(county_classification,'(blank)') AS county, count(*)::bigint AS rows
+     FROM live_flight_detections_rows GROUP BY 1 ORDER BY 2 DESC LIMIT 15`,
+  );
+  return json({
+    totals: (totals as any[])[0] ?? {},
+    byCounty,
+    legacy,
+    disagreements: Number((mismatch as any[])[0]?.disagreements ?? 0),
+  });
+}
+
+async function handleCountyBackfill(neonUrl: string, body: any) {
+  const batch = Math.min(Number(body.batchSize ?? 200000), 500000);
+  const rows = await neonQuery(
+    neonUrl,
+    `WITH p AS (
+       SELECT d.id, d.latitude, d.longitude
+       FROM live_flight_detections_rows d
+       WHERE NOT EXISTS (SELECT 1 FROM detection_county_map m WHERE m.detection_id = d.id)
+       LIMIT ${batch}
+     ), ins AS (
+       INSERT INTO detection_county_map(detection_id, county_derived, county_source)
+       SELECT p.id,
+         CASE WHEN p.latitude IS NULL OR p.longitude IS NULL THEN NULL
+              ELSE COALESCE((SELECT c.county_name FROM ca_county_parts c
+                    WHERE c.geom && ST_SetSRID(ST_MakePoint(p.longitude, p.latitude), 4326)
+                      AND ST_Intersects(c.geom, ST_SetSRID(ST_MakePoint(p.longitude, p.latitude), 4326))
+                    LIMIT 1), 'Outside_AOI') END,
+         CASE WHEN p.latitude IS NULL OR p.longitude IS NULL THEN 'no_position' ELSE 'polygon' END
+       FROM p
+       ON CONFLICT (detection_id) DO NOTHING
+       RETURNING 1
+     )
+     SELECT (SELECT count(*) FROM ins)::bigint AS inserted,
+            (SELECT count(*) FROM live_flight_detections_rows d
+             WHERE NOT EXISTS (SELECT 1 FROM detection_county_map m WHERE m.detection_id = d.id))::bigint AS remaining`,
+  );
+  return json((rows as any[])[0] ?? { inserted: 0, remaining: 0 });
+}
+
+
 // ─── UNIFIED TAG VIEW (Phase 2) ───────────────────────────────────────
 async function handleTagsView(neonUrl: string) {
   const cols = await neonQuery(
@@ -280,6 +350,8 @@ Deno.serve(async (req) => {
       case "indexCleanup": return await handleIndexCleanup(neonUrl, body);
       case "vacuumTables": return await handleVacuum(neonUrl, body);
       case "tagsView": return await handleTagsView(neonUrl);
+      case "countyStats": return await handleCountyStats(neonUrl);
+      case "countyBackfill": return await handleCountyBackfill(neonUrl, body);
       case "hashCoverage": return await handleHashCoverage(neonUrl);
       default: return json({ error: `Unknown action: ${action}` }, 400);
     }

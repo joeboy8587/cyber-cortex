@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Progress } from "@/components/ui/progress";
 import { supabase } from "@/integrations/supabase/client";
+import { downloadCSV, forensicFilename } from "@/lib/csv";
 
 interface TableCount {
   table_name: string;
@@ -67,18 +68,11 @@ export function NeonTableCensus() {
   }, []);
 
   const exportCSV = () => {
-    const csv = [
-      'table_name,row_count',
-      ...tables.map(t => `${t.table_name},${t.row_count}`)
-    ].join('\n');
-    
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `neon_table_census_${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadCSV(
+      tables.map(t => ({ table_name: t.table_name, row_count: t.row_count })),
+      forensicFilename('CENSUS', 'NEON_TABLE_CENSUS'),
+      ['table_name', 'row_count'],
+    );
   };
 
   const formatNumber = (num: number) => num.toLocaleString();

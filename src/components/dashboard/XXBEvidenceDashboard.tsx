@@ -314,14 +314,11 @@ export function XXBEvidenceDashboard() {
       l.speed < 30 ? 'HOVER' : 'TRANSIT'
     ]);
 
-    const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `XXB_MASK_LEAKS_${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadCSV(
+      rows.map((r) => Object.fromEntries(headers.map((h, i) => [h, r[i]]))),
+      forensicFilename('XXB', 'MASK_LEAKS'),
+      headers,
+    );
     toast.success('CSV exported successfully');
   };
 

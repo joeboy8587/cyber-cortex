@@ -1,3 +1,4 @@
+import { downloadCSV, forensicFilename } from '@/lib/csv';
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -159,15 +160,7 @@ export default function ForensicTrajectoryPanel() {
   const exportCSV = () => {
     const rows = violations.length > 0 ? violations : trajectory;
     if (rows.length === 0) { toast.error('No data to export'); return; }
-    const headers = Object.keys(rows[0]).join(',');
-    const csv = [headers, ...rows.map(r => Object.values(r).map(v => `"${v ?? ''}"`).join(','))].join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `forensic_evidence_${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadCSV(rows as Record<string, unknown>[], forensicFilename('TRAJECTORY', 'FORENSIC_EVIDENCE'));
     toast.success('Evidence exported as CSV');
   };
 

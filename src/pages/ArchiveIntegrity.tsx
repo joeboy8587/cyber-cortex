@@ -217,7 +217,12 @@ export default function ArchiveIntegrity() {
             <TabsTrigger value="indexes">Query speed</TabsTrigger>
             <TabsTrigger value="hashes">Hash coverage</TabsTrigger>
             <TabsTrigger value="chain">Chain of custody</TabsTrigger>
+            <TabsTrigger value="county">County integrity</TabsTrigger>
           </TabsList>
+
+          <TabsContent value="county" className="space-y-4">
+            <CountyIntegrityPanel />
+          </TabsContent>
 
           <TabsContent value="indexes" className="space-y-4">
             <CyberPanel title="Redundant & unused indexes" icon={<Gauge className="h-4 w-4" />}>

@@ -1,3 +1,4 @@
+import { downloadCSV, forensicFilename } from '@/lib/csv';
 import { useState, useEffect, useCallback } from 'react';
 import { CyberPanel } from '@/components/ui/cyber-panel';
 import { Badge } from '@/components/ui/badge';

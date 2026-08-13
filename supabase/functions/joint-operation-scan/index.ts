@@ -109,6 +109,9 @@ Deno.serve(async (req) => {
       FROM pairs
       WHERE nm <= ${proximityNm}
       GROUP BY tail, mil_id, hex, date_trunc('hour', le_t)
+      -- credibility guard: drop Class-A cruise overflights (no joint operation possible)
+      HAVING min(coalesce(mil_alt, 0)) < 18000
+         AND abs(min(coalesce(mil_alt,0)) - min(coalesce(le_alt,0))) < 10000
       ORDER BY min(nm) ASC, count(*) DESC
       LIMIT 500
     `)) as unknown as Array<Record<string, unknown>>;

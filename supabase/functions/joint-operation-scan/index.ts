@@ -68,7 +68,7 @@ Deno.serve(async (req) => {
         WHERE detection_timestamp > NOW() - INTERVAL '${hours} hours'
           AND latitude IS NOT NULL AND longitude IS NOT NULL
           AND (
-            upper(coalesce(icao24,'')) ~ '^(AE|ADF|AE0)' OR
+            (length(coalesce(icao24,'')) = 6 AND upper(icao24) BETWEEN 'ADF7C8' AND 'AFFFFF') OR
             coalesce(registration,'') ~ '^[0-9]{2}-[0-9]{3,5}$'
           )
       ),

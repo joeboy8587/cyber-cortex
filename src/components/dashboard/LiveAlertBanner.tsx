@@ -59,6 +59,20 @@ const isShellOperator = (entity: string): boolean => {
   return SHELL_OPERATOR_KEYWORDS.some(k => e.includes(k));
 };
 
+// Detections older than this are last-known cache, not live airspace state.
+const STALE_AFTER_MS = 20 * 60 * 1000;
+const isStaleDetection = (ts: string): boolean => {
+  const t = new Date(ts).getTime();
+  if (!Number.isFinite(t)) return true;
+  return Date.now() - t > STALE_AFTER_MS;
+};
+const formatAge = (ts: string): string => {
+  const mins = Math.max(0, Math.round((Date.now() - new Date(ts).getTime()) / 60000));
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  return hrs < 48 ? `${hrs}h ago` : `${Math.round(hrs / 24)}d ago`;
+};
+
 const CRITICAL_REGISTRATIONS = ['N912KC', 'N913KC', 'N743AM', 'N139HP', 'N156HP', 'N202HP', 'N8274E'];
 
 export function LiveAlertBanner({
@@ -72,6 +86,7 @@ export function LiveAlertBanner({
   const [soundEnabled, setSoundEnabled] = useState(initialSoundEnabled);
   const [expanded, setExpanded] = useState(true);
   const [lastCheck, setLastCheck] = useState<Date>(new Date());
+  const [feedSource, setFeedSource] = useState<string>('live');
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const previousAlertsRef = useRef<Set<string>>(new Set());
 
@@ -200,6 +215,7 @@ export function LiveAlertBanner({
       });
 
       const allFlights: any[] = [];
+      setFeedSource(liveResult.data?.source || 'live');
 
       if (liveResult.data?.flights) {
         for (const f of liveResult.data.flights) {
@@ -224,7 +240,8 @@ export function LiveAlertBanner({
 
       // Check for new critical/high alerts to trigger sound
       const newCriticalAlerts = newAlerts.filter(
-        a => (a.threat_level === 'critical' || a.threat_level === 'high') && 
+        a => (a.threat_level === 'critical' || a.threat_level === 'high') &&
+             !isStaleDetection(a.detected_at) &&
              !previousAlertsRef.current.has(a.registration)
       );
 
@@ -265,8 +282,11 @@ export function LiveAlertBanner({
     setAlerts([]);
   };
 
-  const criticalCount = alerts.filter(a => a.threat_level === 'critical').length;
-  const highCount = alerts.filter(a => a.threat_level === 'high').length;
+  const liveAlerts = alerts.filter(a => !isStaleDetection(a.detected_at));
+  const staleAlerts = alerts.filter(a => isStaleDetection(a.detected_at));
+  const isCachedFeed = feedSource === 'cached' || liveAlerts.length === 0;
+  const criticalCount = liveAlerts.filter(a => a.threat_level === 'critical').length;
+  const highCount = liveAlerts.filter(a => a.threat_level === 'high').length;
   // Count UNIQUE tails (not operators) flagged as shell-linked
   const shellTails = new Set(
     alerts
@@ -311,7 +331,9 @@ export function LiveAlertBanner({
         className={cn(
           "rounded-lg border-2 overflow-hidden transition-all",
           (criticalCount > 0 || enterpriseCritical)
-            ? "bg-destructive/20 border-destructive animate-pulse" 
+            ? "bg-destructive/20 border-destructive animate-pulse"
+            : liveAlerts.length === 0
+            ? "bg-muted/30 border-muted-foreground/30"
             : "bg-orange-500/20 border-orange-500"
         )}
       >
@@ -342,7 +364,7 @@ export function LiveAlertBanner({
         <div 
           className={cn(
             "p-3 flex items-center justify-between cursor-pointer",
-            criticalCount > 0 ? "bg-destructive/30" : "bg-orange-500/30"
+            criticalCount > 0 ? "bg-destructive/30" : liveAlerts.length === 0 ? "bg-muted/40" : "bg-orange-500/30"
           )}
           onClick={() => setExpanded(!expanded)}
         >
@@ -353,10 +375,17 @@ export function LiveAlertBanner({
             )} />
             <div>
               <div className="font-bold text-lg flex items-center gap-2">
-                {criticalCount > 0 ? 'CRITICAL AIRCRAFT DETECTED' : 'AIRCRAFT ALERT'}
-                <Badge variant="destructive" className="animate-pulse">
-                  {alerts.length} ACTIVE
-                </Badge>
+                {criticalCount > 0 ? 'CRITICAL AIRCRAFT DETECTED' : liveAlerts.length > 0 ? 'AIRCRAFT ALERT' : 'LAST KNOWN ACTIVITY'}
+                {liveAlerts.length > 0 && (
+                  <Badge variant="destructive" className="animate-pulse">
+                    {liveAlerts.length} LIVE
+                  </Badge>
+                )}
+                {staleAlerts.length > 0 && (
+                  <Badge variant="outline" className="text-xs">
+                    {staleAlerts.length} CACHED
+                  </Badge>
+                )}
               </div>
               <div className="text-xs text-muted-foreground flex items-center gap-2">
                 {criticalCount > 0 && (
@@ -369,6 +398,11 @@ export function LiveAlertBanner({
                   <Badge variant="outline" className="text-xs border-primary/40 text-primary">{shellCount} Shell</Badge>
                 )}
                 <span>• Low altitude threshold: {lowAltitudeThreshold}ft</span>
+                {isCachedFeed && staleAlerts.length > 0 && (
+                  <span className="text-yellow-500">
+                    • No live low-altitude traffic — showing last known detections (Sentinel window shows 0 because these are outside it)
+                  </span>
+                )}
               </div>
             </div>
           </div>
@@ -400,6 +434,7 @@ export function LiveAlertBanner({
                 key={alert.id}
                 className={cn(
                   "p-3 rounded-lg border flex items-center justify-between cursor-pointer hover:opacity-90 transition-opacity",
+                  isStaleDetection(alert.detected_at) && "opacity-60",
                   alert.threat_level === 'critical' 
                     ? "bg-destructive/10 border-destructive" 
                     : alert.threat_level === 'high'
@@ -427,6 +462,11 @@ export function LiveAlertBanner({
                       >
                         {alert.threat_level.toUpperCase()}
                       </Badge>
+                      {isStaleDetection(alert.detected_at) && (
+                        <Badge variant="outline" className="text-[10px] py-0 border-muted-foreground/40 text-muted-foreground">
+                          CACHED • {formatAge(alert.detected_at)}
+                        </Badge>
+                      )}
                     </div>
                     <div className="text-xs text-muted-foreground flex items-center gap-3 mt-1">
                       <span className="flex items-center gap-1">

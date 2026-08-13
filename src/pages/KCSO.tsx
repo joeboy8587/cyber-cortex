@@ -36,10 +36,16 @@ export default function KCSO() {
           </div>
         </div>
 
+        {/* Posse Comitatus — simultaneous military / law-enforcement operations */}
+        <section>
+          <JointOperationPanel />
+        </section>
+
         {/* Schema Integrity — Josiah 2026-05-16 audit */}
         <section>
           <SchemaIntegrityPanel />
         </section>
+
 
         {/* Evidence Matrix */}
         <section>

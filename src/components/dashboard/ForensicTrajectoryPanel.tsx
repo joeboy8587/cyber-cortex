@@ -160,7 +160,7 @@ export default function ForensicTrajectoryPanel() {
   const exportCSV = () => {
     const rows = violations.length > 0 ? violations : trajectory;
     if (rows.length === 0) { toast.error('No data to export'); return; }
-    downloadCSV(rows as Record<string, unknown>[], forensicFilename('TRAJECTORY', 'FORENSIC_EVIDENCE'));
+    downloadCSV(rows as unknown as Record<string, unknown>[], forensicFilename('TRAJECTORY', 'FORENSIC_EVIDENCE'));
     toast.success('Evidence exported as CSV');
   };
 

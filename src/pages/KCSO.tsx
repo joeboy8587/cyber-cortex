@@ -15,6 +15,7 @@ import { XXBInvestigator } from "@/components/dashboard/XXBInvestigator";
 import { XXBEvidenceDashboard } from "@/components/dashboard/XXBEvidenceDashboard";
 import { XXBTaxonomyPanel } from "@/components/dashboard/XXBTaxonomyPanel";
 import { SchemaIntegrityPanel } from "@/components/dashboard/SchemaIntegrityPanel";
+import { JointOperationPanel } from "@/components/dashboard/JointOperationPanel";
 
 export default function KCSO() {
   return (
@@ -35,10 +36,16 @@ export default function KCSO() {
           </div>
         </div>
 
+        {/* Posse Comitatus — simultaneous military / law-enforcement operations */}
+        <section>
+          <JointOperationPanel />
+        </section>
+
         {/* Schema Integrity — Josiah 2026-05-16 audit */}
         <section>
           <SchemaIntegrityPanel />
         </section>
+
 
         {/* Evidence Matrix */}
         <section>

@@ -10,6 +10,7 @@ import { downloadCSV } from "@/lib/csv";
 interface JointEvent {
   le_tail: string;
   le_model: string | null;
+  le_agency: string | null;
   mil_id: string;
   mil_hex: string;
   mil_callsign: string | null;

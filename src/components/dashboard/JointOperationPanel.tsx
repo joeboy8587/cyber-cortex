@@ -109,8 +109,8 @@ export function JointOperationPanel() {
                 variant="ghost"
                 onClick={() =>
                   downloadCSV(
-                    `${new Date().toISOString().slice(0, 10).replace(/-/g, "")}_POSSE_JOINTOPS.csv`,
                     events as unknown as Record<string, unknown>[],
+                    `${new Date().toISOString().slice(0, 10).replace(/-/g, "")}_POSSE_JOINTOPS.csv`,
                   )
                 }
               >

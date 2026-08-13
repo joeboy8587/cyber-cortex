@@ -65,7 +65,7 @@ Deno.serve(async (req) => {
           AND d.registration IS NOT NULL
           AND d.latitude IS NOT NULL AND d.longitude IS NOT NULL
           AND (
-            upper(coalesce(m.name,'')) ~ '(SHERIFF|POLICE|HIGHWAY PATROL|MARSHAL|CUSTOMS|BORDER PROTECTION|HOMELAND|DEPT OF JUSTICE|DEPARTMENT OF JUSTICE|DRUG ENFORCEMENT)'
+            upper(coalesce(m.name,'')) ~ '(SHERIFF|POLICE DEPT|POLICE DEPARTMENT|POLICE|HIGHWAY PATROL|MARSHALS SERVICE|CUSTOMS|BORDER PROTECTION|HOMELAND|DEPT OF JUSTICE|DEPARTMENT OF JUSTICE|DRUG ENFORCEMENT)'
             OR upper(d.registration) IN (${tailList})
           )
       ),

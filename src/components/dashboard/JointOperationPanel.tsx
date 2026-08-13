@@ -135,7 +135,7 @@ export function JointOperationPanel() {
             >
               <div className="flex flex-wrap items-center gap-2 font-mono text-sm">
                 <span className="font-bold text-primary">{e.le_tail}</span>
-                <span className="text-muted-foreground">{e.le_model}</span>
+                <span className="text-muted-foreground">{e.le_agency ?? e.le_model}</span>
                 <span className="text-destructive">↔</span>
                 <span className="font-bold text-destructive">{e.mil_id}</span>
                 <span className="text-muted-foreground">hex {e.mil_hex}</span>

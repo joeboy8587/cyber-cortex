@@ -43,21 +43,31 @@ Deno.serve(async (req) => {
     const modelByTail = Object.fromEntries((fleet ?? []).map((f: { tail_number: string; model: string }) => [
       String(f.tail_number).toUpperCase(), f.model,
     ]));
-    if (leTails.length === 0) return json({ error: "no law-enforcement fleet registered" }, 400);
-
     sql = postgres(NEON, { ssl: "require", max: 1, idle_timeout: 30, prepare: false });
     await sql.unsafe(`SET statement_timeout = '110000'`).catch(() => {});
 
     // 2. Simultaneous co-presence: LE ping ↔ MIL ping within windowSec and proximityNm
-    const tailList = leTails.map((t) => `'${t.replace(/'/g, "")}'`).join(",");
+    // Law-enforcement side = FULL FAA registry (any sheriff / police / patrol / federal
+    // enforcement registrant) plus the locally-registered KCSO fleet.
+    const tailList = leTails.length
+      ? leTails.map((t) => `'${t.replace(/'/g, "")}'`).join(",")
+      : "''";
     const rows = (await sql.unsafe(`
       WITH le AS (
-        SELECT upper(registration) AS tail, detection_timestamp AS t,
-               latitude AS la, longitude AS lo, altitude AS alt
-        FROM live_flight_detections_rows
-        WHERE detection_timestamp > NOW() - INTERVAL '${hours} hours'
-          AND upper(registration) IN (${tailList})
-          AND latitude IS NOT NULL AND longitude IS NOT NULL
+        SELECT upper(d.registration) AS tail,
+               COALESCE(NULLIF(TRIM(m.name), ''), 'LAW ENFORCEMENT') AS agency,
+               d.detection_timestamp AS t,
+               d.latitude AS la, d.longitude AS lo, d.altitude AS alt
+        FROM live_flight_detections_rows d
+        LEFT JOIN faa_master m
+          ON m.n_number = regexp_replace(upper(d.registration), '^N', '')
+        WHERE d.detection_timestamp > NOW() - INTERVAL '${hours} hours'
+          AND d.registration IS NOT NULL
+          AND d.latitude IS NOT NULL AND d.longitude IS NOT NULL
+          AND (
+            upper(coalesce(m.name,'')) ~ '(SHERIFF|POLICE DEPT|POLICE DEPARTMENT|POLICE|HIGHWAY PATROL|MARSHALS SERVICE|CUSTOMS|BORDER PROTECTION|HOMELAND|DEPT OF JUSTICE|DEPARTMENT OF JUSTICE|DRUG ENFORCEMENT)'
+            OR upper(d.registration) IN (${tailList})
+          )
       ),
       mil AS (
         SELECT upper(coalesce(icao24,'')) AS hex,
@@ -69,11 +79,12 @@ Deno.serve(async (req) => {
           AND latitude IS NOT NULL AND longitude IS NOT NULL
           AND (
             (length(coalesce(icao24,'')) = 6 AND upper(icao24) BETWEEN 'ADF7C8' AND 'AFFFFF') OR
-            coalesce(registration,'') ~ '^[0-9]{2}-[0-9]{3,5}$'
+            coalesce(registration,'') ~ '^[0-9]{2}-[0-9]{3,5}$' OR
+            upper(coalesce(callsign,'')) ~ '^(RCH|REACH|KNIFE|STMPD|TRON|CONGO|LASSO|EVAC|SNTRY|DOOM|HAWK|VVBH|BOXER|PYTHN|ROMAN|SHADY|GRZLY|VADER|TITAN|SPAR|POLO|JEDI|DINOCO)'
           )
       ),
       pairs AS (
-        SELECT le.tail, mil.mil_id, mil.hex, mil.callsign,
+        SELECT le.tail, le.agency, mil.mil_id, mil.hex, mil.callsign,
                le.t AS le_t, mil.t AS mil_t, le.alt AS le_alt, mil.alt AS mil_alt,
                le.la AS le_la, le.lo AS le_lo,
                (3440.065 * 2 * asin(sqrt(
@@ -87,7 +98,7 @@ Deno.serve(async (req) => {
          AND mil.la BETWEEN le.la - 0.35 AND le.la + 0.35
          AND mil.lo BETWEEN le.lo - 0.4  AND le.lo + 0.4
       )
-      SELECT tail, mil_id, hex, max(callsign) AS callsign,
+      SELECT tail, max(agency) AS agency, mil_id, hex, max(callsign) AS callsign,
              date_trunc('hour', le_t) AS window_start,
              count(*) AS ping_pairs,
              round(min(nm)::numeric, 2) AS min_nm,
@@ -98,8 +109,11 @@ Deno.serve(async (req) => {
       FROM pairs
       WHERE nm <= ${proximityNm}
       GROUP BY tail, mil_id, hex, date_trunc('hour', le_t)
+      -- credibility guard: drop Class-A cruise overflights (no joint operation possible)
+      HAVING min(coalesce(mil_alt, 0)) < 18000
+         AND abs(min(coalesce(mil_alt,0)) - min(coalesce(le_alt,0))) < 10000
       ORDER BY min(nm) ASC, count(*) DESC
-      LIMIT 200
+      LIMIT 500
     `)) as unknown as Array<Record<string, unknown>>;
 
     const events = rows.map((r) => {
@@ -112,6 +126,7 @@ Deno.serve(async (req) => {
       return {
         le_tail: String(r.tail),
         le_model: modelByTail[String(r.tail)] ?? null,
+        le_agency: r.agency ? String(r.agency) : null,
         mil_id: String(r.mil_id),
         mil_hex: String(r.hex),
         mil_callsign: r.callsign ? String(r.callsign) : null,

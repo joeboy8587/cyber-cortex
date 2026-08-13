@@ -10,6 +10,7 @@ import { downloadCSV } from "@/lib/csv";
 interface JointEvent {
   le_tail: string;
   le_model: string | null;
+  le_agency: string | null;
   mil_id: string;
   mil_hex: string;
   mil_callsign: string | null;
@@ -134,7 +135,7 @@ export function JointOperationPanel() {
             >
               <div className="flex flex-wrap items-center gap-2 font-mono text-sm">
                 <span className="font-bold text-primary">{e.le_tail}</span>
-                <span className="text-muted-foreground">{e.le_model}</span>
+                <span className="text-muted-foreground">{e.le_agency ?? e.le_model}</span>
                 <span className="text-destructive">↔</span>
                 <span className="font-bold text-destructive">{e.mil_id}</span>
                 <span className="text-muted-foreground">hex {e.mil_hex}</span>

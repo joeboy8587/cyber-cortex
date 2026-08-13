@@ -43,21 +43,31 @@ Deno.serve(async (req) => {
     const modelByTail = Object.fromEntries((fleet ?? []).map((f: { tail_number: string; model: string }) => [
       String(f.tail_number).toUpperCase(), f.model,
     ]));
-    if (leTails.length === 0) return json({ error: "no law-enforcement fleet registered" }, 400);
-
     sql = postgres(NEON, { ssl: "require", max: 1, idle_timeout: 30, prepare: false });
     await sql.unsafe(`SET statement_timeout = '110000'`).catch(() => {});
 
     // 2. Simultaneous co-presence: LE ping ↔ MIL ping within windowSec and proximityNm
-    const tailList = leTails.map((t) => `'${t.replace(/'/g, "")}'`).join(",");
+    // Law-enforcement side = FULL FAA registry (any sheriff / police / patrol / federal
+    // enforcement registrant) plus the locally-registered KCSO fleet.
+    const tailList = leTails.length
+      ? leTails.map((t) => `'${t.replace(/'/g, "")}'`).join(",")
+      : "''";
     const rows = (await sql.unsafe(`
       WITH le AS (
-        SELECT upper(registration) AS tail, detection_timestamp AS t,
-               latitude AS la, longitude AS lo, altitude AS alt
-        FROM live_flight_detections_rows
-        WHERE detection_timestamp > NOW() - INTERVAL '${hours} hours'
-          AND upper(registration) IN (${tailList})
-          AND latitude IS NOT NULL AND longitude IS NOT NULL
+        SELECT upper(d.registration) AS tail,
+               COALESCE(NULLIF(TRIM(m.name), ''), 'LAW ENFORCEMENT') AS agency,
+               d.detection_timestamp AS t,
+               d.latitude AS la, d.longitude AS lo, d.altitude AS alt
+        FROM live_flight_detections_rows d
+        LEFT JOIN faa_master m
+          ON m.n_number = regexp_replace(upper(d.registration), '^N', '')
+        WHERE d.detection_timestamp > NOW() - INTERVAL '${hours} hours'
+          AND d.registration IS NOT NULL
+          AND d.latitude IS NOT NULL AND d.longitude IS NOT NULL
+          AND (
+            upper(coalesce(m.name,'')) ~ '(SHERIFF|POLICE|HIGHWAY PATROL|MARSHAL|CUSTOMS|BORDER PROTECTION|HOMELAND|DEPT OF JUSTICE|DEPARTMENT OF JUSTICE|DRUG ENFORCEMENT)'
+            OR upper(d.registration) IN (${tailList})
+          )
       ),
       mil AS (
         SELECT upper(coalesce(icao24,'')) AS hex,
@@ -69,7 +79,8 @@ Deno.serve(async (req) => {
           AND latitude IS NOT NULL AND longitude IS NOT NULL
           AND (
             (length(coalesce(icao24,'')) = 6 AND upper(icao24) BETWEEN 'ADF7C8' AND 'AFFFFF') OR
-            coalesce(registration,'') ~ '^[0-9]{2}-[0-9]{3,5}$'
+            coalesce(registration,'') ~ '^[0-9]{2}-[0-9]{3,5}$' OR
+            upper(coalesce(callsign,'')) ~ '^(RCH|REACH|KNIFE|STMPD|TRON|CONGO|LASSO|EVAC|SNTRY|DOOM|HAWK|VVBH|BOXER|PYTHN|ROMAN|SHADY|GRZLY|VADER|TITAN|SPAR|POLO|JEDI|DINOCO)'
           )
       ),
       pairs AS (

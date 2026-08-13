@@ -123,6 +123,7 @@ Deno.serve(async (req) => {
       return {
         le_tail: String(r.tail),
         le_model: modelByTail[String(r.tail)] ?? null,
+        le_agency: r.agency ? String(r.agency) : null,
         mil_id: String(r.mil_id),
         mil_hex: String(r.hex),
         mil_callsign: r.callsign ? String(r.callsign) : null,

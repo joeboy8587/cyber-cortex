@@ -84,7 +84,7 @@ Deno.serve(async (req) => {
           )
       ),
       pairs AS (
-        SELECT le.tail, mil.mil_id, mil.hex, mil.callsign,
+        SELECT le.tail, le.agency, mil.mil_id, mil.hex, mil.callsign,
                le.t AS le_t, mil.t AS mil_t, le.alt AS le_alt, mil.alt AS mil_alt,
                le.la AS le_la, le.lo AS le_lo,
                (3440.065 * 2 * asin(sqrt(
@@ -98,7 +98,7 @@ Deno.serve(async (req) => {
          AND mil.la BETWEEN le.la - 0.35 AND le.la + 0.35
          AND mil.lo BETWEEN le.lo - 0.4  AND le.lo + 0.4
       )
-      SELECT tail, mil_id, hex, max(callsign) AS callsign,
+      SELECT tail, max(agency) AS agency, mil_id, hex, max(callsign) AS callsign,
              date_trunc('hour', le_t) AS window_start,
              count(*) AS ping_pairs,
              round(min(nm)::numeric, 2) AS min_nm,
@@ -110,7 +110,7 @@ Deno.serve(async (req) => {
       WHERE nm <= ${proximityNm}
       GROUP BY tail, mil_id, hex, date_trunc('hour', le_t)
       ORDER BY min(nm) ASC, count(*) DESC
-      LIMIT 200
+      LIMIT 500
     `)) as unknown as Array<Record<string, unknown>>;
 
     const events = rows.map((r) => {

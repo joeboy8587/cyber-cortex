@@ -15,6 +15,7 @@ import { XXBInvestigator } from "@/components/dashboard/XXBInvestigator";
 import { XXBEvidenceDashboard } from "@/components/dashboard/XXBEvidenceDashboard";
 import { XXBTaxonomyPanel } from "@/components/dashboard/XXBTaxonomyPanel";
 import { SchemaIntegrityPanel } from "@/components/dashboard/SchemaIntegrityPanel";
+import { JointOperationPanel } from "@/components/dashboard/JointOperationPanel";
 
 export default function KCSO() {
   return (

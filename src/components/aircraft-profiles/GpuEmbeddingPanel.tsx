@@ -117,14 +117,27 @@ export function GpuEmbeddingPanel({ embedded, onImported }: Props) {
           {importing ? <Loader2 className="w-3 h-3 mr-2 animate-spin" /> : <Upload className="w-3 h-3 mr-2" />}
           Upload embeddings
         </Button>
-        <input
-          ref={fileRef}
-          type="file"
-          accept=".jsonl,.json,.ndjson"
-          className="hidden"
-          onChange={(e) => { const f = e.target.files?.[0]; if (f) importVectors(f); }}
-        />
+        <a href="/scripts/gpu-embed-aircraft.py" download="gpu-embed-aircraft.py">
+          <Button size="sm" variant="secondary" type="button">
+            <FileCode className="w-3 h-3 mr-2" />
+            Download GPU helper script
+          </Button>
+        </a>
       </div>
+      <div className="text-xs text-muted-foreground space-y-1">
+        <p>
+          <strong className="text-foreground">Not a coder?</strong> The button above downloads a ready-to-run Python
+          script for your new MSI Katana RTX. It installs the model and embeds the corpus automatically.
+        </p>
+        <p>Recommended model: <code className="font-mono">sentence-transformers/all-MiniLM-L6-v2</code> (384 dims, fast on RTX).</p>
+      </div>
+      <input
+        ref={fileRef}
+        type="file"
+        accept=".jsonl,.json,.ndjson"
+        className="hidden"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) importVectors(f); }}
+      />
       {progress && <div className="text-xs font-mono text-muted-foreground">{progress}</div>}
     </Card>
   );

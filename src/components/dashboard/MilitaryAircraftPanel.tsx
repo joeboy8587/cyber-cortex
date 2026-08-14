@@ -253,6 +253,21 @@ export function MilitaryAircraftPanel() {
           <div className="flex items-center gap-2">
             <Button
               size="sm"
+              variant="default"
+              onClick={exportMilitaryDetections}
+              disabled={exporting}
+              className="h-7 px-2 text-xs"
+            >
+              {exporting ? (
+                <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+              ) : (
+                <Download className="w-3.5 h-3.5 mr-1" />
+              )}
+              {exporting ? exportProgress || "Exporting…" : "Export military detections"}
+            </Button>
+
+            <Button
+              size="sm"
               variant="ghost"
               onClick={() => fetchMilitaryData(false)}
               disabled={refreshing || loading}

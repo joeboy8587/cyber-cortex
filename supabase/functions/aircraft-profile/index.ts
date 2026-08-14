@@ -429,30 +429,35 @@ async function importEmbeddings(sql: ReturnType<typeof postgres>, body: Record<s
     written++;
   }
 
-  // Recompute nearest behavioural twins for everything sharing the dominant dim.
-  await sql.unsafe(`
-    WITH d AS (SELECT dims FROM aircraft_dossier_embeddings GROUP BY dims ORDER BY COUNT(*) DESC LIMIT 1),
-    n AS (
-      SELECT a.registration,
-             jsonb_agg(jsonb_build_object('registration', b.registration, 'similarity', ROUND(s.sim::numeric, 4))
-                       ORDER BY s.sim DESC) AS neighbors
-      FROM aircraft_dossier_embeddings a
-      JOIN aircraft_dossier_embeddings b ON b.registration <> a.registration AND b.dims = a.dims
-      JOIN d ON d.dims = a.dims
-      CROSS JOIN LATERAL (
-        SELECT SUM(x*y) / NULLIF(SQRT(SUM(x*x)) * SQRT(SUM(y*y)), 0) AS sim
-        FROM unnest(a.vec, b.vec) AS t(x, y)
-      ) s
-      WHERE s.sim IS NOT NULL
-      GROUP BY a.registration
-    )
-    UPDATE aircraft_dossier_embeddings e
-    SET neighbors = (SELECT jsonb_agg(v) FROM (SELECT v FROM jsonb_array_elements(n.neighbors) v LIMIT 8) q)
-    FROM n WHERE n.registration = e.registration
-  `).catch(() => null);
+  // Nearest-twin precomputation is O(n^2) across the whole corpus, which blows the
+  // request budget for large uploads. Only run it when explicitly requested; the
+  // "similar" action computes cosine neighbours on demand anyway.
+  if (body.recomputeTwins === true) {
+    await sql.unsafe(`
+      WITH d AS (SELECT dims FROM aircraft_dossier_embeddings GROUP BY dims ORDER BY COUNT(*) DESC LIMIT 1),
+      n AS (
+        SELECT a.registration,
+               jsonb_agg(jsonb_build_object('registration', b.registration, 'similarity', ROUND(s.sim::numeric, 4))
+                         ORDER BY s.sim DESC) AS neighbors
+        FROM aircraft_dossier_embeddings a
+        JOIN aircraft_dossier_embeddings b ON b.registration <> a.registration AND b.dims = a.dims
+        JOIN d ON d.dims = a.dims
+        CROSS JOIN LATERAL (
+          SELECT SUM(x*y) / NULLIF(SQRT(SUM(x*x)) * SQRT(SUM(y*y)), 0) AS sim
+          FROM unnest(a.vec, b.vec) AS t(x, y)
+        ) s
+        WHERE s.sim IS NOT NULL
+        GROUP BY a.registration
+      )
+      UPDATE aircraft_dossier_embeddings e
+      SET neighbors = (SELECT jsonb_agg(v) FROM (SELECT v FROM jsonb_array_elements(n.neighbors) v LIMIT 8) q)
+      FROM n WHERE n.registration = e.registration
+    `).catch(() => null);
+  }
 
   return { ok: true, written };
 }
+
 
 async function similar(sql: ReturnType<typeof postgres>, body: Record<string, unknown>) {
   const reg = String(body.registration || "").trim().toUpperCase().replace(/'/g, "");

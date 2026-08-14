@@ -56,7 +56,7 @@ export default function AircraftProfiles() {
   const rebuild = async () => {
     setBuilding(true);
     try {
-      const PARTS = 6;
+      const PARTS = 12;
       let total = 0;
       for (let part = 0; part < PARTS; part++) {
         toast.info(`Rebuilding dossiers — pass ${part + 1} of ${PARTS}…`);

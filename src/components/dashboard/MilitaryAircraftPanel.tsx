@@ -60,7 +60,10 @@ export function MilitaryAircraftPanel() {
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [isLive, setIsLive] = useState(true);
+  const [exporting, setExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState("");
   const intervalRef = useRef<number | null>(null);
+
   const [stats, setStats] = useState<MilitaryStats>({
     totalMilitaryEvents: 0,
     uniqueRegistrations: 0,

@@ -35,10 +35,22 @@ Deno.serve(async (req) => {
   const sql = postgres(NEON, {
     ssl: { rejectUnauthorized: false },
     max: 1, connect_timeout: 15, prepare: false,
-    connection: { statement_timeout: 110000 },
+    connection: { statement_timeout: 85000 },
   });
 
-  try {
+  // Hard request budget below the platform's 150s idle timeout so the client
+  // always gets a structured JSON error instead of a 504 IDLE_TIMEOUT.
+  const BUDGET_MS = 100_000;
+  let timer: number | undefined;
+  const budget = new Promise<Response>((resolve) => {
+    timer = setTimeout(() => resolve(json({
+      ok: false,
+      code: "BUDGET_EXCEEDED",
+      error: "Aircraft profile request exceeded the 100s budget — narrow the window or use a smaller shard (more parts).",
+    }, 504)), BUDGET_MS) as unknown as number;
+  });
+
+  const work = (async () => {
     const body = await req.json().catch(() => ({}));
     const action = String(body.action || "list");
     await ensureSchema(sql);
@@ -51,12 +63,16 @@ Deno.serve(async (req) => {
     if (action === "similar") return json(await similar(sql, body));
     if (action === "stats") return json(await stats(sql));
     return json({ ok: false, error: `unknown action "${action}"` }, 400);
-  } catch (e) {
-    return json({ ok: false, error: String((e as Error)?.message || e) }, 500);
+  })().catch((e) => json({ ok: false, error: String((e as Error)?.message || e) }, 500));
+
+  try {
+    return await Promise.race([work, budget]);
   } finally {
+    if (timer) clearTimeout(timer);
     try { await sql.end({ timeout: 5 }); } catch { /* noop */ }
   }
 });
+
 
 async function ensureSchema(sql: ReturnType<typeof postgres>) {
   await sql.unsafe(`

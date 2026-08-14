@@ -32,6 +32,8 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           </header>
           <DoctrineBanner />
           <RealtimeAlertBanner />
+          <JointOpNotifier />
+
           <main className="flex-1 overflow-auto">
             <div className="w-full max-w-full">
               {children}

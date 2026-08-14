@@ -60,8 +60,28 @@ export function JointOperationPanel() {
     }
   };
 
+  // Deep link (#joint-operations) from the real-time notification: scroll here,
+  // highlight briefly and auto-run the 48 h scan.
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [highlight, setHighlight] = useState(false);
+  useEffect(() => {
+    if (window.location.hash !== "#joint-operations") return;
+    cardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    setHighlight(true);
+    const t = setTimeout(() => setHighlight(false), 4000);
+    runScan(48);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
-    <Card className="border-destructive/40">
+    <Card
+      id="joint-operations"
+      ref={cardRef}
+      className={`border-destructive/40 scroll-mt-20 transition-shadow ${
+        highlight ? "ring-2 ring-destructive shadow-lg" : ""
+      }`}
+    >
       <CardHeader className="flex flex-row items-start justify-between gap-4">
         <div>
           <CardTitle className="font-display uppercase tracking-wider text-destructive flex items-center gap-2">

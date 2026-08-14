@@ -1,6 +1,7 @@
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/AppSidebar";
 import { RealtimeAlertBanner } from "@/components/dashboard/RealtimeAlertBanner";
+import { JointOpNotifier } from "@/components/dashboard/JointOpNotifier";
 import { DoctrineBanner } from "@/components/DoctrineBanner";
 
 interface DashboardLayoutProps {

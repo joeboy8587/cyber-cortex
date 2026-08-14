@@ -3,7 +3,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
-import { Cpu, Download, Upload, Loader2 } from "lucide-react";
+import { Cpu, Download, Upload, Loader2, FileCode } from "lucide-react";
 import { toast } from "sonner";
 
 type Props = { embedded: number; onImported?: () => void };

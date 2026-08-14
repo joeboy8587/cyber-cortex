@@ -3,25 +3,27 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
-import { Cpu, Download, Upload, Loader2, FileCode } from "lucide-react";
+import { Cpu, Download, Upload, Loader2, FileCode, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 
-type Props = { embedded: number; onImported?: () => void };
+type Props = { embedded: number; pending?: number; onImported?: () => void };
 
-export function GpuEmbeddingPanel({ embedded, onImported }: Props) {
+export function GpuEmbeddingPanel({ embedded, pending = 0, onImported }: Props) {
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const exportCorpus = async () => {
+  const exportCorpus = async (onlyStale = false) => {
     setExporting(true);
     try {
       const { data, error } = await supabase.functions.invoke("aircraft-profile", {
-        body: { action: "exportFeatures", limit: 20000 },
+        body: { action: "exportFeatures", limit: 20000, onlyStale },
       });
       if (error) throw error;
       if (!data?.ok) throw new Error(data?.error || "Export failed");
+      if (!data.count) { toast.info("Every profile already has an up-to-date embedding"); return; }
+
       const jsonl = (data.rows || [])
         .map((r: any) => JSON.stringify({
           registration: r.registration,
@@ -100,7 +102,12 @@ export function GpuEmbeddingPanel({ embedded, onImported }: Props) {
           <Cpu className="w-4 h-4 text-primary" />
           <span className="font-display tracking-wide">Local GPU embedding bridge</span>
         </div>
-        <Badge variant="secondary" className="font-mono">{embedded.toLocaleString()} vectors stored</Badge>
+        <div className="flex items-center gap-2">
+          {pending > 0 && (
+            <Badge variant="destructive" className="font-mono">{pending.toLocaleString()} need refresh</Badge>
+          )}
+          <Badge variant="secondary" className="font-mono">{embedded.toLocaleString()} vectors stored</Badge>
+        </div>
       </div>
       <p className="text-xs text-muted-foreground leading-relaxed">
         Step 1 — download the feature corpus (one line per aircraft: numeric behaviour vector, hour/weekday
@@ -109,14 +116,19 @@ export function GpuEmbeddingPanel({ embedded, onImported }: Props) {
         the system stores them and recomputes behavioural twins automatically.
       </p>
       <div className="flex flex-wrap gap-2">
-        <Button size="sm" variant="outline" onClick={exportCorpus} disabled={exporting}>
-          {exporting ? <Loader2 className="w-3 h-3 mr-2 animate-spin" /> : <Download className="w-3 h-3 mr-2" />}
-          Export feature corpus
+        <Button size="sm" onClick={() => exportCorpus(true)} disabled={exporting}>
+          {exporting ? <Loader2 className="w-3 h-3 mr-2 animate-spin" /> : <RefreshCw className="w-3 h-3 mr-2" />}
+          Export new &amp; changed only{pending > 0 ? ` (${pending.toLocaleString()})` : ""}
         </Button>
-        <Button size="sm" onClick={() => fileRef.current?.click()} disabled={importing}>
+        <Button size="sm" variant="outline" onClick={() => exportCorpus(false)} disabled={exporting}>
+          {exporting ? <Loader2 className="w-3 h-3 mr-2 animate-spin" /> : <Download className="w-3 h-3 mr-2" />}
+          Export full corpus
+        </Button>
+        <Button size="sm" variant="outline" onClick={() => fileRef.current?.click()} disabled={importing}>
           {importing ? <Loader2 className="w-3 h-3 mr-2 animate-spin" /> : <Upload className="w-3 h-3 mr-2" />}
           Upload embeddings
         </Button>
+
         <a href="/scripts/gpu-embed-aircraft.py" download="gpu-embed-aircraft.py">
           <Button size="sm" variant="secondary" type="button">
             <FileCode className="w-3 h-3 mr-2" />

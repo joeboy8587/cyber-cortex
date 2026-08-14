@@ -380,7 +380,10 @@ async function stats(sql: ReturnType<typeof postgres>) {
            COUNT(*) FILTER (WHERE (faa_violations + sentinel_violations) > 0)::int AS violators,
            COUNT(*) FILTER (WHERE aoi_pings > 0)::int AS aoi_actors,
            MAX(updated_at) AS last_build,
-           (SELECT COUNT(*)::int FROM aircraft_dossier_embeddings) AS embedded
+           (SELECT COUNT(*)::int FROM aircraft_dossier_embeddings) AS embedded,
+           (SELECT COUNT(*)::int FROM aircraft_dossier d
+             LEFT JOIN aircraft_dossier_embeddings e ON e.registration = d.registration
+             WHERE e.registration IS NULL OR d.updated_at > e.updated_at) AS pending_embeddings
     FROM aircraft_dossier`);
   return { ok: true, stats: s };
 }
@@ -389,6 +392,14 @@ async function stats(sql: ReturnType<typeof postgres>) {
 
 async function exportFeatures(sql: ReturnType<typeof postgres>, body: Record<string, unknown>) {
   const limit = Math.min(Math.max(Number(body.limit) || 2000, 1), 20000);
+  // "onlyStale" keeps the corpus incremental: brand-new tails plus any dossier
+  // whose behaviour was rebuilt after its last embedding.
+  const staleJoin = body.onlyStale
+    ? `LEFT JOIN aircraft_dossier_embeddings e ON e.registration = aircraft_dossier.registration`
+    : "";
+  const staleWhere = body.onlyStale
+    ? `WHERE e.registration IS NULL OR aircraft_dossier.updated_at > e.updated_at`
+    : "";
   const rows = await sql.unsafe(`
     SELECT registration, icao24, operator, aircraft_type, feature_vector,
            hour_hist, dow_hist, risk_score, signature_hash,
@@ -405,29 +416,39 @@ async function exportFeatures(sql: ReturnType<typeof postgres>, body: Record<str
              'sentinel violations ' || sentinel_violations,
              'coordination partners ' || partner_count
            ) AS text
-    FROM aircraft_dossier
+    FROM aircraft_dossier ${staleJoin} ${staleWhere}
     ORDER BY risk_score DESC NULLS LAST LIMIT ${limit}`);
   return { ok: true, count: rows.length, rows };
 }
+
 
 async function importEmbeddings(sql: ReturnType<typeof postgres>, body: Record<string, unknown>) {
   const items = Array.isArray(body.embeddings) ? body.embeddings : [];
   const model = String(body.model || "local-gpu");
   if (!items.length) return { ok: false, error: "embeddings array required" };
 
-  let written = 0;
+  // Bulk upsert — one round trip per batch instead of one per aircraft.
+  const clean: Array<{ reg: string; vec: number[] }> = [];
   for (const raw of items) {
     const it = raw as { registration?: string; vec?: number[]; embedding?: number[] };
-    const reg = String(it.registration || "").trim().toUpperCase();
+    const reg = String(it.registration || "").trim().toUpperCase().replace(/'/g, "");
     const vec = (it.vec || it.embedding || []).map(Number).filter((n) => Number.isFinite(n));
-    if (!reg || vec.length < 2) continue;
-    await sql`
-      INSERT INTO aircraft_dossier_embeddings (registration, dims, vec, model, source, updated_at)
-      VALUES (${reg}, ${vec.length}, ${vec as unknown as number[]}, ${model}, 'local-gpu', NOW())
-      ON CONFLICT (registration) DO UPDATE SET
-        dims = EXCLUDED.dims, vec = EXCLUDED.vec, model = EXCLUDED.model, updated_at = NOW()`;
-    written++;
+    if (reg && vec.length >= 2) clean.push({ reg, vec });
   }
+  let written = 0;
+  for (let i = 0; i < clean.length; i += 500) {
+    const chunk = clean.slice(i, i + 500);
+    const values = chunk.map((c) =>
+      `('${c.reg}', ${c.vec.length}, ARRAY[${c.vec.map((v) => v.toFixed(6)).join(",")}]::double precision[], '${model.replace(/'/g, "")}', 'local-gpu', NOW())`
+    ).join(",");
+    await sql.unsafe(`
+      INSERT INTO aircraft_dossier_embeddings (registration, dims, vec, model, source, updated_at)
+      VALUES ${values}
+      ON CONFLICT (registration) DO UPDATE SET
+        dims = EXCLUDED.dims, vec = EXCLUDED.vec, model = EXCLUDED.model, updated_at = NOW()`);
+    written += chunk.length;
+  }
+
 
   // Nearest-twin precomputation is O(n^2) across the whole corpus, which blows the
   // request budget for large uploads. Only run it when explicitly requested; the

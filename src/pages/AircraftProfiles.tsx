@@ -117,7 +117,12 @@ export default function AircraftProfiles() {
           </div>
         )}
 
-        <GpuEmbeddingPanel embedded={Number(stats?.embedded || 0)} onImported={load} />
+        <GpuEmbeddingPanel
+          embedded={Number(stats?.embedded || 0)}
+          pending={Number(stats?.pending_embeddings || 0)}
+          onImported={load}
+        />
+
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <Card className="p-3 flex flex-col min-h-[560px]">

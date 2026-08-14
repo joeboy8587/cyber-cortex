@@ -28,6 +28,7 @@ import SentinelV2 from "./pages/SentinelV2";
 import NeonDataHealth from "./pages/NeonDataHealth";
 import TankerNetwork from "./pages/TankerNetwork";
 import NetworkIntel from "./pages/NetworkIntel";
+import AircraftProfiles from "./pages/AircraftProfiles";
 import ArchiveIntegrity from "./pages/ArchiveIntegrity";
 
 const queryClient = new QueryClient({
@@ -158,6 +159,11 @@ const App = () => (
             <Route path="/tanker-network" element={
               <ProtectedRoute>
                 <TankerNetwork />
+              </ProtectedRoute>
+            } />
+            <Route path="/aircraft-profiles" element={
+              <ProtectedRoute>
+                <AircraftProfiles />
               </ProtectedRoute>
             } />
             <Route path="/network-intel" element={

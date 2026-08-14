@@ -1,0 +1,15 @@
+# Python dependencies for the Watchtower Aircraft GPU Embedding Bridge
+# Run: python -m pip install -r scripts/requirements-gpu.txt
+
+# Core embedding library (uses PyTorch; auto-detects CUDA/RTX)
+sentence-transformers>=3.0.0
+
+# Progress bar
+tqdm>=4.66.0
+
+# PyTorch with CUDA is usually installed separately. If you have an RTX GPU,
+# follow the official guide at https://pytorch.org/get-started/locally/ and run
+# the command that matches your CUDA version. For most new MSI Katana 5050
+# laptops with RTX 40-series, this command works:
+#
+#   python -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124

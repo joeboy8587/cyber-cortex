@@ -21,7 +21,8 @@ import {
   ScanEye,
   Fingerprint,
   HeartPulse,
-  Fuel
+  Fuel,
+  Plane
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useAuth } from "@/hooks/useAuth";
@@ -136,6 +137,12 @@ const navigationItems = [
     url: "/tanker-network",
     icon: Fuel,
     description: "KC-135/46/10 → Receivers Graph"
+  },
+  {
+    title: "Aircraft Dossiers",
+    url: "/aircraft-profiles",
+    icon: Plane,
+    description: "Per-Tail Signatures · Violations · GPU Embeddings"
   },
   {
     title: "Network Intel",

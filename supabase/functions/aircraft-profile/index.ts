@@ -1,4 +1,4 @@
-// Aircraft Profile Engine
+// Aircraft Profile Engine (per-tail dossiers)
 // Builds one durable dossier per tail number in Neon:
 //   • FAA-authoritative identity (v_faa_identity)
 //   • behavioural signature (hour-of-day + weekday histograms, altitude/speed

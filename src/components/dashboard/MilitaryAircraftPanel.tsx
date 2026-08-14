@@ -1,10 +1,14 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { CyberPanel } from "@/components/ui/cyber-panel";
-import { Shield, Loader2, AlertTriangle, Target, MapPin, Radio, RefreshCw } from "lucide-react";
+import { Shield, Loader2, AlertTriangle, Target, MapPin, Radio, RefreshCw, Download } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { supabase } from "@/integrations/supabase/client";
+import { neonQuery } from "@/lib/neonQueryRetry";
+import { downloadCSV, forensicFilename } from "@/lib/csv";
+import { toast } from "@/hooks/use-toast";
+
 
 interface MilitaryEvent {
   registration: string;
@@ -56,7 +60,10 @@ export function MilitaryAircraftPanel() {
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [isLive, setIsLive] = useState(true);
+  const [exporting, setExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState("");
   const intervalRef = useRef<number | null>(null);
+
   const [stats, setStats] = useState<MilitaryStats>({
     totalMilitaryEvents: 0,
     uniqueRegistrations: 0,
@@ -150,6 +157,70 @@ export function MilitaryAircraftPanel() {
     };
   }, [isLive, fetchMilitaryData]);
 
+  const exportMilitaryDetections = useCallback(async () => {
+    setExporting(true);
+    setExportProgress("Preparing export…");
+    try {
+      // Month-sized windows keep each gateway query well inside its safety budget.
+      const windows: Array<[string, string]> = [];
+      const start = new Date("2025-01-01T00:00:00Z");
+      const end = new Date();
+      const cursor = new Date(start);
+      while (cursor < end) {
+        const next = new Date(cursor);
+        next.setUTCMonth(next.getUTCMonth() + 1);
+        windows.push([cursor.toISOString(), (next < end ? next : end).toISOString()]);
+        cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+      }
+
+      const headers = [
+        "detection_timestamp", "registration", "icao24", "callsign", "aircraft_type",
+        "owner_operator", "altitude", "speed", "latitude", "longitude", "heading",
+        "county_derived", "flagged", "flagged_reasons", "data_source", "evidence_hash",
+      ];
+
+      const rows: Record<string, unknown>[] = [];
+      const failed: string[] = [];
+
+      for (let i = 0; i < windows.length; i++) {
+        const [from, to] = windows[i];
+        setExportProgress(`Window ${i + 1} of ${windows.length} — ${rows.length.toLocaleString()} rows`);
+        const q = `SELECT ${headers.join(", ")}
+          FROM live_flight_detections_rows
+          WHERE is_military = true
+            AND detection_timestamp >= '${from}' AND detection_timestamp < '${to}'
+          ORDER BY detection_timestamp`;
+        const { data, error } = await neonQuery({ action: "customQuery", query: q });
+        const payload = Array.isArray(data) ? data : data?.data;
+        if (error || !Array.isArray(payload)) {
+          failed.push(from.slice(0, 7));
+          continue;
+        }
+        rows.push(...payload);
+      }
+
+      if (rows.length === 0) {
+        toast({ title: "No military detections found", variant: "destructive" });
+        return;
+      }
+
+      downloadCSV(rows, forensicFilename("MIL-DET", "military_aircraft_detections"), headers);
+      toast({
+        title: `Exported ${rows.length.toLocaleString()} military detections`,
+        description: failed.length
+          ? `Windows that timed out: ${failed.join(", ")}`
+          : "Full archive, chain-of-custody columns included.",
+      });
+    } catch (e) {
+      toast({ title: "Export failed", description: String((e as Error).message), variant: "destructive" });
+    } finally {
+      setExporting(false);
+      setExportProgress("");
+    }
+  }, []);
+
+
+
   return (
     <CyberPanel
       title="MILITARY & GOVERNMENT AIRCRAFT TRACKING"
@@ -180,6 +251,21 @@ export function MilitaryAircraftPanel() {
             )}
           </div>
           <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="default"
+              onClick={exportMilitaryDetections}
+              disabled={exporting}
+              className="h-7 px-2 text-xs"
+            >
+              {exporting ? (
+                <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+              ) : (
+                <Download className="w-3.5 h-3.5 mr-1" />
+              )}
+              {exporting ? exportProgress || "Exporting…" : "Export military detections"}
+            </Button>
+
             <Button
               size="sm"
               variant="ghost"

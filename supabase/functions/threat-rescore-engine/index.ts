@@ -300,6 +300,7 @@ serve(async (req) => {
       metadata: { weights: W, max_rows: maxRows, flags_created: flagsCreated, confidence, sample: summaries.slice(0, 20) },
     });
 
+    const nextOffset = limitTails ? null : offset + profiles.length;
     return new Response(
       JSON.stringify({
         ok: true,
@@ -308,14 +309,29 @@ serve(async (req) => {
         flags_created: flagsCreated,
         confidence,
         signals_used: Array.from(have),
+        offset,
+        next_offset: nextOffset,
+        total_profiles: totalProfiles,
+        done: limitTails ? true : (nextOffset as number) >= totalProfiles,
+        lookback_days: lookbackDays,
+        elapsed_ms: Date.now() - startedAt,
         sample: summaries.slice(0, 50),
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (err) {
-    console.error("threat-rescore-engine error:", err);
-    return new Response(JSON.stringify({ error: String((err as any)?.message || err) }), {
-      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    const msg = String((err as any)?.message || err);
+    console.error("threat-rescore-engine error:", msg);
+    const budgetHit = msg.includes("BUDGET_EXCEEDED") || msg.includes("statement timeout");
+    return new Response(JSON.stringify({
+      error: budgetHit
+        ? `Batch at offset ${offset} exceeded the time budget — retry with a smaller maxRows or a shorter lookbackDays.`
+        : msg,
+      code: budgetHit ? "BUDGET_EXCEEDED" : "ERROR",
+      offset,
+      next_offset: offset + maxRows,
+    }), {
+      status: budgetHit ? 504 : 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } finally {
     await sql.end({ timeout: 5 });

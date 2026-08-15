@@ -56,14 +56,14 @@ export function OperatorRescorePanel() {
       let last: any = null;
       const failedShards: number[] = [];
 
-      for (let shard = 0; shard < 60; shard++) {
-        setProgress(`Batch ${shard + 1} — ${evaluated.toLocaleString()} profiles scored`);
+      for (let shard = 0; shard < 400; shard++) {
+        setProgress(`Batch ${shard + 1} — ${evaluated.toLocaleString()} of ${(last?.total_profiles ?? 0).toLocaleString() || "?"} profiles scored`);
         const { data, error } = await supabase.functions.invoke("threat-rescore-engine", {
-          body: { maxRows: 100, offset, includeLiveSignals: true, autoFlag: true, lookbackDays: 90 },
+          body: { maxRows: 200, offset, includeLiveSignals: true, autoFlag: true, lookbackDays: 90 },
         });
         if (error || data?.error) {
           failedShards.push(offset);
-          offset += 100;
+          offset += 200;
           if (failedShards.length >= 5) break;
           continue;
         }
@@ -71,7 +71,7 @@ export function OperatorRescorePanel() {
         evaluated += data.evaluated ?? 0;
         upserted += data.upserted ?? 0;
         flags += data.flags_created ?? 0;
-        offset = data.next_offset ?? offset + 100;
+        offset = data.next_offset ?? offset + 200;
         if (data.done || (data.evaluated ?? 0) === 0) break;
       }
 

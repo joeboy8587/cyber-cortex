@@ -87,6 +87,7 @@ export function LiveAlertBanner({
   const [expanded, setExpanded] = useState(true);
   const [lastCheck, setLastCheck] = useState<Date>(new Date());
   const [feedSource, setFeedSource] = useState<string>('live');
+  const [cacheAgeMinutes, setCacheAgeMinutes] = useState<number | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const previousAlertsRef = useRef<Set<string>>(new Set());
 
@@ -246,6 +247,9 @@ export function LiveAlertBanner({
 
       const allFlights: any[] = [];
       setFeedSource(liveResult.data?.source || 'live');
+      setCacheAgeMinutes(
+        typeof liveResult.data?.cacheAgeMinutes === 'number' ? liveResult.data.cacheAgeMinutes : null
+      );
 
       if (liveResult.data?.flights) {
         for (const f of liveResult.data.flights) {
@@ -430,7 +434,7 @@ export function LiveAlertBanner({
                 <span>• Low altitude threshold: {lowAltitudeThreshold}ft</span>
                 {isCachedFeed && staleAlerts.length > 0 && (
                   <span className="text-yellow-500">
-                    • No live low-altitude traffic — showing last known detections (Sentinel window shows 0 because these are outside it)
+                    • {feedSource === 'cached' ? 'CACHED' : 'LIVE'} feed · Kern County AOI{cacheAgeMinutes !== null ? ` · newest detection ${cacheAgeMinutes} min old` : ''} — same airspace Josiah Sentinel scans
                   </span>
                 )}
               </div>

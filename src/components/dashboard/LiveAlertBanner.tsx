@@ -118,6 +118,25 @@ export function LiveAlertBanner({
     const altitude = flight.altitude || 0;
     const reasons: string[] = [];
     let threat_level: 'critical' | 'high' | 'medium' = 'medium';
+
+    // --- Scope guard: same Kern AOI box Josiah Sentinel uses. Anything outside is
+    // context traffic, never a local alert. Prevents cached national/international
+    // rows from being reported as CRITICAL over Oildale.
+    const lat = Number(flight.latitude);
+    const lon = Number(flight.longitude);
+    const inKern = Number.isFinite(lat) && Number.isFinite(lon)
+      && lat >= 34.8 && lat <= 35.9 && lon >= -119.8 && lon <= -118.3;
+    if (!inKern) return null;
+
+    // --- Bucket guard: MLAT placeholders and parked aircraft are not violations.
+    const bucket = String(flight.mlatBucket || flight.mlat_taxonomy || '').toUpperCase();
+    if (bucket === 'MLAT' || bucket === 'GROUND') return null;
+    if (flight.onGround === true || flight.on_ground === true) return null;
+
+    // --- Canonical stored score (written by detection-enrichment) drives severity
+    // so the banner and Sentinel can never disagree about the same aircraft.
+    const composite = flight.compositeThreatScore ?? flight.composite_threat_score;
+    const compositeScore = composite === null || composite === undefined ? null : Number(composite);
     let entity = 'Unknown';
 
     const ownerOperator = flight.ownerOperator || flight.owner_operator || '';

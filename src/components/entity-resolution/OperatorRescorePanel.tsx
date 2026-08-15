@@ -121,9 +121,12 @@ export function OperatorRescorePanel() {
             <div className="flex gap-2">
               <Button onClick={() => rescoreThreats()} disabled={busy !== "none"} className="flex-1" variant="default">
                 {busy === "rescore" ? <Loader2 className="w-3 h-3 mr-2 animate-spin" /> : <RefreshCw className="w-3 h-3 mr-2" />}
-                Re-score top 500 tails
+                Re-score all tails (batched)
               </Button>
             </div>
+            {progress && (
+              <p className="text-[10px] font-mono text-primary">{progress}</p>
+            )}
             <div className="flex gap-2">
               <Input value={tails} onChange={(e) => setTails(e.target.value)} placeholder="N912KC,N913KC,..." className="text-xs h-8" />
               <Button size="sm" variant="outline" onClick={() => rescoreThreats(tailList)} disabled={busy !== "none" || !tailList.length}>

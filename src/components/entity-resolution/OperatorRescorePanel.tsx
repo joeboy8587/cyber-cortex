@@ -12,6 +12,7 @@ export function OperatorRescorePanel() {
   const [busy, setBusy] = useState<"none" | "profiles" | "rescore">("none");
   const [tails, setTails] = useState("N912KC,N913KC,N597E,N949SL,N4022W,N473CA,N791FA");
   const [result, setResult] = useState<any>(null);
+  const [progress, setProgress] = useState("");
 
   async function rebuildProfiles(includeHeavy = false) {
     setBusy("profiles");
@@ -31,21 +32,61 @@ export function OperatorRescorePanel() {
   async function rescoreThreats(targetTails?: string[]) {
     setBusy("rescore");
     setResult(null);
+    setProgress("");
     try {
-      const body: any = targetTails?.length
-        ? { registrations: targetTails, includeLiveSignals: true, autoFlag: true }
-        : { maxRows: 500, includeLiveSignals: true, autoFlag: true };
-      const { data, error } = await supabase.functions.invoke("threat-rescore-engine", { body });
-      if (error) throw error;
-      setResult(data);
+      // Targeted run: single call. Full sweep: sharded batches so no single
+      // invocation can hit the platform time limit.
+      if (targetTails?.length) {
+        const { data, error } = await supabase.functions.invoke("threat-rescore-engine", {
+          body: { registrations: targetTails, includeLiveSignals: true, autoFlag: true },
+        });
+        if (error) throw error;
+        setResult(data);
+        toast({
+          title: "Sentinel evolved",
+          description: `${data?.upserted ?? 0} threats re-scored · ${data?.flags_created ?? 0} new patterns auto-flagged`,
+        });
+        return;
+      }
+
+      let offset = 0;
+      let upserted = 0;
+      let flags = 0;
+      let evaluated = 0;
+      let last: any = null;
+      const failedShards: number[] = [];
+
+      for (let shard = 0; shard < 60; shard++) {
+        setProgress(`Batch ${shard + 1} — ${evaluated.toLocaleString()} profiles scored`);
+        const { data, error } = await supabase.functions.invoke("threat-rescore-engine", {
+          body: { maxRows: 100, offset, includeLiveSignals: true, autoFlag: true, lookbackDays: 90 },
+        });
+        if (error || data?.error) {
+          failedShards.push(offset);
+          offset += 100;
+          if (failedShards.length >= 5) break;
+          continue;
+        }
+        last = data;
+        evaluated += data.evaluated ?? 0;
+        upserted += data.upserted ?? 0;
+        flags += data.flags_created ?? 0;
+        offset = data.next_offset ?? offset + 100;
+        if (data.done || (data.evaluated ?? 0) === 0) break;
+      }
+
+      setResult({ ...(last || {}), evaluated, upserted, flags_created: flags, failed_shards: failedShards });
       toast({
         title: "Sentinel evolved",
-        description: `${data?.upserted ?? 0} threats re-scored · ${data?.flags_created ?? 0} new patterns auto-flagged`,
+        description: `${upserted.toLocaleString()} threats re-scored · ${flags} new patterns auto-flagged${
+          failedShards.length ? ` · ${failedShards.length} batch(es) skipped` : ""
+        }`,
       });
     } catch (e: any) {
       toast({ title: "Rescore failed", description: e.message, variant: "destructive" });
     } finally {
       setBusy("none");
+      setProgress("");
     }
   }
 

@@ -56,11 +56,25 @@ serve(async (req) => {
     });
   }
 
+  const startedAt = Date.now();
+  const BUDGET_MS = 100_000;
+  const budget = <T,>(p: Promise<T>): Promise<T> =>
+    Promise.race([
+      p,
+      new Promise<T>((_, rej) =>
+        setTimeout(() => rej(new Error("BUDGET_EXCEEDED")), Math.max(2000, BUDGET_MS - (Date.now() - startedAt)))
+      ),
+    ]);
+
   const body = await req.json().catch(() => ({}));
   const limitTails: string[] | null = Array.isArray(body?.registrations) && body.registrations.length
     ? body.registrations.map((s: string) => String(s).toUpperCase())
     : null;
-  const maxRows: number = Math.min(Number(body?.maxRows) || 500, 2000);
+  // Sharded by default: small batches that always finish inside the platform limit.
+  const maxRows: number = Math.min(Number(body?.maxRows) || 100, 500);
+  const offset: number = Math.max(0, Number(body?.offset) || 0);
+  // Aggregates are bounded to this window so they ride the detection_timestamp index.
+  const lookbackDays: number = Math.min(Math.max(Number(body?.lookbackDays) || 90, 1), 365);
   // Default ON — physics/proximity/identity are the whole point of the engine. Disable only for huge sweeps.
   const includeLiveSignals: boolean = body?.includeLiveSignals !== false;
   const autoFlag: boolean = body?.autoFlag !== false; // auto-create watchtower flags for emerging high-score tails
@@ -69,20 +83,33 @@ serve(async (req) => {
   const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
   try {
+    await sql.unsafe(`SET statement_timeout = '85000'`).catch(() => {});
+
     // 1. Candidate profiles
     const hasProfile = await sql`
       SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='canonical_operator_profiles'
     `;
     let profiles: any[] = [];
+    let totalProfiles = 0;
     if (hasProfile.length) {
-      profiles = limitTails
-        ? await sql`SELECT * FROM canonical_operator_profiles WHERE registration = ANY(${limitTails})`
-        : await sql`SELECT * FROM canonical_operator_profiles ORDER BY occurrences_total DESC LIMIT ${maxRows}`;
+      if (limitTails) {
+        profiles = await sql`SELECT * FROM canonical_operator_profiles WHERE registration = ANY(${limitTails})`;
+        totalProfiles = profiles.length;
+      } else {
+        const [cnt] = await sql`SELECT COUNT(*)::int AS n FROM canonical_operator_profiles`;
+        totalProfiles = Number(cnt?.n || 0);
+        profiles = await sql`
+          SELECT * FROM canonical_operator_profiles
+          ORDER BY occurrences_total DESC
+          LIMIT ${maxRows} OFFSET ${offset}
+        `;
+      }
     }
     if (!profiles.length) {
-      return new Response(JSON.stringify({ ok: false, error: "no profiles found - run operator-profile-builder first" }), {
-        status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return new Response(JSON.stringify({
+        ok: true, evaluated: 0, upserted: 0, offset, total_profiles: totalProfiles,
+        done: true, note: offset > 0 ? "no more profiles at this offset" : "no profiles found - run operator-profile-builder first",
+      }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     const tails = profiles.map((p) => p.registration);
@@ -97,13 +124,14 @@ serve(async (req) => {
     `;
     const have = new Set(tbls.map((r: any) => r.table_name));
 
-    // 3. BULK AGGREGATIONS — one query per signal across all tails
+    // 3. BULK AGGREGATIONS — one query per signal across all tails, time-bounded
     const flightAgg = new Map<string, any>();
     const aoiAgg = new Map<string, any>();
     const bioAgg = new Map<string, number>();
+    const since = new Date(Date.now() - lookbackDays * 86400_000).toISOString();
 
     if (includeLiveSignals && have.has("live_flight_detections_rows")) {
-      const rows = await sql`
+      const rows = await budget(sql`
         SELECT UPPER(registration) AS reg,
                COUNT(*) FILTER (WHERE COALESCE(speed,1000) < 48 AND COALESCE(altitude,1000) < 500)::int AS substall,
                COUNT(*) FILTER (WHERE COALESCE(altitude,9999) <= 0)::int AS zerofoot,
@@ -112,20 +140,22 @@ serve(async (req) => {
                COUNT(DISTINCT callsign)::int AS cs_n
         FROM live_flight_detections_rows
         WHERE registration = ANY(${tails})
+          AND detection_timestamp > ${since}
         GROUP BY UPPER(registration)
-      `;
+      `);
       for (const r of rows) flightAgg.set(r.reg, r);
 
-      const aoiRows = await sql`
+      const aoiRows = await budget(sql`
         SELECT UPPER(registration) AS reg,
                COUNT(*)::int AS n,
                AVG(altitude)::numeric AS avg_alt
         FROM live_flight_detections_rows
         WHERE registration = ANY(${tails})
+          AND detection_timestamp > ${since}
           AND latitude BETWEEN ${AOI_LAT - AOI_RADIUS_DEG} AND ${AOI_LAT + AOI_RADIUS_DEG}
           AND longitude BETWEEN ${AOI_LNG - AOI_RADIUS_DEG} AND ${AOI_LNG + AOI_RADIUS_DEG}
         GROUP BY UPPER(registration)
-      `;
+      `);
       for (const r of aoiRows) aoiAgg.set(r.reg, r);
     }
 
@@ -270,6 +300,7 @@ serve(async (req) => {
       metadata: { weights: W, max_rows: maxRows, flags_created: flagsCreated, confidence, sample: summaries.slice(0, 20) },
     });
 
+    const nextOffset = limitTails ? null : offset + profiles.length;
     return new Response(
       JSON.stringify({
         ok: true,
@@ -278,14 +309,29 @@ serve(async (req) => {
         flags_created: flagsCreated,
         confidence,
         signals_used: Array.from(have),
+        offset,
+        next_offset: nextOffset,
+        total_profiles: totalProfiles,
+        done: limitTails ? true : (nextOffset as number) >= totalProfiles,
+        lookback_days: lookbackDays,
+        elapsed_ms: Date.now() - startedAt,
         sample: summaries.slice(0, 50),
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (err) {
-    console.error("threat-rescore-engine error:", err);
-    return new Response(JSON.stringify({ error: String((err as any)?.message || err) }), {
-      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    const msg = String((err as any)?.message || err);
+    console.error("threat-rescore-engine error:", msg);
+    const budgetHit = msg.includes("BUDGET_EXCEEDED") || msg.includes("statement timeout");
+    return new Response(JSON.stringify({
+      error: budgetHit
+        ? `Batch at offset ${offset} exceeded the time budget — retry with a smaller maxRows or a shorter lookbackDays.`
+        : msg,
+      code: budgetHit ? "BUDGET_EXCEEDED" : "ERROR",
+      offset,
+      next_offset: offset + maxRows,
+    }), {
+      status: budgetHit ? 504 : 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } finally {
     await sql.end({ timeout: 5 });

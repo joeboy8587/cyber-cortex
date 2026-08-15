@@ -87,6 +87,7 @@ export function LiveAlertBanner({
   const [expanded, setExpanded] = useState(true);
   const [lastCheck, setLastCheck] = useState<Date>(new Date());
   const [feedSource, setFeedSource] = useState<string>('live');
+  const [cacheAgeMinutes, setCacheAgeMinutes] = useState<number | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const previousAlertsRef = useRef<Set<string>>(new Set());
 
@@ -118,6 +119,25 @@ export function LiveAlertBanner({
     const altitude = flight.altitude || 0;
     const reasons: string[] = [];
     let threat_level: 'critical' | 'high' | 'medium' = 'medium';
+
+    // --- Scope guard: same Kern AOI box Josiah Sentinel uses. Anything outside is
+    // context traffic, never a local alert. Prevents cached national/international
+    // rows from being reported as CRITICAL over Oildale.
+    const lat = Number(flight.latitude);
+    const lon = Number(flight.longitude);
+    const inKern = Number.isFinite(lat) && Number.isFinite(lon)
+      && lat >= 34.8 && lat <= 35.9 && lon >= -119.8 && lon <= -118.3;
+    if (!inKern) return null;
+
+    // --- Bucket guard: MLAT placeholders and parked aircraft are not violations.
+    const bucket = String(flight.mlatBucket || flight.mlat_taxonomy || '').toUpperCase();
+    if (bucket === 'MLAT' || bucket === 'GROUND') return null;
+    if (flight.onGround === true || flight.on_ground === true) return null;
+
+    // --- Canonical stored score (written by detection-enrichment) drives severity
+    // so the banner and Sentinel can never disagree about the same aircraft.
+    const composite = flight.compositeThreatScore ?? flight.composite_threat_score;
+    const compositeScore = composite === null || composite === undefined ? null : Number(composite);
     let entity = 'Unknown';
 
     const ownerOperator = flight.ownerOperator || flight.owner_operator || '';
@@ -177,6 +197,16 @@ export function LiveAlertBanner({
       }
     }
 
+    // Stored composite score wins over the local altitude rule when available.
+    if (compositeScore !== null) {
+      reasons.push(`COMPOSITE:${compositeScore}`);
+      const composedLevel: 'critical' | 'high' | 'medium' =
+        compositeScore >= 70 ? 'critical' : compositeScore >= 45 ? 'high' : 'medium';
+      threat_level = composedLevel;
+      const compositeReasons = flight.compositeReasons || flight.composite_threat_reasons;
+      if (Array.isArray(compositeReasons)) reasons.push(...compositeReasons);
+    }
+
     // Existing flagged reasons from API
     if (flight.flaggedReasons?.length) {
       reasons.push(...flight.flaggedReasons);
@@ -187,6 +217,7 @@ export function LiveAlertBanner({
 
     // Only return if meets alert criteria
     if (reasons.length === 0) return null;
+    if (compositeScore !== null && compositeScore < 45 && threat_level === 'medium') return null;
     if (threat_level === 'medium' && altitude >= lowAltitudeThreshold) return null;
 
     return {
@@ -216,6 +247,9 @@ export function LiveAlertBanner({
 
       const allFlights: any[] = [];
       setFeedSource(liveResult.data?.source || 'live');
+      setCacheAgeMinutes(
+        typeof liveResult.data?.cacheAgeMinutes === 'number' ? liveResult.data.cacheAgeMinutes : null
+      );
 
       if (liveResult.data?.flights) {
         for (const f of liveResult.data.flights) {
@@ -400,7 +434,7 @@ export function LiveAlertBanner({
                 <span>• Low altitude threshold: {lowAltitudeThreshold}ft</span>
                 {isCachedFeed && staleAlerts.length > 0 && (
                   <span className="text-yellow-500">
-                    • No live low-altitude traffic — showing last known detections (Sentinel window shows 0 because these are outside it)
+                    • {feedSource === 'cached' ? 'CACHED' : 'LIVE'} feed · Kern County AOI{cacheAgeMinutes !== null ? ` · newest detection ${cacheAgeMinutes} min old` : ''} — same airspace Josiah Sentinel scans
                   </span>
                 )}
               </div>

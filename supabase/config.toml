@@ -141,3 +141,6 @@ enable_confirmations = false
 
 [functions.registrant-osint-scan]
 verify_jwt = false
+
+[functions.detection-enrichment]
+verify_jwt = false

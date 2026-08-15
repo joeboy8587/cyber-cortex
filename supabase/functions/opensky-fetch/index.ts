@@ -566,6 +566,9 @@ serve(async (req) => {
       // ============ FALLBACK 3: Cached DB data ============
       if (!apiSuccess && neonUrl) {
         console.log('API unavailable, fetching cached flights from database...');
+        // Cached fallback is scoped to the SAME Kern AOI box Sentinel uses and to a
+        // 60-minute recency window. Without these bounds the feed resurfaced day-old
+        // national/international traffic and the banner scored it as local CRITICAL.
         const cachedFlights = await safeDbQuery(neonUrl, async (sql) => {
           return await sql`
             SELECT DISTINCT ON (registration)
@@ -573,10 +576,12 @@ serve(async (req) => {
               latitude, longitude, heading, vertical_rate,
               detection_timestamp as detected_at, taxonomy_tag,
               threat_score, tier_level, flagged, flagged_reasons,
-              owner_operator, aircraft_type, is_military, data_source
+              owner_operator, aircraft_type, is_military, data_source,
+              mlat_taxonomy, composite_threat_score, composite_threat_reasons, on_ground
             FROM live_flight_detections_rows
-            WHERE latitude IS NOT NULL AND longitude IS NOT NULL
-              AND detection_timestamp > NOW() - INTERVAL '24 hours'
+            WHERE latitude BETWEEN 34.8 AND 35.9
+              AND longitude BETWEEN -119.8 AND -118.3
+              AND detection_timestamp > NOW() - INTERVAL '60 minutes'
             ORDER BY registration, detection_timestamp DESC
             LIMIT 200
           `;
@@ -591,6 +596,11 @@ serve(async (req) => {
             detected_at: f.detected_at,
             taxonomyTag: f.taxonomy_tag || 'normal_traffic',
             threatScore: parseInt(f.threat_score) || 0,
+            compositeThreatScore: f.composite_threat_score === null || f.composite_threat_score === undefined
+              ? null : Number(f.composite_threat_score),
+            compositeReasons: Array.isArray(f.composite_threat_reasons) ? f.composite_threat_reasons : [],
+            mlatBucket: f.mlat_taxonomy || null,
+            onGround: f.on_ground === true,
             tierLevel: parseInt(f.tier_level) || 5,
             flagged: f.flagged || false,
             flaggedReasons: f.flagged_reasons ? f.flagged_reasons.split('; ') : [],
@@ -600,10 +610,18 @@ serve(async (req) => {
             isMilitary: f.is_military || false,
             source: f.data_source || 'cached'
           }));
-          
+
+          const newest = transformedCached.reduce((acc: number, f: any) => {
+            const t = f.detected_at ? new Date(f.detected_at).getTime() : 0;
+            return t > acc ? t : acc;
+          }, 0);
+
           return new Response(JSON.stringify({
             success: true, flights: transformedCached, count: transformedCached.length,
-            source: 'cached', apiError, timestamp: new Date().toISOString()
+            source: 'cached', apiError, timestamp: new Date().toISOString(),
+            cacheNewestAt: newest ? new Date(newest).toISOString() : null,
+            cacheAgeMinutes: newest ? Math.round((Date.now() - newest) / 60000) : null,
+            aoi: 'kern_county'
           }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
         }
       }

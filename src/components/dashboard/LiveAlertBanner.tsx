@@ -196,6 +196,16 @@ export function LiveAlertBanner({
       }
     }
 
+    // Stored composite score wins over the local altitude rule when available.
+    if (compositeScore !== null) {
+      reasons.push(`COMPOSITE:${compositeScore}`);
+      const composedLevel: 'critical' | 'high' | 'medium' =
+        compositeScore >= 70 ? 'critical' : compositeScore >= 45 ? 'high' : 'medium';
+      threat_level = composedLevel;
+      const compositeReasons = flight.compositeReasons || flight.composite_threat_reasons;
+      if (Array.isArray(compositeReasons)) reasons.push(...compositeReasons);
+    }
+
     // Existing flagged reasons from API
     if (flight.flaggedReasons?.length) {
       reasons.push(...flight.flaggedReasons);
@@ -206,6 +216,7 @@ export function LiveAlertBanner({
 
     // Only return if meets alert criteria
     if (reasons.length === 0) return null;
+    if (compositeScore !== null && compositeScore < 45 && threat_level === 'medium') return null;
     if (threat_level === 'medium' && altitude >= lowAltitudeThreshold) return null;
 
     return {

@@ -471,28 +471,13 @@ async function build(sql: ReturnType<typeof postgres>, body: Record<string, unkn
         69.0 * GREATEST(MAX(latitude) - MIN(latitude), MAX(longitude) - MIN(longitude)) AS geo_spread_mi,
         MIN(${HAV("latitude", "longitude")}) AS aoi_min_mi,
         COUNT(*) FILTER (WHERE ${HAV("latitude", "longitude")} <= 10)::bigint AS aoi_pings,
-        AVG(CASE WHEN ${HAV("latitude", "longitude")} <= 10 THEN 1.0 ELSE 0 END) AS aoi_pct
+        AVG(CASE WHEN ${HAV("latitude", "longitude")} <= 10 THEN 1.0 ELSE 0 END) AS aoi_pct,
+        ARRAY[${Array.from({ length: 24 }, (_, h) => `COUNT(*) FILTER (WHERE EXTRACT(HOUR FROM ts) = ${h})::int`).join(",")}] AS hour_hist,
+        ARRAY[${Array.from({ length: 7 }, (_, d) => `COUNT(*) FILTER (WHERE EXTRACT(DOW FROM ts) = ${d})::int`).join(",")}] AS dow_hist
       FROM base GROUP BY reg
       HAVING COUNT(*) >= ${minPings}
     ),
-    hours AS (
-      SELECT reg, ARRAY_AGG(c ORDER BY h)::int[] AS hour_hist FROM (
-        SELECT r.reg AS reg, g.h, COUNT(b.ts)::int AS c
-        FROM (SELECT DISTINCT reg FROM base) r
-        CROSS JOIN generate_series(0,23) g(h)
-        LEFT JOIN base b ON b.reg = r.reg AND EXTRACT(HOUR FROM b.ts) = g.h
-        GROUP BY r.reg, g.h
-      ) s WHERE reg IS NOT NULL GROUP BY reg
-    ),
-    dows AS (
-      SELECT reg, ARRAY_AGG(c ORDER BY d)::int[] AS dow_hist FROM (
-        SELECT r.reg AS reg, g.d, COUNT(b.ts)::int AS c
-        FROM (SELECT DISTINCT reg FROM base) r
-        CROSS JOIN generate_series(0,6) g(d)
-        LEFT JOIN base b ON b.reg = r.reg AND EXTRACT(DOW FROM b.ts) = g.d
-        GROUP BY r.reg, g.d
-      ) s WHERE reg IS NOT NULL GROUP BY reg
-    ),
+
     faa_v AS (
       SELECT UPPER(TRIM(registration)) AS reg, COUNT(*)::int AS n,
              MAX(altitude_deficit) AS worst_deficit,

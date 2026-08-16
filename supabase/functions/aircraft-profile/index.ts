@@ -425,15 +425,27 @@ async function mergeArchive(sql: ReturnType<typeof postgres>) {
 
 /* ─────────────────────────── build ─────────────────────────── */
 
+// Sharding by hashtext() forced a full 15 GB scan on every pass (the predicate
+// is not indexable), which blew the statement timeout. Registration *ranges*
+// ride idx_lfd_rows_reg_time, so each pass reads only its own slice.
+const REG_BUCKETS: Array<[string | null, string | null]> = [
+  [null, "N1"], ["N1", "N2"], ["N2", "N3"], ["N3", "N4"], ["N4", "N5"],
+  ["N5", "N6"], ["N6", "N7"], ["N7", "N8"], ["N8", "N9"], ["N9", "NA"],
+  ["NA", "NC"], ["NC", "NF"], ["NF", "NJ"], ["NJ", "NN"], ["NN", "NR"],
+  ["NR", "NV"], ["NV", "O"], ["O", null],
+];
+
 async function build(sql: ReturnType<typeof postgres>, body: Record<string, unknown>) {
   const days = Math.min(Math.max(Number(body.days) || 90, 1), 365);
   const minPings = Math.min(Math.max(Number(body.minPings) || 5, 1), 500);
-  const parts = Math.min(Math.max(Number(body.parts) || 1, 1), 16);
-  const part = Math.min(Math.max(Number(body.part) || 0, 0), parts - 1);
-  const shard = parts > 1
-    ? `AND mod(abs(hashtext(UPPER(TRIM(d.registration)))), ${parts}) = ${part}`
+  const useShards = Number(body.parts) > 1;
+  const part = Math.min(Math.max(Number(body.part) || 0, 0), REG_BUCKETS.length - 1);
+  const [lo, hi] = REG_BUCKETS[part];
+  const shard = useShards
+    ? `${lo ? `AND d.registration >= '${lo}'` : ""} ${hi ? `AND d.registration < '${hi}'` : ""}`
     : "";
   const t0 = Date.now();
+
 
   const rows = await sql.unsafe(`
     WITH base AS (
@@ -471,28 +483,13 @@ async function build(sql: ReturnType<typeof postgres>, body: Record<string, unkn
         69.0 * GREATEST(MAX(latitude) - MIN(latitude), MAX(longitude) - MIN(longitude)) AS geo_spread_mi,
         MIN(${HAV("latitude", "longitude")}) AS aoi_min_mi,
         COUNT(*) FILTER (WHERE ${HAV("latitude", "longitude")} <= 10)::bigint AS aoi_pings,
-        AVG(CASE WHEN ${HAV("latitude", "longitude")} <= 10 THEN 1.0 ELSE 0 END) AS aoi_pct
+        AVG(CASE WHEN ${HAV("latitude", "longitude")} <= 10 THEN 1.0 ELSE 0 END) AS aoi_pct,
+        ARRAY[${Array.from({ length: 24 }, (_, h) => `COUNT(*) FILTER (WHERE EXTRACT(HOUR FROM ts) = ${h})::int`).join(",")}] AS hour_hist,
+        ARRAY[${Array.from({ length: 7 }, (_, d) => `COUNT(*) FILTER (WHERE EXTRACT(DOW FROM ts) = ${d})::int`).join(",")}] AS dow_hist
       FROM base GROUP BY reg
       HAVING COUNT(*) >= ${minPings}
     ),
-    hours AS (
-      SELECT reg, ARRAY_AGG(c ORDER BY h)::int[] AS hour_hist FROM (
-        SELECT r.reg AS reg, g.h, COUNT(b.ts)::int AS c
-        FROM (SELECT DISTINCT reg FROM base) r
-        CROSS JOIN generate_series(0,23) g(h)
-        LEFT JOIN base b ON b.reg = r.reg AND EXTRACT(HOUR FROM b.ts) = g.h
-        GROUP BY r.reg, g.h
-      ) s WHERE reg IS NOT NULL GROUP BY reg
-    ),
-    dows AS (
-      SELECT reg, ARRAY_AGG(c ORDER BY d)::int[] AS dow_hist FROM (
-        SELECT r.reg AS reg, g.d, COUNT(b.ts)::int AS c
-        FROM (SELECT DISTINCT reg FROM base) r
-        CROSS JOIN generate_series(0,6) g(d)
-        LEFT JOIN base b ON b.reg = r.reg AND EXTRACT(DOW FROM b.ts) = g.d
-        GROUP BY r.reg, g.d
-      ) s WHERE reg IS NOT NULL GROUP BY reg
-    ),
+
     faa_v AS (
       SELECT UPPER(TRIM(registration)) AS reg, COUNT(*)::int AS n,
              MAX(altitude_deficit) AS worst_deficit,
@@ -540,7 +537,7 @@ async function build(sql: ReturnType<typeof postgres>, body: Record<string, unkn
       f.year_manufactured, f.status,
       a.detections, a.archive_pings, a.live_pings, a.archive_first_seen,
       a.days_active, a.first_seen, a.last_seen, a.callsigns,
-      h.hour_hist, w.dow_hist,
+      a.hour_hist, a.dow_hist,
       a.alt_min, a.alt_p10, a.alt_avg, a.alt_p90, a.alt_sigma, a.spd_avg, a.spd_sigma,
       a.night_pct, a.low_alt_pct, a.sub_stall_pct, a.on_ground_pct,
       -- loiter: many pings inside a tight geographic footprint
@@ -574,13 +571,11 @@ async function build(sql: ReturnType<typeof postgres>, body: Record<string, unkn
           LEAST(10, COALESCE(pt.partner_count, 0)::numeric * 0.4) +
           CASE WHEN f.n_number IS NULL THEN 8 ELSE 0 END)::numeric, 2)),
       encode(sha256(convert_to(
-        a.reg || '|' || a.detections::text || '|' || COALESCE(h.hour_hist::text, '') || '|' ||
+        a.reg || '|' || a.detections::text || '|' || COALESCE(a.hour_hist::text, '') || '|' ||
         COALESCE(ROUND(a.low_alt_pct::numeric, 4)::text, '') || '|' || COALESCE(ROUND(a.night_pct::numeric, 4)::text, '') ||
         '|' || COALESCE(fv.n, 0)::text || '|' || COALESCE(sv.n, 0)::text, 'UTF8')), 'hex'),
       ${days}, NOW()
     FROM agg a
-    LEFT JOIN hours h ON h.reg = a.reg
-    LEFT JOIN dows  w ON w.reg = a.reg
     LEFT JOIN v_faa_identity f ON f.n_number = a.reg
     LEFT JOIN faa_v fv ON fv.reg = a.reg
     LEFT JOIN sen_v sv ON sv.reg = a.reg
@@ -614,7 +609,7 @@ async function build(sql: ReturnType<typeof postgres>, body: Record<string, unkn
     RETURNING registration
   `);
 
-  return { ok: true, profiles: rows.length, days, part, parts, ms: Date.now() - t0 };
+  return { ok: true, profiles: rows.length, days, part, parts: REG_BUCKETS.length, range: [lo, hi], ms: Date.now() - t0 };
 }
 
 /* ─────────────────────────── reads ─────────────────────────── */

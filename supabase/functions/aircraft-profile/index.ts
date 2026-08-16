@@ -525,7 +525,7 @@ async function build(sql: ReturnType<typeof postgres>, body: Record<string, unkn
       f.year_manufactured, f.status,
       a.detections, a.archive_pings, a.live_pings, a.archive_first_seen,
       a.days_active, a.first_seen, a.last_seen, a.callsigns,
-      h.hour_hist, w.dow_hist,
+      a.hour_hist, a.dow_hist,
       a.alt_min, a.alt_p10, a.alt_avg, a.alt_p90, a.alt_sigma, a.spd_avg, a.spd_sigma,
       a.night_pct, a.low_alt_pct, a.sub_stall_pct, a.on_ground_pct,
       -- loiter: many pings inside a tight geographic footprint
@@ -559,13 +559,11 @@ async function build(sql: ReturnType<typeof postgres>, body: Record<string, unkn
           LEAST(10, COALESCE(pt.partner_count, 0)::numeric * 0.4) +
           CASE WHEN f.n_number IS NULL THEN 8 ELSE 0 END)::numeric, 2)),
       encode(sha256(convert_to(
-        a.reg || '|' || a.detections::text || '|' || COALESCE(h.hour_hist::text, '') || '|' ||
+        a.reg || '|' || a.detections::text || '|' || COALESCE(a.hour_hist::text, '') || '|' ||
         COALESCE(ROUND(a.low_alt_pct::numeric, 4)::text, '') || '|' || COALESCE(ROUND(a.night_pct::numeric, 4)::text, '') ||
         '|' || COALESCE(fv.n, 0)::text || '|' || COALESCE(sv.n, 0)::text, 'UTF8')), 'hex'),
       ${days}, NOW()
     FROM agg a
-    LEFT JOIN hours h ON h.reg = a.reg
-    LEFT JOIN dows  w ON w.reg = a.reg
     LEFT JOIN v_faa_identity f ON f.n_number = a.reg
     LEFT JOIN faa_v fv ON fv.reg = a.reg
     LEFT JOIN sen_v sv ON sv.reg = a.reg

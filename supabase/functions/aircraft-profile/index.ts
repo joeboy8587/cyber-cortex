@@ -609,7 +609,7 @@ async function build(sql: ReturnType<typeof postgres>, body: Record<string, unkn
     RETURNING registration
   `);
 
-  return { ok: true, profiles: rows.length, days, part, parts, ms: Date.now() - t0 };
+  return { ok: true, profiles: rows.length, days, part, parts: REG_BUCKETS.length, range: [lo, hi], ms: Date.now() - t0 };
 }
 
 /* ─────────────────────────── reads ─────────────────────────── */

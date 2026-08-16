@@ -23,7 +23,18 @@ Behaviour details:
 
 In the app, the GPU panel on Aircraft Profiles gets a second download button for the Linux sync bundle and a short "set it and forget it" note, plus a "last embedding refresh" timestamp so you can see at a glance whether the box is keeping up.
 
-## Part 2 — Deep analysis pass
+## Part 2 — Profiles from the unsealed archive dump
+
+Dossiers are currently built only from `live_flight_detections_rows` (last 90 days). The sealed MLAT dump (~4M rows) holds years of history that never reaches a profile.
+
+- Add a historical source to the dossier builder: read the unsealed dump alongside live detections, keyed on tail number, so each profile covers its full observed history rather than a 90-day slice.
+- Run it in shards (by month and by tail-number range) so no single pass hits the function time limit; progress is shown as passes complete.
+- Profiles gain "first seen (archive)", total historical pings, and a note showing how much of the behaviour comes from archive vs live.
+- Nothing in the sealed dump is modified — read-only, no deletes, no vacuum.
+- Every rebuilt profile is automatically marked as needing a fresh embedding, so your GPU box picks them up on its next run and you embed the enriched profiles locally.
+
+## Part 3 — Deep analysis pass
+
 
 A read-only sweep, then a written findings report you can act on, plus the quick wins implemented in the same pass.
 

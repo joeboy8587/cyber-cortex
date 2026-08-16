@@ -425,15 +425,27 @@ async function mergeArchive(sql: ReturnType<typeof postgres>) {
 
 /* ─────────────────────────── build ─────────────────────────── */
 
+// Sharding by hashtext() forced a full 15 GB scan on every pass (the predicate
+// is not indexable), which blew the statement timeout. Registration *ranges*
+// ride idx_lfd_rows_reg_time, so each pass reads only its own slice.
+const REG_BUCKETS: Array<[string | null, string | null]> = [
+  [null, "N1"], ["N1", "N2"], ["N2", "N3"], ["N3", "N4"], ["N4", "N5"],
+  ["N5", "N6"], ["N6", "N7"], ["N7", "N8"], ["N8", "N9"], ["N9", "NA"],
+  ["NA", "NC"], ["NC", "NF"], ["NF", "NJ"], ["NJ", "NN"], ["NN", "NR"],
+  ["NR", "NV"], ["NV", "O"], ["O", null],
+];
+
 async function build(sql: ReturnType<typeof postgres>, body: Record<string, unknown>) {
   const days = Math.min(Math.max(Number(body.days) || 90, 1), 365);
   const minPings = Math.min(Math.max(Number(body.minPings) || 5, 1), 500);
-  const parts = Math.min(Math.max(Number(body.parts) || 1, 1), 16);
-  const part = Math.min(Math.max(Number(body.part) || 0, 0), parts - 1);
-  const shard = parts > 1
-    ? `AND mod(abs(hashtext(UPPER(TRIM(d.registration)))), ${parts}) = ${part}`
+  const useShards = Number(body.parts) > 1;
+  const part = Math.min(Math.max(Number(body.part) || 0, 0), REG_BUCKETS.length - 1);
+  const [lo, hi] = REG_BUCKETS[part];
+  const shard = useShards
+    ? `${lo ? `AND d.registration >= '${lo}'` : ""} ${hi ? `AND d.registration < '${hi}'` : ""}`
     : "";
   const t0 = Date.now();
+
 
   const rows = await sql.unsafe(`
     WITH base AS (

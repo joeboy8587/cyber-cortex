@@ -168,7 +168,6 @@ async function train(sql: ReturnType<typeof postgres>, body: Record<string, unkn
         AVG(CASE WHEN alt IS NOT NULL AND alt < 1000 THEN 1.0 ELSE 0 END) AS low_alt_pct,
         (ARRAY_AGG(DISTINCT icao) FILTER (WHERE icao IS NOT NULL AND icao <> ''))[1:8] AS icao_set,
         (ARRAY_AGG(DISTINCT cs) FILTER (WHERE cs IS NOT NULL AND cs <> ''))[1:24] AS callsign_set,
-        ARRAY_AGG(COALESCE(0,0)) FILTER (WHERE false) AS _unused
       FROM base GROUP BY reg HAVING COUNT(*) >= ${minPings}
     ),
     radius AS (
@@ -454,9 +453,8 @@ async function list(sql: ReturnType<typeof postgres>, body: Record<string, unkno
   const minProb = Number(body.minProb) || 0;
   const search = String(body.search || "").toUpperCase().replace(/'/g, "");
   const rows = await sql.unsafe(`
-    SELECT s.*, f.operator_hint
+    SELECT s.*
     FROM soda_identity_scores s
-    LEFT JOIN LATERAL (SELECT NULL::text AS operator_hint) f ON true
     WHERE s.spoof_probability >= ${minProb}
       ${search ? `AND s.registration LIKE '%${search}%'` : ""}
     ORDER BY s.spoof_probability DESC, s.window_end DESC

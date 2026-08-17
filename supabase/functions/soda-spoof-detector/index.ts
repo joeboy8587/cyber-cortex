@@ -344,15 +344,24 @@ async function score(sql: ReturnType<typeof postgres>, body: Record<string, unkn
     const fpIcao = (r.f_icao_set as string[] | null) || [];
     const obsCs = (r.callsign_set as string[] | null) || [];
     const fpCs = (r.f_callsign_set as string[] | null) || [];
+    const basePings = N(r.f_pings);
+    const solidBaseline = trained && basePings >= 50;
     const newIcao = trained && fpIcao.length > 0 && obsIcao.some((i) => !fpIcao.includes(i));
-    const newCallsign = trained && fpCs.length > 0 && obsCs.some((c) => !fpCs.includes(c));
+    // Airline flight numbers rotate constantly — only an unfamiliar operator
+    // prefix (first three letters of the callsign) counts as an identity change.
+    const prefixes = new Set(fpCs.map((c) => c.slice(0, 3)));
+    const foreignCs = obsCs.filter((c) => !fpCs.includes(c) && !prefixes.has(c.slice(0, 3)));
+    const newCallsign = trained && fpCs.length > 0 && foreignCs.length > 0;
 
+    // Sparse feed sampling inflates implied speed; only treat clear outliers
+    // above every civil airframe's capability as physically impossible.
     const maxKts = N(r.max_implied_kts);
-    const impossible = maxKts > 700;
+    const impossible = maxKts > 900;
 
-    // Nearest-fingerprint check: does another tail explain this behaviour better?
+    // Nearest-fingerprint check: does another tail explain this behaviour
+    // better? Only meaningful with a solid baseline and enough fresh pings.
     let nearest: string | null = null, gain = 0;
-    if (trained && libVecs.length) {
+    if (solidBaseline && N(r.pings) >= 20 && libVecs.length) {
       const ov = vec({
         alt_avg: N(r.alt_avg), spd_avg: N(r.spd_avg),
         lat_c: N(r.lat_c), lng_c: N(r.lng_c), night_pct: N(r.night_pct),
@@ -365,32 +374,34 @@ async function score(sql: ReturnType<typeof postgres>, body: Record<string, unkn
         const d = dist(ov, l.v);
         if (d < bestD) { bestD = d; bestReg = l.reg; }
       }
-      if (Number.isFinite(ownD) && bestD < ownD * 0.3 && ownD > 0.08) {
+      if (Number.isFinite(ownD) && bestD < ownD * 0.25 && ownD > 0.15) {
         nearest = bestReg;
         gain = ownD > 0 ? (ownD - bestD) / ownD : 0;
       }
     }
 
     if (newIcao) evidence.push(`ICAO address ${obsIcao.filter((i) => !fpIcao.includes(i)).join(", ")} never used by this tail in baseline (${fpIcao.join(", ") || "none"})`);
-    if (newCallsign) evidence.push(`Unseen callsign ${obsCs.filter((c) => !fpCs.includes(c)).join(", ")}`);
+    if (newCallsign) evidence.push(`Callsign from an unfamiliar operator prefix: ${foreignCs.join(", ")}`);
     if (impossible) evidence.push(`Implied ground speed ${Math.round(maxKts)} kt between consecutive positions — physically impossible for this airframe`);
-    if (zAlt >= 3) evidence.push(`Altitude profile ${zAlt.toFixed(1)}σ off its own baseline (${Math.round(N(r.alt_avg))} ft vs ${Math.round(N(r.f_alt_avg))} ft)`);
-    if (zSpd >= 3) evidence.push(`Ground-speed profile ${zSpd.toFixed(1)}σ off baseline (${Math.round(N(r.spd_avg))} kt vs ${Math.round(N(r.f_spd_avg))} kt)`);
+    if (solidBaseline && zAlt >= 3) evidence.push(`Altitude profile ${zAlt.toFixed(1)}σ off its own baseline (${Math.round(N(r.alt_avg))} ft vs ${Math.round(N(r.f_alt_avg))} ft)`);
+    if (solidBaseline && zSpd >= 3) evidence.push(`Ground-speed profile ${zSpd.toFixed(1)}σ off baseline (${Math.round(N(r.spd_avg))} kt vs ${Math.round(N(r.f_spd_avg))} kt)`);
     if (geoDev > 25) evidence.push(`Operating ${Math.round(geoDev)} mi outside its learned ${Math.round(N(r.f_radius))} mi envelope`);
     if (nearest) evidence.push(`Behaviour matches ${nearest}'s fingerprint far better than its own (${Math.round(gain * 100)}% closer) — possible impersonation`);
     if (!trained) evidence.push("No baseline fingerprint — first observation of this tail, identity unverified");
 
-    // Weighted deviation → logistic spoof probability.
+    // Weighted deviation → logistic spoof probability. Kinematic drift only
+    // counts against a statistically solid baseline.
+    const kinW = solidBaseline ? 0.35 : 0.12;
     const deviation =
       (newIcao ? 3.2 : 0) +
-      (impossible ? 3.0 : 0) +
+      (impossible ? 2.6 : 0) +
       (nearest ? 2.0 * Math.min(gain / 0.5, 1) : 0) +
-      Math.min(zAlt, 6) * 0.35 +
-      Math.min(zSpd, 6) * 0.35 +
+      Math.min(zAlt, 6) * kinW +
+      Math.min(zSpd, 6) * kinW +
       Math.min(geoDev / 100, 2) * 0.8 +
       (newCallsign ? 0.8 : 0) +
       (!trained ? 0.6 : 0);
-    const prob = 1 / (1 + Math.exp(-(deviation - 2.6)));
+    const prob = 1 / (1 + Math.exp(-(deviation - 3.2)));
     const verdict = prob >= 0.8 ? "SPOOF_LIKELY"
       : prob >= 0.55 ? "SUSPECT"
       : prob >= 0.3 ? "ANOMALOUS"

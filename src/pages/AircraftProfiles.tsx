@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { AircraftDossier } from "@/components/aircraft-profiles/AircraftDossier";
 import { GpuEmbeddingPanel } from "@/components/aircraft-profiles/GpuEmbeddingPanel";
+import { SodaSpoofPanel } from "@/components/aircraft-profiles/SodaSpoofPanel";
 import { supabase } from "@/integrations/supabase/client";
 import { Loader2, RefreshCw, Search, Plane, ShieldAlert, Crosshair } from "lucide-react";
 import { toast } from "sonner";
@@ -122,6 +123,8 @@ export default function AircraftProfiles() {
           pending={Number(stats?.pending_embeddings || 0)}
           onImported={load}
         />
+
+        <SodaSpoofPanel />
 
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

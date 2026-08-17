@@ -63,15 +63,38 @@ export function GpuEmbeddingPanel({ embedded, pending = 0, onImported }: Props) 
       if (trimmed.startsWith("[")) {
         items = JSON.parse(trimmed);
       } else {
-        items = trimmed.split("\n").filter(Boolean).map((l) => JSON.parse(l));
+        items = trimmed.split("\n").filter(Boolean).map((l) => {
+          try { return JSON.parse(l); } catch { return null; }
+        }).filter(Boolean);
       }
+
+      const pickVec = (i: any): number[] => {
+        const cand = i.vec ?? i.embedding ?? i.vector ?? i.values ?? i.embeddings ?? i.data?.embedding;
+        if (Array.isArray(cand)) return cand.map(Number).filter((n: number) => Number.isFinite(n));
+        if (cand && Array.isArray(cand.values)) return cand.values.map(Number);
+        return [];
+      };
+
       const clean = items
         .map((i) => ({
-          registration: String(i.registration || i.reg || "").toUpperCase(),
-          vec: (i.vec || i.embedding || i.vector || []).map(Number),
+          registration: String(i.registration || i.reg || i.tail || i.id || "").toUpperCase().trim(),
+          vec: pickVec(i),
         }))
         .filter((i) => i.registration && i.vec.length >= 2);
-      if (!clean.length) throw new Error("No usable {registration, vec} records found");
+
+      if (!clean.length) {
+        const sample = items[0] ? Object.keys(items[0]).join(", ") : "none";
+        const looksLikeFeatures = items.some((i) => i && i.text && !pickVec(i).length);
+        throw new Error(
+          looksLikeFeatures
+            ? "This is the exported features file (registration + text), not an embedded file. Run the GPU script on it first, then upload the *_embedded.jsonl output."
+            : `No {registration, vec} records found. Parsed ${items.length} lines; first-line keys: ${sample}`,
+        );
+      }
+
+      const dims = clean[0].vec.length;
+      const mismatched = clean.filter((c) => c.vec.length !== dims).length;
+      if (mismatched) throw new Error(`${mismatched} records have a different vector size than ${dims} — re-embed with one model.`);
 
       const CHUNK = 250;
       let written = 0;
@@ -84,16 +107,17 @@ export function GpuEmbeddingPanel({ embedded, pending = 0, onImported }: Props) 
         if (!data?.ok) throw new Error(data?.error || "Import failed");
         written += data.written || 0;
       }
-      toast.success(`Stored ${written} embeddings — behavioural twins recomputed`);
+      toast.success(`Stored ${written} embeddings (${dims}-dim) — behavioural twins recomputed`);
       onImported?.();
     } catch (e: any) {
-      toast.error(e.message || "Import failed");
+      toast.error(e.message || "Import failed", { duration: 12000 });
     } finally {
       setImporting(false);
       setProgress(null);
       if (fileRef.current) fileRef.current.value = "";
     }
   };
+
 
   return (
     <Card className="p-4 space-y-3">

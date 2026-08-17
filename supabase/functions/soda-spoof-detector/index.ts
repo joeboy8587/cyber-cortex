@@ -35,7 +35,7 @@ const TABLE = "live_flight_detections_rows";
 // instead of forcing a hash expression scan.
 const SHARDS: Array<[string, string]> = [
   ["N0", "N2"], ["N2", "N4"], ["N4", "N6"], ["N6", "N8"], ["N8", "NA"],
-  ["NA", "NN"], ["NN", "O"], ["", "N0"], ["O", "\uffff"],
+  ["NA", "NN"], ["NN", "O"], ["", "G"], ["G", "K"], ["K", "N0"], ["O", "\uffff"],
 ];
 
 Deno.serve(async (req) => {
@@ -365,7 +365,7 @@ async function score(sql: ReturnType<typeof postgres>, body: Record<string, unkn
         const d = dist(ov, l.v);
         if (d < bestD) { bestD = d; bestReg = l.reg; }
       }
-      if (Number.isFinite(ownD) && bestD < ownD * 0.5 && ownD > 0.02) {
+      if (Number.isFinite(ownD) && bestD < ownD * 0.3 && ownD > 0.08) {
         nearest = bestReg;
         gain = ownD > 0 ? (ownD - bestD) / ownD : 0;
       }

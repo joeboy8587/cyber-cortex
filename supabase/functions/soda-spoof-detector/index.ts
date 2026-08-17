@@ -167,7 +167,7 @@ async function train(sql: ReturnType<typeof postgres>, body: Record<string, unkn
         AVG(CASE WHEN EXTRACT(HOUR FROM ts) < 6 OR EXTRACT(HOUR FROM ts) >= 22 THEN 1.0 ELSE 0 END) AS night_pct,
         AVG(CASE WHEN alt IS NOT NULL AND alt < 1000 THEN 1.0 ELSE 0 END) AS low_alt_pct,
         (ARRAY_AGG(DISTINCT icao) FILTER (WHERE icao IS NOT NULL AND icao <> ''))[1:8] AS icao_set,
-        (ARRAY_AGG(DISTINCT cs) FILTER (WHERE cs IS NOT NULL AND cs <> ''))[1:24] AS callsign_set,
+        (ARRAY_AGG(DISTINCT cs) FILTER (WHERE cs IS NOT NULL AND cs <> ''))[1:24] AS callsign_set
       FROM base GROUP BY reg HAVING COUNT(*) >= ${minPings}
     ),
     radius AS (

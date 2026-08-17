@@ -229,6 +229,7 @@ type Fp = {
   night_pct: number; low_alt_pct: number;
 };
 
+const iso = (v: unknown) => (v instanceof Date ? v.toISOString() : v ? new Date(String(v)).toISOString() : null);
 const N = (v: unknown) => (v === null || v === undefined ? 0 : Number(v));
 
 // 5-feature normalised behaviour vector used for the nearest-fingerprint test.
@@ -396,7 +397,7 @@ async function score(sql: ReturnType<typeof postgres>, body: Record<string, unkn
 
     out.push({
       registration: reg,
-      window_start: r.win_start, window_end: r.win_end,
+      window_start: iso(r.win_start), window_end: iso(r.win_end),
       pings: N(r.pings), claimed_icao: obsIcao[0] || null,
       z_alt: +zAlt.toFixed(3), z_spd: +zSpd.toFixed(3), geo_dev_mi: +geoDev.toFixed(2),
       new_icao: !!newIcao, new_callsign: !!newCallsign,

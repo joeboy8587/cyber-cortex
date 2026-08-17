@@ -229,7 +229,6 @@ type Fp = {
   night_pct: number; low_alt_pct: number;
 };
 
-const iso = (v: unknown) => (v instanceof Date ? v.toISOString() : v ? new Date(String(v)).toISOString() : null);
 const N = (v: unknown) => (v === null || v === undefined ? 0 : Number(v));
 const iso = (v: unknown) =>
   v instanceof Date ? v.toISOString() : v ? new Date(String(v)).toISOString() : null;

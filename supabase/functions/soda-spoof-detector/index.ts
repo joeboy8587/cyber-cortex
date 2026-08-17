@@ -231,6 +231,8 @@ type Fp = {
 
 const iso = (v: unknown) => (v instanceof Date ? v.toISOString() : v ? new Date(String(v)).toISOString() : null);
 const N = (v: unknown) => (v === null || v === undefined ? 0 : Number(v));
+const iso = (v: unknown) =>
+  v instanceof Date ? v.toISOString() : v ? new Date(String(v)).toISOString() : null;
 
 // 5-feature normalised behaviour vector used for the nearest-fingerprint test.
 function vec(f: {

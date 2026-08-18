@@ -285,23 +285,33 @@ ANALYSIS GUIDELINES:
 11. Maintain prosecutorial tone; tier every cited fact (HIGH/MED/LOW value).
 12. For TRO/injunction, cite irreparable harm from ongoing biometric collapses and class size.`;
 
-    console.log("Calling Lovable AI Gateway with google/gemini-2.5-pro...");
+    const model = "google/gemini-2.5-flash";
+    console.log(`Calling Lovable AI Gateway with ${model}...`);
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-pro",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: query }
-        ],
-        stream: true,
-      }),
-    });
+    const upstreamAbort = new AbortController();
+    const upstreamTimer = setTimeout(() => upstreamAbort.abort(), 120_000);
+
+    let response: Response;
+    try {
+      response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${LOVABLE_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: query }
+          ],
+          stream: true,
+        }),
+        signal: upstreamAbort.signal,
+      });
+    } finally {
+      clearTimeout(upstreamTimer);
+    }
 
     console.log("AI Gateway response status:", response.status);
 
@@ -327,7 +337,35 @@ ANALYSIS GUIDELINES:
       );
     }
 
-    return new Response(response.body, {
+    // Keep the connection alive with SSE comments while the model "thinks",
+    // otherwise the platform kills the request after 150s of idle time.
+    const encoder = new TextEncoder();
+    const upstream = response.body!.getReader();
+    const keptAlive = new ReadableStream({
+      async start(controller) {
+        controller.enqueue(encoder.encode(": connected\n\n"));
+        const heartbeat = setInterval(() => {
+          try { controller.enqueue(encoder.encode(": keep-alive\n\n")); } catch { /* closed */ }
+        }, 10_000);
+        try {
+          while (true) {
+            const { done, value } = await upstream.read();
+            if (done) break;
+            controller.enqueue(value);
+          }
+        } catch (e) {
+          console.error("Stream relay error:", e);
+        } finally {
+          clearInterval(heartbeat);
+          controller.close();
+        }
+      },
+      cancel() {
+        upstream.cancel().catch(() => {});
+      },
+    });
+
+    return new Response(keptAlive, {
       headers: { 
         ...corsHeaders, 
         "Content-Type": "text/event-stream",
@@ -335,6 +373,7 @@ ANALYSIS GUIDELINES:
         "Connection": "keep-alive"
       },
     });
+
 
   } catch (err) {
     console.error("Legal analysis error:", err);

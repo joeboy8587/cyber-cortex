@@ -690,10 +690,11 @@ async function stats(sql: ReturnType<typeof postgres>) {
 /* ───────────────────── GPU embedding workflow ───────────────────── */
 
 async function exportFeatures(sql: ReturnType<typeof postgres>, body: Record<string, unknown>) {
-  // Each row carries a feature vector + histograms + text; >500 rows per call
+  // Each row carries a feature vector + histograms + text; >150 rows per call
   // blows the edge worker's memory ceiling (546 WORKER_RESOURCE_LIMIT).
-  const limit = Math.min(Math.max(Number(body.limit) || 500, 1), 500);
+  const limit = Math.min(Math.max(Number(body.limit) || 150, 1), 150);
   const offset = Math.max(Number(body.offset) || 0, 0);
+
   // "onlyStale" keeps the corpus incremental: brand-new tails plus any dossier
   // whose behaviour was rebuilt after its last embedding.
   const staleJoin = body.onlyStale
@@ -741,8 +742,9 @@ async function importEmbeddings(sql: ReturnType<typeof postgres>, body: Record<s
     if (reg && vec.length >= 2) clean.push({ reg, vec });
   }
   let written = 0;
-  for (let i = 0; i < clean.length; i += 200) {
-    const chunk = clean.slice(i, i + 200);
+  for (let i = 0; i < clean.length; i += 100) {
+    const chunk = clean.slice(i, i + 100);
+
     const values = chunk.map((c) =>
       `('${c.reg}', ${c.vec.length}, ARRAY[${c.vec.map((v) => v.toFixed(6)).join(",")}]::double precision[], '${model.replace(/'/g, "")}', 'local-gpu', NOW())`
     ).join(",");

@@ -690,7 +690,8 @@ async function stats(sql: ReturnType<typeof postgres>) {
 /* ───────────────────── GPU embedding workflow ───────────────────── */
 
 async function exportFeatures(sql: ReturnType<typeof postgres>, body: Record<string, unknown>) {
-  const limit = Math.min(Math.max(Number(body.limit) || 2000, 1), 20000);
+  const limit = Math.min(Math.max(Number(body.limit) || 2000, 1), 5000);
+  const offset = Math.max(Number(body.offset) || 0, 0);
   // "onlyStale" keeps the corpus incremental: brand-new tails plus any dossier
   // whose behaviour was rebuilt after its last embedding.
   const staleJoin = body.onlyStale

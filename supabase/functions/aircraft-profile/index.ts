@@ -703,10 +703,10 @@ async function exportFeatures(sql: ReturnType<typeof postgres>, body: Record<str
     ? `WHERE e.registration IS NULL OR aircraft_dossier.updated_at > e.updated_at`
     : "";
   const rows = await sql.unsafe(`
-    SELECT registration, icao24, operator, aircraft_type, feature_vector,
+    SELECT aircraft_dossier.registration, icao24, operator, aircraft_type, feature_vector,
            hour_hist, dow_hist, risk_score, signature_hash,
            CONCAT_WS(' | ',
-             'Tail ' || registration,
+             'Tail ' || aircraft_dossier.registration,
              'Operator ' || COALESCE(operator, 'UNREGISTERED'),
              'Type ' || COALESCE(aircraft_type, 'unknown'),
              detections || ' detections over ' || days_active || ' active days',

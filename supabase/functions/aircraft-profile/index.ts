@@ -719,8 +719,9 @@ async function exportFeatures(sql: ReturnType<typeof postgres>, body: Record<str
              'coordination partners ' || partner_count
            ) AS text
     FROM aircraft_dossier ${staleJoin} ${staleWhere}
-    ORDER BY risk_score DESC NULLS LAST LIMIT ${limit}`);
-  return { ok: true, count: rows.length, rows };
+    ORDER BY aircraft_dossier.registration
+    LIMIT ${limit} OFFSET ${offset}`);
+  return { ok: true, count: rows.length, offset, limit, done: rows.length < limit, rows };
 }
 
 

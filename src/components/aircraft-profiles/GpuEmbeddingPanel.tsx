@@ -16,40 +16,57 @@ export function GpuEmbeddingPanel({ embedded, pending = 0, onImported }: Props) 
 
   const exportCorpus = async (onlyStale = false) => {
     setExporting(true);
+    setProgress("Preparing export…");
     try {
-      const { data, error } = await supabase.functions.invoke("aircraft-profile", {
-        body: { action: "exportFeatures", limit: 20000, onlyStale },
-      });
-      if (error) throw error;
-      if (!data?.ok) throw new Error(data?.error || "Export failed");
-      if (!data.count) { toast.info("Every profile already has an up-to-date embedding"); return; }
+      const PAGE = 2000;
+      const parts: string[] = [];
+      let offset = 0;
+      let total = 0;
+      // Paged so a 20k+ corpus never blows the edge-function response budget.
+      for (let page = 0; page < 100; page++) {
+        setProgress(`Downloading records ${offset + 1}–${offset + PAGE}…`);
+        const { data, error } = await supabase.functions.invoke("aircraft-profile", {
+          body: { action: "exportFeatures", limit: PAGE, offset, onlyStale },
+        });
+        if (error) throw error;
+        if (!data?.ok) throw new Error(data?.error || "Export failed");
+        const rows = data.rows || [];
+        total += rows.length;
+        if (rows.length) {
+          parts.push(
+            rows.map((r: any) => JSON.stringify({
+              registration: r.registration,
+              icao24: r.icao24,
+              operator: r.operator,
+              aircraft_type: r.aircraft_type,
+              risk_score: Number(r.risk_score || 0),
+              signature_hash: r.signature_hash,
+              features: (r.feature_vector || []).map(Number),
+              hour_hist: r.hour_hist || [],
+              dow_hist: r.dow_hist || [],
+              text: r.text,
+            })).join("\n") + "\n",
+          );
+        }
+        offset += PAGE;
+        if (data.done || rows.length < PAGE) break;
+      }
 
-      const jsonl = (data.rows || [])
-        .map((r: any) => JSON.stringify({
-          registration: r.registration,
-          icao24: r.icao24,
-          operator: r.operator,
-          aircraft_type: r.aircraft_type,
-          risk_score: Number(r.risk_score || 0),
-          signature_hash: r.signature_hash,
-          features: (r.feature_vector || []).map(Number),
-          hour_hist: r.hour_hist || [],
-          dow_hist: r.dow_hist || [],
-          text: r.text,
-        }))
-        .join("\n");
+      if (!total) { toast.info("Every profile already has an up-to-date embedding"); return; }
+
       const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-      const blob = new Blob([jsonl], { type: "application/x-ndjson" });
+      const blob = new Blob(parts, { type: "application/x-ndjson" });
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
       a.download = `${stamp}_WATCHTOWER_AIRCRAFT-PROFILES_features.jsonl`;
       a.click();
       URL.revokeObjectURL(a.href);
-      toast.success(`Exported ${data.count} aircraft feature records`);
+      toast.success(`Exported ${total.toLocaleString()} aircraft feature records`);
     } catch (e: any) {
-      toast.error(e.message || "Export failed");
+      toast.error(e.message || "Export failed", { duration: 12000 });
     } finally {
       setExporting(false);
+      setProgress(null);
     }
   };
 
@@ -57,57 +74,81 @@ export function GpuEmbeddingPanel({ embedded, pending = 0, onImported }: Props) 
     setImporting(true);
     setProgress("Reading file…");
     try {
-      const text = await file.text();
-      let items: any[] = [];
-      const trimmed = text.trim();
-      if (trimmed.startsWith("[")) {
-        items = JSON.parse(trimmed);
-      } else {
-        items = trimmed.split("\n").filter(Boolean).map((l) => {
-          try { return JSON.parse(l); } catch { return null; }
-        }).filter(Boolean);
-      }
-
       const pickVec = (i: any): number[] => {
         const cand = i.vec ?? i.embedding ?? i.vector ?? i.values ?? i.embeddings ?? i.data?.embedding;
         if (Array.isArray(cand)) return cand.map(Number).filter((n: number) => Number.isFinite(n));
         if (cand && Array.isArray(cand.values)) return cand.values.map(Number);
         return [];
       };
+      const parseLine = (line: string) => {
+        const t = line.trim().replace(/,$/, "");
+        if (!t || t === "[" || t === "]") return null;
+        let obj: any;
+        try { obj = JSON.parse(t); } catch { return null; }
+        if (!obj || typeof obj !== "object") return null;
+        const registration = String(obj.registration || obj.reg || obj.tail || obj.id || "").toUpperCase().trim();
+        const vec = pickVec(obj);
+        if (!registration || vec.length < 2) return null;
+        return { registration, vec };
+      };
 
-      const clean = items
-        .map((i) => ({
-          registration: String(i.registration || i.reg || i.tail || i.id || "").toUpperCase().trim(),
-          vec: pickVec(i),
-        }))
-        .filter((i) => i.registration && i.vec.length >= 2);
-
-      if (!clean.length) {
-        const sample = items[0] ? Object.keys(items[0]).join(", ") : "none";
-        const looksLikeFeatures = items.some((i) => i && i.text && !pickVec(i).length);
-        throw new Error(
-          looksLikeFeatures
-            ? "This is the exported features file (registration + text), not an embedded file. Run the GPU script on it first, then upload the *_embedded.jsonl output."
-            : `No {registration, vec} records found. Parsed ${items.length} lines; first-line keys: ${sample}`,
-        );
-      }
-
-      const dims = clean[0].vec.length;
-      const mismatched = clean.filter((c) => c.vec.length !== dims).length;
-      if (mismatched) throw new Error(`${mismatched} records have a different vector size than ${dims} — re-embed with one model.`);
-
+      // Stream the file line-by-line: a multi-GB JSONL cannot be read with
+      // file.text() (the browser silently fails and we parsed 0 records).
+      const reader = (file.stream() as ReadableStream<Uint8Array>).getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let batch: Array<{ registration: string; vec: number[] }> = [];
+      let parsed = 0, skipped = 0, written = 0, dims = 0;
       const CHUNK = 250;
-      let written = 0;
-      for (let i = 0; i < clean.length; i += CHUNK) {
-        setProgress(`Uploading ${i + 1}–${Math.min(i + CHUNK, clean.length)} of ${clean.length}…`);
+
+      const flush = async () => {
+        if (!batch.length) return;
+        setProgress(`Uploading… ${written.toLocaleString()} stored, ${parsed.toLocaleString()} parsed`);
         const { data, error } = await supabase.functions.invoke("aircraft-profile", {
-          body: { action: "importEmbeddings", embeddings: clean.slice(i, i + CHUNK), model: file.name },
+          body: { action: "importEmbeddings", embeddings: batch, model: file.name },
         });
         if (error) throw error;
         if (!data?.ok) throw new Error(data?.error || "Import failed");
         written += data.written || 0;
+        batch = [];
+      };
+
+      const handle = async (line: string) => {
+        const rec = parseLine(line);
+        if (!rec) { if (line.trim()) skipped++; return; }
+        if (!dims) dims = rec.vec.length;
+        if (rec.vec.length !== dims) { skipped++; return; }
+        parsed++;
+        batch.push(rec);
+        if (batch.length >= CHUNK) await flush();
+      };
+
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let nl: number;
+        while ((nl = buffer.indexOf("\n")) >= 0) {
+          const line = buffer.slice(0, nl);
+          buffer = buffer.slice(nl + 1);
+          await handle(line);
+        }
+        if (parsed % 1000 === 0) setProgress(`Parsed ${parsed.toLocaleString()} vectors…`);
       }
-      toast.success(`Stored ${written} embeddings (${dims}-dim) — behavioural twins recomputed`);
+      buffer += decoder.decode();
+      if (buffer.trim()) await handle(buffer);
+      await flush();
+
+      if (!parsed) {
+        throw new Error(
+          `No {registration, vec} records found (skipped ${skipped.toLocaleString()} lines). ` +
+          "Upload the *_embedded.jsonl produced by the GPU script, not the features export.",
+        );
+      }
+      toast.success(
+        `Stored ${written.toLocaleString()} embeddings (${dims}-dim)` +
+        (skipped ? ` — ${skipped.toLocaleString()} lines skipped` : ""),
+      );
       onImported?.();
     } catch (e: any) {
       toast.error(e.message || "Import failed", { duration: 12000 });

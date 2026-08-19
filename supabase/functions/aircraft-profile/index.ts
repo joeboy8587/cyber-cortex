@@ -741,8 +741,8 @@ async function importEmbeddings(sql: ReturnType<typeof postgres>, body: Record<s
     if (reg && vec.length >= 2) clean.push({ reg, vec });
   }
   let written = 0;
-  for (let i = 0; i < clean.length; i += 500) {
-    const chunk = clean.slice(i, i + 500);
+  for (let i = 0; i < clean.length; i += 200) {
+    const chunk = clean.slice(i, i + 200);
     const values = chunk.map((c) =>
       `('${c.reg}', ${c.vec.length}, ARRAY[${c.vec.map((v) => v.toFixed(6)).join(",")}]::double precision[], '${model.replace(/'/g, "")}', 'local-gpu', NOW())`
     ).join(",");

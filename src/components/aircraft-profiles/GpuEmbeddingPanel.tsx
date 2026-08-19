@@ -18,12 +18,12 @@ export function GpuEmbeddingPanel({ embedded, pending = 0, onImported }: Props) 
     setExporting(true);
     setProgress("Preparing export…");
     try {
-      const PAGE = 2000;
+      const PAGE = 500;
       const parts: string[] = [];
       let offset = 0;
       let total = 0;
       // Paged so a 20k+ corpus never blows the edge-function response budget.
-      for (let page = 0; page < 100; page++) {
+      for (let page = 0; page < 400; page++) {
         setProgress(`Downloading records ${offset + 1}–${offset + PAGE}…`);
         const { data, error } = await supabase.functions.invoke("aircraft-profile", {
           body: { action: "exportFeatures", limit: PAGE, offset, onlyStale },
@@ -99,7 +99,7 @@ export function GpuEmbeddingPanel({ embedded, pending = 0, onImported }: Props) 
       let buffer = "";
       let batch: Array<{ registration: string; vec: number[] }> = [];
       let parsed = 0, skipped = 0, written = 0, dims = 0;
-      const CHUNK = 250;
+      const CHUNK = 200;
 
       const flush = async () => {
         if (!batch.length) return;

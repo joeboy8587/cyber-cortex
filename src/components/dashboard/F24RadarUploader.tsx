@@ -483,7 +483,11 @@ const F24RadarUploader: React.FC = () => {
       screenshot_url: screenshot.dataUrl,
       status: 'processing' as const,
       neonSynced: false,
-      exifMetadata: screenshot.exifData
+      exifMetadata: screenshot.exifData,
+      capturedAtLocal: null,
+      capturedAtUtc: null,
+      clockSource: null,
+      adsb: null
     }));
     setEvents(prev => [...processingEvents, ...prev]);
 
@@ -491,9 +495,10 @@ const F24RadarUploader: React.FC = () => {
       // Process each screenshot
       for (let i = 0; i < uploadedScreenshots.length; i++) {
         const screenshot = uploadedScreenshots[i];
-        // Use EXIF timestamp if available, otherwise use current time
+        // EXIF values are naive PACIFIC wall-clock strings, not UTC.
         const exifTs = screenshot.exifData?.dateTimeOriginal || screenshot.exifData?.modifyDate;
-        const timestamp = exifTs || new Date(baseTimestamp.getTime() + i * 1000).toISOString();
+        const exifUtc = screenshotTimestampToUtcIso(exifTs || null);
+        const timestamp = exifUtc || new Date(baseTimestamp.getTime() + i * 1000).toISOString();
 
         try {
           // Call AI to analyze the screenshot
@@ -505,7 +510,7 @@ const F24RadarUploader: React.FC = () => {
                 hrv: parseInt(manualBiometrics.hrv) || null
               },
               location,
-              additionalNotes: `${additionalNotes} [Screenshot ${i + 1} of ${uploadedScreenshots.length}]${exifTs ? ` [EXIF Timestamp: ${exifTs}]` : ''}`,
+              additionalNotes: `${additionalNotes} [Screenshot ${i + 1} of ${uploadedScreenshots.length}]${exifTs ? ` [EXIF local time: ${exifTs} Pacific]` : ''}`,
               timestamp,
               exifMetadata: screenshot.exifData
             }
@@ -514,18 +519,61 @@ const F24RadarUploader: React.FC = () => {
           if (aiError) throw aiError;
 
           const extractedData = aiResponse?.data || aiResponse;
+
+          // ── Resolve the capture instant ────────────────────────────────
+          // Priority: EXIF DateTimeOriginal > on-screen clock (paired with the
+          // EXIF/filename date) > filename pattern > upload time. Everything the
+          // phone shows is Pacific local; ADS-B tables are UTC.
+          let capturedAtLocal: string | null = exifTs || null;
+          let clockSource: WatchtowerEvent['clockSource'] =
+            screenshot.exifData?.timestampSource === 'EXIF_DATETIME_ORIGINAL'
+              ? 'EXIF'
+              : screenshot.exifData?.timestampSource === 'FILENAME_PATTERN'
+              ? 'FILENAME'
+              : exifTs
+              ? 'EXIF'
+              : 'FALLBACK';
+
+          const screenClock: string | null =
+            extractedData?.track_clock_local || extractedData?.screen_clock_local || null;
+          const useScreenClock =
+            !!screenClock &&
+            /^\d{1,2}:\d{2}(:\d{2})?$/.test(String(screenClock).trim()) &&
+            clockSource !== 'EXIF';
+          if (useScreenClock) {
+            const datePart =
+              extractedData?.screen_date_local ||
+              (capturedAtLocal ? capturedAtLocal.slice(0, 10) : new Date().toISOString().slice(0, 10));
+            const [hh, mm, ss] = String(screenClock).trim().split(':');
+            capturedAtLocal = `${datePart}T${hh.padStart(2, '0')}:${mm}:${ss || '00'}`;
+            clockSource = 'SCREEN_CLOCK';
+          }
+
+          const capturedAtUtc =
+            (capturedAtLocal ? pacificNaiveToUtc(capturedAtLocal)?.toISOString() : null) || timestamp;
+
+          // ── Correlate against ADS-B evidence (UTC) ─────────────────────
+          const adsb = await correlateScreenshotWithAdsb({
+            capturedAtUtc,
+            registration: extractedData?.flight_data?.registration,
+            icao: extractedData?.flight_data?.icao,
+            callsign: extractedData?.flight_data?.callsign,
+            windowMinutes: 15
+          });
           
           // Create the complete event with forensic timestamp source tag
           const timestampSource = screenshot.exifData?.timestampSource || 'CURRENT_TIME';
           const completeEvent: WatchtowerEvent = {
             id: screenshot.id,
-            timestamp,
+            timestamp: capturedAtUtc,
             exifTimestamp: exifTs || null,
             event_type: extractedData?.event_type || 'Surveillance Detection',
             location,
             tags: [
               ...(extractedData?.tags || ['F24 Analysis', 'Watchtower', `Batch ${i + 1}`]),
-              timestampSource // Use exact source tag for forensic audit
+              timestampSource, // Use exact source tag for forensic audit
+              `CLOCK_${clockSource}`,
+              adsb.identityMatches.length > 0 ? 'ADSB_MATCHED' : 'ADSB_UNMATCHED'
             ],
             flight_data: extractedData?.flight_data || null,
             biometrics: {
@@ -538,7 +586,11 @@ const F24RadarUploader: React.FC = () => {
             screenshot_url: screenshot.dataUrl,
             status: 'complete',
             neonSynced: false,
-            exifMetadata: screenshot.exifData
+            exifMetadata: screenshot.exifData,
+            capturedAtLocal,
+            capturedAtUtc,
+            clockSource,
+            adsb
           };
 
           processedEvents.push(completeEvent);
@@ -560,11 +612,25 @@ const F24RadarUploader: React.FC = () => {
                 aircraft_data: JSON.stringify(completeEvent.flight_data || {}),
                 biometric_data: JSON.stringify(completeEvent.biometrics || {}),
                 screenshot_url: screenshot.dataUrl?.slice(0, 200) || '',
-                created_at: timestamp,
+                created_at: capturedAtUtc,
                 exif_timestamp: exifTs || null,
-                exif_metadata: JSON.stringify(screenshot.exifData || {}),
+                exif_metadata: JSON.stringify({
+                  ...(screenshot.exifData || {}),
+                  capturedAtLocalPacific: capturedAtLocal,
+                  capturedAtUtc,
+                  clockSource,
+                  pacificZone: capturedAtUtc ? pacificZoneLabel(new Date(capturedAtUtc)) : null,
+                  adsbIdentityMatches: adsb.identityMatches.length,
+                  adsbContextMatches: adsb.contextMatches.length
+                }),
                 timestamp_source: timestampSource, // Forensic audit: how was timestamp derived?
-                forensic_notes: screenshot.exifData?.forensicNotes || null
+                forensic_notes: [
+                  screenshot.exifData?.forensicNotes || '',
+                  `Capture ${capturedAtLocal || 'unknown'} Pacific = ${capturedAtUtc} UTC (clock source: ${clockSource}).`,
+                  adsb.identityMatches.length > 0
+                    ? `ADS-B corroboration: ${adsb.identityMatches.length} identity match(es), closest ${adsb.identityMatches[0].delta_seconds}s.`
+                    : `No ADS-B identity match within ±${adsb.windowMinutes} min; ${adsb.contextMatches.length} other aircraft in window.`
+                ].filter(Boolean).join(' ')
               }
             }
           });
@@ -577,6 +643,8 @@ const F24RadarUploader: React.FC = () => {
               e.id === screenshot.id ? { ...e, neonSynced: true } : e
             ));
           }
+
+
 
           // Also log to live_flight_detections if flight data extracted
           if (completeEvent.flight_data?.registration) {

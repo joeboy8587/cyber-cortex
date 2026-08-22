@@ -103,7 +103,15 @@ interface WatchtowerEvent {
   status: 'processing' | 'complete' | 'error';
   neonSynced: boolean;
   exifMetadata: ExifMetadata | null;
+  /** Pacific local wall-clock string used as the source of truth for the capture. */
+  capturedAtLocal: string | null;
+  /** UTC instant derived from the Pacific capture time — this is what matches ADS-B. */
+  capturedAtUtc: string | null;
+  /** How the local capture time was established. */
+  clockSource: 'EXIF' | 'SCREEN_CLOCK' | 'FILENAME' | 'FALLBACK' | null;
+  adsb: CorrelationResult | null;
 }
+
 
 interface UploadedScreenshot {
   id: string;

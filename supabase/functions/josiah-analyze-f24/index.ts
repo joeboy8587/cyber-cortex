@@ -43,17 +43,20 @@ Output must be valid JSON with these fields:
 Never invent a clock reading. If you cannot read it, return null.`;
 
 
-    const userPrompt = `Analyze this FlightRadar24 screenshot and generate a Watchtower Report.
+    const userPrompt = `Analyze this FlightRadar24 / ADS-B Exchange screenshot and generate a Watchtower Report.
 
 Location: ${location}
-Timestamp: ${timestamp}
+Capture instant (UTC, derived from EXIF): ${timestamp}
+${exifMetadata?.dateTimeOriginal ? `EXIF DateTimeOriginal (Pacific local): ${exifMetadata.dateTimeOriginal}` : ''}
+${exifMetadata?.timestampSource ? `Timestamp source: ${exifMetadata.timestampSource}` : ''}
 ${biometrics?.heart_rate ? `Heart Rate: ${biometrics.heart_rate} BPM` : ''}
 ${biometrics?.hrv ? `HRV: ${biometrics.hrv} ms` : ''}
 ${additionalNotes ? `Observer Notes: ${additionalNotes}` : ''}
 
-Extract all visible flight data and generate analysis. If you cannot see the image clearly, make reasonable inferences from any visible text or context provided.
+Extract all visible flight data, plus every clock reading you can see (status bar and track labels) so the capture time can be cross-checked against ADS-B records. Clocks on screen are Pacific local time.
 
 Return ONLY valid JSON, no markdown.`;
+
 
     console.log('[josiah-analyze-f24] Sending to AI for analysis...');
 

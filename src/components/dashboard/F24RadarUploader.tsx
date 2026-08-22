@@ -7,6 +7,15 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
+import {
+  screenshotTimestampToUtcIso,
+  pacificNaiveToUtc,
+  formatPacific,
+  formatUtc,
+  pacificZoneLabel,
+} from '@/lib/timezone';
+import { correlateScreenshotWithAdsb, type CorrelationResult } from '@/lib/adsbCorrelation';
+
 // exif-js is dynamically imported to avoid bundling issues
 let EXIF: any = null;
 const loadExifJs = async () => {

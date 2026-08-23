@@ -374,8 +374,13 @@ const F24RadarUploader: React.FC = () => {
           screenshot_url: row.screenshot_url || null,
           status: 'complete' as const,
           neonSynced: true,
-          exifMetadata: row.exif_metadata ? (typeof row.exif_metadata === 'string' ? JSON.parse(row.exif_metadata) : row.exif_metadata) : null
+          exifMetadata: row.exif_metadata ? (typeof row.exif_metadata === 'string' ? JSON.parse(row.exif_metadata) : row.exif_metadata) : null,
+          capturedAtLocal: row.exif_timestamp || null,
+          capturedAtUtc: row.created_at || null,
+          clockSource: null,
+          adsb: null
         }));
+
         setEvents(mappedEvents);
       }
     } catch (err) {

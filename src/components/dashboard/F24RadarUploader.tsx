@@ -969,17 +969,59 @@ const F24RadarUploader: React.FC = () => {
                         </span>
                       </div>
                       <div className="flex flex-col items-end text-xs">
-                        <span className="text-cyan-400/50">
-                          {new Date(event.timestamp).toLocaleTimeString()}
+                        <span className="text-cyan-400/70">
+                          {formatPacific(event.capturedAtUtc || event.timestamp)}
                         </span>
-                        {event.exifTimestamp && (
+                        <span className="text-cyan-400/40 text-[10px]">
+                          {formatUtc(event.capturedAtUtc || event.timestamp)}
+                        </span>
+                        {event.clockSource && (
                           <span className="text-green-400 flex items-center gap-1 text-[10px]">
                             <Calendar className="h-2.5 w-2.5" />
-                            EXIF
+                            {event.clockSource === 'EXIF' ? 'EXIF' : event.clockSource === 'SCREEN_CLOCK' ? 'ON-SCREEN CLOCK' : event.clockSource}
                           </span>
                         )}
                       </div>
                     </div>
+
+                    {/* ADS-B corroboration (screenshot PDT → UTC matched against detections) */}
+                    {event.adsb && (
+                      <div className={`rounded p-2 mb-2 text-[11px] border ${
+                        event.adsb.identityMatches.length > 0
+                          ? 'border-green-500/30 bg-green-500/5'
+                          : 'border-yellow-500/30 bg-yellow-500/5'
+                      }`}>
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="flex items-center gap-1 text-cyan-300">
+                            <Database className="h-3 w-3" />
+                            ADS-B cross-check (±{event.adsb.windowMinutes} min UTC)
+                          </span>
+                          <span className={event.adsb.identityMatches.length > 0 ? 'text-green-400' : 'text-yellow-400'}>
+                            {event.adsb.identityMatches.length > 0
+                              ? `${event.adsb.identityMatches.length} match`
+                              : 'no identity match'}
+                          </span>
+                        </div>
+                        {event.adsb.identityMatches.slice(0, 3).map((m, mi) => (
+                          <div key={mi} className="flex items-center justify-between text-cyan-400/80 font-mono">
+                            <span>
+                              {m.registration || m.callsign || m.icao24} · {m.source}
+                            </span>
+                            <span>
+                              {m.altitude != null ? `${Math.round(m.altitude)}ft` : '—'} ·{' '}
+                              {m.speed != null ? `${Math.round(m.speed)}kt` : '—'} · Δ{m.delta_seconds}s
+                            </span>
+                          </div>
+                        ))}
+                        {event.adsb.identityMatches.length === 0 && (
+                          <div className="text-cyan-400/60">
+                            {event.adsb.contextMatches.length} other aircraft recorded in the same window
+                            {event.adsb.error ? ` — ${event.adsb.error}` : ''}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
 
                     {/* Location + Neon Sync Status */}
                     <div className="flex items-center justify-between text-xs mb-2">

@@ -374,7 +374,7 @@ export async function handleAction6(action: string, body: Record<string, any>, s
 
       const [overview, topAircraft, dailyActivity, crossCounty] = await Promise.all([
 
-        sql.unsafe(`
+        safe(`
           SELECT
             COUNT(*)::int as total_detections,
             COUNT(DISTINCT COALESCE(NULLIF(registration, ''), NULLIF(icao_code, '')))::int as unique_aircraft,
@@ -389,7 +389,7 @@ export async function handleAction6(action: string, body: Record<string, any>, s
           WHERE detection_timestamp > NOW() - INTERVAL '${timeWindow}'
             ${tulareGeo}
         `),
-        sql.unsafe(`
+        safe(`
           SELECT
             COALESCE(NULLIF(registration, ''), NULLIF(icao_code, ''), 'GHOST') as registration,
             COUNT(*)::int as detections,
@@ -412,7 +412,7 @@ export async function handleAction6(action: string, body: Record<string, any>, s
           ORDER BY detections DESC
           LIMIT 50
         `),
-        sql.unsafe(`
+        safe(`
           SELECT
             TO_CHAR(DATE(detection_timestamp), 'MM/DD') as date,
             COUNT(*)::int as detections,
@@ -426,7 +426,7 @@ export async function handleAction6(action: string, body: Record<string, any>, s
           GROUP BY DATE(detection_timestamp)
           ORDER BY DATE(detection_timestamp)
         `),
-        sql.unsafe(`
+        safe(`
           WITH tulare AS (
             SELECT
               COALESCE(NULLIF(registration, ''), NULLIF(icao_code, '')) as acid,

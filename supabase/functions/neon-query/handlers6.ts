@@ -360,10 +360,21 @@ export async function handleAction6(action: string, body: Record<string, any>, s
       const tulareGeo = `AND latitude BETWEEN 35.8 AND 36.5 AND longitude BETWEEN -119.6 AND -118.3`;
       const kernGeo = `AND latitude BETWEEN 35.0 AND 36.0 AND longitude BETWEEN -119.5 AND -118.0`;
 
-      await sql.unsafe(`SET statement_timeout = '25s'`);
+      await sql.unsafe(`SET statement_timeout = '20s'`);
 
-      const [overview, topAircraft, dailyActivity, crossCounty] = await Promise.all([
-        sql.unsafe(`
+      // Each query is isolated: a timeout on one panel must not blank the page.
+      const safe = async (q: string): Promise<any[]> => {
+        try {
+          return await sql.unsafe(q);
+        } catch (e) {
+          console.error('tulareCountyScan partial failure:', (e as Error).message);
+          return [];
+        }
+      };
+
+      const [overview, topAircraft] = await Promise.all([
+
+        safe(`
           SELECT
             COUNT(*)::int as total_detections,
             COUNT(DISTINCT COALESCE(NULLIF(registration, ''), NULLIF(icao_code, '')))::int as unique_aircraft,
@@ -378,7 +389,7 @@ export async function handleAction6(action: string, body: Record<string, any>, s
           WHERE detection_timestamp > NOW() - INTERVAL '${timeWindow}'
             ${tulareGeo}
         `),
-        sql.unsafe(`
+        safe(`
           SELECT
             COALESCE(NULLIF(registration, ''), NULLIF(icao_code, ''), 'GHOST') as registration,
             COUNT(*)::int as detections,
@@ -401,7 +412,10 @@ export async function handleAction6(action: string, body: Record<string, any>, s
           ORDER BY detections DESC
           LIMIT 50
         `),
-        sql.unsafe(`
+      ]);
+
+      const [dailyActivity, crossCounty] = await Promise.all([
+        safe(`
           SELECT
             TO_CHAR(DATE(detection_timestamp), 'MM/DD') as date,
             COUNT(*)::int as detections,
@@ -415,7 +429,7 @@ export async function handleAction6(action: string, body: Record<string, any>, s
           GROUP BY DATE(detection_timestamp)
           ORDER BY DATE(detection_timestamp)
         `),
-        sql.unsafe(`
+        safe(`
           WITH tulare AS (
             SELECT
               COALESCE(NULLIF(registration, ''), NULLIF(icao_code, '')) as acid,
@@ -426,6 +440,8 @@ export async function handleAction6(action: string, body: Record<string, any>, s
               ${tulareGeo}
               AND COALESCE(NULLIF(registration, ''), NULLIF(icao_code, '')) IS NOT NULL
             GROUP BY acid
+            ORDER BY det DESC
+            LIMIT 50
           ),
           kern AS (
             SELECT
@@ -435,9 +451,10 @@ export async function handleAction6(action: string, body: Record<string, any>, s
             FROM live_flight_detections_rows
             WHERE detection_timestamp > NOW() - INTERVAL '${timeWindow}'
               ${kernGeo}
-              AND COALESCE(NULLIF(registration, ''), NULLIF(icao_code, '')) IS NOT NULL
+              AND COALESCE(NULLIF(registration, ''), NULLIF(icao_code, '')) IN (SELECT acid FROM tulare)
             GROUP BY acid
           )
+
           SELECT
             t.acid as registration,
             k.det as kern_detections,

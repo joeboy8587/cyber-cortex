@@ -412,6 +412,9 @@ export async function handleAction6(action: string, body: Record<string, any>, s
           ORDER BY detections DESC
           LIMIT 50
         `),
+      ]);
+
+      const [dailyActivity, crossCounty] = await Promise.all([
         safe(`
           SELECT
             TO_CHAR(DATE(detection_timestamp), 'MM/DD') as date,
@@ -426,7 +429,7 @@ export async function handleAction6(action: string, body: Record<string, any>, s
           GROUP BY DATE(detection_timestamp)
           ORDER BY DATE(detection_timestamp)
         `),
-        safeSecond(`
+        safe(`
           WITH tulare AS (
             SELECT
               COALESCE(NULLIF(registration, ''), NULLIF(icao_code, '')) as acid,

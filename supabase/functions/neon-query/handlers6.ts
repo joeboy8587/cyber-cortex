@@ -360,9 +360,20 @@ export async function handleAction6(action: string, body: Record<string, any>, s
       const tulareGeo = `AND latitude BETWEEN 35.8 AND 36.5 AND longitude BETWEEN -119.6 AND -118.3`;
       const kernGeo = `AND latitude BETWEEN 35.0 AND 36.0 AND longitude BETWEEN -119.5 AND -118.0`;
 
-      await sql.unsafe(`SET statement_timeout = '25s'`);
+      await sql.unsafe(`SET statement_timeout = '20s'`);
+
+      // Each query is isolated: a timeout on one panel must not blank the page.
+      const safe = async (q: string): Promise<any[]> => {
+        try {
+          return await sql.unsafe(q);
+        } catch (e) {
+          console.error('tulareCountyScan partial failure:', (e as Error).message);
+          return [];
+        }
+      };
 
       const [overview, topAircraft, dailyActivity, crossCounty] = await Promise.all([
+
         sql.unsafe(`
           SELECT
             COUNT(*)::int as total_detections,

@@ -372,7 +372,7 @@ export async function handleAction6(action: string, body: Record<string, any>, s
         }
       };
 
-      const [overview, topAircraft, dailyActivity, crossCounty] = await Promise.all([
+      const [overview, topAircraft] = await Promise.all([
 
         safe(`
           SELECT
@@ -426,7 +426,7 @@ export async function handleAction6(action: string, body: Record<string, any>, s
           GROUP BY DATE(detection_timestamp)
           ORDER BY DATE(detection_timestamp)
         `),
-        safe(`
+        safeSecond(`
           WITH tulare AS (
             SELECT
               COALESCE(NULLIF(registration, ''), NULLIF(icao_code, '')) as acid,

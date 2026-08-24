@@ -437,6 +437,8 @@ export async function handleAction6(action: string, body: Record<string, any>, s
               ${tulareGeo}
               AND COALESCE(NULLIF(registration, ''), NULLIF(icao_code, '')) IS NOT NULL
             GROUP BY acid
+            ORDER BY det DESC
+            LIMIT 50
           ),
           kern AS (
             SELECT
@@ -446,9 +448,10 @@ export async function handleAction6(action: string, body: Record<string, any>, s
             FROM live_flight_detections_rows
             WHERE detection_timestamp > NOW() - INTERVAL '${timeWindow}'
               ${kernGeo}
-              AND COALESCE(NULLIF(registration, ''), NULLIF(icao_code, '')) IS NOT NULL
+              AND COALESCE(NULLIF(registration, ''), NULLIF(icao_code, '')) IN (SELECT acid FROM tulare)
             GROUP BY acid
           )
+
           SELECT
             t.acid as registration,
             k.det as kern_detections,

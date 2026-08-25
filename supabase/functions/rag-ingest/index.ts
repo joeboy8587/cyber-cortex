@@ -137,17 +137,40 @@ Deno.serve(async (req) => {
     const bytes = new Uint8Array(buf);
 
     let text = "";
+    let parser = "text";
     const ext = (doc.filename.split(".").pop() || "").toLowerCase();
     const mime = (doc.mime_type || "").toLowerCase();
+    const hasUnstructured = !!Deno.env.get("UNSTRUCTURED_API_KEY");
 
-    if (ext === "pdf" || mime.includes("pdf")) {
-      await update({ status: "parsing", status_message: "Extracting PDF text" });
-      text = await parsePdf(bytes);
-    } else {
-      text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+    if (hasUnstructured && unstructuredSupports(doc.filename, doc.mime_type)) {
+      try {
+        await update({ status: "parsing", status_message: "Unstructured: partitioning + OCR" });
+        const res = await partitionWithUnstructured(bytes, doc.filename, doc.mime_type);
+        text = res.text;
+        parser = `unstructured:${res.strategy}`;
+        await update({
+          status: "parsing",
+          status_message: `Unstructured: ${res.elementCount} elements, ${res.tableCount} tables${res.ocr ? " (OCR)" : ""}`,
+        });
+      } catch (e) {
+        console.error("unstructured failed, falling back", e);
+      }
+    }
+
+    if (!text || text.trim().length < 20) {
+      if (ext === "pdf" || mime.includes("pdf")) {
+        await update({ status: "parsing", status_message: "Extracting PDF text (fallback)" });
+        text = await parsePdf(bytes);
+        parser = "unpdf";
+      } else if (!mime.startsWith("image/")) {
+        text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+        parser = "text";
+      }
     }
 
     if (!text || text.trim().length < 20) throw new Error("no extractable text");
+    console.log(`[rag-ingest] parsed ${doc.filename} via ${parser} (${text.length} chars)`);
+
 
     await update({
       status: "chunking",

@@ -1,5 +1,6 @@
 // Josiah RAG ingestion: parse → chunk → embed → auto-extract → high-conf auto-promote
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { partitionWithUnstructured, unstructuredSupports } from "../_shared/unstructured.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",

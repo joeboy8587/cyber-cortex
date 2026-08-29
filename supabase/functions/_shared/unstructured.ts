@@ -6,50 +6,65 @@ const UNSTRUCTURED_URL = (
 ).replace(/\/+$/, "");
 // Platform SaaS (platform-api.transform.unstructured.io) has no sync partition route;
 // it processes files through the jobs API (upload -> poll -> download).
-const IS_PLATFORM = /platform-api\./.test(UNSTRUCTURED_URL);
+export const IS_PLATFORM = /platform-api\./.test(UNSTRUCTURED_URL);
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function partitionViaPlatformJobs(
+function platformHeaders(apiKey: string) {
+  return { "unstructured-api-key": apiKey, accept: "application/json" };
+}
+
+function platformTemplate(filename: string, mimeType?: string | null): string {
+  return isImageFile(filename, mimeType) ? "hi_res_and_enrichment" : "hi_res_partition";
+}
+
+/** Create an async platform job. Returns the job id immediately. */
+export async function createPlatformJob(
   bytes: Uint8Array,
   filename: string,
-  mimeType: string | null | undefined,
-  apiKey: string,
-  strategy: string,
-): Promise<any[]> {
-  const base = UNSTRUCTURED_URL;
-  const isImage = isImageFile(filename, mimeType);
-  // Platform templates: hi_res_partition (docs) / hi_res_and_enrichment (VLM OCR, images).
-  const templateId = isImage ? "hi_res_and_enrichment" : "hi_res_partition";
-
+  mimeType?: string | null,
+): Promise<string> {
+  const apiKey = Deno.env.get("UNSTRUCTURED_API_KEY");
+  if (!apiKey) throw new Error("UNSTRUCTURED_API_KEY is not configured");
   const form = new FormData();
   form.append(
     "input_files",
     new Blob([bytes], { type: mimeType || "application/octet-stream" }),
     filename,
   );
-  form.append("request_data", JSON.stringify({ template_id: templateId }));
-
-  const headers = { "unstructured-api-key": apiKey, accept: "application/json" };
-  const create = await fetch(`${base}/jobs/`, { method: "POST", headers, body: form });
-  if (!create.ok) {
-    throw new Error(`Platform job create ${create.status}: ${(await create.text()).slice(0, 500)}`);
-  }
-  const job = await create.json();
+  form.append("request_data", JSON.stringify({ template_id: platformTemplate(filename, mimeType) }));
+  const res = await fetch(`${UNSTRUCTURED_URL}/jobs/`, {
+    method: "POST", headers: platformHeaders(apiKey), body: form,
+  });
+  if (!res.ok) throw new Error(`Platform job create ${res.status}: ${(await res.text()).slice(0, 500)}`);
+  const job = await res.json();
   const jobId = job.id || job.job_id;
   if (!jobId) throw new Error(`Platform job create returned no id: ${JSON.stringify(job).slice(0, 300)}`);
+  return jobId;
+}
 
-  // Poll until finished (max ~100s to stay inside the edge budget).
-  let jobInfo: any = null;
-  for (let i = 0; i < 34; i++) {
-    await sleep(3000);
-    const st = await fetch(`${base}/jobs/${jobId}`, { headers });
-    if (!st.ok) throw new Error(`Platform job poll ${st.status}`);
-    jobInfo = await st.json();
-    const status = (jobInfo.status || "").toUpperCase();
-    if (["SCHEDULED", "IN_PROGRESS", "NEW", "PENDING", "PROCESSING"].includes(status)) continue;
-    if (["COMPLETED", "FINISHED", "SUCCESS", "DONE"].includes(status)) break;
-    throw new Error(`Platform job ended with status ${status}: ${JSON.stringify(jobInfo).slice(0, 300)}`);
+export type PlatformJobState =
+  | { state: "pending"; status: string }
+  | { state: "failed"; status: string; detail: string }
+  | { state: "done"; status: string; elements: any[] };
+
+/** Check a platform job; when finished, download and return the elements. */
+export async function fetchPlatformJobResult(jobId: string): Promise<PlatformJobState> {
+  const apiKey = Deno.env.get("UNSTRUCTURED_API_KEY");
+  if (!apiKey) throw new Error("UNSTRUCTURED_API_KEY is not configured");
+  const headers = platformHeaders(apiKey);
+  const base = UNSTRUCTURED_URL;
+
+  const st = await fetch(`${base}/jobs/${jobId}`, { headers });
+  if (!st.ok) throw new Error(`Platform job poll ${st.status}`);
+  const jobInfo = await st.json();
+  const status = String(jobInfo.status || "UNKNOWN");
+  const up = status.toUpperCase();
+  if (["SCHEDULED", "IN_PROGRESS", "NEW", "PENDING", "PROCESSING", "RUNNING"].includes(up)) {
+    return { state: "pending", status };
+  }
+  if (!["COMPLETED", "FINISHED", "SUCCESS", "DONE", "COMPLETE"].includes(up)) {
+    return { state: "failed", status, detail: JSON.stringify(jobInfo).slice(0, 300) };
   }
 
   // Output file ids come from the job details (node file metadata).
@@ -76,9 +91,27 @@ async function partitionViaPlatformJobs(
     if (Array.isArray(payload)) all.push(...payload.flatMap((v: any) => (Array.isArray(v) ? v : [v])));
     else for (const v of Object.values(payload)) if (Array.isArray(v)) all.push(...v);
   }
-  void jobInfo;
+  return { state: "done", status, elements: all };
+}
+
+/** Synchronous wrapper: create + poll up to maxWaitMs. Used by rag-ingest. */
+async function partitionViaPlatformJobs(
+  bytes: Uint8Array,
+  filename: string,
+  mimeType: string | null | undefined,
+  strategy: string,
+  maxWaitMs = 100000,
+): Promise<any[]> {
+  const jobId = await createPlatformJob(bytes, filename, mimeType);
+  const deadline = Date.now() + maxWaitMs;
+  while (Date.now() < deadline) {
+    await sleep(5000);
+    const r = await fetchPlatformJobResult(jobId);
+    if (r.state === "done") return r.elements;
+    if (r.state === "failed") throw new Error(`Platform job ${r.status}: ${r.detail}`);
+  }
+  throw new Error(`Platform job ${jobId} still processing after ${maxWaitMs / 1000}s`);
   void strategy;
-  return all;
 }
 
 export interface PartitionResult {

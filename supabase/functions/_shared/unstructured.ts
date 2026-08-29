@@ -40,27 +40,43 @@ async function partitionViaPlatformJobs(
   if (!jobId) throw new Error(`Platform job create returned no id: ${JSON.stringify(job).slice(0, 300)}`);
 
   // Poll until finished (max ~100s to stay inside the edge budget).
-  let status = "";
+  let jobInfo: any = null;
   for (let i = 0; i < 34; i++) {
     await sleep(3000);
     const st = await fetch(`${base}/jobs/${jobId}`, { headers });
     if (!st.ok) throw new Error(`Platform job poll ${st.status}`);
-    const j = await st.json();
-    status = (j.status || "").toUpperCase();
+    jobInfo = await st.json();
+    const status = (jobInfo.status || "").toUpperCase();
     if (["SCHEDULED", "IN_PROGRESS", "NEW", "PENDING", "PROCESSING"].includes(status)) continue;
     if (["COMPLETED", "FINISHED", "SUCCESS", "DONE"].includes(status)) break;
-    throw new Error(`Platform job ended with status ${status}: ${JSON.stringify(j).slice(0, 300)}`);
+    throw new Error(`Platform job ended with status ${status}: ${JSON.stringify(jobInfo).slice(0, 300)}`);
   }
 
-  const dl = await fetch(`${base}/jobs/${jobId}/download`, { headers });
-  if (!dl.ok) throw new Error(`Platform job download ${dl.status}: ${(await dl.text()).slice(0, 300)}`);
-  const payload = await dl.json();
-  // Download returns { "filename": [elements...] } or a bare array depending on version.
-  if (Array.isArray(payload)) return payload.flatMap((v: any) => (Array.isArray(v) ? v : [v]));
+  // Output file ids come from the job details (node file metadata).
+  const det = await fetch(`${base}/jobs/${jobId}/details`, { headers });
+  if (!det.ok) throw new Error(`Platform job details ${det.status}`);
+  const details = await det.json();
+  const fileIds: string[] = [];
+  const collect = (v: any) => {
+    if (!v) return;
+    if (Array.isArray(v)) return v.forEach(collect);
+    if (typeof v === "object") {
+      if (typeof v.file_id === "string") fileIds.push(v.file_id);
+      for (const val of Object.values(v)) collect(val);
+    }
+  };
+  collect(details?.output_node_files ?? details?.node_file_metadata ?? details);
+
   const all: any[] = [];
-  for (const v of Object.values(payload)) {
-    if (Array.isArray(v)) all.push(...v);
+  for (const fid of [...new Set(fileIds)]) {
+    const dl = await fetch(`${base}/jobs/${jobId}/download?file_id=${encodeURIComponent(fid)}`, { headers });
+    if (!dl.ok) continue; // skip non-element outputs (logs, manifests)
+    const payload = await dl.json().catch(() => null);
+    if (!payload) continue;
+    if (Array.isArray(payload)) all.push(...payload.flatMap((v: any) => (Array.isArray(v) ? v : [v])));
+    else for (const v of Object.values(payload)) if (Array.isArray(v)) all.push(...v);
   }
+  void jobInfo;
   void strategy;
   return all;
 }

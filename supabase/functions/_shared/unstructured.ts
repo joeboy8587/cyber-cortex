@@ -1,14 +1,65 @@
 // Shared Unstructured.io partitioning helper (Serverless API).
 // Turns PDFs, Office docs, HTML/email and images (OCR) into clean markdown text.
 
-const UNSTRUCTURED_URL = (() => {
-  const raw = (
-    Deno.env.get("UNSTRUCTURED_API_URL") || "https://api.unstructuredapp.io/general/v0/general"
-  ).replace(/\/+$/, "");
-  // Platform SaaS base URLs (…/api/v1) need the partition route appended.
-  if (!/\/(general|partition)(\/.+)?$/.test(raw)) return `${raw}/partition`;
-  return raw;
-})();
+const UNSTRUCTURED_URL = (
+  Deno.env.get("UNSTRUCTURED_API_URL") || "https://api.unstructuredapp.io/general/v0/general"
+).replace(/\/+$/, "");
+// Platform SaaS (platform-api.transform.unstructured.io) has no sync partition route;
+// it processes files through the jobs API (upload -> poll -> download).
+const IS_PLATFORM = /platform-api\./.test(UNSTRUCTURED_URL);
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function partitionViaPlatformJobs(
+  bytes: Uint8Array,
+  filename: string,
+  mimeType: string | null | undefined,
+  apiKey: string,
+  strategy: string,
+): Promise<any[]> {
+  const base = UNSTRUCTURED_URL;
+  const form = new FormData();
+  form.append(
+    "input_files",
+    new Blob([bytes], { type: mimeType || "application/octet-stream" }),
+    filename,
+  );
+  form.append("request_data", JSON.stringify({}));
+
+  const headers = { "unstructured-api-key": apiKey, accept: "application/json" };
+  const create = await fetch(`${base}/jobs/`, { method: "POST", headers, body: form });
+  if (!create.ok) {
+    throw new Error(`Platform job create ${create.status}: ${(await create.text()).slice(0, 500)}`);
+  }
+  const job = await create.json();
+  const jobId = job.id || job.job_id;
+  if (!jobId) throw new Error(`Platform job create returned no id: ${JSON.stringify(job).slice(0, 300)}`);
+
+  // Poll until finished (max ~100s to stay inside the edge budget).
+  let status = "";
+  for (let i = 0; i < 34; i++) {
+    await sleep(3000);
+    const st = await fetch(`${base}/jobs/${jobId}`, { headers });
+    if (!st.ok) throw new Error(`Platform job poll ${st.status}`);
+    const j = await st.json();
+    status = (j.status || "").toUpperCase();
+    if (["SCHEDULED", "IN_PROGRESS", "NEW", "PENDING", "PROCESSING"].includes(status)) continue;
+    if (["COMPLETED", "FINISHED", "SUCCESS", "DONE"].includes(status)) break;
+    throw new Error(`Platform job ended with status ${status}: ${JSON.stringify(j).slice(0, 300)}`);
+  }
+
+  const dl = await fetch(`${base}/jobs/${jobId}/download`, { headers });
+  if (!dl.ok) throw new Error(`Platform job download ${dl.status}: ${(await dl.text()).slice(0, 300)}`);
+  const payload = await dl.json();
+  // Download returns { "filename": [elements...] } or a bare array depending on version.
+  if (Array.isArray(payload)) return payload.flatMap((v: any) => (Array.isArray(v) ? v : [v]));
+  const all: any[] = [];
+  for (const v of Object.values(payload)) {
+    if (Array.isArray(v)) all.push(...v);
+  }
+  void strategy;
+  return all;
+}
 
 export interface PartitionResult {
   text: string;

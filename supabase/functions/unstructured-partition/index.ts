@@ -8,6 +8,7 @@ import {
   createPlatformJob,
   fetchPlatformJobResult,
   partitionWithUnstructured,
+  elementsToResult,
   isImageFile,
 } from "../_shared/unstructured.ts";
 
@@ -47,8 +48,14 @@ Deno.serve(async (req) => {
         });
       }
       const { elements } = r;
+      const result = elementsToResult(elements, body.filename || "upload.bin", body.mime_type, "hi_res");
       return new Response(JSON.stringify({
-        success: true, pending: false, job_id: body.job_id, elements,
+        success: true,
+        pending: false,
+        job_id: body.job_id,
+        filename: body.filename,
+        is_image: isImageFile(body.filename || "upload.bin", body.mime_type),
+        ...result,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 

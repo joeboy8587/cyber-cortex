@@ -71,6 +71,7 @@ export async function fetchPlatformJobResult(jobId: string): Promise<PlatformJob
   const det = await fetch(`${base}/jobs/${jobId}/details`, { headers });
   if (!det.ok) throw new Error(`Platform job details ${det.status}`);
   const details = await det.json();
+  console.log("[unstructured] details:", JSON.stringify(details).slice(0, 2000));
   const fileIds: string[] = [];
   const collect = (v: any) => {
     if (!v) return;

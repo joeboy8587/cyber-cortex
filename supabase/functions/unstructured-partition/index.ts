@@ -24,6 +24,20 @@ Deno.serve(async (req) => {
 
   try {
     const body = await req.json();
+
+    // TEMP probe: list platform templates to pick the right job template.
+    if (body.probe === "templates") {
+      const base = (Deno.env.get("UNSTRUCTURED_API_URL") || "").replace(/\/+$/, "");
+      const key = Deno.env.get("UNSTRUCTURED_API_KEY") || "";
+      const r = await fetch(`${base}/templates/`, {
+        headers: { "unstructured-api-key": key, accept: "application/json" },
+      });
+      const j = await r.json();
+      return new Response(JSON.stringify({ status: r.status, templates: j }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
 
     let bytes: Uint8Array | null = null;

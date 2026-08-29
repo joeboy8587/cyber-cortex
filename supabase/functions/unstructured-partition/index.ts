@@ -1,7 +1,16 @@
 // Unstructured.io partitioner: documents + radar screenshots -> clean markdown text.
-// Accepts { document_id } | { storage_path, filename, mime_type } | { file_base64, filename, mime_type }
+// Serverless API: synchronous partition.
+// Platform API: async job flow — POST with a file creates a job ({ pending, job_id });
+//               POST { job_id } polls and returns the result when the job finishes.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
-import { partitionWithUnstructured, isImageFile } from "../_shared/unstructured.ts";
+import {
+  IS_PLATFORM,
+  createPlatformJob,
+  fetchPlatformJobResult,
+  partitionWithUnstructured,
+  elementsToResult,
+  isImageFile,
+} from "../_shared/unstructured.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -24,6 +33,32 @@ Deno.serve(async (req) => {
 
   try {
     const body = await req.json();
+
+    // Poll an existing platform job.
+    if (body.job_id) {
+      const r = await fetchPlatformJobResult(body.job_id);
+      if (r.state === "pending") {
+        return new Response(JSON.stringify({ pending: true, job_id: body.job_id, status: r.status }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      if (r.state === "failed") {
+        return new Response(JSON.stringify({ error: `Platform job ${r.status}: ${r.detail}` }), {
+          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const { elements } = r;
+      const result = elementsToResult(elements, body.filename || "upload.bin", body.mime_type, "hi_res");
+      return new Response(JSON.stringify({
+        success: true,
+        pending: false,
+        job_id: body.job_id,
+        filename: body.filename,
+        is_image: isImageFile(body.filename || "upload.bin", body.mime_type),
+        ...result,
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
 
     let bytes: Uint8Array | null = null;
@@ -49,6 +84,17 @@ Deno.serve(async (req) => {
     }
 
     if (!bytes || bytes.length === 0) throw new Error("no file bytes provided");
+
+    // Platform API: create the async job and return immediately — the client polls.
+    if (IS_PLATFORM) {
+      const jobId = await createPlatformJob(bytes, filename, mimeType);
+      return new Response(JSON.stringify({
+        pending: true,
+        job_id: jobId,
+        filename,
+        is_image: isImageFile(filename, mimeType),
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
 
     const result = await partitionWithUnstructured(bytes, filename, mimeType, {
       strategy: body.strategy,

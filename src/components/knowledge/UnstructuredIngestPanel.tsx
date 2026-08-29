@@ -103,10 +103,30 @@ export const UnstructuredIngestPanel = () => {
     const b64 = dataUrl.split(",")[1];
 
     patch(id, { message: "Unstructured OCR…" });
-    const { data: part, error: partErr } = await supabase.functions.invoke("unstructured-partition", {
-      body: { file_base64: b64, filename: file.name, mime_type: file.type || "image/png" },
+    const mime = file.type || "image/png";
+    let { data: part, error: partErr } = await supabase.functions.invoke("unstructured-partition", {
+      body: { file_base64: b64, filename: file.name, mime_type: mime },
     });
     if (partErr) throw partErr;
+
+    // Platform API returns an async job — poll until the OCR job finishes (up to ~8 min).
+    if (part?.pending && part?.job_id) {
+      const jobId: string = part.job_id;
+      let status = "";
+      for (let i = 0; i < 48; i++) {
+        await new Promise((r) => setTimeout(r, 10000));
+        const poll = await supabase.functions.invoke("unstructured-partition", {
+          body: { job_id: jobId, filename: file.name, mime_type: mime },
+        });
+        if (poll.error) throw poll.error;
+        part = poll.data;
+        if (!part?.pending) break;
+        status = part?.status || status;
+        patch(id, { message: `Unstructured OCR job running (${status || "processing"})… ${(i + 1) * 10}s` });
+      }
+      if (part?.pending) throw new Error(`OCR job did not finish in time (last status: ${status || "unknown"})`);
+      if (part?.error) throw new Error(part.error);
+    }
     const ocrText: string = part?.text || "";
 
     patch(id, {

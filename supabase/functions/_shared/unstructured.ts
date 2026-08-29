@@ -67,11 +67,9 @@ export async function fetchPlatformJobResult(jobId: string): Promise<PlatformJob
     return { state: "failed", status, detail: JSON.stringify(jobInfo).slice(0, 300) };
   }
 
-  // Output file ids come from the job details (node file metadata).
+  // Output file ids live on the job object (output_node_files), with /details as fallback.
   const det = await fetch(`${base}/jobs/${jobId}/details`, { headers });
-  if (!det.ok) throw new Error(`Platform job details ${det.status}`);
-  const details = await det.json();
-  console.log("[unstructured] details:", JSON.stringify(details).slice(0, 2000));
+  const details = det.ok ? await det.json() : null;
   const fileIds: string[] = [];
   const collect = (v: any) => {
     if (!v) return;
@@ -81,7 +79,8 @@ export async function fetchPlatformJobResult(jobId: string): Promise<PlatformJob
       for (const val of Object.values(v)) collect(val);
     }
   };
-  collect(details?.output_node_files ?? details?.node_file_metadata ?? details);
+  collect(jobInfo?.output_node_files);
+  collect(details?.output_node_files ?? details?.node_file_metadata);
 
   const all: any[] = [];
   for (const fid of [...new Set(fileIds)]) {

@@ -130,30 +130,35 @@ export async function partitionWithUnstructured(
   const image = isImageFile(filename, mimeType);
   const strategy = opts.strategy || (image ? "hi_res" : "auto");
 
-  const form = new FormData();
-  form.append(
-    "files",
-    new Blob([bytes], { type: mimeType || "application/octet-stream" }),
-    filename,
-  );
-  form.append("strategy", strategy);
-  form.append("coordinates", "false");
-  form.append("pdf_infer_table_structure", "true");
-  form.append("unique_element_ids", "true");
-  for (const lang of opts.languages || ["eng"]) form.append("languages", lang);
+  let elements: any[];
+  if (IS_PLATFORM) {
+    elements = await partitionViaPlatformJobs(bytes, filename, mimeType, apiKey, strategy);
+  } else {
+    const form = new FormData();
+    form.append(
+      "files",
+      new Blob([bytes], { type: mimeType || "application/octet-stream" }),
+      filename,
+    );
+    form.append("strategy", strategy);
+    form.append("coordinates", "false");
+    form.append("pdf_infer_table_structure", "true");
+    form.append("unique_element_ids", "true");
+    for (const lang of opts.languages || ["eng"]) form.append("languages", lang);
 
-  const res = await fetch(UNSTRUCTURED_URL, {
-    method: "POST",
-    headers: { "unstructured-api-key": apiKey, accept: "application/json" },
-    body: form,
-  });
+    const res = await fetch(UNSTRUCTURED_URL, {
+      method: "POST",
+      headers: { "unstructured-api-key": apiKey, accept: "application/json" },
+      body: form,
+    });
 
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Unstructured ${res.status}: ${body.slice(0, 500)}`);
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`Unstructured ${res.status}: ${body.slice(0, 500)}`);
+    }
+
+    elements = await res.json();
   }
-
-  const elements = await res.json();
   if (!Array.isArray(elements)) throw new Error("Unstructured returned an unexpected payload");
 
   const byType: Record<string, number> = {};

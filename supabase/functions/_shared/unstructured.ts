@@ -1,8 +1,14 @@
 // Shared Unstructured.io partitioning helper (Serverless API).
 // Turns PDFs, Office docs, HTML/email and images (OCR) into clean markdown text.
 
-const UNSTRUCTURED_URL =
-  Deno.env.get("UNSTRUCTURED_API_URL") || "https://api.unstructuredapp.io/general/v0/general";
+const UNSTRUCTURED_URL = (() => {
+  const raw = (
+    Deno.env.get("UNSTRUCTURED_API_URL") || "https://api.unstructuredapp.io/general/v0/general"
+  ).replace(/\/+$/, "");
+  // Platform SaaS base URLs (…/api/v1) need the partition route appended.
+  if (!/\/(general|partition)(\/.+)?$/.test(raw)) return `${raw}/partition`;
+  return raw;
+})();
 
 export interface PartitionResult {
   text: string;

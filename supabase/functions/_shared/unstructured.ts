@@ -137,6 +137,27 @@ export function isImageFile(filename: string, mimeType?: string | null): boolean
   return (mimeType || "").toLowerCase().startsWith("image/") || IMAGE_EXT.includes(ext);
 }
 
+/** Build a PartitionResult from raw elements (shared by sync + async job paths). */
+export function elementsToResult(
+  elements: any[],
+  filename: string,
+  mimeType?: string | null,
+  strategy = "auto",
+): PartitionResult {
+  const image = isImageFile(filename, mimeType);
+  const byType: Record<string, number> = {};
+  for (const el of elements) byType[el.type || "Text"] = (byType[el.type || "Text"] || 0) + 1;
+  const { text, tables } = elementsToMarkdown(elements);
+  return {
+    text: text.slice(0, 500000),
+    elementCount: elements.length,
+    tableCount: tables,
+    byType,
+    strategy,
+    ocr: image || strategy === "hi_res",
+  };
+}
+
 function elementsToMarkdown(elements: any[]): { text: string; tables: number } {
   const out: string[] = [];
   let tables = 0;
@@ -212,17 +233,5 @@ export async function partitionWithUnstructured(
   }
   if (!Array.isArray(elements)) throw new Error("Unstructured returned an unexpected payload");
 
-  const byType: Record<string, number> = {};
-  for (const el of elements) byType[el.type || "Text"] = (byType[el.type || "Text"] || 0) + 1;
-
-  const { text, tables } = elementsToMarkdown(elements);
-
-  return {
-    text: text.slice(0, 500000),
-    elementCount: elements.length,
-    tableCount: tables,
-    byType,
-    strategy,
-    ocr: image || strategy === "hi_res",
-  };
+  return elementsToResult(elements, filename, mimeType, strategy);
 }

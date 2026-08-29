@@ -34,6 +34,19 @@ Deno.serve(async (req) => {
   try {
     const body = await req.json();
 
+    // TEMP probe: dump platform API responses for a job.
+    if (body.probe && body.job_id) {
+      const apiKey = Deno.env.get("UNSTRUCTURED_API_KEY")!;
+      const base = Deno.env.get("UNSTRUCTURED_API_URL") || "";
+      const headers = { "unstructured-api-key": apiKey, accept: "application/json" };
+      const out: Record<string, unknown> = {};
+      for (const path of [`/jobs/${body.job_id}/files`, `/jobs/${body.job_id}`]) {
+        const r = await fetch(`${base}${path}`, { headers });
+        out[path] = { status: r.status, body: (await r.text()).slice(0, 3000) };
+      }
+      return new Response(JSON.stringify(out), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     // Poll an existing platform job.
     if (body.job_id) {
       const r = await fetchPlatformJobResult(body.job_id);

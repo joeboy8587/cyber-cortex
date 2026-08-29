@@ -18,13 +18,17 @@ async function partitionViaPlatformJobs(
   strategy: string,
 ): Promise<any[]> {
   const base = UNSTRUCTURED_URL;
+  const isImage = isImageFile(filename, mimeType);
+  // Platform templates: hi_res_partition (docs) / hi_res_and_enrichment (VLM OCR, images).
+  const templateId = isImage ? "hi_res_and_enrichment" : "hi_res_partition";
+
   const form = new FormData();
   form.append(
     "input_files",
     new Blob([bytes], { type: mimeType || "application/octet-stream" }),
     filename,
   );
-  form.append("request_data", JSON.stringify({}));
+  form.append("request_data", JSON.stringify({ template_id: templateId }));
 
   const headers = { "unstructured-api-key": apiKey, accept: "application/json" };
   const create = await fetch(`${base}/jobs/`, { method: "POST", headers, body: form });

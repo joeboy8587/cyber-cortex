@@ -99,7 +99,6 @@ async function partitionViaPlatformJobs(
   bytes: Uint8Array,
   filename: string,
   mimeType: string | null | undefined,
-  strategy: string,
   maxWaitMs = 100000,
 ): Promise<any[]> {
   const jobId = await createPlatformJob(bytes, filename, mimeType);
@@ -111,7 +110,6 @@ async function partitionViaPlatformJobs(
     if (r.state === "failed") throw new Error(`Platform job ${r.status}: ${r.detail}`);
   }
   throw new Error(`Platform job ${jobId} still processing after ${maxWaitMs / 1000}s`);
-  void strategy;
 }
 
 export interface PartitionResult {
@@ -185,7 +183,7 @@ export async function partitionWithUnstructured(
 
   let elements: any[];
   if (IS_PLATFORM) {
-    elements = await partitionViaPlatformJobs(bytes, filename, mimeType, apiKey, strategy);
+    elements = await partitionViaPlatformJobs(bytes, filename, mimeType);
   } else {
     const form = new FormData();
     form.append(

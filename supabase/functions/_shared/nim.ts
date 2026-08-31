@@ -6,7 +6,8 @@ export const NIM_BASE_URL =
   Deno.env.get("NVIDIA_NIM_BASE_URL") || "https://integrate.api.nvidia.com/v1";
 
 export const NIM_DEFAULT_MODEL =
-  Deno.env.get("NVIDIA_NIM_MODEL") || "meta/llama-3.3-70b-instruct";
+  Deno.env.get("NVIDIA_NIM_MODEL") || "nvidia/nemotron-3-super-120b-a12b";
+
 
 export function hasNim(): boolean {
   return !!Deno.env.get("NVIDIA_NIM_API_KEY");

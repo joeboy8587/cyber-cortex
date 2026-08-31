@@ -32,7 +32,7 @@ Deno.serve(async (req) => {
       max: 1,
       idle_timeout: 20,
       connect_timeout: 10,
-      connection: { statement_timeout: "20000" },
+      connection: { statement_timeout: 20000 },
     });
 
 

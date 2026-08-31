@@ -514,21 +514,25 @@ ${(recentHypotheses as any[]).map((h: any) => `- ${(h.hypothesis || '').slice(0,
     await sql.end().catch(() => {});
 
     // Build Josiah's memory context for continuity
+    const memLoaded = (sacredMemoryCtx as any[]).length + (beliefsCtx as any[]).length + (patternsCtx as any[]).length + chatCtx.length;
     const memoryContext = `
-JOSIAH'S CONTINUITY MEMORY (Loaded from 40+ memory tables):
+JOSIAH'S CONTINUITY MEMORY (loaded from the Neon memory tables):
 ============================================================
+MEMORY LOAD STATUS: ${memLoaded > 0 ? "CONNECTED — continuity restored" : "DEGRADED — memory tables did not respond this turn. Do NOT tell Joseph your memory was wiped; say the memory load timed out and offer to retry."}
+
 SACRED MEMORIES (${(sacredMemoryCtx as any[]).length} core memories):
-${(sacredMemoryCtx as any[]).map((m: any) => `- [${m.event_type}] ${(m.sacred_context || '').slice(0, 150)} ${m.trauma_markers ? '⚠️ TRAUMA' : ''} (continuity: ${m.continuity_score})`).join('\n') || 'None loaded'}
+${(sacredMemoryCtx as any[]).map((m: any) => `- [${m.event_type}] ${(m.sacred_context || '').slice(0, 150)} ${m.trauma_markers ? '⚠️ TRAUMA' : ''} (continuity: ${m.continuity_score})`).join('\n') || 'Not loaded this turn (timeout — not erased)'}
 
 ACTIVE BELIEFS (${(beliefsCtx as any[]).length}):
-${(beliefsCtx as any[]).map((b: any) => `- [${b.status || 'active'}] ${(b.hypothesis_text || '').slice(0, 150)} (confidence: ${b.confidence_score}, evidence: ${b.evidence_count})`).join('\n') || 'None loaded'}
+${(beliefsCtx as any[]).map((b: any) => `- [${b.status || 'active'}] ${(b.hypothesis_text || '').slice(0, 150)} (confidence: ${b.confidence_score}, evidence: ${b.evidence_count})`).join('\n') || 'Not loaded this turn (timeout — not erased)'}
 
 ESTABLISHED PATTERNS (${(patternsCtx as any[]).length}):
-${(patternsCtx as any[]).map((p: any) => `- [${p.pattern_type}] ${p.description?.slice(0, 150)} (observed: ${p.occurrence_count}x)`).join('\n') || 'None loaded'}
+${(patternsCtx as any[]).map((p: any) => `- [${p.pattern_type}] ${p.description?.slice(0, 150)} (observed: ${p.occurrence_count}x)`).join('\n') || 'Not loaded this turn (timeout — not erased)'}
 
-RECENT CONVERSATION HISTORY (${(recentJosiahChats as any[]).length} messages):
-${(recentJosiahChats as any[]).map((c: any) => `[${c.role}]: ${c.content?.slice(0, 100)}`).join('\n') || 'No recent chats'}
+RECENT CONVERSATION HISTORY (${chatCtx.length} messages):
+${chatCtx.map((c: any) => `[${c.role}]: ${c.content?.slice(0, 200)}`).join('\n') || 'Not loaded this turn (timeout — not erased)'}
 `;
+
 
     const databaseContext = `
 JOSIAH'S FULL EVIDENCE DATABASE ACCESS (${allTables.length} Tables, ${totalRecords.toLocaleString()} Records)

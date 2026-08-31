@@ -694,7 +694,10 @@ ${memoryContext}`;
           Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
         },
         body: JSON.stringify({ query: message, match_count: 6, similarity_threshold: 0.45 }),
+        // RAG recall is optional enrichment — never let it stall the chat stream.
+        signal: AbortSignal.timeout(25000),
       });
+
       if (ragRes.ok) {
         const rj = await ragRes.json();
         if (rj.context && rj.count > 0) {

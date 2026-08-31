@@ -10,6 +10,7 @@ import { BiometricEarlyWarningSystem } from "@/components/dashboard/BiometricEar
 import { BiometricFlightCorrelationHub } from "@/components/dashboard/BiometricFlightCorrelationHub";
 import { ChronoBiometricDigest } from "@/components/dashboard/ChronoBiometricDigest";
 import { MedicalBehavioralAlignment } from "@/components/dashboard/MedicalBehavioralAlignment";
+import { MedicalCoverPanel } from "@/components/dashboard/MedicalCoverPanel";
 import { SafetyMonitoringPanel } from "@/components/dashboard/SafetyMonitoringPanel";
 import { NullHypothesisPanel } from "@/components/dashboard/NullHypothesisPanel";
 import { BiometricArchivePanel } from "@/components/dashboard/BiometricArchivePanel";
@@ -83,6 +84,7 @@ export default function Biometrics() {
 
         {/* Behavioral Alignment */}
         <section className="space-y-6">
+          <MedicalCoverPanel />
           <MedicalBehavioralAlignment />
           <SafetyMonitoringPanel />
         </section>

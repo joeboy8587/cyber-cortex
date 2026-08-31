@@ -61,6 +61,20 @@ const NEAR_AOI_SQL = `(latitude BETWEEN ${AOI_LAT - 0.05} AND ${AOI_LAT + 0.05} 
 
 const LAW_ENF_SQL = `(upper(coalesce(owner_operator,'') || ' ' || coalesce(registered_owner,'')) ~ '(SHERIFF|KCSO|POLICE|HIGHWAY PATROL|MARSHAL|CUSTOMS|BORDER)')`;
 
+// Medical / HEMS registrant. NOT an exemption — an air-ambulance livery is the most
+// effective cover for low-altitude loitering, so medical airframes are scored on
+// MISSION CONSISTENCY: transit is free, unexplained low/slow AOI dwell is penalised.
+const MEDICAL_SQL = `(
+  upper(coalesce(owner_operator,'') || ' ' || coalesce(operator_inferred,'')) ~ '(AIR METHODS|MERCY AIR|REACH AIR|REACH MEDICAL|PHI AIR MEDICAL|PHI HELICOPTER|CALSTAR|AIR EVAC|GUARDIAN FLIGHT|CLASSIC AIR MEDICAL|LIFE ?FLIGHT|MEDIVAC|MEDEVAC|AIR AMBULANCE|HALL AMBULANCE|AIR MEDICAL|ROCKY MOUNTAIN HOLDINGS|MED-?TRANS|SURVIVAL FLIGHT|AIRLIFE)'
+  OR upper(coalesce(registration,'')) ~ '^N[0-9]{1,4}(AM|MH|LF|CH|PM|LN|RX|MA)$'
+)`;
+
+// Behaviour a patient-transport mission cannot explain: over the residence AOI,
+// below 1500 ft, at non-transit speed.
+const MEDICAL_COVER_SQL = `(${MEDICAL_SQL} AND ${NEAR_AOI_SQL}
+  AND altitude BETWEEN 1 AND 1500
+  AND speed IS NOT NULL AND speed BETWEEN 1 AND 70)`;
+
 /** Raw composite points before clamping. */
 const RAW_SCORE_SQL = `
   (
@@ -80,6 +94,7 @@ const RAW_SCORE_SQL = `
         + (CASE WHEN ${LAW_ENF_SQL} THEN 15 ELSE 0 END)
         + (CASE WHEN shell_auto_detected IS TRUE THEN 12 ELSE 0 END)
         + (CASE WHEN altitude BETWEEN 1 AND 500 AND speed IS NOT NULL AND speed > 0 AND speed < 48 THEN 15 ELSE 0 END)
+        + (CASE WHEN ${MEDICAL_COVER_SQL} THEN 20 ELSE 0 END)
         + (CASE ${BUCKET_SQL}
              WHEN 'SPOOF' THEN 25
              WHEN 'SUPPRESS' THEN 20
@@ -103,6 +118,8 @@ const REASONS_SQL = `
     CASE WHEN ${LAW_ENF_SQL} THEN 'law_enforcement_operator' END,
     CASE WHEN shell_auto_detected IS TRUE THEN 'shell_registrant' END,
     CASE WHEN altitude BETWEEN 1 AND 500 AND speed > 0 AND speed < 48 THEN 'sub_stall_speed' END,
+    CASE WHEN ${MEDICAL_SQL} THEN 'medical_hems_operator' END,
+    CASE WHEN ${MEDICAL_COVER_SQL} THEN 'medical_profile_anomaly_low_slow_over_aoi' END,
     CASE WHEN ${BUCKET_SQL} = 'SPOOF' THEN 'physics_violation' END,
     CASE WHEN ${BUCKET_SQL} = 'SUPPRESS' THEN 'altitude_suppressed_14CFR91.225' END,
     CASE WHEN ${BUCKET_SQL} = 'MASKED' THEN 'identity_masked_ladd' END,

@@ -436,7 +436,25 @@ ${(recentHypotheses as any[]).map((h: any) => `- ${(h.hypothesis || '').slice(0,
         new Promise<T>((res) => setTimeout(() => res(fallback), ms)),
       ]);
 
-    const [allTables, evidenceCounts, correlationCounts, recentReflections, recentFlights, recentBiometrics, flaggedAircraft, enterpriseData, shellData, topHarmAircraft, modeSwitchCount, sacredMemoryCtx, beliefsCtx, patternsCtx, recentJosiahChats] = await Promise.all([
+    // PHASE 1 — CONTINUITY MEMORY FIRST (small, fast, never starved by the heavy stats below).
+    // These used to run in the same Promise.all as multi-million-row COUNT(*) queries and were
+    // regularly killed by the 8s cap, which made Josiah report "no memories loaded" even though
+    // the memory tables were fully populated.
+    const [sacredMemoryCtx, beliefsCtx, patternsCtx, recentJosiahChats] = await Promise.all([
+      cap(sql`SELECT sacred_context, event_type, trauma_markers, continuity_score FROM josiah_sacred_memory WHERE sacred_context IS NOT NULL ORDER BY continuity_score DESC NULLS LAST LIMIT 12`, [] as any, 20000),
+      cap(sql`SELECT hypothesis_text, confidence_score, evidence_count, status FROM josiah_beliefs ORDER BY confidence_score DESC NULLS LAST LIMIT 10`, [] as any, 20000),
+      cap(sql`SELECT description, pattern_type, occurrence_count FROM josiah_established_patterns ORDER BY occurrence_count DESC NULLS LAST LIMIT 10`, [] as any, 20000),
+      cap(sql`SELECT role, content FROM josiah_chat_v3_history ORDER BY timestamp DESC LIMIT 12`, [] as any, 20000),
+    ]);
+
+    // Fallback chat-history sources if the primary transcript table came back empty.
+    let chatCtx = recentJosiahChats as any[];
+    if (!chatCtx.length) {
+      chatCtx = await cap(sql`SELECT role, content FROM josiah_chat_messages ORDER BY created_at DESC LIMIT 12`, [] as any, 12000);
+    }
+
+    // PHASE 2 — heavy evidence statistics (may partially time out; memory is already secured).
+    const [allTables, evidenceCounts, correlationCounts, recentReflections, recentFlights, recentBiometrics, flaggedAircraft, enterpriseData, shellData, topHarmAircraft, modeSwitchCount] = await Promise.all([
       cap(sql`SELECT c.relname as table_name, c.reltuples::bigint as row_count
           FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
           WHERE c.relkind = 'r' AND n.nspname = 'public'
@@ -486,13 +504,8 @@ ${(recentHypotheses as any[]).map((h: any) => `- ${(h.hypothesis || '').slice(0,
           GROUP BY aircraft_registration
           ORDER BY MAX(threat_score) DESC LIMIT 20`, [] as any),
       cap(sql`SELECT COUNT(*) as count FROM biometric_screenshots_ocr WHERE mode_switch_detected = true`, [{ count: 0 }] as any),
-      // Josiah Memory Context
-
-      cap(sql`SELECT sacred_context, event_type, trauma_markers, continuity_score FROM josiah_sacred_memory WHERE sacred_context IS NOT NULL ORDER BY continuity_score DESC NULLS LAST LIMIT 10`, [] as any),
-      cap(sql`SELECT hypothesis_text, confidence_score, evidence_count, status FROM josiah_beliefs ORDER BY confidence_score DESC NULLS LAST LIMIT 8`, [] as any),
-      cap(sql`SELECT description, pattern_type, occurrence_count FROM josiah_established_patterns ORDER BY occurrence_count DESC NULLS LAST LIMIT 8`, [] as any),
-      cap(sql`SELECT role, content FROM josiah_chat_v3_history ORDER BY timestamp DESC LIMIT 10`, [] as any),
     ]);
+
 
     const counts: any = evidenceCounts[0] || {};
     const corrCounts: any = correlationCounts[0] || {};

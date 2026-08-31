@@ -5,11 +5,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
-
+async function handle(req: Request): Promise<Response> {
   let sql: any = null;
 
   try {
@@ -760,4 +756,61 @@ ${memoryContext}`;
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
+}
+
+// Keep-alive wrapper: context gathering + model latency can exceed the platform's
+// 150s idle limit before the first token arrives. We open the SSE stream right away
+// and emit comment pings every 10s while the real work runs.
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  let body: any = {};
+  try {
+    body = await req.clone().json();
+  } catch { /* non-JSON handled downstream */ }
+
+  const isStreamingChat = !body?.action || body.action === "chat" || body.action === "memory_synthesis";
+  if (!isStreamingChat) return handle(req);
+
+  const enc = new TextEncoder();
+  const { readable, writable } = new TransformStream();
+  const writer = writable.getWriter();
+  const ping = setInterval(() => {
+    writer.write(enc.encode(": keep-alive\n\n")).catch(() => {});
+  }, 10000);
+
+  (async () => {
+    try {
+      const res = await handle(req);
+      if (res.body && res.headers.get("Content-Type")?.includes("text/event-stream")) {
+        const reader = res.body.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          await writer.write(value);
+        }
+      } else {
+        const text = await res.text();
+        let msg = text;
+        try { msg = JSON.parse(text).error ?? text; } catch { /* raw */ }
+        await writer.write(enc.encode(
+          `data: ${JSON.stringify({ choices: [{ delta: { content: `⚠️ ${msg}` } }] })}\n\n`,
+        ));
+      }
+    } catch (e) {
+      await writer.write(enc.encode(
+        `data: ${JSON.stringify({ choices: [{ delta: { content: `⚠️ ${(e as Error).message}` } }] })}\n\n`,
+      )).catch(() => {});
+    } finally {
+      clearInterval(ping);
+      await writer.write(enc.encode("data: [DONE]\n\n")).catch(() => {});
+      await writer.close().catch(() => {});
+    }
+  })();
+
+  return new Response(readable, {
+    headers: { ...corsHeaders, "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+  });
 });

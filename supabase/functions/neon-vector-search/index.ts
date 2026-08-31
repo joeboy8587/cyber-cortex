@@ -37,23 +37,35 @@ function withTimeout<T>(p: Promise<T>, ms: number, tag: string): Promise<T> {
   ]);
 }
 
+function toOrTsQuery(query: string): string {
+  const terms = query
+    .toLowerCase()
+    .split(/[^a-z0-9]+/i)
+    .filter((w) => w.length > 1)
+    .slice(0, 12);
+  return terms.join(" | ");
+}
+
 async function searchStore(sql: any, store: StoreDef, query: string, topK: number) {
   const { table, textCol, vecCol, idCol } = store;
+  const tsq = toOrTsQuery(query);
+  if (!tsq) return { store: store.key, label: store.label, seed_matches: 0, matches: [] };
 
-  // Stage 1: lexical seed
+  // Stage 1: lexical seed (any-term match, ranked by how many terms hit)
   const seeds = await sql.unsafe(
     `SELECT ${idCol}::text AS id,
             left(${textCol}, 900) AS snippet,
             source_table,
-            ts_rank(to_tsvector('english', coalesce(${textCol},'')), websearch_to_tsquery('english', $1)) AS rank
+            ts_rank(to_tsvector('english', coalesce(${textCol},'')), to_tsquery('english', $1)) AS rank
        FROM ${table}
       WHERE ${textCol} IS NOT NULL
         AND ${vecCol} IS NOT NULL
-        AND to_tsvector('english', coalesce(${textCol},'')) @@ websearch_to_tsquery('english', $1)
+        AND to_tsvector('english', coalesce(${textCol},'')) @@ to_tsquery('english', $1)
       ORDER BY rank DESC
       LIMIT 5`,
-    [query],
+    [tsq],
   );
+
 
   if (seeds.length === 0) {
     return { store: store.key, label: store.label, seed_matches: 0, matches: [] };

@@ -3,17 +3,38 @@ import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
 import { AGENT_CONFIGS, type AgentContext } from "./agent-configs.ts";
 import { getDbContext, getDocumentsForAgent } from "./db-context.ts";
 import { buildAgentSystemPrompt } from "./prompts.ts";
+import { nimChat } from "../_shared/nim.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-async function callLovableAI(systemPrompt: string, userPrompt: string, context: string) {
+async function callAI(
+  systemPrompt: string,
+  userPrompt: string,
+  context: string,
+  provider: string,
+) {
+  const messages = [
+    { role: "system", content: systemPrompt },
+    { role: "user", content: `${userPrompt}\n\nCONTEXT:\n${context}` },
+  ];
+
+  // Adversarial debate runs on NVIDIA NIM; every other agent stays on Lovable AI.
+  if (provider === "nvidia") {
+    return await nimChat({
+      messages,
+      stream: true,
+      max_tokens: 6000,
+      fallbackModel: "google/gemini-3-flash-preview",
+    });
+  }
+
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
-  
-  const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+
+  return await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
     headers: {
       "Authorization": `Bearer ${LOVABLE_API_KEY}`,
@@ -21,16 +42,11 @@ async function callLovableAI(systemPrompt: string, userPrompt: string, context: 
     },
     body: JSON.stringify({
       model: "google/gemini-3-flash-preview",
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: `${userPrompt}\n\nCONTEXT:\n${context}` }
-      ],
+      messages,
       stream: true,
       max_tokens: 6000,
     }),
   });
-  
-  return response;
 }
 
 serve(async (req) => {
@@ -39,7 +55,7 @@ serve(async (req) => {
   }
 
   try {
-    const { agentType, message, context: inputContext } = await req.json();
+    const { agentType, message, context: inputContext, provider } = await req.json();
     
     const NEON_DATABASE_URL = Deno.env.get("NEON_DATABASE_URL");
     
@@ -85,7 +101,7 @@ serve(async (req) => {
     const systemPrompt = await buildAgentSystemPrompt(agentType, dbContext, agentContext, relevantDocuments);
     const contextString = JSON.stringify({ dbContext, agentContext }, null, 2);
     
-    const response = await callLovableAI(systemPrompt, message, contextString);
+    const response = await callAI(systemPrompt, message, contextString, provider);
     
     if (!response.ok) {
       const errorText = await response.text();

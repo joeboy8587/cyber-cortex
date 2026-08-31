@@ -6,7 +6,13 @@ export const NIM_BASE_URL =
   Deno.env.get("NVIDIA_NIM_BASE_URL") || "https://integrate.api.nvidia.com/v1";
 
 export const NIM_DEFAULT_MODEL =
-  Deno.env.get("NVIDIA_NIM_MODEL") || "nvidia/nemotron-3-super-120b-a12b";
+  Deno.env.get("NVIDIA_NIM_MODEL") || "deepseek-ai/deepseek-v4-pro-0813";
+
+export const NIM_BACKUP_MODELS = [
+  "deepseek-ai/deepseek-v4-flash-0731",
+  "nvidia/nemotron-3-super-120b-a12b",
+];
+
 
 
 export function hasNim(): boolean {

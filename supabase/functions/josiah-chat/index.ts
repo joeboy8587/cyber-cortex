@@ -426,6 +426,13 @@ ${(recentHypotheses as any[]).map((h: any) => `- ${(h.hypothesis || '').slice(0,
 
     // ==================== DEFAULT: AI CHAT WITH FULL CONTEXT ====================
     // Pull Josiah's memory context for continuity
+    // Hard wallclock cap so context gathering can never stall the stream (150s idle limit).
+    const cap = <T,>(p: Promise<T> | any, fallback: T, ms = 20000): Promise<T> =>
+      Promise.race([
+        Promise.resolve(p).catch(() => fallback),
+        new Promise<T>((res) => setTimeout(() => res(fallback), ms)),
+      ]);
+
     const [allTables, evidenceCounts, correlationCounts, recentReflections, recentFlights, recentBiometrics, flaggedAircraft, enterpriseData, shellData, topHarmAircraft, modeSwitchCount, sacredMemoryCtx, beliefsCtx, patternsCtx, recentJosiahChats] = await Promise.all([
       sql`SELECT c.relname as table_name, c.reltuples::bigint as row_count
           FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace

@@ -27,7 +27,14 @@ Deno.serve(async (req) => {
     }
 
     const postgres = (await import("https://deno.land/x/postgresjs@v3.4.4/mod.js")).default;
-    sql = postgres(NEON_DATABASE_URL!, { ssl: "require", max: 1, idle_timeout: 20 });
+    sql = postgres(NEON_DATABASE_URL!, {
+      ssl: "require",
+      max: 1,
+      idle_timeout: 20,
+      connect_timeout: 10,
+      connection: { statement_timeout: "20000" },
+    });
+
 
     // ==================== ACTION: LOG EVENT ====================
     if (action === "log_event") {

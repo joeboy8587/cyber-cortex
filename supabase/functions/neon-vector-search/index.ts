@@ -102,7 +102,16 @@ async function searchStore(sql: any, store: StoreDef, query: string, topK: numbe
       score: Number(n.similarity) || 0,
       match_type: "semantic",
     })),
-  ].filter((m) => (seen.has(m.id) ? false : (seen.add(m.id), true)));
+  ].filter((m) => {
+    // Dedupe by id AND by text, so duplicated evidence rows collapse into one passage
+    const key = `${m.id}`;
+    const textKey = `t:${(m.snippet ?? "").slice(0, 200)}`;
+    if (seen.has(key) || seen.has(textKey)) return false;
+    seen.add(key);
+    seen.add(textKey);
+    return true;
+  });
+
 
   return { store: store.key, label: store.label, seed_matches: seeds.length, matches: matches.slice(0, topK) };
 }

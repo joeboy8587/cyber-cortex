@@ -68,6 +68,8 @@ export function AdversarialDebatePanel() {
         agentType,
         message: prompt,
         context: {},
+        provider: "nvidia",
+
       }),
     });
 

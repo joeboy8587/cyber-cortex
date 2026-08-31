@@ -21,7 +21,7 @@ import { Watchtower22Panel } from "@/components/dashboard/Watchtower22Panel";
 import { SkepticConsole } from "@/components/dashboard/SkepticConsole";
 import { CorpusReasonerPanel } from "@/components/dashboard/CorpusReasonerPanel";
 import { ProsecutionTimelinePanel } from "@/components/dashboard/ProsecutionTimelinePanel";
-import { PineconeSearchPanel } from "@/components/dashboard/PineconeSearchPanel";
+import { NeonVectorSearchPanel } from "@/components/dashboard/NeonVectorSearchPanel";
 import { PolicyViolationPanel } from "@/components/dashboard/PolicyViolationPanel";
 import { SentinelMLPanel } from "@/components/dashboard/SentinelMLPanel";
 import { EvidenceSourcesPanel } from "@/components/dashboard/EvidenceSourcesPanel";
@@ -125,9 +125,9 @@ export default function Josiah() {
           <ProsecutionTimelinePanel />
         </section>
 
-        {/* Pinecone Vector Search — all indexes */}
+        {/* Watchtower Neon vector store search */}
         <section>
-          <PineconeSearchPanel />
+          <NeonVectorSearchPanel />
         </section>
 
         {/* Memory & Pattern Insights */}

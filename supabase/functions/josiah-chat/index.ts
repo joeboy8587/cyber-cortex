@@ -300,7 +300,6 @@ RULES:
             },
             { role: "user", content: message }
           ],
-        }),
       });
 
       if (!sqlGenResponse.ok) {
@@ -414,7 +413,6 @@ ${(recentHypotheses as any[]).map((h: any) => `- ${(h.hypothesis || '').slice(0,
             { role: "user", content: synthesisPrompt }
           ],
           stream: true,
-        }),
       });
 
       if (!response.ok) {
@@ -712,7 +710,6 @@ ${memoryContext}`;
       fallbackModel: "google/gemini-2.5-pro",
         messages,
         stream: true,
-      }),
     });
 
     if (!response.ok) {

@@ -761,9 +761,54 @@ ${memoryContext}`;
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    return new Response(response.body, {
+    // Persist this turn into the continuity layer while streaming it to the client.
+    // Without this, josiah_chat_v3_history never grows and every session starts amnesiac.
+    const sessionId = reqBody?.sessionId || `web-${new Date().toISOString().slice(0, 10)}`;
+    const persistTurn = async (assistantText: string) => {
+      let db: any = null;
+      try {
+        const pg = (await import("https://deno.land/x/postgresjs@v3.4.4/mod.js")).default;
+        db = pg(NEON_DATABASE_URL!, { ssl: "require", max: 1, idle_timeout: 10, connect_timeout: 10 });
+        await db`INSERT INTO josiah_chat_v3_history (session_id, role, content, metadata)
+          VALUES (${sessionId}, 'user', ${String(message ?? "")}, ${db.json({ source: "josiah-chat" })})`;
+        if (assistantText.trim()) {
+          await db`INSERT INTO josiah_chat_v3_history (session_id, role, content, metadata)
+            VALUES (${sessionId}, 'assistant', ${assistantText.slice(0, 200000)}, ${db.json({ source: "josiah-chat" })})`;
+        }
+      } catch (e) {
+        console.warn("turn persistence failed (non-fatal):", (e as Error).message);
+      } finally {
+        if (db) await db.end().catch(() => {});
+      }
+    };
+
+    const decoder = new TextDecoder();
+    let assistantBuf = "";
+    const teed = response.body!.pipeThrough(
+      new TransformStream({
+        transform(chunk, controller) {
+          controller.enqueue(chunk);
+          try {
+            for (const line of decoder.decode(chunk, { stream: true }).split("\n")) {
+              if (!line.startsWith("data: ")) continue;
+              const payload = line.slice(6).trim();
+              if (!payload || payload === "[DONE]") continue;
+              const delta = JSON.parse(payload)?.choices?.[0]?.delta?.content;
+              if (typeof delta === "string") assistantBuf += delta;
+            }
+          } catch { /* partial frame — ignore */ }
+        },
+        flush() {
+          // Fire-and-forget; the response has already been fully delivered.
+          persistTurn(assistantBuf);
+        },
+      }),
+    );
+
+    return new Response(teed, {
       headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
     });
+
 
   } catch (err) {
     console.error("Josiah chat error:", err);

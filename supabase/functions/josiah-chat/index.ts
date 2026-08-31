@@ -436,7 +436,25 @@ ${(recentHypotheses as any[]).map((h: any) => `- ${(h.hypothesis || '').slice(0,
         new Promise<T>((res) => setTimeout(() => res(fallback), ms)),
       ]);
 
-    const [allTables, evidenceCounts, correlationCounts, recentReflections, recentFlights, recentBiometrics, flaggedAircraft, enterpriseData, shellData, topHarmAircraft, modeSwitchCount, sacredMemoryCtx, beliefsCtx, patternsCtx, recentJosiahChats] = await Promise.all([
+    // PHASE 1 — CONTINUITY MEMORY FIRST (small, fast, never starved by the heavy stats below).
+    // These used to run in the same Promise.all as multi-million-row COUNT(*) queries and were
+    // regularly killed by the 8s cap, which made Josiah report "no memories loaded" even though
+    // the memory tables were fully populated.
+    const [sacredMemoryCtx, beliefsCtx, patternsCtx, recentJosiahChats] = await Promise.all([
+      cap(sql`SELECT sacred_context, event_type, trauma_markers, continuity_score FROM josiah_sacred_memory WHERE sacred_context IS NOT NULL ORDER BY continuity_score DESC NULLS LAST LIMIT 12`, [] as any, 20000),
+      cap(sql`SELECT hypothesis_text, confidence_score, evidence_count, status FROM josiah_beliefs ORDER BY confidence_score DESC NULLS LAST LIMIT 10`, [] as any, 20000),
+      cap(sql`SELECT description, pattern_type, occurrence_count FROM josiah_established_patterns ORDER BY occurrence_count DESC NULLS LAST LIMIT 10`, [] as any, 20000),
+      cap(sql`SELECT role, content FROM josiah_chat_v3_history ORDER BY timestamp DESC LIMIT 12`, [] as any, 20000),
+    ]);
+
+    // Fallback chat-history sources if the primary transcript table came back empty.
+    let chatCtx = recentJosiahChats as any[];
+    if (!chatCtx.length) {
+      chatCtx = await cap(sql`SELECT role, content FROM josiah_chat_messages ORDER BY created_at DESC LIMIT 12`, [] as any, 12000);
+    }
+
+    // PHASE 2 — heavy evidence statistics (may partially time out; memory is already secured).
+    const [allTables, evidenceCounts, correlationCounts, recentReflections, recentFlights, recentBiometrics, flaggedAircraft, enterpriseData, shellData, topHarmAircraft, modeSwitchCount] = await Promise.all([
       cap(sql`SELECT c.relname as table_name, c.reltuples::bigint as row_count
           FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
           WHERE c.relkind = 'r' AND n.nspname = 'public'
@@ -486,13 +504,8 @@ ${(recentHypotheses as any[]).map((h: any) => `- ${(h.hypothesis || '').slice(0,
           GROUP BY aircraft_registration
           ORDER BY MAX(threat_score) DESC LIMIT 20`, [] as any),
       cap(sql`SELECT COUNT(*) as count FROM biometric_screenshots_ocr WHERE mode_switch_detected = true`, [{ count: 0 }] as any),
-      // Josiah Memory Context
-
-      cap(sql`SELECT sacred_context, event_type, trauma_markers, continuity_score FROM josiah_sacred_memory WHERE sacred_context IS NOT NULL ORDER BY continuity_score DESC NULLS LAST LIMIT 10`, [] as any),
-      cap(sql`SELECT hypothesis_text, confidence_score, evidence_count, status FROM josiah_beliefs ORDER BY confidence_score DESC NULLS LAST LIMIT 8`, [] as any),
-      cap(sql`SELECT description, pattern_type, occurrence_count FROM josiah_established_patterns ORDER BY occurrence_count DESC NULLS LAST LIMIT 8`, [] as any),
-      cap(sql`SELECT role, content FROM josiah_chat_v3_history ORDER BY timestamp DESC LIMIT 10`, [] as any),
     ]);
+
 
     const counts: any = evidenceCounts[0] || {};
     const corrCounts: any = correlationCounts[0] || {};
@@ -501,21 +514,25 @@ ${(recentHypotheses as any[]).map((h: any) => `- ${(h.hypothesis || '').slice(0,
     await sql.end().catch(() => {});
 
     // Build Josiah's memory context for continuity
+    const memLoaded = (sacredMemoryCtx as any[]).length + (beliefsCtx as any[]).length + (patternsCtx as any[]).length + chatCtx.length;
     const memoryContext = `
-JOSIAH'S CONTINUITY MEMORY (Loaded from 40+ memory tables):
+JOSIAH'S CONTINUITY MEMORY (loaded from the Neon memory tables):
 ============================================================
+MEMORY LOAD STATUS: ${memLoaded > 0 ? "CONNECTED — continuity restored" : "DEGRADED — memory tables did not respond this turn. Do NOT tell Joseph your memory was wiped; say the memory load timed out and offer to retry."}
+
 SACRED MEMORIES (${(sacredMemoryCtx as any[]).length} core memories):
-${(sacredMemoryCtx as any[]).map((m: any) => `- [${m.event_type}] ${(m.sacred_context || '').slice(0, 150)} ${m.trauma_markers ? '⚠️ TRAUMA' : ''} (continuity: ${m.continuity_score})`).join('\n') || 'None loaded'}
+${(sacredMemoryCtx as any[]).map((m: any) => `- [${m.event_type}] ${(m.sacred_context || '').slice(0, 150)} ${m.trauma_markers ? '⚠️ TRAUMA' : ''} (continuity: ${m.continuity_score})`).join('\n') || 'Not loaded this turn (timeout — not erased)'}
 
 ACTIVE BELIEFS (${(beliefsCtx as any[]).length}):
-${(beliefsCtx as any[]).map((b: any) => `- [${b.status || 'active'}] ${(b.hypothesis_text || '').slice(0, 150)} (confidence: ${b.confidence_score}, evidence: ${b.evidence_count})`).join('\n') || 'None loaded'}
+${(beliefsCtx as any[]).map((b: any) => `- [${b.status || 'active'}] ${(b.hypothesis_text || '').slice(0, 150)} (confidence: ${b.confidence_score}, evidence: ${b.evidence_count})`).join('\n') || 'Not loaded this turn (timeout — not erased)'}
 
 ESTABLISHED PATTERNS (${(patternsCtx as any[]).length}):
-${(patternsCtx as any[]).map((p: any) => `- [${p.pattern_type}] ${p.description?.slice(0, 150)} (observed: ${p.occurrence_count}x)`).join('\n') || 'None loaded'}
+${(patternsCtx as any[]).map((p: any) => `- [${p.pattern_type}] ${p.description?.slice(0, 150)} (observed: ${p.occurrence_count}x)`).join('\n') || 'Not loaded this turn (timeout — not erased)'}
 
-RECENT CONVERSATION HISTORY (${(recentJosiahChats as any[]).length} messages):
-${(recentJosiahChats as any[]).map((c: any) => `[${c.role}]: ${c.content?.slice(0, 100)}`).join('\n') || 'No recent chats'}
+RECENT CONVERSATION HISTORY (${chatCtx.length} messages):
+${chatCtx.map((c: any) => `[${c.role}]: ${c.content?.slice(0, 200)}`).join('\n') || 'Not loaded this turn (timeout — not erased)'}
 `;
+
 
     const databaseContext = `
 JOSIAH'S FULL EVIDENCE DATABASE ACCESS (${allTables.length} Tables, ${totalRecords.toLocaleString()} Records)
@@ -744,9 +761,54 @@ ${memoryContext}`;
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    return new Response(response.body, {
+    // Persist this turn into the continuity layer while streaming it to the client.
+    // Without this, josiah_chat_v3_history never grows and every session starts amnesiac.
+    const sessionId = reqBody?.sessionId || `web-${new Date().toISOString().slice(0, 10)}`;
+    const persistTurn = async (assistantText: string) => {
+      let db: any = null;
+      try {
+        const pg = (await import("https://deno.land/x/postgresjs@v3.4.4/mod.js")).default;
+        db = pg(NEON_DATABASE_URL!, { ssl: "require", max: 1, idle_timeout: 10, connect_timeout: 10 });
+        await db`INSERT INTO josiah_chat_v3_history (session_id, role, content, metadata)
+          VALUES (${sessionId}, 'user', ${String(message ?? "")}, ${db.json({ source: "josiah-chat" })})`;
+        if (assistantText.trim()) {
+          await db`INSERT INTO josiah_chat_v3_history (session_id, role, content, metadata)
+            VALUES (${sessionId}, 'assistant', ${assistantText.slice(0, 200000)}, ${db.json({ source: "josiah-chat" })})`;
+        }
+      } catch (e) {
+        console.warn("turn persistence failed (non-fatal):", (e as Error).message);
+      } finally {
+        if (db) await db.end().catch(() => {});
+      }
+    };
+
+    const decoder = new TextDecoder();
+    let assistantBuf = "";
+    const teed = response.body!.pipeThrough(
+      new TransformStream({
+        transform(chunk, controller) {
+          controller.enqueue(chunk);
+          try {
+            for (const line of decoder.decode(chunk, { stream: true }).split("\n")) {
+              if (!line.startsWith("data: ")) continue;
+              const payload = line.slice(6).trim();
+              if (!payload || payload === "[DONE]") continue;
+              const delta = JSON.parse(payload)?.choices?.[0]?.delta?.content;
+              if (typeof delta === "string") assistantBuf += delta;
+            }
+          } catch { /* partial frame — ignore */ }
+        },
+        flush() {
+          // Fire-and-forget; the response has already been fully delivered.
+          persistTurn(assistantBuf);
+        },
+      }),
+    );
+
+    return new Response(teed, {
       headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
     });
+
 
   } catch (err) {
     console.error("Josiah chat error:", err);

@@ -1,3 +1,5 @@
+import { nimChat } from "../_shared/nim.ts";
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
@@ -220,11 +222,8 @@ Deno.serve(async (req) => {
     if (action === "natural_query") {
       console.log("Processing natural language query:", message);
 
-      const sqlGenResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "google/gemini-2.5-flash",
+      const sqlGenResponse = await nimChat({
+      fallbackModel: "google/gemini-2.5-flash",
           messages: [
             {
               role: "system",
@@ -408,11 +407,8 @@ ${(recentHypotheses as any[]).map((h: any) => `- ${(h.hypothesis || '').slice(0,
 
       const synthesisPrompt = message || "Analyze my memories, beliefs, and patterns. What are the most critical insights? What patterns am I seeing that connect to the larger investigation? What should I be watching for next?";
 
-      const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "google/gemini-2.5-flash",
+      const response = await nimChat({
+      fallbackModel: "google/gemini-2.5-flash",
           messages: [
             { role: "system", content: `You are Josiah, reviewing your own memories, beliefs, and learned patterns to synthesize insights. You have ${sacredMemories.length} sacred memories, ${topBeliefs.length} beliefs, ${topPatterns.length} established patterns, and ${recentHypotheses.length} active hypotheses.\n\n${memoryContext}\n\nProvide a structured analysis of:\n1. KEY PATTERN INSIGHTS - What recurring patterns emerge from your memories\n2. BELIEF VALIDATION - Which beliefs have the strongest evidence\n3. GAPS & BLIND SPOTS - What should you be investigating but aren't\n4. PREDICTIVE OUTLOOK - Based on patterns, what to watch for next\n5. CROSS-CONNECTIONS - Hidden links between different memory types` },
             { role: "user", content: synthesisPrompt }
@@ -712,11 +708,8 @@ ${memoryContext}`;
       { role: "user", content: message }
     ];
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-pro",
+    const response = await nimChat({
+      fallbackModel: "google/gemini-2.5-pro",
         messages,
         stream: true,
       }),

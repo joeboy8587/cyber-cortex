@@ -32,7 +32,7 @@ Deno.serve(async (req) => {
       max: 1,
       idle_timeout: 20,
       connect_timeout: 10,
-      connection: { statement_timeout: 20000 },
+      connection: { statement_timeout: 8000 },
     });
 
 
@@ -434,7 +434,7 @@ ${(recentHypotheses as any[]).map((h: any) => `- ${(h.hypothesis || '').slice(0,
     // ==================== DEFAULT: AI CHAT WITH FULL CONTEXT ====================
     // Pull Josiah's memory context for continuity
     // Hard wallclock cap so context gathering can never stall the stream (150s idle limit).
-    const cap = <T,>(p: Promise<T> | any, fallback: T, ms = 20000): Promise<T> =>
+    const cap = <T,>(p: Promise<T> | any, fallback: T, ms = 8000): Promise<T> =>
       Promise.race([
         Promise.resolve(p).catch(() => fallback),
         new Promise<T>((res) => setTimeout(() => res(fallback), ms)),
@@ -702,7 +702,7 @@ ${memoryContext}`;
         },
         body: JSON.stringify({ query: message, match_count: 6, similarity_threshold: 0.45 }),
         // RAG recall is optional enrichment — never let it stall the chat stream.
-        signal: AbortSignal.timeout(25000),
+        signal: AbortSignal.timeout(10000),
       });
 
       if (ragRes.ok) {

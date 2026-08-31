@@ -482,8 +482,9 @@ ${(recentHypotheses as any[]).map((h: any) => `- ${(h.hypothesis || '').slice(0,
           WHERE threat_level IN ('CRITICAL','HIGH')
           GROUP BY aircraft_registration
           ORDER BY MAX(threat_score) DESC LIMIT 20`, [] as any),
-      cap(sql`SELECT COUNT(*) as count FROM biometric_screenshots_ocr WHERE mode_switch_detected = true`.catch(() => [{ count: 0 }]),
-      // Josiah Memory Context, [] as any),
+      cap(sql`SELECT COUNT(*) as count FROM biometric_screenshots_ocr WHERE mode_switch_detected = true`, [{ count: 0 }] as any),
+      // Josiah Memory Context
+
       cap(sql`SELECT sacred_context, event_type, trauma_markers, continuity_score FROM josiah_sacred_memory WHERE sacred_context IS NOT NULL ORDER BY continuity_score DESC NULLS LAST LIMIT 10`, [] as any),
       cap(sql`SELECT hypothesis_text, confidence_score, evidence_count, status FROM josiah_beliefs ORDER BY confidence_score DESC NULLS LAST LIMIT 8`, [] as any),
       cap(sql`SELECT description, pattern_type, occurrence_count FROM josiah_established_patterns ORDER BY occurrence_count DESC NULLS LAST LIMIT 8`, [] as any),

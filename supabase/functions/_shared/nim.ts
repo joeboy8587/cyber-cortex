@@ -69,7 +69,7 @@ export async function nimChat(opts: NimChatOptions): Promise<Response> {
       });
       if (res.ok) return res;
       last = res;
-      if (res.status !== 503 && res.status !== 404 && res.status !== 410) return res;
+      if (![503, 529, 404, 410, 429].includes(res.status)) return res;
       console.error(`NIM model ${m} unavailable (${res.status}), trying next`);
     }
     if (last) return last;

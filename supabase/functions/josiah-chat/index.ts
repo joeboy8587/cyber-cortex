@@ -723,7 +723,7 @@ ${memoryContext}`;
     const response = await nimChat({
       // Flash variant: the pro model takes ~90s on this large system prompt,
       // which pushes the stream close to the platform idle timeout.
-      model: "deepseek-ai/deepseek-v4-flash-0731",
+      model: "deepseek-ai/deepseek-v4-pro-0813",
       fallbackModel: "google/gemini-2.5-pro",
         messages,
         stream: true,

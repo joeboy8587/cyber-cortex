@@ -434,11 +434,11 @@ ${(recentHypotheses as any[]).map((h: any) => `- ${(h.hypothesis || '').slice(0,
       ]);
 
     const [allTables, evidenceCounts, correlationCounts, recentReflections, recentFlights, recentBiometrics, flaggedAircraft, enterpriseData, shellData, topHarmAircraft, modeSwitchCount, sacredMemoryCtx, beliefsCtx, patternsCtx, recentJosiahChats] = await Promise.all([
-      sql`SELECT c.relname as table_name, c.reltuples::bigint as row_count
+      cap(sql`SELECT c.relname as table_name, c.reltuples::bigint as row_count
           FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
           WHERE c.relkind = 'r' AND n.nspname = 'public'
-          ORDER BY c.reltuples DESC`,
-      sql`SELECT
+          ORDER BY c.reltuples DESC`, [] as any),
+      cap(sql`SELECT
             (SELECT COUNT(*) FROM live_flight_detections_rows) as flights,
             (SELECT COUNT(*) FROM unified_biometric_aircraft_correlation_final) as biometrics,
             (SELECT COUNT(*) FROM criminal_enterprise_command_structure) as enterprise,
@@ -448,8 +448,8 @@ ${(recentHypotheses as any[]).map((h: any) => `- ${(h.hypothesis || '').slice(0,
             (SELECT COUNT(*) FROM unified_biometric_aircraft_correlation_final WHERE legal_evidence = true) as bio_correlations,
             (SELECT COUNT(*) FROM live_flight_detections_rows WHERE flagged = true) as flagged_aircraft,
             (SELECT COUNT(*) FROM four_factor_correlations) as correlations
-        `.catch(() => [{}]),
-      sql`SELECT
+        `, [{}] as any),
+      cap(sql`SELECT
             (SELECT COUNT(*) FROM unified_biometric_aircraft_correlation_final) as bio_correlations_confirmed,
             (SELECT COUNT(DISTINCT aircraft_registration) FROM unified_biometric_aircraft_correlation_final WHERE aircraft_registration IS NOT NULL) as matrix_aircraft,
             (SELECT COUNT(DISTINCT aircraft_registration) FROM unified_biometric_aircraft_correlation_final WHERE threat_level IN ('CRITICAL','HIGH')) as high_harm_aircraft,
@@ -458,20 +458,20 @@ ${(recentHypotheses as any[]).map((h: any) => `- ${(h.hypothesis || '').slice(0,
             (SELECT COUNT(*) FROM coordinated_operations_analysis) as coordinated_ops,
             (SELECT COUNT(*) FROM live_flight_detections_rows WHERE taxonomy_tag LIKE 'xxb_%') as xxb_ghost_records,
             (SELECT COUNT(*) FROM complete_aircraft_trace) as traced_aircraft
-        `.catch(() => [{}]),
-      sql`SELECT reflection_content, trigger_type, created_at FROM josiah_reflections_rows ORDER BY created_at DESC LIMIT 10`.catch(() => []),
-      sql`SELECT registration, callsign, altitude, speed, detection_timestamp, taxonomy_tag
-          FROM live_flight_detections_rows ORDER BY detection_timestamp DESC LIMIT 20`.catch(() => []),
-      sql`SELECT heart_rate_bpm AS heart_rate, hrv_ms AS hrv, stress_score AS stress_level,
+        `, [{}] as any),
+      cap(sql`SELECT reflection_content, trigger_type, created_at FROM josiah_reflections_rows ORDER BY created_at DESC LIMIT 10`, [] as any),
+      cap(sql`SELECT registration, callsign, altitude, speed, detection_timestamp, taxonomy_tag
+          FROM live_flight_detections_rows ORDER BY detection_timestamp DESC LIMIT 20`, [] as any),
+      cap(sql`SELECT heart_rate_bpm AS heart_rate, hrv_ms AS hrv, stress_score AS stress_level,
             biometric_timestamp_utc AS measurement_timestamp,
             (biometric_severity IN ('CRITICAL','HIGH')) AS medical_alert,
             legal_evidence, biometric_source AS data_source
           FROM unified_biometric_aircraft_correlation_final
-          ORDER BY biometric_timestamp_utc DESC LIMIT 50`.catch(() => []),
-      sql`SELECT * FROM flagged_aircraft_main ORDER BY threat_score DESC NULLS LAST LIMIT 50`.catch(() => []),
-      sql`SELECT * FROM criminal_enterprise_command_structure`.catch(() => []),
-      sql`SELECT * FROM shell_companies`.catch(() => []),
-      sql`SELECT aircraft_registration AS registration,
+          ORDER BY biometric_timestamp_utc DESC LIMIT 50`, [] as any),
+      cap(sql`SELECT * FROM flagged_aircraft_main ORDER BY threat_score DESC NULLS LAST LIMIT 50`, [] as any),
+      cap(sql`SELECT * FROM criminal_enterprise_command_structure`, [] as any),
+      cap(sql`SELECT * FROM shell_companies`, [] as any),
+      cap(sql`SELECT aircraft_registration AS registration,
             MAX(threat_score) AS combined_harm_score,
             MAX(threat_level) AS harm_level,
             AVG(correlation_strength) AS p_value,
@@ -481,13 +481,13 @@ ${(recentHypotheses as any[]).map((h: any) => `- ${(h.hypothesis || '').slice(0,
           FROM unified_biometric_aircraft_correlation_final
           WHERE threat_level IN ('CRITICAL','HIGH')
           GROUP BY aircraft_registration
-          ORDER BY MAX(threat_score) DESC LIMIT 20`.catch(() => []),
-      sql`SELECT COUNT(*) as count FROM biometric_screenshots_ocr WHERE mode_switch_detected = true`.catch(() => [{ count: 0 }]),
-      // Josiah Memory Context
-      sql`SELECT sacred_context, event_type, trauma_markers, continuity_score FROM josiah_sacred_memory WHERE sacred_context IS NOT NULL ORDER BY continuity_score DESC NULLS LAST LIMIT 10`.catch(() => []),
-      sql`SELECT hypothesis_text, confidence_score, evidence_count, status FROM josiah_beliefs ORDER BY confidence_score DESC NULLS LAST LIMIT 8`.catch(() => []),
-      sql`SELECT description, pattern_type, occurrence_count FROM josiah_established_patterns ORDER BY occurrence_count DESC NULLS LAST LIMIT 8`.catch(() => []),
-      sql`SELECT role, content FROM josiah_chat_v3_history ORDER BY timestamp DESC LIMIT 10`.catch(() => []),
+          ORDER BY MAX(threat_score) DESC LIMIT 20`, [] as any),
+      cap(sql`SELECT COUNT(*) as count FROM biometric_screenshots_ocr WHERE mode_switch_detected = true`.catch(() => [{ count: 0 }]),
+      // Josiah Memory Context, [] as any),
+      cap(sql`SELECT sacred_context, event_type, trauma_markers, continuity_score FROM josiah_sacred_memory WHERE sacred_context IS NOT NULL ORDER BY continuity_score DESC NULLS LAST LIMIT 10`, [] as any),
+      cap(sql`SELECT hypothesis_text, confidence_score, evidence_count, status FROM josiah_beliefs ORDER BY confidence_score DESC NULLS LAST LIMIT 8`, [] as any),
+      cap(sql`SELECT description, pattern_type, occurrence_count FROM josiah_established_patterns ORDER BY occurrence_count DESC NULLS LAST LIMIT 8`, [] as any),
+      cap(sql`SELECT role, content FROM josiah_chat_v3_history ORDER BY timestamp DESC LIMIT 10`, [] as any),
     ]);
 
     const counts: any = evidenceCounts[0] || {};

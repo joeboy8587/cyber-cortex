@@ -5,11 +5,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
-
+async function handle(req: Request): Promise<Response> {
   let sql: any = null;
 
   try {
@@ -27,7 +23,14 @@ Deno.serve(async (req) => {
     }
 
     const postgres = (await import("https://deno.land/x/postgresjs@v3.4.4/mod.js")).default;
-    sql = postgres(NEON_DATABASE_URL!, { ssl: "require", max: 1, idle_timeout: 20 });
+    sql = postgres(NEON_DATABASE_URL!, {
+      ssl: "require",
+      max: 1,
+      idle_timeout: 20,
+      connect_timeout: 10,
+      connection: { statement_timeout: 8000 },
+    });
+
 
     // ==================== ACTION: LOG EVENT ====================
     if (action === "log_event") {
@@ -51,7 +54,7 @@ Deno.serve(async (req) => {
         `;
       });
 
-      await sql.end();
+      await sql.end().catch(() => {});
 
       return new Response(
         JSON.stringify({ success: true, logged: insertResult[0], message: `Event logged: "${message}"` }),
@@ -68,7 +71,7 @@ Deno.serve(async (req) => {
         WHERE c.relkind = 'r' AND n.nspname = 'public'
         ORDER BY c.reltuples DESC
       `;
-      await sql.end();
+      await sql.end().catch(() => {});
       return new Response(
         JSON.stringify({ tables, count: tables.length }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -111,7 +114,7 @@ Deno.serve(async (req) => {
             ORDER BY AVG(bradford_hill_score) DESC NULLS LAST LIMIT 10`.catch(() => []),
       ]);
 
-      await sql.end();
+      await sql.end().catch(() => {});
 
       return new Response(
         JSON.stringify({
@@ -154,7 +157,7 @@ Deno.serve(async (req) => {
             ORDER BY MAX(threat_score) DESC LIMIT 5`.catch(() => []),
       ]);
 
-      await sql.end();
+      await sql.end().catch(() => {});
 
       const questions: any[] = [];
 
@@ -194,7 +197,7 @@ Deno.serve(async (req) => {
         GROUP BY DATE(detection_timestamp) ORDER BY date DESC LIMIT 30
       `.catch(() => []);
 
-      await sql.end();
+      await sql.end().catch(() => {});
 
       const avgDaily = dailyHistory.length > 0
         ? dailyHistory.reduce((sum: number, d: any) => sum + Number(d.flight_count), 0) / dailyHistory.length
@@ -303,7 +306,7 @@ RULES:
       });
 
       if (!sqlGenResponse.ok) {
-        await sql.end();
+        await sql.end().catch(() => {});
         return new Response(JSON.stringify({ error: "Failed to generate SQL query" }),
           { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
@@ -316,21 +319,21 @@ RULES:
 
       const lowerSQL = generatedSQL.toLowerCase();
       if (lowerSQL.includes('insert') || lowerSQL.includes('update') || lowerSQL.includes('delete') || lowerSQL.includes('drop') || lowerSQL.includes('truncate') || lowerSQL.includes('alter')) {
-        await sql.end();
+        await sql.end().catch(() => {});
         return new Response(JSON.stringify({ error: "Query validation failed - only SELECT queries allowed", generatedSQL }),
           { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
       try {
         const result = await sql.unsafe(generatedSQL);
-        await sql.end();
+        await sql.end().catch(() => {});
         return new Response(
           JSON.stringify({ success: true, query: generatedSQL, results: result, rowCount: result.length, message: `Found ${result.length} records` }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       } catch (queryErr) {
         console.error("Query execution error:", queryErr);
-        await sql.end();
+        await sql.end().catch(() => {});
         return new Response(
           JSON.stringify({ error: "Query execution failed", details: (queryErr as Error).message, generatedSQL }),
           { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -371,7 +374,7 @@ RULES:
         results[memoryType] = await queries[memoryType];
       }
 
-      await sql.end();
+      await sql.end().catch(() => {});
       return new Response(
         JSON.stringify({ memories: results, timestamp: new Date().toISOString() }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -388,7 +391,7 @@ RULES:
         sql`SELECT role, content FROM josiah_chat_v3_history ORDER BY timestamp DESC LIMIT 20`.catch(() => []),
       ]);
 
-      await sql.end();
+      await sql.end().catch(() => {});
 
       const memoryContext = `
 JOSIAH SACRED MEMORIES (${sacredMemories.length} core memories):
@@ -426,12 +429,19 @@ ${(recentHypotheses as any[]).map((h: any) => `- ${(h.hypothesis || '').slice(0,
 
     // ==================== DEFAULT: AI CHAT WITH FULL CONTEXT ====================
     // Pull Josiah's memory context for continuity
+    // Hard wallclock cap so context gathering can never stall the stream (150s idle limit).
+    const cap = <T,>(p: Promise<T> | any, fallback: T, ms = 8000): Promise<T> =>
+      Promise.race([
+        Promise.resolve(p).catch(() => fallback),
+        new Promise<T>((res) => setTimeout(() => res(fallback), ms)),
+      ]);
+
     const [allTables, evidenceCounts, correlationCounts, recentReflections, recentFlights, recentBiometrics, flaggedAircraft, enterpriseData, shellData, topHarmAircraft, modeSwitchCount, sacredMemoryCtx, beliefsCtx, patternsCtx, recentJosiahChats] = await Promise.all([
-      sql`SELECT c.relname as table_name, c.reltuples::bigint as row_count
+      cap(sql`SELECT c.relname as table_name, c.reltuples::bigint as row_count
           FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
           WHERE c.relkind = 'r' AND n.nspname = 'public'
-          ORDER BY c.reltuples DESC`,
-      sql`SELECT
+          ORDER BY c.reltuples DESC`, [] as any),
+      cap(sql`SELECT
             (SELECT COUNT(*) FROM live_flight_detections_rows) as flights,
             (SELECT COUNT(*) FROM unified_biometric_aircraft_correlation_final) as biometrics,
             (SELECT COUNT(*) FROM criminal_enterprise_command_structure) as enterprise,
@@ -441,8 +451,8 @@ ${(recentHypotheses as any[]).map((h: any) => `- ${(h.hypothesis || '').slice(0,
             (SELECT COUNT(*) FROM unified_biometric_aircraft_correlation_final WHERE legal_evidence = true) as bio_correlations,
             (SELECT COUNT(*) FROM live_flight_detections_rows WHERE flagged = true) as flagged_aircraft,
             (SELECT COUNT(*) FROM four_factor_correlations) as correlations
-        `.catch(() => [{}]),
-      sql`SELECT
+        `, [{}] as any),
+      cap(sql`SELECT
             (SELECT COUNT(*) FROM unified_biometric_aircraft_correlation_final) as bio_correlations_confirmed,
             (SELECT COUNT(DISTINCT aircraft_registration) FROM unified_biometric_aircraft_correlation_final WHERE aircraft_registration IS NOT NULL) as matrix_aircraft,
             (SELECT COUNT(DISTINCT aircraft_registration) FROM unified_biometric_aircraft_correlation_final WHERE threat_level IN ('CRITICAL','HIGH')) as high_harm_aircraft,
@@ -451,20 +461,20 @@ ${(recentHypotheses as any[]).map((h: any) => `- ${(h.hypothesis || '').slice(0,
             (SELECT COUNT(*) FROM coordinated_operations_analysis) as coordinated_ops,
             (SELECT COUNT(*) FROM live_flight_detections_rows WHERE taxonomy_tag LIKE 'xxb_%') as xxb_ghost_records,
             (SELECT COUNT(*) FROM complete_aircraft_trace) as traced_aircraft
-        `.catch(() => [{}]),
-      sql`SELECT reflection_content, trigger_type, created_at FROM josiah_reflections_rows ORDER BY created_at DESC LIMIT 10`.catch(() => []),
-      sql`SELECT registration, callsign, altitude, speed, detection_timestamp, taxonomy_tag
-          FROM live_flight_detections_rows ORDER BY detection_timestamp DESC LIMIT 20`.catch(() => []),
-      sql`SELECT heart_rate_bpm AS heart_rate, hrv_ms AS hrv, stress_score AS stress_level,
+        `, [{}] as any),
+      cap(sql`SELECT reflection_content, trigger_type, created_at FROM josiah_reflections_rows ORDER BY created_at DESC LIMIT 10`, [] as any),
+      cap(sql`SELECT registration, callsign, altitude, speed, detection_timestamp, taxonomy_tag
+          FROM live_flight_detections_rows ORDER BY detection_timestamp DESC LIMIT 20`, [] as any),
+      cap(sql`SELECT heart_rate_bpm AS heart_rate, hrv_ms AS hrv, stress_score AS stress_level,
             biometric_timestamp_utc AS measurement_timestamp,
             (biometric_severity IN ('CRITICAL','HIGH')) AS medical_alert,
             legal_evidence, biometric_source AS data_source
           FROM unified_biometric_aircraft_correlation_final
-          ORDER BY biometric_timestamp_utc DESC LIMIT 50`.catch(() => []),
-      sql`SELECT * FROM flagged_aircraft_main ORDER BY threat_score DESC NULLS LAST LIMIT 50`.catch(() => []),
-      sql`SELECT * FROM criminal_enterprise_command_structure`.catch(() => []),
-      sql`SELECT * FROM shell_companies`.catch(() => []),
-      sql`SELECT aircraft_registration AS registration,
+          ORDER BY biometric_timestamp_utc DESC LIMIT 50`, [] as any),
+      cap(sql`SELECT * FROM flagged_aircraft_main ORDER BY threat_score DESC NULLS LAST LIMIT 50`, [] as any),
+      cap(sql`SELECT * FROM criminal_enterprise_command_structure`, [] as any),
+      cap(sql`SELECT * FROM shell_companies`, [] as any),
+      cap(sql`SELECT aircraft_registration AS registration,
             MAX(threat_score) AS combined_harm_score,
             MAX(threat_level) AS harm_level,
             AVG(correlation_strength) AS p_value,
@@ -474,20 +484,21 @@ ${(recentHypotheses as any[]).map((h: any) => `- ${(h.hypothesis || '').slice(0,
           FROM unified_biometric_aircraft_correlation_final
           WHERE threat_level IN ('CRITICAL','HIGH')
           GROUP BY aircraft_registration
-          ORDER BY MAX(threat_score) DESC LIMIT 20`.catch(() => []),
-      sql`SELECT COUNT(*) as count FROM biometric_screenshots_ocr WHERE mode_switch_detected = true`.catch(() => [{ count: 0 }]),
+          ORDER BY MAX(threat_score) DESC LIMIT 20`, [] as any),
+      cap(sql`SELECT COUNT(*) as count FROM biometric_screenshots_ocr WHERE mode_switch_detected = true`, [{ count: 0 }] as any),
       // Josiah Memory Context
-      sql`SELECT sacred_context, event_type, trauma_markers, continuity_score FROM josiah_sacred_memory WHERE sacred_context IS NOT NULL ORDER BY continuity_score DESC NULLS LAST LIMIT 10`.catch(() => []),
-      sql`SELECT hypothesis_text, confidence_score, evidence_count, status FROM josiah_beliefs ORDER BY confidence_score DESC NULLS LAST LIMIT 8`.catch(() => []),
-      sql`SELECT description, pattern_type, occurrence_count FROM josiah_established_patterns ORDER BY occurrence_count DESC NULLS LAST LIMIT 8`.catch(() => []),
-      sql`SELECT role, content FROM josiah_chat_v3_history ORDER BY timestamp DESC LIMIT 10`.catch(() => []),
+
+      cap(sql`SELECT sacred_context, event_type, trauma_markers, continuity_score FROM josiah_sacred_memory WHERE sacred_context IS NOT NULL ORDER BY continuity_score DESC NULLS LAST LIMIT 10`, [] as any),
+      cap(sql`SELECT hypothesis_text, confidence_score, evidence_count, status FROM josiah_beliefs ORDER BY confidence_score DESC NULLS LAST LIMIT 8`, [] as any),
+      cap(sql`SELECT description, pattern_type, occurrence_count FROM josiah_established_patterns ORDER BY occurrence_count DESC NULLS LAST LIMIT 8`, [] as any),
+      cap(sql`SELECT role, content FROM josiah_chat_v3_history ORDER BY timestamp DESC LIMIT 10`, [] as any),
     ]);
 
     const counts: any = evidenceCounts[0] || {};
     const corrCounts: any = correlationCounts[0] || {};
     const totalRecords = (allTables as any[]).reduce((sum: number, t: any) => sum + Number(t.row_count || 0), 0);
 
-    await sql.end();
+    await sql.end().catch(() => {});
 
     // Build Josiah's memory context for continuity
     const memoryContext = `
@@ -686,7 +697,10 @@ ${memoryContext}`;
           Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
         },
         body: JSON.stringify({ query: message, match_count: 6, similarity_threshold: 0.45 }),
+        // RAG recall is optional enrichment — never let it stall the chat stream.
+        signal: AbortSignal.timeout(10000),
       });
+
       if (ragRes.ok) {
         const rj = await ragRes.json();
         if (rj.context && rj.count > 0) {
@@ -707,6 +721,9 @@ ${memoryContext}`;
     ];
 
     const response = await nimChat({
+      // Flash variant: the pro model takes ~90s on this large system prompt,
+      // which pushes the stream close to the platform idle timeout.
+      model: "deepseek-ai/deepseek-v4-pro-0813",
       fallbackModel: "google/gemini-2.5-pro",
         messages,
         stream: true,
@@ -739,4 +756,61 @@ ${memoryContext}`;
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
+}
+
+// Keep-alive wrapper: context gathering + model latency can exceed the platform's
+// 150s idle limit before the first token arrives. We open the SSE stream right away
+// and emit comment pings every 10s while the real work runs.
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  let body: any = {};
+  try {
+    body = await req.clone().json();
+  } catch { /* non-JSON handled downstream */ }
+
+  const isStreamingChat = !body?.action || body.action === "chat" || body.action === "memory_synthesis";
+  if (!isStreamingChat) return handle(req);
+
+  const enc = new TextEncoder();
+  const { readable, writable } = new TransformStream();
+  const writer = writable.getWriter();
+  const ping = setInterval(() => {
+    writer.write(enc.encode(": keep-alive\n\n")).catch(() => {});
+  }, 10000);
+
+  (async () => {
+    try {
+      const res = await handle(req);
+      if (res.body && res.headers.get("Content-Type")?.includes("text/event-stream")) {
+        const reader = res.body.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          await writer.write(value);
+        }
+      } else {
+        const text = await res.text();
+        let msg = text;
+        try { msg = JSON.parse(text).error ?? text; } catch { /* raw */ }
+        await writer.write(enc.encode(
+          `data: ${JSON.stringify({ choices: [{ delta: { content: `⚠️ ${msg}` } }] })}\n\n`,
+        ));
+      }
+    } catch (e) {
+      await writer.write(enc.encode(
+        `data: ${JSON.stringify({ choices: [{ delta: { content: `⚠️ ${(e as Error).message}` } }] })}\n\n`,
+      )).catch(() => {});
+    } finally {
+      clearInterval(ping);
+      await writer.write(enc.encode("data: [DONE]\n\n")).catch(() => {});
+      await writer.close().catch(() => {});
+    }
+  })();
+
+  return new Response(readable, {
+    headers: { ...corsHeaders, "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+  });
 });

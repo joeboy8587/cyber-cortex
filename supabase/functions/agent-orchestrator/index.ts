@@ -49,91 +49,139 @@ async function callAI(
   });
 }
 
+/** Resolve a promise with a fallback if it takes too long. */
+async function cap<T>(p: Promise<T>, fallback: T, ms: number): Promise<T> {
+  let t: number | undefined;
+  try {
+    return await Promise.race([
+      p,
+      new Promise<T>((res) => { t = setTimeout(() => res(fallback), ms); }),
+    ]);
+  } finally {
+    if (t) clearTimeout(t);
+  }
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
+  let body: any;
   try {
-    const { agentType, message, context: inputContext, provider } = await req.json();
-    
-    const NEON_DATABASE_URL = Deno.env.get("NEON_DATABASE_URL");
-    
-    if (!AGENT_CONFIGS[agentType as keyof typeof AGENT_CONFIGS]) {
-      return new Response(
-        JSON.stringify({ error: `Unknown agent type: ${agentType}` }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-    
-    const config = AGENT_CONFIGS[agentType as keyof typeof AGENT_CONFIGS];
-    
-    // Get database context + document intelligence
-    let dbContext: Record<string, unknown> = {};
-    let relevantDocuments = "";
-    
-    if (NEON_DATABASE_URL) {
-      const sql = postgres(NEON_DATABASE_URL, { ssl: "require", max: 1 });
-      try {
-        dbContext = await getDbContext(sql);
-        relevantDocuments = await getDocumentsForAgent(sql, config.docTags);
-      } finally {
-        await sql.end();
-      }
-    }
-    
-    // Also fetch from Supabase evidence_documents if selected docs provided
-    if (inputContext?.selectedDocuments?.length) {
-      // Append selected doc IDs to context for the prompt
-      relevantDocuments += `\n\n[USER SELECTED DOCUMENTS: ${inputContext.selectedDocuments.join(", ")}]`;
-    }
-    
-    // Build agent context
-    const agentContext: AgentContext = {
-      violations: inputContext?.violations || [],
-      shellCompanies: inputContext?.shellCompanies || [],
-      financialTrails: inputContext?.financialTrails || [],
-      draftedDocuments: inputContext?.draftedDocuments || [],
-      conversationHistory: inputContext?.conversationHistory || [],
-      selectedDocuments: inputContext?.selectedDocuments || []
-    };
-    
-    const systemPrompt = await buildAgentSystemPrompt(agentType, dbContext, agentContext, relevantDocuments);
-    const contextString = JSON.stringify({ dbContext, agentContext }, null, 2);
-    
-    const response = await callAI(systemPrompt, message, contextString, provider);
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`Lovable AI error:`, response.status, errorText);
-      
-      if (response.status === 429) {
-        return new Response(
-          JSON.stringify({ error: "Rate limit exceeded. Please try again in a moment." }),
-          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      if (response.status === 402) {
-        return new Response(
-          JSON.stringify({ error: "Usage limit reached. Please add credits to your workspace." }),
-          { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      return new Response(
-        JSON.stringify({ error: `AI gateway error: ${response.status}` }),
-        { status: response.status, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-    
-    return new Response(response.body, {
-      headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
+    body = await req.json();
+  } catch {
+    return new Response(JSON.stringify({ error: "Invalid JSON body" }), {
+      status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
-    
-  } catch (err) {
-    console.error("Agent orchestrator error:", err);
+  }
+
+  const { agentType, message, context: inputContext, provider } = body ?? {};
+
+  if (!AGENT_CONFIGS[agentType as keyof typeof AGENT_CONFIGS]) {
     return new Response(
-      JSON.stringify({ error: (err as Error).message }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      JSON.stringify({ error: `Unknown agent type: ${agentType}` }),
+      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
+
+  const config = AGENT_CONFIGS[agentType as keyof typeof AGENT_CONFIGS];
+  const NEON_DATABASE_URL = Deno.env.get("NEON_DATABASE_URL");
+  const encoder = new TextEncoder();
+
+  // Stream immediately: heartbeats keep the connection alive while we gather
+  // DB context and wait for the model's first token (avoids 150s IDLE_TIMEOUT).
+  const stream = new ReadableStream({
+    async start(controller) {
+      let alive = true;
+      const send = (s: string) => { if (alive) controller.enqueue(encoder.encode(s)); };
+      send(": connected\n\n");
+      const beat = setInterval(() => send(": keep-alive\n\n"), 10_000);
+
+      const fail = (msg: string) => {
+        send(`data: ${JSON.stringify({ error: msg })}\n\n`);
+        send("data: [DONE]\n\n");
+      };
+
+      try {
+        let dbContext: Record<string, unknown> = {};
+        let relevantDocuments = "";
+
+        if (NEON_DATABASE_URL) {
+          const sql = postgres(NEON_DATABASE_URL, {
+            ssl: "require", max: 1, idle_timeout: 10, connect_timeout: 10,
+          });
+          try {
+            dbContext = await cap(getDbContext(sql), {} as Record<string, unknown>, 25_000);
+            relevantDocuments = await cap(getDocumentsForAgent(sql, config.docTags), "", 10_000);
+          } catch (e) {
+            console.warn("db context failed (non-fatal):", (e as Error).message);
+          } finally {
+            await sql.end().catch(() => {});
+          }
+        }
+
+        if (inputContext?.selectedDocuments?.length) {
+          relevantDocuments += `\n\n[USER SELECTED DOCUMENTS: ${inputContext.selectedDocuments.join(", ")}]`;
+        }
+
+        const agentContext: AgentContext = {
+          violations: inputContext?.violations || [],
+          shellCompanies: inputContext?.shellCompanies || [],
+          financialTrails: inputContext?.financialTrails || [],
+          draftedDocuments: inputContext?.draftedDocuments || [],
+          conversationHistory: inputContext?.conversationHistory || [],
+          selectedDocuments: inputContext?.selectedDocuments || [],
+        };
+
+        const systemPrompt = await cap(
+          buildAgentSystemPrompt(agentType, dbContext, agentContext, relevantDocuments),
+          `You are the ${config.name} agent. ${config.role}`,
+          20_000,
+        );
+        // Keep the payload small — huge contexts are the main cause of slow first tokens.
+        const contextString = JSON.stringify({ dbContext, agentContext }).slice(0, 60_000);
+
+        const response = await callAI(systemPrompt, message, contextString, provider);
+
+        if (!response.ok || !response.body) {
+          const errorText = await response.text().catch(() => "");
+          console.error("AI error:", response.status, errorText);
+          fail(
+            response.status === 429
+              ? "Rate limit exceeded. Please try again in a moment."
+              : response.status === 402
+                ? "Usage limit reached. Please add credits to your workspace."
+                : `AI gateway error: ${response.status}`,
+          );
+          return;
+        }
+
+        const reader = response.body.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          clearInterval(beat); // real data flowing; heartbeats no longer needed
+          if (alive) controller.enqueue(value);
+        }
+      } catch (err) {
+        console.error("Agent orchestrator error:", err);
+        fail((err as Error).message);
+      } finally {
+        clearInterval(beat);
+        alive = false;
+        try { controller.close(); } catch { /* already closed */ }
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      ...corsHeaders,
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    },
+  });
 });
+

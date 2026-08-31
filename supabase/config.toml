@@ -144,3 +144,6 @@ verify_jwt = false
 
 [functions.detection-enrichment]
 verify_jwt = false
+
+[functions.medical-cover-scan]
+verify_jwt = false

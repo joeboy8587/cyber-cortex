@@ -51,7 +51,7 @@ Deno.serve(async (req) => {
         `;
       });
 
-      await sql.end();
+      await sql.end({ timeout: 5 }).catch(() => {});
 
       return new Response(
         JSON.stringify({ success: true, logged: insertResult[0], message: `Event logged: "${message}"` }),
@@ -68,7 +68,7 @@ Deno.serve(async (req) => {
         WHERE c.relkind = 'r' AND n.nspname = 'public'
         ORDER BY c.reltuples DESC
       `;
-      await sql.end();
+      await sql.end({ timeout: 5 }).catch(() => {});
       return new Response(
         JSON.stringify({ tables, count: tables.length }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -111,7 +111,7 @@ Deno.serve(async (req) => {
             ORDER BY AVG(bradford_hill_score) DESC NULLS LAST LIMIT 10`.catch(() => []),
       ]);
 
-      await sql.end();
+      await sql.end({ timeout: 5 }).catch(() => {});
 
       return new Response(
         JSON.stringify({
@@ -154,7 +154,7 @@ Deno.serve(async (req) => {
             ORDER BY MAX(threat_score) DESC LIMIT 5`.catch(() => []),
       ]);
 
-      await sql.end();
+      await sql.end({ timeout: 5 }).catch(() => {});
 
       const questions: any[] = [];
 
@@ -194,7 +194,7 @@ Deno.serve(async (req) => {
         GROUP BY DATE(detection_timestamp) ORDER BY date DESC LIMIT 30
       `.catch(() => []);
 
-      await sql.end();
+      await sql.end({ timeout: 5 }).catch(() => {});
 
       const avgDaily = dailyHistory.length > 0
         ? dailyHistory.reduce((sum: number, d: any) => sum + Number(d.flight_count), 0) / dailyHistory.length
@@ -303,7 +303,7 @@ RULES:
       });
 
       if (!sqlGenResponse.ok) {
-        await sql.end();
+        await sql.end({ timeout: 5 }).catch(() => {});
         return new Response(JSON.stringify({ error: "Failed to generate SQL query" }),
           { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
@@ -316,21 +316,21 @@ RULES:
 
       const lowerSQL = generatedSQL.toLowerCase();
       if (lowerSQL.includes('insert') || lowerSQL.includes('update') || lowerSQL.includes('delete') || lowerSQL.includes('drop') || lowerSQL.includes('truncate') || lowerSQL.includes('alter')) {
-        await sql.end();
+        await sql.end({ timeout: 5 }).catch(() => {});
         return new Response(JSON.stringify({ error: "Query validation failed - only SELECT queries allowed", generatedSQL }),
           { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
       try {
         const result = await sql.unsafe(generatedSQL);
-        await sql.end();
+        await sql.end({ timeout: 5 }).catch(() => {});
         return new Response(
           JSON.stringify({ success: true, query: generatedSQL, results: result, rowCount: result.length, message: `Found ${result.length} records` }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       } catch (queryErr) {
         console.error("Query execution error:", queryErr);
-        await sql.end();
+        await sql.end({ timeout: 5 }).catch(() => {});
         return new Response(
           JSON.stringify({ error: "Query execution failed", details: (queryErr as Error).message, generatedSQL }),
           { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -371,7 +371,7 @@ RULES:
         results[memoryType] = await queries[memoryType];
       }
 
-      await sql.end();
+      await sql.end({ timeout: 5 }).catch(() => {});
       return new Response(
         JSON.stringify({ memories: results, timestamp: new Date().toISOString() }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -388,7 +388,7 @@ RULES:
         sql`SELECT role, content FROM josiah_chat_v3_history ORDER BY timestamp DESC LIMIT 20`.catch(() => []),
       ]);
 
-      await sql.end();
+      await sql.end({ timeout: 5 }).catch(() => {});
 
       const memoryContext = `
 JOSIAH SACRED MEMORIES (${sacredMemories.length} core memories):
@@ -495,7 +495,7 @@ ${(recentHypotheses as any[]).map((h: any) => `- ${(h.hypothesis || '').slice(0,
     const corrCounts: any = correlationCounts[0] || {};
     const totalRecords = (allTables as any[]).reduce((sum: number, t: any) => sum + Number(t.row_count || 0), 0);
 
-    await sql.end();
+    await sql.end({ timeout: 5 }).catch(() => {});
 
     // Build Josiah's memory context for continuity
     const memoryContext = `
@@ -744,7 +744,7 @@ ${memoryContext}`;
 
   } catch (err) {
     console.error("Josiah chat error:", err);
-    if (sql) await sql.end().catch(() => {});
+    if (sql) await sql.end({ timeout: 5 }).catch(() => {});
     return new Response(
       JSON.stringify({ error: (err as Error).message }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }

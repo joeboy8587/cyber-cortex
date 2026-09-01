@@ -109,6 +109,9 @@ async function sha256(buf: ArrayBuffer): Promise<string> {
   return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
+const TERMINAL = ["ready", "failed"];
+const STUCK_MINUTES = 30;
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
@@ -116,9 +119,59 @@ Deno.serve(async (req) => {
   let documentId: string | null = null;
 
   try {
-    const { document_id } = await req.json();
-    documentId = document_id;
+    const body = await req.json().catch(() => ({} as any));
+    const action = body?.action;
+
+    // ---- Pipeline health / repair actions -------------------------------
+    if (action === "status" || action === "repair_stuck") {
+      const cutoff = new Date(Date.now() - STUCK_MINUTES * 60_000).toISOString();
+      const { data: docs, error } = await supabase
+        .from("rag_documents")
+        .select("id,title,status,status_message,updated_at,chunk_count")
+        .order("updated_at", { ascending: true });
+      if (error) throw error;
+
+      const all = docs ?? [];
+      const counts: Record<string, number> = {};
+      for (const d of all) counts[d.status] = (counts[d.status] || 0) + 1;
+      const stuck = all.filter((d) => !TERMINAL.includes(d.status) && d.updated_at < cutoff);
+
+      if (action === "status") {
+        return new Response(JSON.stringify({ counts, total: all.length, stuck }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      // repair_stuck — re-run the whole pipeline for each stranded document.
+      const limit = Math.min(Number(body?.limit) || 5, 10);
+      const batch = stuck.slice(0, limit);
+      for (const d of batch) {
+        // Clear half-written chunks so the re-run starts clean.
+        await supabase.from("rag_chunks").delete().eq("document_id", d.id);
+        await supabase.from("rag_documents")
+          .update({ status: "queued", status_message: "Re-queued by pipeline repair", chunk_count: 0 })
+          .eq("id", d.id);
+        // Fire-and-forget: each document gets its own invocation and budget.
+        const p = fetch(`${SUPABASE_URL}/functions/v1/rag-ingest`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${SERVICE_KEY}` },
+          body: JSON.stringify({ document_id: d.id }),
+        }).catch((e) => console.error("repair dispatch failed", d.id, e));
+        // @ts-ignore EdgeRuntime is available in Supabase edge functions
+        if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(p);
+      }
+
+      return new Response(JSON.stringify({
+        ok: true,
+        counts,
+        stuck_total: stuck.length,
+        requeued: batch.map((d) => ({ id: d.id, title: d.title, was: d.status })),
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    documentId = body?.document_id;
     if (!documentId) throw new Error("document_id required");
+
 
     const { data: doc, error: docErr } = await supabase
       .from("rag_documents").select("*").eq("id", documentId).single();

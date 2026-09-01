@@ -18,16 +18,24 @@ type TableRow = {
   row_estimate: number;
   total_bytes: number;
   column_count: number;
+  last_analyze?: string | null;
+  dead_tuples?: number;
   freshness: { ts_col: string; latest: string | null; last_24h: number; last_7d: number } | null;
 };
+type StaleRow = { table: string; rows: number; last_analyze: string | null; dead_tuples: number; stale_days: number | null };
 type Report = {
   generated_at: string;
-  summary: { total_tables: number; tables_with_24h_activity: number; total_bytes: number };
+  partial?: boolean;
+  duration_ms?: number;
+  errors?: Record<string, string>;
+  summary: { total_tables: number; tables_with_24h_activity: number; total_bytes: number; stale_stats_tables?: number };
   tables: TableRow[];
   top_active_24h: { table: string; last_24h: number; latest: string }[];
+  stale_stats?: StaleRow[];
   pipeline: Record<string, any>;
   new_tables: { tablename: string }[];
 };
+
 
 function fmtBytes(b: number): string {
   if (!b) return "0 B";
@@ -97,9 +105,11 @@ export default function NeonDataHealth() {
             </p>
             {report && (
               <p className="text-xs text-muted-foreground mt-1">
-                Generated {formatDistanceToNow(new Date(report.generated_at))} ago
+                Last successful refresh {formatDistanceToNow(new Date(report.generated_at))} ago
+                {report.duration_ms ? ` · scan took ${(report.duration_ms / 1000).toFixed(1)}s` : ""}
               </p>
             )}
+
           </div>
           <div className="flex gap-2">
             {report && (
@@ -120,11 +130,26 @@ export default function NeonDataHealth() {
           </div>
         )}
 
+        {report?.partial && (
+          <div className="p-4 border border-warning/40 bg-warning/10 rounded text-sm">
+            <AlertTriangle className="w-4 h-4 inline mr-2 text-warning" />
+            Partial scan — some checks ran out of time and were skipped. Everything shown below is accurate;
+            the skipped checks are listed under Raw JSON.
+          </div>
+        )}
+
         {!report && loading && (
           <div className="text-center py-20 text-muted-foreground text-sm">
             Inventorying Neon database…
           </div>
         )}
+
+        {!report && !loading && !error && (
+          <div className="text-center py-20 text-muted-foreground text-sm">
+            No report loaded yet — press Refresh.
+          </div>
+        )}
+
 
         {report && (
           <>
@@ -140,9 +165,47 @@ export default function NeonDataHealth() {
               <TabsList>
                 <TabsTrigger value="pipeline">Pipeline Coverage</TabsTrigger>
                 <TabsTrigger value="active">Active Tables</TabsTrigger>
+                <TabsTrigger value="maint">Maintenance ({report.stale_stats?.length ?? 0})</TabsTrigger>
                 <TabsTrigger value="all">All Tables ({report.tables.length})</TabsTrigger>
                 <TabsTrigger value="raw">Raw JSON</TabsTrigger>
               </TabsList>
+
+              <TabsContent value="maint" className="mt-4">
+                <CyberPanel title="Large tables with stale query statistics" icon={<AlertTriangle className="w-4 h-4" />}>
+                  <div className="p-4">
+                    <p className="text-xs text-muted-foreground mb-3">
+                      When statistics go stale, the database stops choosing the fastest path and panels start timing out.
+                      Anything listed here has more than 250,000 rows and has not been analysed in over a week.
+                    </p>
+                    <table className="w-full text-xs">
+                      <thead className="text-muted-foreground border-b border-border">
+                        <tr>
+                          <th className="text-left py-2">Table</th>
+                          <th className="text-right">Rows</th>
+                          <th className="text-right">Stats age</th>
+                          <th className="text-right">Dead rows</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(report.stale_stats ?? []).map((s) => (
+                          <tr key={s.table} className="border-b border-border/50">
+                            <td className="py-2 font-mono">{s.table}</td>
+                            <td className="text-right font-mono">{fmtNum(s.rows)}</td>
+                            <td className="text-right font-mono text-warning">
+                              {s.stale_days === null ? "never analysed" : `${s.stale_days}d`}
+                            </td>
+                            <td className="text-right font-mono text-muted-foreground">{fmtNum(s.dead_tuples)}</td>
+                          </tr>
+                        ))}
+                        {(report.stale_stats ?? []).length === 0 && (
+                          <tr><td colSpan={4} className="py-6 text-center text-success">All large tables have fresh statistics.</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </CyberPanel>
+              </TabsContent>
+
 
               <TabsContent value="pipeline" className="space-y-4 mt-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

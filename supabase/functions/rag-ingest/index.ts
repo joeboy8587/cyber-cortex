@@ -14,23 +14,25 @@ const AUTO_PROMOTE_THRESHOLD = 0.85;
 
 function chunkText(text: string, size = 1200, overlap = 150): string[] {
   const clean = text.replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
-  if (clean.length <= size) return [clean];
+  if (clean.length <= size) return clean.length > 0 ? [clean] : [];
   const chunks: string[] = [];
   let i = 0;
+  // Guaranteed-terminating walk: the cursor always advances by at least
+  // (size - overlap) characters, so no input can loop forever.
+  const step = Math.max(1, size - overlap);
   while (i < clean.length) {
     const end = Math.min(i + size, clean.length);
     let slice = clean.slice(i, end);
-    // try to break on paragraph/sentence
     if (end < clean.length) {
       const lastBreak = Math.max(slice.lastIndexOf("\n\n"), slice.lastIndexOf(". "));
       if (lastBreak > size * 0.5) slice = slice.slice(0, lastBreak + 1);
     }
     chunks.push(slice.trim());
-    i += slice.length - overlap;
-    if (i <= 0) i = end;
+    i += Math.max(step, slice.length - overlap);
   }
-  return chunks.filter(c => c.length > 30);
+  return chunks.filter((c) => c.length > 30);
 }
+
 
 async function parsePdf(bytes: Uint8Array): Promise<string> {
   // Use unpdf — Deno-compatible, no native canvas dependency

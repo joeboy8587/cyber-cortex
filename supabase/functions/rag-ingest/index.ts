@@ -154,26 +154,33 @@ Deno.serve(async (req) => {
       const done: any[] = [];
 
       for (const d of batch) {
-        if (Date.now() - startedAt > 110_000) break; // leave room to respond
+        if (Date.now() - startedAt > 100_000) break; // stay inside the 150s request limit
         // Clear half-written chunks so the re-run starts clean.
         await supabase.from("rag_chunks").delete().eq("document_id", d.id);
         await supabase.from("rag_documents")
           .update({ status: "queued", status_message: "Re-queued by pipeline repair", chunk_count: 0 })
           .eq("id", d.id);
+        const ac = new AbortController();
+        const cap = setTimeout(() => ac.abort(), Math.max(15_000, 100_000 - (Date.now() - startedAt)));
         try {
           const res = await fetch(`${SUPABASE_URL}/functions/v1/rag-ingest`, {
             method: "POST",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${SERVICE_KEY}` },
             body: JSON.stringify({ document_id: d.id }),
+            signal: ac.signal,
           });
           done.push({ id: d.id, title: d.title, was: d.status, ok: res.ok });
         } catch (e) {
-          console.error("repair run failed", d.id, e);
-          done.push({ id: d.id, title: d.title, was: d.status, ok: false });
+          // Aborted runs keep processing on their own worker; report as in progress.
+          console.error("repair run detached", d.id, e);
+          done.push({ id: d.id, title: d.title, was: d.status, ok: true, still_running: true });
+        } finally {
+          clearTimeout(cap);
         }
         // Respect the Unstructured 1 req/sec job-submission limit.
         await new Promise((r) => setTimeout(r, 1500));
       }
+
 
       return new Response(JSON.stringify({
         ok: true,

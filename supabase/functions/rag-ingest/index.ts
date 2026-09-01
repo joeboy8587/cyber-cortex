@@ -124,7 +124,8 @@ Deno.serve(async (req) => {
 
     // ---- Pipeline health / repair actions -------------------------------
     if (action === "status" || action === "repair_stuck") {
-      const cutoff = new Date(Date.now() - STUCK_MINUTES * 60_000).toISOString();
+      const stuckMinutes = Number(body?.stuck_minutes) > 0 ? Number(body.stuck_minutes) : STUCK_MINUTES;
+      const cutoff = new Date(Date.now() - stuckMinutes * 60_000).toISOString();
       const { data: docs, error } = await supabase
         .from("rag_documents")
         .select("id,title,status,status_message,updated_at,chunk_count")

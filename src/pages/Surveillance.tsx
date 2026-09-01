@@ -44,6 +44,7 @@ import { ZeroFootClassifier } from "@/components/dashboard/ZeroFootClassifier";
 import { NightOpsDashboard } from "@/components/dashboard/NightOpsDashboard";
 import { OpenFieldStagingPanel } from "@/components/dashboard/OpenFieldStagingPanel";
 import { EnrichedAircraftIntelligencePanel } from "@/components/dashboard/EnrichedAircraftIntelligencePanel";
+import FederalFrontPanel from "@/components/dashboard/FederalFrontPanel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export default function Surveillance() {
@@ -87,6 +88,7 @@ export default function Surveillance() {
               <TabsTrigger value="investigation">Investigation</TabsTrigger>
               <TabsTrigger value="live">Live Ops</TabsTrigger>
               <TabsTrigger value="watchtower">Watchtower</TabsTrigger>
+              <TabsTrigger value="fedfronts" className="text-destructive">🛡️ Fed Fronts</TabsTrigger>
               <TabsTrigger value="patterns">Patterns</TabsTrigger>
               <TabsTrigger value="monitoring">Monitoring</TabsTrigger>
               <TabsTrigger value="intake">Intake</TabsTrigger>
@@ -187,6 +189,12 @@ export default function Surveillance() {
             </section>
             <section>
               <BiometricBattleMap />
+            </section>
+          </TabsContent>
+
+          <TabsContent value="fedfronts" className="space-y-6">
+            <section>
+              <FederalFrontPanel />
             </section>
           </TabsContent>
 

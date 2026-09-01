@@ -54,7 +54,7 @@ export function RagPipelineHealth() {
     setRepairing(true);
     try {
       const { data, error } = await supabase.functions.invoke("rag-ingest", {
-        body: { action: "repair_stuck", limit: 5 },
+        body: { action: "repair_stuck", limit: 3 },
       });
       if (error) throw error;
       toast({

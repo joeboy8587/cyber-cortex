@@ -142,31 +142,43 @@ Deno.serve(async (req) => {
         });
       }
 
-      // repair_stuck — re-run the whole pipeline for each stranded document.
-      const limit = Math.min(Number(body?.limit) || 5, 10);
+      // repair_stuck — re-run the pipeline STRICTLY ONE DOCUMENT AT A TIME.
+      // Parallel dispatch blew the worker memory limit and tripped the
+      // Unstructured 1-request/second job limit, so keep it serial.
+      const limit = Math.min(Number(body?.limit) || 3, 5);
       const batch = stuck.slice(0, limit);
+      const startedAt = Date.now();
+      const done: any[] = [];
+
       for (const d of batch) {
+        if (Date.now() - startedAt > 110_000) break; // leave room to respond
         // Clear half-written chunks so the re-run starts clean.
         await supabase.from("rag_chunks").delete().eq("document_id", d.id);
         await supabase.from("rag_documents")
           .update({ status: "queued", status_message: "Re-queued by pipeline repair", chunk_count: 0 })
           .eq("id", d.id);
-        // Fire-and-forget: each document gets its own invocation and budget.
-        const p = fetch(`${SUPABASE_URL}/functions/v1/rag-ingest`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${SERVICE_KEY}` },
-          body: JSON.stringify({ document_id: d.id }),
-        }).catch((e) => console.error("repair dispatch failed", d.id, e));
-        // @ts-ignore EdgeRuntime is available in Supabase edge functions
-        if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(p);
+        try {
+          const res = await fetch(`${SUPABASE_URL}/functions/v1/rag-ingest`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${SERVICE_KEY}` },
+            body: JSON.stringify({ document_id: d.id }),
+          });
+          done.push({ id: d.id, title: d.title, was: d.status, ok: res.ok });
+        } catch (e) {
+          console.error("repair run failed", d.id, e);
+          done.push({ id: d.id, title: d.title, was: d.status, ok: false });
+        }
+        // Respect the Unstructured 1 req/sec job-submission limit.
+        await new Promise((r) => setTimeout(r, 1500));
       }
 
       return new Response(JSON.stringify({
         ok: true,
         counts,
         stuck_total: stuck.length,
-        requeued: batch.map((d) => ({ id: d.id, title: d.title, was: d.status })),
+        requeued: done,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
     }
 
     documentId = body?.document_id;

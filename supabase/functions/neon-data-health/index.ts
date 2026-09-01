@@ -125,14 +125,13 @@ serve(async (req) => {
     await pipeSlow("faa_enrichment_coverage", `
       WITH tails AS (
         SELECT DISTINCT registration FROM live_flight_detections_rows
-        WHERE detection_timestamp > NOW() - INTERVAL '24 hours' AND registration IS NOT NULL
+        WHERE detection_timestamp > NOW() - INTERVAL '12 hours' AND registration IS NOT NULL
       )
       SELECT COUNT(*)::int AS total_tails,
-             COUNT(*) FILTER (WHERE EXISTS (
-               SELECT 1 FROM faa_master r
-               WHERE r.n_number = t.registration OR r.n_number = ltrim(t.registration, 'N')
-             ))::int AS enriched_tails
-      FROM tails t`);
+             COUNT(m.n_number)::int AS enriched_tails
+      FROM tails t
+      LEFT JOIN faa_master m ON m.n_number = ltrim(t.registration, 'N')`);
+
     await pipe("icao_quarantine_total", `
       SELECT GREATEST(reltuples,0)::int AS n, 0 AS last_7d FROM pg_class WHERE relname='icao_quarantine'`);
     await pipe("ghost_fleet_active", `

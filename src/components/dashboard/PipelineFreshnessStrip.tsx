@@ -2,14 +2,23 @@ import { useCallback, useEffect, useState } from "react";
 import { CyberPanel } from "@/components/ui/cyber-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Activity, RefreshCw } from "lucide-react";
+import { Activity, RefreshCw, Play } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { useToast } from "@/hooks/use-toast";
 
 interface FreshnessRow {
   stage: string;
   latest: string | null;
   row_count: number;
 }
+
+// Stages that can be brought up to date on demand.
+const REFRESH_JOBS: Record<string, { fn: string; body: Record<string, unknown>; label: string }> = {
+  "Merkle ledger": { fn: "merkle-anchor", body: { action: "anchorBatch", batchSize: 500 }, label: "Seal new evidence" },
+  "Policy violations": { fn: "policy-violation-scan", body: { lookbackDays: 30 }, label: "Re-scan violations" },
+  "Sentinel threats": { fn: "sentinel-v2", body: {}, label: "Re-score threats" },
+  "Exhibits": { fn: "promotion-engine", body: {}, label: "Run promotion rules" },
+};
 
 function ageDays(latest: string | null): number | null {
   if (!latest) return null;
@@ -34,6 +43,7 @@ const STATUS_LABEL: Record<string, string> = {
   warn: "AGING",
   stalled: "STALLED",
 };
+
 
 export function PipelineFreshnessStrip() {
   const [rows, setRows] = useState<FreshnessRow[]>([]);

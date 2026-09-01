@@ -2,14 +2,23 @@ import { useCallback, useEffect, useState } from "react";
 import { CyberPanel } from "@/components/ui/cyber-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Activity, RefreshCw } from "lucide-react";
+import { Activity, RefreshCw, Play } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { useToast } from "@/hooks/use-toast";
 
 interface FreshnessRow {
   stage: string;
   latest: string | null;
   row_count: number;
 }
+
+// Stages that can be brought up to date on demand.
+const REFRESH_JOBS: Record<string, { fn: string; body: Record<string, unknown>; label: string }> = {
+  "Merkle ledger": { fn: "merkle-anchor", body: { action: "anchorBatch", batchSize: 500 }, label: "Seal new evidence" },
+  "Policy violations": { fn: "policy-violation-scan", body: { lookbackDays: 30 }, label: "Re-scan violations" },
+  "Sentinel threats": { fn: "sentinel-v2", body: {}, label: "Re-score threats" },
+  "Exhibits": { fn: "promotion-engine", body: {}, label: "Run promotion rules" },
+};
 
 function ageDays(latest: string | null): number | null {
   if (!latest) return null;
@@ -35,9 +44,12 @@ const STATUS_LABEL: Record<string, string> = {
   stalled: "STALLED",
 };
 
+
 export function PipelineFreshnessStrip() {
+  const { toast } = useToast();
   const [rows, setRows] = useState<FreshnessRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [running, setRunning] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -51,6 +63,26 @@ export function PipelineFreshnessStrip() {
   useEffect(() => {
     load();
   }, [load]);
+
+  const runJob = async (stage: string) => {
+    const job = REFRESH_JOBS[stage];
+    if (!job) return;
+    setRunning(stage);
+    try {
+      const { error } = await supabase.functions.invoke(job.fn, { body: job.body });
+      if (error) throw error;
+      toast({ title: `${stage} updated`, description: "New results are being written now." });
+      setTimeout(load, 3000);
+    } catch (e) {
+      toast({
+        title: `${stage} could not be updated`,
+        description: e instanceof Error ? e.message : "Unknown error",
+        variant: "destructive",
+      });
+    } finally {
+      setRunning(null);
+    }
+  };
 
   const stalled = rows.filter((r) => statusOf(ageDays(r.latest)) === "stalled").length;
 
@@ -75,6 +107,7 @@ export function PipelineFreshnessStrip() {
           {rows.map((r) => {
             const days = ageDays(r.latest);
             const st = statusOf(days);
+            const job = REFRESH_JOBS[r.stage];
             return (
               <div key={r.stage} className={`rounded border p-2.5 ${STATUS_STYLES[st]}`}>
                 <div className="font-mono text-[10px] uppercase tracking-wider opacity-80 truncate">
@@ -91,6 +124,18 @@ export function PipelineFreshnessStrip() {
                     {STATUS_LABEL[st]}
                   </Badge>
                 </div>
+                {job && st !== "ok" && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="w-full mt-2 h-7 text-[10px] border-current"
+                    disabled={running === r.stage}
+                    onClick={() => runJob(r.stage)}
+                  >
+                    <Play className={`w-3 h-3 mr-1 ${running === r.stage ? "animate-pulse" : ""}`} />
+                    {running === r.stage ? "Running…" : job.label}
+                  </Button>
+                )}
               </div>
             );
           })}
@@ -98,4 +143,5 @@ export function PipelineFreshnessStrip() {
       </div>
     </CyberPanel>
   );
+
 }

@@ -245,10 +245,13 @@ Deno.serve(async (req) => {
       raw_text_preview: text.slice(0, 2000),
     });
 
+    console.log(`[rag-ingest] chunking start mem=${JSON.stringify(Deno.memoryUsage())}`);
     const chunks = chunkText(text.slice(0, 200000));
+    console.log(`[rag-ingest] chunking done: ${chunks.length} chunks mem=${JSON.stringify(Deno.memoryUsage())}`);
     if (chunks.length === 0) throw new Error("no chunks produced");
 
     await update({ status: "embedding", status_message: `Embedding ${chunks.length} chunks` });
+
 
     // Embed AND insert in small waves so vectors are never all held in memory
     // at once (large documents previously blew the worker memory limit).

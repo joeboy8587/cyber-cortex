@@ -245,35 +245,37 @@ Deno.serve(async (req) => {
       raw_text_preview: text.slice(0, 2000),
     });
 
-    const chunks = chunkText(text);
+    const chunks = chunkText(text.slice(0, 200000));
     if (chunks.length === 0) throw new Error("no chunks produced");
 
     await update({ status: "embedding", status_message: `Embedding ${chunks.length} chunks` });
 
-    // Embed in batches of 64
-    const allRows: any[] = [];
-    for (let i = 0; i < chunks.length; i += 64) {
-      const batch = chunks.slice(i, i + 64);
+    // Embed AND insert in small waves so vectors are never all held in memory
+    // at once (large documents previously blew the worker memory limit).
+    let inserted = 0;
+    for (let i = 0; i < chunks.length; i += 24) {
+      const batch = chunks.slice(i, i + 24);
       const vecs = await embed(batch);
-      vecs.forEach((v, j) => {
-        allRows.push({
-          document_id: documentId,
-          chunk_index: i + j,
-          content: batch[j],
-          token_estimate: Math.ceil(batch[j].length / 4),
-          embedding: v,
-        });
-      });
-    }
-
-    // Insert chunks (bulk in pages of 100)
-    for (let i = 0; i < allRows.length; i += 100) {
-      const slice = allRows.slice(i, i + 100);
-      const { error } = await supabase.from("rag_chunks").insert(slice);
+      const rows = vecs.map((v, j) => ({
+        document_id: documentId,
+        chunk_index: i + j,
+        content: batch[j],
+        token_estimate: Math.ceil(batch[j].length / 4),
+        embedding: v,
+      }));
+      const { error } = await supabase.from("rag_chunks").insert(rows);
       if (error) throw new Error(`chunks insert: ${error.message}`);
+      inserted += rows.length;
+      rows.length = 0;
+      vecs.length = 0;
+      if (i % 120 === 0) {
+        await update({ status: "embedding", status_message: `Embedded ${inserted}/${chunks.length} chunks` });
+      }
     }
+    const allRows = { length: inserted };
 
-    await update({ status: "analyzing", status_message: "Extracting entities", chunk_count: allRows.length });
+    await update({ status: "analyzing", status_message: "Extracting entities", chunk_count: inserted });
+
 
     const extractions = await extractEntities(text);
     let autoPromoted = 0;

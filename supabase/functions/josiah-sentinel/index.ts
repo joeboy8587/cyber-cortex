@@ -644,7 +644,7 @@ serve(async (req) => {
         registration: detection.registration || detection.callsign || 'UNKNOWN',
         details: severity === 'critical'
           ? `Aircraft at ${alt}ft — 14 CFR § 91.119 minimum safe altitude breach (congested-area floor 1,000ft / 500ft other).`
-          : `Aircraft at ${alt}ft — PATTERN ANOMALY: below FAR § 91.119 floor within AOI. Network-context correlation required for prosecution.`,
+          : `Aircraft at ${alt}ft over the AOI — below the 14 CFR § 91.119 congested-area floor of 1,000ft. Recorded as a measured altitude fact.`,
         timestamp: detection.detection_timestamp, altitude: alt,
         coordinates: detection.latitude && detection.longitude ? 
           { lat: parseFloat(detection.latitude), lng: parseFloat(detection.longitude) } : undefined

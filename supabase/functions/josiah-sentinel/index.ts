@@ -213,7 +213,74 @@ interface Countermeasure {
   escalation_level: number;
   total_violations: number;
   status: string;
+  source?: 'AI' | 'RULEBOOK';
 }
+
+// Deterministic countermeasure rulebook — guarantees an action for every escalated
+// tail even when the AI writer is slow, rate-limited, or unavailable.
+function rulebookCountermeasure(threatType: string, escalationLevel: number): string {
+  const t = String(threatType || '').toUpperCase();
+  if (t.includes('PHYSICS')) {
+    return 'File FAA Flight Standards (FSDO) complaint citing 14 CFR § 91.119 + demand LADD/registry audit for sub-stall and 0ft staging telemetry';
+  }
+  if (t.includes('IDENTITY') || t.includes('SPOOF') || t.includes('FALSIFICATION')) {
+    return 'FAA Registry referral on ICAO-hex / N-number mismatch + build identity-falsification exhibit (49 U.S.C. § 44103 / 18 U.S.C. § 1001)';
+  }
+  if (t.includes('KCSO') || t.includes('CIVIL-RIGHTS') || t.includes('LAW ENFORCEMENT')) {
+    return 'Add to 42 U.S.C. § 1983 discovery exhibit + serve CPRA/FOIA request for flight logs, mission tasking and funding records';
+  }
+  if (t.includes('BIOMETRIC') || t.includes('HARM')) {
+    return 'Compile medical causation exhibit (±5 min biometric window) and attach physician-verified ECG set to damages filing';
+  }
+  if (t.includes('MILITARY') || t.includes('POSSE') || t.includes('1385')) {
+    return 'FBI tips.fbi.gov referral under 18 U.S.C. § 1385 + DoD IG complaint documenting military/civilian tasking';
+  }
+  if (t.includes('SHELL') || t.includes('ENTERPRISE') || t.includes('RICO')) {
+    return 'Corporate veil trace: CA SOS + Delaware filings, subpoena beneficial owner, add to RICO predicate exhibit';
+  }
+  if (t.includes('MEDICAL')) {
+    return 'Air-ambulance mission audit: request CMS/insurer transport records and cross-check against detection track';
+  }
+  if (t.includes('NIGHT')) {
+    return 'Night-operations exhibit: log 1-4 AM passes and demand operator justification via FAA hotline 1-866-835-5322';
+  }
+  return escalationLevel >= 4
+    ? 'Escalate to federal referral packet (FBI + FAA hotline) with full detection history and hash manifest'
+    : 'Open evidence file: FOIA registered owner, preserve detection track, add to TRO discovery exhibit';
+}
+
+interface AircraftDossier {
+  registration: string;
+  trigger: string;                 // which violation pulled this dossier
+  operator: string | null;
+  operator_type: string | null;
+  operator_location: string | null;
+  aircraft_type: string | null;
+  year_manufactured: number | null;
+  reg_status: string | null;
+  icao24: string | null;
+  faa_matched: boolean;
+  detections: number;
+  days_active: number;
+  first_seen: string | null;
+  last_seen: string | null;
+  alt_avg_ft: number | null;
+  alt_min_ft: number | null;
+  night_pct: number;
+  low_alt_pct: number;
+  sub_stall_pct: number;
+  aoi_pct: number;
+  peak_hours: string[];
+  risk_score: number;
+  faa_violations: number;
+  sentinel_violations: number;
+  violation_types: string[];
+  partners: Array<{ registration: string; weight: number }>;
+  known_threat: { threat_type: string; escalation_level: number; total_violations: number; countermeasure_status: string } | null;
+  recommended_action: string;
+  assessment: string;
+}
+
 
 interface DedupeMetrics {
   raw_pings: number;            // raw ADS-B/MLAT rows pulled

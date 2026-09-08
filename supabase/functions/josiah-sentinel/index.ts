@@ -213,7 +213,74 @@ interface Countermeasure {
   escalation_level: number;
   total_violations: number;
   status: string;
+  source?: 'AI' | 'RULEBOOK';
 }
+
+// Deterministic countermeasure rulebook — guarantees an action for every escalated
+// tail even when the AI writer is slow, rate-limited, or unavailable.
+function rulebookCountermeasure(threatType: string, escalationLevel: number): string {
+  const t = String(threatType || '').toUpperCase();
+  if (t.includes('PHYSICS')) {
+    return 'File FAA Flight Standards (FSDO) complaint citing 14 CFR § 91.119 + demand LADD/registry audit for sub-stall and 0ft staging telemetry';
+  }
+  if (t.includes('IDENTITY') || t.includes('SPOOF') || t.includes('FALSIFICATION')) {
+    return 'FAA Registry referral on ICAO-hex / N-number mismatch + build identity-falsification exhibit (49 U.S.C. § 44103 / 18 U.S.C. § 1001)';
+  }
+  if (t.includes('KCSO') || t.includes('CIVIL-RIGHTS') || t.includes('LAW ENFORCEMENT')) {
+    return 'Add to 42 U.S.C. § 1983 discovery exhibit + serve CPRA/FOIA request for flight logs, mission tasking and funding records';
+  }
+  if (t.includes('BIOMETRIC') || t.includes('HARM')) {
+    return 'Compile medical causation exhibit (±5 min biometric window) and attach physician-verified ECG set to damages filing';
+  }
+  if (t.includes('MILITARY') || t.includes('POSSE') || t.includes('1385')) {
+    return 'FBI tips.fbi.gov referral under 18 U.S.C. § 1385 + DoD IG complaint documenting military/civilian tasking';
+  }
+  if (t.includes('SHELL') || t.includes('ENTERPRISE') || t.includes('RICO')) {
+    return 'Corporate veil trace: CA SOS + Delaware filings, subpoena beneficial owner, add to RICO predicate exhibit';
+  }
+  if (t.includes('MEDICAL')) {
+    return 'Air-ambulance mission audit: request CMS/insurer transport records and cross-check against detection track';
+  }
+  if (t.includes('NIGHT')) {
+    return 'Night-operations exhibit: log 1-4 AM passes and demand operator justification via FAA hotline 1-866-835-5322';
+  }
+  return escalationLevel >= 4
+    ? 'Escalate to federal referral packet (FBI + FAA hotline) with full detection history and hash manifest'
+    : 'Open evidence file: FOIA registered owner, preserve detection track, add to TRO discovery exhibit';
+}
+
+interface AircraftDossier {
+  registration: string;
+  trigger: string;                 // which violation pulled this dossier
+  operator: string | null;
+  operator_type: string | null;
+  operator_location: string | null;
+  aircraft_type: string | null;
+  year_manufactured: number | null;
+  reg_status: string | null;
+  icao24: string | null;
+  faa_matched: boolean;
+  detections: number;
+  days_active: number;
+  first_seen: string | null;
+  last_seen: string | null;
+  alt_avg_ft: number | null;
+  alt_min_ft: number | null;
+  night_pct: number;
+  low_alt_pct: number;
+  sub_stall_pct: number;
+  aoi_pct: number;
+  peak_hours: string[];
+  risk_score: number;
+  faa_violations: number;
+  sentinel_violations: number;
+  violation_types: string[];
+  partners: Array<{ registration: string; weight: number }>;
+  known_threat: { threat_type: string; escalation_level: number; total_violations: number; countermeasure_status: string } | null;
+  recommended_action: string;
+  assessment: string;
+}
+
 
 interface DedupeMetrics {
   raw_pings: number;            // raw ADS-B/MLAT rows pulled
@@ -239,6 +306,8 @@ interface SentinelReport {
   threat_level: 'CRITICAL' | 'HIGH' | 'ELEVATED' | 'NORMAL';
   adaptive_thresholds: AdaptiveThreshold[];
   countermeasures: Countermeasure[];
+  dossiers: AircraftDossier[];
+
   josiah_snark: string | null;
   military_repeat_offenders: Array<{ callsign: string; prefix: string; appearances: number; first_seen?: string; last_seen?: string; min_altitude?: number }>;
   hall_of_shame: HallOfShameEntry[];
@@ -424,6 +493,8 @@ serve(async (req) => {
     const proactiveAlerts: string[] = [];
     const adaptiveThresholds: AdaptiveThreshold[] = [];
     const countermeasures: Countermeasure[] = [];
+    const dossiers: AircraftDossier[] = [];
+
 
     // ========== STEP 0: LOAD ADAPTIVE THRESHOLDS FROM LEARNED THREATS ==========
     let learnedThreats: any[] = [];
@@ -573,7 +644,7 @@ serve(async (req) => {
         registration: detection.registration || detection.callsign || 'UNKNOWN',
         details: severity === 'critical'
           ? `Aircraft at ${alt}ft — 14 CFR § 91.119 minimum safe altitude breach (congested-area floor 1,000ft / 500ft other).`
-          : `Aircraft at ${alt}ft — PATTERN ANOMALY: below FAR § 91.119 floor within AOI. Network-context correlation required for prosecution.`,
+          : `Aircraft at ${alt}ft over the AOI — below the 14 CFR § 91.119 congested-area floor of 1,000ft. Recorded as a measured altitude fact.`,
         timestamp: detection.detection_timestamp, altitude: alt,
         coordinates: detection.latitude && detection.longitude ? 
           { lat: parseFloat(detection.latitude), lng: parseFloat(detection.longitude) } : undefined
@@ -614,7 +685,7 @@ serve(async (req) => {
       violations.push({
         type: 'SHELL_COMPANY', severity: uniqueShell.length >= 2 ? 'critical' : 'high',
         registration: uniqueShell.join(', '),
-        details: `${uniqueShell.length} shell-linked aircraft detected${shellOperators.length ? ` • operators: ${shellOperators.slice(0, 3).join(', ')}` : ''}`,
+        details: `${uniqueShell.length} aircraft over the AOI are registered to holding-company / leasing entities rather than named end users${shellOperators.length ? ` — registrants of record: ${shellOperators.slice(0, 3).join(', ')}` : ''}`,
         timestamp: new Date().toISOString(), relatedAircraft: uniqueShell as string[]
       });
     }
@@ -1167,19 +1238,38 @@ Write 4-7 short punchy paragraphs. Highlight the worst offenders by name. Mock c
     }
     proactiveAlerts.push(...escalationAlerts);
 
-    // ========== STEP 9.7: COUNTERMEASURES (always run when escalated threats exist) ==========
-    if (sbSql && LOVABLE_API_KEY && (Date.now() - startTime) < 22000) {
+    // ========== STEP 9.7: COUNTERMEASURES (rulebook first, AI refinement optional) ==========
+    let escalatedThreats: any[] = [];
+    if (sbSql) {
       try {
-        const highEscalationThreats = await withTimeout(
+        escalatedThreats = await withTimeout(
           sbSql`SELECT registration, threat_type, total_violations, escalation_level, avg_altitude, countermeasure_status
             FROM sentinel_learned_threats WHERE escalation_level >= 2
             ORDER BY escalation_level DESC, total_violations DESC LIMIT 20`,
-          5000, "high_escalation_query"
+          6000, "high_escalation_query"
         );
-        if (highEscalationThreats.length > 0) {
-          const cmPrompt = `You are an offensive countermeasure planner. For each escalated aerial threat below, recommend ONE concrete legal/forensic countermeasure (e.g. "FAA Hotline 1-866-835-5322 report", "FBI tips.fbi.gov § 1385 referral", "OFAC referral", "FOIA registration owner", "Add to TRO discovery exhibit", "Demand FAA LADD audit", "File NTSB safety complaint").
+      } catch (e) { console.warn("Escalated threat query failed:", e instanceof Error ? e.message : e); }
+
+      // 1) Deterministic rulebook — every escalated tail always gets an action.
+      for (const t of escalatedThreats) {
+        const escLvl = Number(t.escalation_level) || 1;
+        countermeasures.push({
+          registration: t.registration,
+          action: rulebookCountermeasure(String(t.threat_type || ''), escLvl),
+          priority: escLvl >= 4 ? 'critical' : escLvl >= 3 ? 'high' : 'medium',
+          escalation_level: escLvl,
+          total_violations: Number(t.total_violations) || 0,
+          status: escLvl >= 4 ? 'ESCALATED' : escLvl >= 3 ? 'RECOMMENDED' : 'PENDING',
+          source: 'RULEBOOK',
+        });
+      }
+
+      // 2) AI refinement — upgrades rulebook wording when budget allows.
+      if (LOVABLE_API_KEY && escalatedThreats.length > 0 && (Date.now() - startTime) < 60000) {
+        try {
+          const cmPrompt = `You are an offensive countermeasure planner for a federal surveillance investigation. For each escalated aerial threat below, state ONE concrete legal/forensic action in direct declarative voice (no hedging, no "consider", no "may"). Examples: "File FAA Hotline 1-866-835-5322 complaint citing 14 CFR § 91.119", "FBI tips.fbi.gov referral under 18 U.S.C. § 1385", "Subpoena beneficial owner via CA SOS filings", "Demand FAA LADD audit", "Add to TRO discovery exhibit".
 Threats:
-${highEscalationThreats.map((t: any) => `- ${t.registration} | ${t.threat_type} | Level ${t.escalation_level} | ${t.total_violations} violations`).join('\n')}
+${escalatedThreats.map((t: any) => `- ${t.registration} | ${t.threat_type} | Level ${t.escalation_level} | ${t.total_violations} detections`).join('\n')}
 Output STRICT format, one per line, no preamble:
 REGISTRATION | ACTION | PRIORITY (critical/high/medium)`;
 
@@ -1190,58 +1280,171 @@ REGISTRATION | ACTION | PRIORITY (critical/high/medium)`;
               body: JSON.stringify({
                 model: "google/gemini-2.5-flash-lite",
                 messages: [
-                  { role: "system", content: "Output structured countermeasure recommendations. No preamble, no markdown." },
+                  { role: "system", content: "Output structured countermeasure recommendations. No preamble, no markdown, no hedging." },
                   { role: "user", content: cmPrompt }
                 ],
                 max_tokens: 600,
               }),
             }),
-            10000, "countermeasure_ai"
+            12000, "countermeasure_ai"
           );
           if (cmResponse.ok) {
             const cmData = await cmResponse.json();
             const cmText = cmData.choices?.[0]?.message?.content || '';
-            const lines = cmText.split('\n').filter((l: string) => l.trim() && l.includes('|'));
-            for (const line of lines) {
+            for (const line of cmText.split('\n')) {
+              if (!line.includes('|')) continue;
               const parts = line.split('|').map((p: string) => p.trim());
-              if (parts.length >= 3) {
-                const matchingThreat = highEscalationThreats.find((t: any) => parts[0].includes(t.registration));
-                const reg = matchingThreat?.registration || parts[0];
-                const action = parts[1];
-                const priority = (parts[2].toLowerCase().includes('critical') ? 'critical' : parts[2].toLowerCase().includes('high') ? 'high' : 'medium') as 'critical' | 'high' | 'medium';
-                const escLvl = matchingThreat ? Number(matchingThreat.escalation_level) : 1;
-                countermeasures.push({
-                  registration: reg, action, priority,
-                  escalation_level: escLvl,
-                  total_violations: matchingThreat ? Number(matchingThreat.total_violations) : 0,
-                  status: 'RECOMMENDED'
-                });
-
-                // Persist countermeasure to threat record
-                if (matchingThreat) {
-                  try {
-                    const newStatus = escLvl >= 4 ? 'ESCALATED' : escLvl >= 3 ? 'RECOMMENDED' : 'PENDING';
-                    await withTimeout(
-                      sbSql`UPDATE sentinel_learned_threats
-                        SET countermeasure_status = ${newStatus},
-                            countermeasure_actions = COALESCE(countermeasure_actions, '[]'::jsonb) || ${JSON.stringify([{
-                              action, priority, generated_at: new Date().toISOString()
-                            }])}::jsonb,
-                            updated_at = NOW()
-                        WHERE registration = ${matchingThreat.registration} AND threat_type = ${matchingThreat.threat_type}`,
-                      3000, "persist_countermeasure"
-                    );
-                  } catch (persistErr) {
-                    console.warn("Countermeasure persist failed:", persistErr instanceof Error ? persistErr.message : persistErr);
-                  }
-                }
+              if (parts.length < 3 || !parts[1]) continue;
+              const target = countermeasures.find(c => parts[0].toUpperCase().includes(c.registration.toUpperCase()));
+              if (target) {
+                target.action = parts[1];
+                target.source = 'AI';
               }
             }
-            console.log(`Generated and persisted ${countermeasures.length} countermeasures`);
           }
+        } catch (e) { console.warn("Countermeasure AI refinement skipped:", e instanceof Error ? e.message : e); }
+      }
+
+      // 3) Persist whatever we produced (rulebook or refined).
+      for (const cm of countermeasures.slice(0, 20)) {
+        const threat = escalatedThreats.find((t: any) => t.registration === cm.registration);
+        if (!threat) continue;
+        try {
+          await withTimeout(
+            sbSql`UPDATE sentinel_learned_threats
+              SET countermeasure_status = ${cm.status},
+                  countermeasure_actions = COALESCE(countermeasure_actions, '[]'::jsonb) || ${JSON.stringify([{
+                    action: cm.action, priority: cm.priority, source: cm.source, generated_at: new Date().toISOString()
+                  }])}::jsonb,
+                  updated_at = NOW()
+              WHERE registration = ${threat.registration} AND threat_type = ${threat.threat_type}`,
+            3000, "persist_countermeasure"
+          );
+        } catch (persistErr) {
+          console.warn("Countermeasure persist failed:", persistErr instanceof Error ? persistErr.message : persistErr);
         }
-      } catch (e) { console.warn("Countermeasure generation skipped:", e instanceof Error ? e.message : e); }
+      }
+      console.log(`Countermeasures generated: ${countermeasures.length}`);
     }
+
+    // ========== STEP 9.75: AUTO-DOSSIERS FOR CRITICAL / HIGH FINDINGS ==========
+    try {
+      const dossierTails = new Set<string>();
+      const triggerByTail = new Map<string, string>();
+      for (const v of violations) {
+        if (v.severity !== 'critical' && v.severity !== 'high') continue;
+        const tails = [
+          ...(v.relatedAircraft || []),
+          ...String(v.registration || '').split(',').map(s => s.trim()),
+        ].filter(t => t && /^[A-Z0-9-]{3,10}$/i.test(t) && t.toUpperCase() !== 'UNKNOWN');
+        for (const t of tails) {
+          const up = t.toUpperCase();
+          if (dossierTails.size >= 12 && !dossierTails.has(up)) continue;
+          dossierTails.add(up);
+          if (!triggerByTail.has(up)) triggerByTail.set(up, v.type);
+        }
+      }
+
+      if (dossierTails.size > 0) {
+        const tailList = [...dossierTails];
+        const rows: any[] = await withTimeout(
+          sql`SELECT registration, icao24, faa_matched, operator, operator_type, operator_city, operator_state,
+                     aircraft_type, year_manufactured, reg_status, detections, days_active, first_seen, last_seen,
+                     alt_avg, alt_min, night_pct, low_alt_pct, sub_stall_pct, aoi_pct, hour_hist,
+                     risk_score, faa_violations, sentinel_violations, violation_types, top_partners
+              FROM aircraft_dossier WHERE registration = ANY(${tailList})`,
+          9000, "dossier_lookup"
+        );
+
+        let knownThreats: any[] = [];
+        if (sbSql) {
+          try {
+            knownThreats = await withTimeout(
+              sbSql`SELECT registration, threat_type, escalation_level, total_violations, countermeasure_status
+                FROM sentinel_learned_threats WHERE registration = ANY(${tailList})
+                ORDER BY escalation_level DESC`,
+              5000, "dossier_threats"
+            );
+          } catch { /* non-fatal */ }
+        }
+
+        for (const tail of tailList) {
+          const r = rows.find((x: any) => String(x.registration).toUpperCase() === tail);
+          const kt = knownThreats.find((x: any) => String(x.registration).toUpperCase() === tail) || null;
+          const hourHist: number[] = Array.isArray(r?.hour_hist) ? r.hour_hist.map(Number) : [];
+          const peakHours = hourHist.length === 24
+            ? hourHist
+                .map((n, h) => ({ n, h }))
+                .sort((a, b) => b.n - a.n)
+                .slice(0, 3)
+                .filter(x => x.n > 0)
+                .map(x => `${String(x.h).padStart(2, '0')}:00 UTC`)
+            : [];
+          const detections = Number(r?.detections || 0);
+          const nightPct = Math.round(Number(r?.night_pct || 0) * 1000) / 10;
+          const lowAltPct = Math.round(Number(r?.low_alt_pct || 0) * 1000) / 10;
+          const subStallPct = Math.round(Number(r?.sub_stall_pct || 0) * 1000) / 10;
+          const aoiPct = Math.round(Number(r?.aoi_pct || 0) * 1000) / 10;
+          const altAvg = r?.alt_avg != null ? Math.round(Number(r.alt_avg)) : null;
+          const altMin = r?.alt_min != null ? Math.round(Number(r.alt_min)) : null;
+          const operator = r?.operator || null;
+
+          const parts: string[] = [];
+          if (operator) parts.push(`FAA registry names ${operator} as registrant${r?.operator_state ? ` (${r.operator_city || ''} ${r.operator_state})`.replace('  ', ' ') : ''}.`);
+          else parts.push('No FAA registry match for this tail — identity is unverified against the federal registry.');
+          if (detections > 0) parts.push(`${detections.toLocaleString()} detections across ${Number(r?.days_active || 0)} active days.`);
+          if (altAvg !== null) parts.push(`Average altitude ${altAvg.toLocaleString()}ft, lowest recorded ${altMin?.toLocaleString() ?? '—'}ft.`);
+          if (lowAltPct > 0) parts.push(`${lowAltPct}% of passes sit below 1,000ft — 14 CFR § 91.119 sets the congested-area floor at 1,000ft.`);
+          if (nightPct > 0) parts.push(`${nightPct}% of activity falls in the night window.`);
+          if (subStallPct > 0) parts.push(`${subStallPct}% of telemetry is below Cessna 172 stall speed.`);
+          if (aoiPct > 0) parts.push(`${aoiPct}% of its track sits inside the 10-mile AOI ring.`);
+          if (peakHours.length) parts.push(`It returns at ${peakHours.join(', ')}.`);
+          if (kt) parts.push(`Already on the learned-threat list as ${kt.threat_type}, escalation level ${kt.escalation_level}.`);
+
+          dossiers.push({
+            registration: tail,
+            trigger: triggerByTail.get(tail) || 'FLAGGED',
+            operator,
+            operator_type: r?.operator_type || null,
+            operator_location: [r?.operator_city, r?.operator_state].filter(Boolean).join(', ') || null,
+            aircraft_type: r?.aircraft_type || null,
+            year_manufactured: r?.year_manufactured ? Number(r.year_manufactured) : null,
+            reg_status: r?.reg_status || null,
+            icao24: r?.icao24 || null,
+            faa_matched: Boolean(r?.faa_matched),
+            detections,
+            days_active: Number(r?.days_active || 0),
+            first_seen: r?.first_seen || null,
+            last_seen: r?.last_seen || null,
+            alt_avg_ft: altAvg,
+            alt_min_ft: altMin,
+            night_pct: nightPct,
+            low_alt_pct: lowAltPct,
+            sub_stall_pct: subStallPct,
+            aoi_pct: aoiPct,
+            peak_hours: peakHours,
+            risk_score: Number(r?.risk_score || 0),
+            faa_violations: Number(r?.faa_violations || 0),
+            sentinel_violations: Number(r?.sentinel_violations || 0),
+            violation_types: Array.isArray(r?.violation_types) ? r.violation_types : [],
+            partners: Array.isArray(r?.top_partners)
+              ? r.top_partners.slice(0, 6).map((p: any) => ({ registration: p.registration, weight: Number(p.weight || 0) }))
+              : [],
+            known_threat: kt ? {
+              threat_type: kt.threat_type,
+              escalation_level: Number(kt.escalation_level),
+              total_violations: Number(kt.total_violations),
+              countermeasure_status: kt.countermeasure_status || 'NONE',
+            } : null,
+            recommended_action: countermeasures.find(c => c.registration.toUpperCase() === tail)?.action
+              || rulebookCountermeasure(kt?.threat_type || triggerByTail.get(tail) || '', Number(kt?.escalation_level || 2)),
+            assessment: parts.join(' '),
+          });
+        }
+        console.log(`Dossiers built: ${dossiers.length}`);
+      }
+    } catch (e) { console.warn("Dossier build failed:", e instanceof Error ? e.message : e); }
+
 
     // ========== STEP 9.5: 90-DAY HALL OF SHAME ==========
     // Top tails by detection count over 90 days within Kern AOI, with altitude
@@ -1349,6 +1552,8 @@ REGISTRATION | ACTION | PRIORITY (critical/high/medium)`;
       threat_level: threatLevel,
       adaptive_thresholds: adaptiveThresholds,
       countermeasures,
+      dossiers,
+
       josiah_snark: josiahSnark,
       military_repeat_offenders: militaryRepeatOffenders,
       hall_of_shame: hallOfShame,

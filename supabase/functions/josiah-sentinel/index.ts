@@ -685,7 +685,7 @@ serve(async (req) => {
       violations.push({
         type: 'SHELL_COMPANY', severity: uniqueShell.length >= 2 ? 'critical' : 'high',
         registration: uniqueShell.join(', '),
-        details: `${uniqueShell.length} shell-linked aircraft detected${shellOperators.length ? ` • operators: ${shellOperators.slice(0, 3).join(', ')}` : ''}`,
+        details: `${uniqueShell.length} aircraft over the AOI are registered to holding-company / leasing entities rather than named end users${shellOperators.length ? ` — registrants of record: ${shellOperators.slice(0, 3).join(', ')}` : ''}`,
         timestamp: new Date().toISOString(), relatedAircraft: uniqueShell as string[]
       });
     }

@@ -306,6 +306,8 @@ interface SentinelReport {
   threat_level: 'CRITICAL' | 'HIGH' | 'ELEVATED' | 'NORMAL';
   adaptive_thresholds: AdaptiveThreshold[];
   countermeasures: Countermeasure[];
+  dossiers: AircraftDossier[];
+
   josiah_snark: string | null;
   military_repeat_offenders: Array<{ callsign: string; prefix: string; appearances: number; first_seen?: string; last_seen?: string; min_altitude?: number }>;
   hall_of_shame: HallOfShameEntry[];
@@ -491,6 +493,8 @@ serve(async (req) => {
     const proactiveAlerts: string[] = [];
     const adaptiveThresholds: AdaptiveThreshold[] = [];
     const countermeasures: Countermeasure[] = [];
+    const dossiers: AircraftDossier[] = [];
+
 
     // ========== STEP 0: LOAD ADAPTIVE THRESHOLDS FROM LEARNED THREATS ==========
     let learnedThreats: any[] = [];
@@ -1416,6 +1420,8 @@ REGISTRATION | ACTION | PRIORITY (critical/high/medium)`;
       threat_level: threatLevel,
       adaptive_thresholds: adaptiveThresholds,
       countermeasures,
+      dossiers,
+
       josiah_snark: josiahSnark,
       military_repeat_offenders: militaryRepeatOffenders,
       hall_of_shame: hallOfShame,

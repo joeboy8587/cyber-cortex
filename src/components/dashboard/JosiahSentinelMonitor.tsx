@@ -697,6 +697,92 @@ ${report.ai_synthesis ? `
           </Card>
         </TabsContent>
 
+        <TabsContent value="dossiers">
+          <Card className="border-sky-500/30">
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <FileText className="h-5 w-5 text-sky-400" />
+                Aircraft Dossiers ({report?.dossiers?.length || 0})
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ScrollArea className="h-[520px] pr-3">
+                {(!report?.dossiers || report.dossiers.length === 0) && (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <FileText className="h-12 w-12 mx-auto mb-2 opacity-50" />
+                    <p>No critical or high findings in this scan window — nothing to compile.</p>
+                  </div>
+                )}
+                <div className="space-y-3">
+                  {report?.dossiers?.map((d) => (
+                    <details key={d.registration} className="rounded-lg border border-sky-500/20 bg-sky-500/5 p-4">
+                      <summary className="cursor-pointer list-none flex flex-wrap items-center gap-2">
+                        <span className="font-mono font-bold">{d.registration}</span>
+                        <Badge variant="outline" className="text-xs">{d.trigger.replace(/_/g, ' ')}</Badge>
+                        {!d.faa_matched && <Badge className="bg-red-500/20 text-red-400 text-xs">NO FAA MATCH</Badge>}
+                        {d.known_threat && (
+                          <Badge className={getEscalationColor(d.known_threat.escalation_level)}>
+                            Level {d.known_threat.escalation_level}
+                          </Badge>
+                        )}
+                        <span className="text-xs text-muted-foreground ml-auto">
+                          {d.detections.toLocaleString()} detections · risk {d.risk_score}
+                        </span>
+                      </summary>
+
+                      <div className="mt-3 space-y-2 text-sm">
+                        <p className="text-muted-foreground">{d.assessment}</p>
+
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                          <div><span className="text-muted-foreground">Registrant</span><br/><span className="font-medium">{d.operator || '—'}</span></div>
+                          <div><span className="text-muted-foreground">Location</span><br/><span className="font-medium">{d.operator_location || '—'}</span></div>
+                          <div><span className="text-muted-foreground">Type</span><br/><span className="font-medium">{d.aircraft_type || '—'}{d.year_manufactured ? ` (${d.year_manufactured})` : ''}</span></div>
+                          <div><span className="text-muted-foreground">Reg status</span><br/><span className="font-medium">{d.reg_status || '—'}</span></div>
+                          <div><span className="text-muted-foreground">Avg / min altitude</span><br/><span className="font-medium">{d.alt_avg_ft ?? '—'} / {d.alt_min_ft ?? '—'} ft</span></div>
+                          <div><span className="text-muted-foreground">Below 1,000ft</span><br/><span className="font-medium">{d.low_alt_pct}%</span></div>
+                          <div><span className="text-muted-foreground">Night activity</span><br/><span className="font-medium">{d.night_pct}%</span></div>
+                          <div><span className="text-muted-foreground">Inside AOI</span><br/><span className="font-medium">{d.aoi_pct}%</span></div>
+                        </div>
+
+                        {d.peak_hours.length > 0 && (
+                          <p className="text-xs"><span className="text-muted-foreground">Recurring hours:</span> {d.peak_hours.join(', ')}</p>
+                        )}
+
+                        {d.partners.length > 0 && (
+                          <p className="text-xs"><span className="text-muted-foreground">Co-present aircraft:</span>{' '}
+                            {d.partners.map(p => (
+                              <button key={p.registration} className="underline mr-2 font-mono"
+                                onClick={() => { setDrillReg(p.registration); setActiveTab('drilldown'); }}>
+                                {p.registration}
+                              </button>
+                            ))}
+                          </p>
+                        )}
+
+                        {(d.violation_types.length > 0 || d.faa_violations > 0 || d.sentinel_violations > 0) && (
+                          <p className="text-xs"><span className="text-muted-foreground">Prior findings:</span> {d.faa_violations} FAA-validated / {d.sentinel_violations} Sentinel{d.violation_types.length ? ` — ${d.violation_types.join(', ')}` : ''}</p>
+                        )}
+
+                        <div className="rounded border border-emerald-500/20 bg-emerald-500/5 p-2 text-xs">
+                          <span className="text-emerald-400 font-semibold">Recommended action:</span> {d.recommended_action}
+                        </div>
+
+                        <button className="text-xs underline text-sky-400"
+                          onClick={() => { setDrillReg(d.registration); setActiveTab('drilldown'); }}>
+                          Open full drill-down for {d.registration}
+                        </button>
+                      </div>
+                    </details>
+                  ))}
+                </div>
+              </ScrollArea>
+              <p className="text-xs text-muted-foreground mt-3">
+                Dossiers compile FAA registry identity, detection telemetry, recurring patterns and prior findings. They document observed facts, not intent.
+              </p>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
 
         <TabsContent value="countermeasures">
           <div className="space-y-4">

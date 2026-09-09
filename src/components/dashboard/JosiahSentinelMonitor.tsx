@@ -488,7 +488,7 @@ ${report.ai_synthesis ? `
 
       {/* Main Content Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList className="grid w-full grid-cols-7">
+        <TabsList className="grid w-full grid-cols-8">
           <TabsTrigger value="violations" className="flex items-center gap-1">
             <AlertTriangle className="h-4 w-4" />
             Live Violations
@@ -503,7 +503,15 @@ ${report.ai_synthesis ? `
               <Badge className="ml-1 bg-amber-600">{report.hall_of_shame.length}</Badge>
             )}
           </TabsTrigger>
+          <TabsTrigger value="dossiers" className="flex items-center gap-1">
+            <FileText className="h-4 w-4" />
+            Dossiers
+            {report?.dossiers && report.dossiers.length > 0 && (
+              <Badge className="ml-1 bg-sky-600">{report.dossiers.length}</Badge>
+            )}
+          </TabsTrigger>
           <TabsTrigger value="countermeasures" className="flex items-center gap-1">
+
             <Swords className="h-4 w-4" />
             Countermeasures
             {report && report.countermeasures && report.countermeasures.length > 0 && (
@@ -734,7 +742,7 @@ ${report.ai_synthesis ? `
                   {(!report?.countermeasures || report.countermeasures.length === 0) && (
                     <div className="text-center py-8 text-muted-foreground">
                       <Swords className="h-12 w-12 mx-auto mb-2 opacity-50" />
-                      <p>Run a scan to generate countermeasures</p>
+                      <p>No escalated threats met the countermeasure threshold in this scan window</p>
                     </div>
                   )}
                   <div className="space-y-3">

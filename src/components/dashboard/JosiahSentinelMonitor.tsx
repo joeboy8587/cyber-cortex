@@ -46,7 +46,41 @@ interface Countermeasure {
   escalation_level: number;
   total_violations: number;
   status: string;
+  source?: 'AI' | 'RULEBOOK';
 }
+
+interface AircraftDossier {
+  registration: string;
+  trigger: string;
+  operator: string | null;
+  operator_type: string | null;
+  operator_location: string | null;
+  aircraft_type: string | null;
+  year_manufactured: number | null;
+  reg_status: string | null;
+  icao24: string | null;
+  faa_matched: boolean;
+  detections: number;
+  days_active: number;
+  first_seen: string | null;
+  last_seen: string | null;
+  alt_avg_ft: number | null;
+  alt_min_ft: number | null;
+  night_pct: number;
+  low_alt_pct: number;
+  sub_stall_pct: number;
+  aoi_pct: number;
+  peak_hours: string[];
+  risk_score: number;
+  faa_violations: number;
+  sentinel_violations: number;
+  violation_types: string[];
+  partners: Array<{ registration: string; weight: number }>;
+  known_threat: { threat_type: string; escalation_level: number; total_violations: number; countermeasure_status: string } | null;
+  recommended_action: string;
+  assessment: string;
+}
+
 
 interface DedupeMetrics {
   raw_pings: number;
@@ -71,6 +105,8 @@ interface SentinelReport {
   threat_level: 'CRITICAL' | 'HIGH' | 'ELEVATED' | 'NORMAL';
   adaptive_thresholds: AdaptiveThreshold[];
   countermeasures: Countermeasure[];
+  dossiers?: AircraftDossier[];
+
   josiah_snark?: string | null;
   military_repeat_offenders?: Array<{ callsign: string; prefix: string; appearances: number; first_seen?: string; last_seen?: string; min_altitude?: number }>;
   hall_of_shame?: HallOfShameEntry[];
@@ -331,8 +367,27 @@ ${report.convergence_altitude_breakdown && report.convergence_altitude_breakdown
 <h2>3. AI COUNTERMEASURE RECOMMENDATIONS (${(report.countermeasures || []).length})</h2>
 <table>
   <tr><th>#</th><th>Registration</th><th>Priority</th><th>Escalation</th><th>Total Violations</th><th>Recommended Action</th><th>Status</th></tr>
-  ${countermeasuresHTML || '<tr><td colspan="7">No countermeasures generated</td></tr>'}
+  ${countermeasuresHTML || '<tr><td colspan="7">No escalated threats met the countermeasure threshold in this scan window</td></tr>'}
 </table>
+
+${(report.dossiers || []).length > 0 ? `
+<h2>3.1 AIRCRAFT DOSSIERS (${(report.dossiers || []).length})</h2>
+${(report.dossiers || []).map((d, i) => `
+<div class="synthesis">
+  <strong>${i + 1}. ${d.registration}</strong> — ${d.aircraft_type || 'type unlisted'}${d.year_manufactured ? ` (${d.year_manufactured})` : ''} | Trigger: ${d.trigger.replace(/_/g, ' ')} | Risk score ${d.risk_score}<br/>
+  <strong>Registrant of record:</strong> ${d.operator || 'NO FAA REGISTRY MATCH'}${d.operator_location ? ` — ${d.operator_location}` : ''}${d.reg_status ? ` | Status: ${d.reg_status}` : ''}${d.icao24 ? ` | ICAO ${d.icao24}` : ''}<br/>
+  <strong>Track record:</strong> ${d.detections.toLocaleString()} detections over ${d.days_active} active days${d.first_seen ? ` (${new Date(d.first_seen).toLocaleDateString()} → ${d.last_seen ? new Date(d.last_seen).toLocaleDateString() : '—'})` : ''} | avg ${d.alt_avg_ft ?? '—'}ft, min ${d.alt_min_ft ?? '—'}ft<br/>
+  <strong>Behaviour:</strong> ${d.low_alt_pct}% below 1,000ft · ${d.night_pct}% night · ${d.sub_stall_pct}% sub-stall · ${d.aoi_pct}% inside AOI${d.peak_hours.length ? ` · returns at ${d.peak_hours.join(', ')}` : ''}<br/>
+  ${d.partners.length ? `<strong>Co-present with:</strong> ${d.partners.map(p => `${p.registration} (${p.weight})`).join(', ')}<br/>` : ''}
+  ${d.violation_types.length ? `<strong>Prior findings:</strong> ${d.faa_violations} FAA-validated / ${d.sentinel_violations} Sentinel — ${d.violation_types.join(', ')}<br/>` : ''}
+  ${d.known_threat ? `<strong>Learned-threat record:</strong> ${d.known_threat.threat_type}, escalation ${d.known_threat.escalation_level}/5, ${d.known_threat.total_violations} logged<br/>` : ''}
+  <strong>Assessment:</strong> ${d.assessment}<br/>
+  <strong>Recommended action:</strong> ${d.recommended_action}
+</div>
+`).join('')}
+<p class="meta">Dossiers are investigative evidence summaries compiled from FAA registry, detection telemetry and prior findings. They document observed facts, not intent.</p>
+` : ''}
+
 
 <h2>4. LEARNED PATTERNS (90-DAY ANALYSIS — DEDUPED BY MINUTE, AOI-FILTERED)</h2>
 <table>
@@ -433,7 +488,7 @@ ${report.ai_synthesis ? `
 
       {/* Main Content Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList className="grid w-full grid-cols-7">
+        <TabsList className="grid w-full grid-cols-8">
           <TabsTrigger value="violations" className="flex items-center gap-1">
             <AlertTriangle className="h-4 w-4" />
             Live Violations
@@ -448,7 +503,15 @@ ${report.ai_synthesis ? `
               <Badge className="ml-1 bg-amber-600">{report.hall_of_shame.length}</Badge>
             )}
           </TabsTrigger>
+          <TabsTrigger value="dossiers" className="flex items-center gap-1">
+            <FileText className="h-4 w-4" />
+            Dossiers
+            {report?.dossiers && report.dossiers.length > 0 && (
+              <Badge className="ml-1 bg-sky-600">{report.dossiers.length}</Badge>
+            )}
+          </TabsTrigger>
           <TabsTrigger value="countermeasures" className="flex items-center gap-1">
+
             <Swords className="h-4 w-4" />
             Countermeasures
             {report && report.countermeasures && report.countermeasures.length > 0 && (
@@ -634,6 +697,92 @@ ${report.ai_synthesis ? `
           </Card>
         </TabsContent>
 
+        <TabsContent value="dossiers">
+          <Card className="border-sky-500/30">
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <FileText className="h-5 w-5 text-sky-400" />
+                Aircraft Dossiers ({report?.dossiers?.length || 0})
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ScrollArea className="h-[520px] pr-3">
+                {(!report?.dossiers || report.dossiers.length === 0) && (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <FileText className="h-12 w-12 mx-auto mb-2 opacity-50" />
+                    <p>No critical or high findings in this scan window — nothing to compile.</p>
+                  </div>
+                )}
+                <div className="space-y-3">
+                  {report?.dossiers?.map((d) => (
+                    <details key={d.registration} className="rounded-lg border border-sky-500/20 bg-sky-500/5 p-4">
+                      <summary className="cursor-pointer list-none flex flex-wrap items-center gap-2">
+                        <span className="font-mono font-bold">{d.registration}</span>
+                        <Badge variant="outline" className="text-xs">{d.trigger.replace(/_/g, ' ')}</Badge>
+                        {!d.faa_matched && <Badge className="bg-red-500/20 text-red-400 text-xs">NO FAA MATCH</Badge>}
+                        {d.known_threat && (
+                          <Badge className={getEscalationColor(d.known_threat.escalation_level)}>
+                            Level {d.known_threat.escalation_level}
+                          </Badge>
+                        )}
+                        <span className="text-xs text-muted-foreground ml-auto">
+                          {d.detections.toLocaleString()} detections · risk {d.risk_score}
+                        </span>
+                      </summary>
+
+                      <div className="mt-3 space-y-2 text-sm">
+                        <p className="text-muted-foreground">{d.assessment}</p>
+
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                          <div><span className="text-muted-foreground">Registrant</span><br/><span className="font-medium">{d.operator || '—'}</span></div>
+                          <div><span className="text-muted-foreground">Location</span><br/><span className="font-medium">{d.operator_location || '—'}</span></div>
+                          <div><span className="text-muted-foreground">Type</span><br/><span className="font-medium">{d.aircraft_type || '—'}{d.year_manufactured ? ` (${d.year_manufactured})` : ''}</span></div>
+                          <div><span className="text-muted-foreground">Reg status</span><br/><span className="font-medium">{d.reg_status || '—'}</span></div>
+                          <div><span className="text-muted-foreground">Avg / min altitude</span><br/><span className="font-medium">{d.alt_avg_ft ?? '—'} / {d.alt_min_ft ?? '—'} ft</span></div>
+                          <div><span className="text-muted-foreground">Below 1,000ft</span><br/><span className="font-medium">{d.low_alt_pct}%</span></div>
+                          <div><span className="text-muted-foreground">Night activity</span><br/><span className="font-medium">{d.night_pct}%</span></div>
+                          <div><span className="text-muted-foreground">Inside AOI</span><br/><span className="font-medium">{d.aoi_pct}%</span></div>
+                        </div>
+
+                        {d.peak_hours.length > 0 && (
+                          <p className="text-xs"><span className="text-muted-foreground">Recurring hours:</span> {d.peak_hours.join(', ')}</p>
+                        )}
+
+                        {d.partners.length > 0 && (
+                          <p className="text-xs"><span className="text-muted-foreground">Co-present aircraft:</span>{' '}
+                            {d.partners.map(p => (
+                              <button key={p.registration} className="underline mr-2 font-mono"
+                                onClick={() => { setDrillReg(p.registration); setActiveTab('drilldown'); }}>
+                                {p.registration}
+                              </button>
+                            ))}
+                          </p>
+                        )}
+
+                        {(d.violation_types.length > 0 || d.faa_violations > 0 || d.sentinel_violations > 0) && (
+                          <p className="text-xs"><span className="text-muted-foreground">Prior findings:</span> {d.faa_violations} FAA-validated / {d.sentinel_violations} Sentinel{d.violation_types.length ? ` — ${d.violation_types.join(', ')}` : ''}</p>
+                        )}
+
+                        <div className="rounded border border-emerald-500/20 bg-emerald-500/5 p-2 text-xs">
+                          <span className="text-emerald-400 font-semibold">Recommended action:</span> {d.recommended_action}
+                        </div>
+
+                        <button className="text-xs underline text-sky-400"
+                          onClick={() => { setDrillReg(d.registration); setActiveTab('drilldown'); }}>
+                          Open full drill-down for {d.registration}
+                        </button>
+                      </div>
+                    </details>
+                  ))}
+                </div>
+              </ScrollArea>
+              <p className="text-xs text-muted-foreground mt-3">
+                Dossiers compile FAA registry identity, detection telemetry, recurring patterns and prior findings. They document observed facts, not intent.
+              </p>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
 
         <TabsContent value="countermeasures">
           <div className="space-y-4">
@@ -679,7 +828,7 @@ ${report.ai_synthesis ? `
                   {(!report?.countermeasures || report.countermeasures.length === 0) && (
                     <div className="text-center py-8 text-muted-foreground">
                       <Swords className="h-12 w-12 mx-auto mb-2 opacity-50" />
-                      <p>Run a scan to generate countermeasures</p>
+                      <p>No escalated threats met the countermeasure threshold in this scan window</p>
                     </div>
                   )}
                   <div className="space-y-3">

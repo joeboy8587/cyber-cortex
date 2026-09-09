@@ -175,7 +175,7 @@ const SceneExtractionPanel: React.FC = () => {
   );
 
   return (
-    <CyberPanel title="VLM SCENE EXTRACTION + TIMESTAMP ARBITRATION" icon={Eye}>
+    <CyberPanel title="VLM SCENE EXTRACTION + TIMESTAMP ARBITRATION" icon={<Eye className="h-4 w-4" />}>
       <div className="space-y-4">
         <p className="text-xs text-muted-foreground">
           Screenshots are structured scenes, not text blobs. A vision model returns a typed scene graph where

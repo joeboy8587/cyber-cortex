@@ -367,8 +367,27 @@ ${report.convergence_altitude_breakdown && report.convergence_altitude_breakdown
 <h2>3. AI COUNTERMEASURE RECOMMENDATIONS (${(report.countermeasures || []).length})</h2>
 <table>
   <tr><th>#</th><th>Registration</th><th>Priority</th><th>Escalation</th><th>Total Violations</th><th>Recommended Action</th><th>Status</th></tr>
-  ${countermeasuresHTML || '<tr><td colspan="7">No countermeasures generated</td></tr>'}
+  ${countermeasuresHTML || '<tr><td colspan="7">No escalated threats met the countermeasure threshold in this scan window</td></tr>'}
 </table>
+
+${(report.dossiers || []).length > 0 ? `
+<h2>3.1 AIRCRAFT DOSSIERS (${(report.dossiers || []).length})</h2>
+${(report.dossiers || []).map((d, i) => `
+<div class="synthesis">
+  <strong>${i + 1}. ${d.registration}</strong> — ${d.aircraft_type || 'type unlisted'}${d.year_manufactured ? ` (${d.year_manufactured})` : ''} | Trigger: ${d.trigger.replace(/_/g, ' ')} | Risk score ${d.risk_score}<br/>
+  <strong>Registrant of record:</strong> ${d.operator || 'NO FAA REGISTRY MATCH'}${d.operator_location ? ` — ${d.operator_location}` : ''}${d.reg_status ? ` | Status: ${d.reg_status}` : ''}${d.icao24 ? ` | ICAO ${d.icao24}` : ''}<br/>
+  <strong>Track record:</strong> ${d.detections.toLocaleString()} detections over ${d.days_active} active days${d.first_seen ? ` (${new Date(d.first_seen).toLocaleDateString()} → ${d.last_seen ? new Date(d.last_seen).toLocaleDateString() : '—'})` : ''} | avg ${d.alt_avg_ft ?? '—'}ft, min ${d.alt_min_ft ?? '—'}ft<br/>
+  <strong>Behaviour:</strong> ${d.low_alt_pct}% below 1,000ft · ${d.night_pct}% night · ${d.sub_stall_pct}% sub-stall · ${d.aoi_pct}% inside AOI${d.peak_hours.length ? ` · returns at ${d.peak_hours.join(', ')}` : ''}<br/>
+  ${d.partners.length ? `<strong>Co-present with:</strong> ${d.partners.map(p => `${p.registration} (${p.weight})`).join(', ')}<br/>` : ''}
+  ${d.violation_types.length ? `<strong>Prior findings:</strong> ${d.faa_violations} FAA-validated / ${d.sentinel_violations} Sentinel — ${d.violation_types.join(', ')}<br/>` : ''}
+  ${d.known_threat ? `<strong>Learned-threat record:</strong> ${d.known_threat.threat_type}, escalation ${d.known_threat.escalation_level}/5, ${d.known_threat.total_violations} logged<br/>` : ''}
+  <strong>Assessment:</strong> ${d.assessment}<br/>
+  <strong>Recommended action:</strong> ${d.recommended_action}
+</div>
+`).join('')}
+<p class="meta">Dossiers are investigative evidence summaries compiled from FAA registry, detection telemetry and prior findings. They document observed facts, not intent.</p>
+` : ''}
+
 
 <h2>4. LEARNED PATTERNS (90-DAY ANALYSIS — DEDUPED BY MINUTE, AOI-FILTERED)</h2>
 <table>

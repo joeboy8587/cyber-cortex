@@ -46,7 +46,41 @@ interface Countermeasure {
   escalation_level: number;
   total_violations: number;
   status: string;
+  source?: 'AI' | 'RULEBOOK';
 }
+
+interface AircraftDossier {
+  registration: string;
+  trigger: string;
+  operator: string | null;
+  operator_type: string | null;
+  operator_location: string | null;
+  aircraft_type: string | null;
+  year_manufactured: number | null;
+  reg_status: string | null;
+  icao24: string | null;
+  faa_matched: boolean;
+  detections: number;
+  days_active: number;
+  first_seen: string | null;
+  last_seen: string | null;
+  alt_avg_ft: number | null;
+  alt_min_ft: number | null;
+  night_pct: number;
+  low_alt_pct: number;
+  sub_stall_pct: number;
+  aoi_pct: number;
+  peak_hours: string[];
+  risk_score: number;
+  faa_violations: number;
+  sentinel_violations: number;
+  violation_types: string[];
+  partners: Array<{ registration: string; weight: number }>;
+  known_threat: { threat_type: string; escalation_level: number; total_violations: number; countermeasure_status: string } | null;
+  recommended_action: string;
+  assessment: string;
+}
+
 
 interface DedupeMetrics {
   raw_pings: number;
@@ -71,6 +105,8 @@ interface SentinelReport {
   threat_level: 'CRITICAL' | 'HIGH' | 'ELEVATED' | 'NORMAL';
   adaptive_thresholds: AdaptiveThreshold[];
   countermeasures: Countermeasure[];
+  dossiers?: AircraftDossier[];
+
   josiah_snark?: string | null;
   military_repeat_offenders?: Array<{ callsign: string; prefix: string; appearances: number; first_seen?: string; last_seen?: string; min_altitude?: number }>;
   hall_of_shame?: HallOfShameEntry[];

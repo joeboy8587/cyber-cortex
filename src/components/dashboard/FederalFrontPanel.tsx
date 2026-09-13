@@ -226,10 +226,16 @@ export default function FederalFrontPanel() {
               {ranAt && <span className="ml-1 opacity-70">Last scan {ranAt}.</span>}
             </CardDescription>
           </div>
-          <Button size="sm" variant="outline" onClick={scan} disabled={loading}>
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            <span className="ml-2">Re-scan</span>
-          </Button>
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={exportCsv} disabled={loading || !enriched.length}>
+              <Download className="h-4 w-4" />
+              <span className="ml-2">Export CSV</span>
+            </Button>
+            <Button size="sm" variant="outline" onClick={scan} disabled={loading}>
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              <span className="ml-2">Re-scan</span>
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-6">

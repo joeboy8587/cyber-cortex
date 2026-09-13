@@ -22,10 +22,12 @@ interface HitRow {
   hex: string;
   tail: string | null;
   pings: number;
+  days_active: number | null;
   first_seen: string;
   last_seen: string;
   minalt: number | null;
   maxalt: number | null;
+  low_pings: number | null;
 }
 
 interface CallsignRow {

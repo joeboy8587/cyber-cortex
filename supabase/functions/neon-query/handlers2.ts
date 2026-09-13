@@ -338,25 +338,7 @@ export async function handleAction2(action: string, body: Record<string, any>, s
             LIMIT 50
           `, [pgArray])),
 
-          // 5. Shell company nodes — bounded window
-          safe('shellNodes', () => sql.unsafe(`
-            SELECT registration, icao_code as hex, owner_operator,
-              COUNT(*)::int as total_detections,
-              shell_auto_detected, taxonomy_tag,
-              MIN(detection_timestamp) as first_seen,
-              MAX(detection_timestamp) as last_seen,
-              COUNT(DISTINCT DATE(detection_timestamp))::int as active_days
-            FROM live_flight_detections_rows
-            WHERE detection_timestamp > NOW() - INTERVAL '${windowDays} days'
-              AND (shell_auto_detected = true
-                OR owner_operator ILIKE '%LLC%' OR owner_operator ILIKE '%Holdings%'
-                OR owner_operator ILIKE '%Trust%' OR owner_operator ILIKE '%Equities%')
-            GROUP BY registration, icao_code, owner_operator, shell_auto_detected, taxonomy_tag
-            ORDER BY total_detections DESC
-            LIMIT 30
-          `)),
-
-          // 6. Biometric correlation for target fleet
+          // 3. Biometric correlation for target fleet
           safe('biometricCorrelation', () => sql.unsafe(`
             SELECT b.registration as aircraft_registration,
               COUNT(*)::int as correlation_count,
@@ -368,7 +350,7 @@ export async function handleAction2(action: string, body: Record<string, any>, s
             ORDER BY correlation_count DESC
           `, [pgArray])),
 
-          // 7. FAA registry cross-reference
+          // 4. FAA registry cross-reference
           safe('faaRegistry', () => sql.unsafe(`
             SELECT n_number, registrant_name, aircraft_manufacturer, aircraft_model,
               certificate_issue_date, airworthiness_date, mode_s_hex,
@@ -380,6 +362,58 @@ export async function handleAction2(action: string, body: Record<string, any>, s
             ORDER BY certificate_issue_date
           `, [pgArrayNNumbers, pgArray])),
         ]);
+
+        // Archive-wide sweeps run one at a time inside whatever budget is left,
+        // so a slow sweep degrades that section instead of killing the request.
+        const sensorLoitering = await safe('sensorLoitering', () => sql.unsafe(`
+          SELECT registration, icao_code as hex, owner_operator,
+            COUNT(*)::int as loiter_detections,
+            ROUND(AVG(altitude::numeric),0) as avg_alt,
+            ROUND(AVG(speed::numeric),1) as avg_speed,
+            MIN(detection_timestamp) as first_loiter,
+            MAX(detection_timestamp) as last_loiter,
+            COUNT(DISTINCT DATE(detection_timestamp))::int as loiter_days
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() - INTERVAL '${windowDays} days'
+            AND speed::numeric < 5
+            AND altitude::numeric > 0 AND altitude::numeric <= 400
+          GROUP BY registration, icao_code, owner_operator
+          HAVING COUNT(*) > 2
+          ORDER BY loiter_detections DESC
+          LIMIT 25
+        `));
+
+        const highAltitude = await safe('highAltitude', () => sql.unsafe(`
+          SELECT registration, icao_code as hex, owner_operator, aircraft_type,
+            MAX(altitude::numeric) as max_altitude,
+            COUNT(*)::int as high_alt_detections,
+            MIN(detection_timestamp) as first_seen,
+            MAX(detection_timestamp) as last_seen
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() - INTERVAL '${windowDays} days'
+            AND altitude::numeric > 60000
+          GROUP BY registration, icao_code, owner_operator, aircraft_type
+          ORDER BY max_altitude DESC
+          LIMIT 20
+        `));
+
+        const shellNodes = await safe('shellNodes', () => sql.unsafe(`
+          SELECT registration, icao_code as hex, owner_operator,
+            COUNT(*)::int as total_detections,
+            shell_auto_detected, taxonomy_tag,
+            MIN(detection_timestamp) as first_seen,
+            MAX(detection_timestamp) as last_seen,
+            COUNT(DISTINCT DATE(detection_timestamp))::int as active_days
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > NOW() - INTERVAL '${windowDays} days'
+            AND (shell_auto_detected = true
+              OR owner_operator ILIKE '%LLC%' OR owner_operator ILIKE '%Holdings%'
+              OR owner_operator ILIKE '%Trust%' OR owner_operator ILIKE '%Equities%')
+          GROUP BY registration, icao_code, owner_operator, shell_auto_detected, taxonomy_tag
+          ORDER BY total_detections DESC
+          LIMIT 30
+        `));
+
 
         return {
           cohort: procurementCohort,

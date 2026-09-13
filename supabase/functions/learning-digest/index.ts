@@ -156,8 +156,9 @@ Deno.serve(async (req) => {
       supabase.from("watchtower_autonomous_flags")
         .select("flag_type, severity, registration, description, resolved_reason, updated_at")
         .eq("auto_resolved", true)
-        .order("updated_at", { ascending: false })
-        .limit(25).then((r) => r.data ?? []),
+        .order("created_at", { ascending: false })
+        .limit(25).then((r) => { if (r.error) console.warn("corrections:", r.error.message); return r.data ?? []; }),
+
       supabase.from("watchtower_autonomous_flags")
         .select("flag_type, severity, registration, description, occurrence_count, first_seen, last_seen, confidence_score")
         .eq("auto_resolved", false)

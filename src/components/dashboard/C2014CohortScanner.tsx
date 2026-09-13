@@ -82,6 +82,14 @@ export function C2014CohortScanner() {
 
         {results && (
           <div className="space-y-4">
+            {results.meta.partial && (
+              <div className="flex items-start gap-2 rounded border border-destructive/40 bg-destructive/10 p-3">
+                <AlertTriangle className="w-3.5 h-3.5 mt-0.5 text-destructive shrink-0" />
+                <p className="text-[11px] font-mono text-destructive">
+                  PARTIAL SCAN — these sections took too long and were skipped: {results.meta.degradedSections?.join(', ')}. Everything else below is complete and accurate.
+                </p>
+              </div>
+            )}
             {/* Meta Summary */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               {[

@@ -45,6 +45,7 @@ import { NightOpsDashboard } from "@/components/dashboard/NightOpsDashboard";
 import { OpenFieldStagingPanel } from "@/components/dashboard/OpenFieldStagingPanel";
 import { EnrichedAircraftIntelligencePanel } from "@/components/dashboard/EnrichedAircraftIntelligencePanel";
 import FederalFrontPanel from "@/components/dashboard/FederalFrontPanel";
+import SceneExtractionPanel from "@/components/dashboard/SceneExtractionPanel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export default function Surveillance() {

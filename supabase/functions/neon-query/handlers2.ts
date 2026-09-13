@@ -259,15 +259,23 @@ export async function handleAction2(action: string, body: Record<string, any>, s
     case 'c2014CohortScan': {
       try {
         const targetRegs: string[] = body.registrations || ['N528AM','N786FA','N6196P','N256AA','N789FA','N912KC','N913KC','N597E','N789FA','N791FA','N790FA'];
-        const windowDays = Math.min(Number(body.days) || 120, 365);
+        // Archive-wide aggregates are expensive (6.4M rows); keep the sweep window tight.
+        const windowDays = Math.min(Number(body.days) || 14, 90);
         const pgArray = `{${targetRegs.join(',')}}`;
         const pgArrayNNumbers = `{${targetRegs.map((r: string) => r.replace('N','')).join(',')}}`;
 
-        // Keep every statement well inside the platform request budget.
-        try { await sql.unsafe(`SET statement_timeout = '18s'`); } catch { /* ignore */ }
+        const started = Date.now();
+        const BUDGET_MS = 110_000;
+        const remaining = () => BUDGET_MS - (Date.now() - started);
+
+        try { await sql.unsafe(`SET statement_timeout = '35s'`); } catch { /* ignore */ }
 
         const degraded: string[] = [];
         const safe = async <T,>(name: string, run: () => Promise<T>): Promise<T | []> => {
+          if (remaining() < 20_000) {
+            degraded.push(name);
+            return [];
+          }
           try {
             return await run();
           } catch (e) {
@@ -277,12 +285,10 @@ export async function handleAction2(action: string, body: Record<string, any>, s
           }
         };
 
+        // Targeted (indexed by registration) queries run together and are fast.
         const [
           procurementCohort,
-          sensorLoitering,
-          highAltitude,
           hammerAnvil,
-          shellNodes,
           biometricCorrelation,
           faaRegistry,
         ] = await Promise.all([

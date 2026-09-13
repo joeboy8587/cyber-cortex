@@ -908,7 +908,7 @@ serve(async (req) => {
     const screenOverflight = (detection: any): boolean => {
       if (!isScheduledOverflight(detection)) return false;
       overflightsScreened += 1;
-      const screen = screenScheduledOverflight(detection, identityIndex);
+      const screen = screenScheduledOverflight(detection, identityIndex, adaptedRegistrations);
       if (screen.verdict === 'EXCLUDE') return true;
       const key = `${detection.callsign}|${detection.icao24}|${screen.reasons.join('|')}`;
       if (!overflightFindingKeys.has(key)) {

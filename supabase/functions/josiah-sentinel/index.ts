@@ -163,6 +163,89 @@ function isScheduledOverflight(d: any): boolean {
   return Boolean(airlineCallsignPrefix(d.callsign)) && alt >= 10000;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SCHEDULED-OVERFLIGHT SCREENING — an airline callsign is a CLAIM, not proof.
+// Before a detection is excluded from tactical scoring we verify the claim.
+// Anything that fails screening is RETAINED (scored normally) and reported, so
+// an impostor cannot buy immunity simply by broadcasting "UAL" in the callsign.
+// ─────────────────────────────────────────────────────────────────────────────
+export type OverflightScreen = { verdict: 'EXCLUDE' | 'RETAIN'; reasons: string[] };
+
+type IdentityIndex = {
+  hexToRegs: Map<string, Set<string>>;
+  regToHexes: Map<string, Set<string>>;
+  callsignToHexes: Map<string, Set<string>>;
+};
+
+function buildIdentityIndex(detections: any[]): IdentityIndex {
+  const hexToRegs = new Map<string, Set<string>>();
+  const regToHexes = new Map<string, Set<string>>();
+  const callsignToHexes = new Map<string, Set<string>>();
+  const add = (m: Map<string, Set<string>>, k: string, v: string) => {
+    if (!k || !v) return;
+    if (!m.has(k)) m.set(k, new Set());
+    m.get(k)!.add(v);
+  };
+  for (const d of detections) {
+    const hex = String(d.icao24 || '').trim().toUpperCase();
+    const reg = String(d.registration || '').trim().toUpperCase();
+    const cs = String(d.callsign || '').trim().toUpperCase();
+    add(hexToRegs, hex, reg);
+    add(regToHexes, reg, hex);
+    add(callsignToHexes, cs, hex);
+  }
+  return { hexToRegs, regToHexes, callsignToHexes };
+}
+
+// Physics envelope for a transport-category jet in Class A cruise.
+const CRUISE_MIN_KTS = 150;
+const CRUISE_MAX_KTS = 650;
+const CRUISE_MAX_ALT_FT = 51000;
+
+function screenScheduledOverflight(d: any, idx: IdentityIndex): OverflightScreen {
+  const reasons: string[] = [];
+  const alt = Number(d.altitude || 0);
+  const spd = Number(d.speed ?? NaN);
+  const hex = String(d.icao24 || '').trim().toUpperCase();
+  const reg = String(d.registration || '').trim().toUpperCase();
+  const cs = String(d.callsign || '').trim().toUpperCase();
+
+  // 1. Registration ↔ ICAO hex country-block coherence.
+  const hexCheck = checkHexAllocation(d.icao24, d.registration);
+  if (hexCheck.status === 'MISMATCH') {
+    reasons.push(`ICAO hex ${hex} is outside the ${hexCheck.country} allocation block for registration ${reg}`);
+  }
+
+  // 2. One hex must map to exactly one airframe, and back.
+  if ((idx.hexToRegs.get(hex)?.size ?? 0) > 1) {
+    reasons.push(`ICAO hex ${hex} broadcast under ${idx.hexToRegs.get(hex)!.size} different registrations in this window`);
+  }
+  if (reg && (idx.regToHexes.get(reg)?.size ?? 0) > 1) {
+    reasons.push(`Registration ${reg} broadcast under ${idx.regToHexes.get(reg)!.size} different ICAO hexes in this window`);
+  }
+  if (cs && (idx.callsignToHexes.get(cs)?.size ?? 0) > 1) {
+    reasons.push(`Callsign ${cs} flown simultaneously by ${idx.callsignToHexes.get(cs)!.size} different airframes`);
+  }
+
+  // 3. An airline callsign with no airframe identity at all cannot be verified.
+  if (!reg && !/^[0-9A-F]{6}$/.test(hex)) {
+    reasons.push(`Airline callsign ${cs} carries no registration and no valid ICAO hex — identity unverifiable`);
+  }
+
+  // 4. Physics envelope for the cruise regime it claims to be in.
+  if (Number.isFinite(spd) && spd > 0 && spd < CRUISE_MIN_KTS) {
+    reasons.push(`${Math.round(spd)}kt at ${alt}ft — below transport-jet cruise envelope, telemetry not physically consistent`);
+  }
+  if (Number.isFinite(spd) && spd > CRUISE_MAX_KTS) {
+    reasons.push(`${Math.round(spd)}kt exceeds the transport-jet envelope — fabricated or corrupted velocity`);
+  }
+  if (alt > CRUISE_MAX_ALT_FT) {
+    reasons.push(`${alt}ft exceeds the service ceiling of any scheduled airliner`);
+  }
+
+  return { verdict: reasons.length ? 'RETAIN' : 'EXCLUDE', reasons };
+}
+
 
 const ESCALATION_THRESHOLDS = [
   { level: 2, minViolations: 10 },
@@ -738,8 +821,39 @@ serve(async (req) => {
     // ========== STEP 6: FLEET CONVERGENCE ==========
     // CORRECTED RULE: only aircraft operating BELOW 3,000 ft AND inside the 5 nm
     // AOI radius can form a convergence. Class A cruise traffic on the
-    // transcontinental airway is excluded, as is scheduled airline metal.
+    // transcontinental airway is excluded — but ONLY after the airline identity
+    // claim survives screening. A failed claim is retained and scored.
     let convergenceExcludedOverflights = 0;
+    const identityIndex = buildIdentityIndex(recentDetections);
+    const overflightFindings: Array<{
+      callsign: string; registration: string | null; icao24: string | null;
+      altitude: number | null; speed: number | null; timestamp: string | null; reasons: string[];
+    }> = [];
+    const overflightFindingKeys = new Set<string>();
+    let overflightsScreened = 0;
+
+    // Screen every airline-callsign detection, at any altitude, before it is trusted.
+    const screenOverflight = (detection: any): boolean => {
+      if (!isScheduledOverflight(detection)) return false;
+      overflightsScreened += 1;
+      const screen = screenScheduledOverflight(detection, identityIndex);
+      if (screen.verdict === 'EXCLUDE') return true;
+      const key = `${detection.callsign}|${detection.icao24}|${screen.reasons.join('|')}`;
+      if (!overflightFindingKeys.has(key)) {
+        overflightFindingKeys.add(key);
+        overflightFindings.push({
+          callsign: String(detection.callsign || '').toUpperCase(),
+          registration: detection.registration ?? null,
+          icao24: detection.icao24 ?? null,
+          altitude: detection.altitude != null ? Number(detection.altitude) : null,
+          speed: detection.speed != null ? Number(detection.speed) : null,
+          timestamp: detection.detection_timestamp ?? null,
+          reasons: screen.reasons,
+        });
+      }
+      return false; // failed screening — do NOT grant the commercial exemption
+    };
+
     const hourlyGroups = new Map<string, { tails: Set<string>; minAlt: Map<string, number> }>();
     for (const detection of recentDetections) {
       const ts = (detection as any).detection_timestamp;
@@ -748,12 +862,14 @@ serve(async (req) => {
       const reg = detection.registration || detection.callsign;
       if (!reg) continue;
 
+      const exempt = screenOverflight(detection);
       const alt = Number(detection.altitude || 0);
       if (!(alt > 0 && alt < CONVERGENCE_ALT_CEILING_FT)) {
-        if (isScheduledOverflight(detection)) convergenceExcludedOverflights += 1;
+        if (exempt) convergenceExcludedOverflights += 1;
         continue;
       }
-      if (isScheduledOverflight(detection)) { convergenceExcludedOverflights += 1; continue; }
+      if (exempt) { convergenceExcludedOverflights += 1; continue; }
+
 
       const dist = nmFromAoi(detection.latitude, detection.longitude);
       if (dist === null || dist > AOI_RADIUS_NM) continue;
@@ -787,8 +903,36 @@ serve(async (req) => {
         timestamp: hour + ':00:00Z', relatedAircraft: Array.from(tails)
       });
     }
+    // Commercial-overflight exemption audit — every exclusion is now earned.
+    const commercialOverflightAudit = {
+      screened: overflightsScreened,
+      excluded_verified: convergenceExcludedOverflights,
+      retained_failed_screening: overflightFindings.length,
+      checks_applied: [
+        'Registration ↔ ICAO hex country-block coherence',
+        'One hex ↔ one registration (and the reverse)',
+        'Callsign not flown by two airframes at once',
+        'Identity present and parseable',
+        `Cruise physics envelope (${CRUISE_MIN_KTS}–${CRUISE_MAX_KTS}kt, ceiling ${CRUISE_MAX_ALT_FT}ft)`,
+      ],
+      findings: overflightFindings.slice(0, 50),
+    };
+
     if (convergenceExcludedOverflights > 0) {
-      proactiveAlerts.push(`ℹ️ ${convergenceExcludedOverflights} scheduled high-altitude airline detections excluded from convergence scoring (transcontinental airway, not tactical).`);
+      proactiveAlerts.push(`ℹ️ ${convergenceExcludedOverflights} scheduled airline detections screened and verified (identity and physics coherent), then excluded from convergence scoring — transcontinental airway, not tactical.`);
+    }
+    for (const f of overflightFindings) {
+      violations.push({
+        type: 'PATTERN_ANOMALY_COMMERCIAL_IDENTITY',
+        severity: 'high',
+        registration: f.registration || f.callsign || 'UNKNOWN',
+        details: `Detection broadcasting scheduled-airline callsign ${f.callsign} failed commercial-identity screening and was RETAINED in tactical scoring: ${f.reasons.join('; ')}. An airline callsign is a claim, not verification.`,
+        timestamp: f.timestamp || new Date().toISOString(),
+        altitude: f.altitude ?? undefined,
+      });
+    }
+    if (overflightFindings.length > 0) {
+      proactiveAlerts.push(`🚨 COMMERCIAL COVER SUSPECTED: ${overflightFindings.length} detection(s) using airline callsigns failed identity or physics screening — ${overflightFindings.slice(0, 5).map(f => f.callsign).join(', ')}. Exemption denied; these are scored as tactical.`);
     }
 
 
@@ -1559,6 +1703,7 @@ REGISTRATION | ACTION | PRIORITY (critical/high/medium)`;
       hall_of_shame: hallOfShame,
       hall_of_shame_meta: hosMeta,
       convergence_altitude_breakdown: convergenceBreakdown,
+      commercial_overflight_audit: commercialOverflightAudit,
     };
 
     console.log(`Sentinel scan complete in ${Date.now() - startTime}ms: ${violations.length} violations, threat=${threatLevel}`);

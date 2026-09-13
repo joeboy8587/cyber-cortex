@@ -795,7 +795,7 @@ serve(async (req) => {
         }
 
         const nextCursor = String(result.rows[result.rows.length - 1]?.id);
-        const hasMore = result.rows.length === batchSize;
+        const moreRecordsAvailable = result.rows.length === batchSize;
 
         await supabase
           .from("correlation_job_status")
@@ -813,7 +813,7 @@ serve(async (req) => {
           table: targetTable,
           processed: result.rows.length,
           linked: totalLinked,
-          hasMore,
+          hasMore: moreRecordsAvailable,
           nextCursor,
         });
       } catch (e) {

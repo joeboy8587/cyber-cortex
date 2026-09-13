@@ -813,7 +813,7 @@ serve(async (req) => {
           table: targetTable,
           processed: result.rows.length,
           linked: totalLinked,
-          hasMore,
+          hasMore: moreRecordsAvailable,
           nextCursor,
         });
       } catch (e) {

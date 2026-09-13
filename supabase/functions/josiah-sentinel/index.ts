@@ -824,8 +824,9 @@ serve(async (req) => {
     // ========== STEP 4: SHELL COMPANY ACTIVITY (KCSO aircraft excluded — they are operator-owned LE) ==========
     const shellActivity = recentDetections.filter((d: any) => {
       if (isKcsoAircraft(d.registration, d.callsign, d.owner_operator)) return false;
-      // Scheduled airline metal (Aeromexico, Volaris, Korean Air…) is never a shell.
-      if (airlineCallsignPrefix(d.callsign)) return false;
+      // Scheduled airline metal is never a shell — unless the airframe is already
+      // on the watchlist, in which case the callsign buys it nothing.
+      if (airlineCallsignPrefix(d.callsign) && !watchlistHit(d, adaptedRegistrations)) return false;
 
       const regMatch = THREAT_SIGNATURES.shellCompany.some(reg => d.registration?.includes(reg) || d.callsign?.includes(reg));
       const ownOp = String(d.owner_operator || '').toUpperCase();

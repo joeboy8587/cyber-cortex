@@ -38,6 +38,10 @@ export const CALIBRATION = {
   mdb_multiplier: 3.29 + 3.09,
   sigma0_m: 30,          // broadcast position quantisation + report noise floor
   drift_rate_m_per_s: 4, // coast growth: tactical-grade INS ~ 4 m/s of drift 1-sigma
+  // Unmodelled manoeuvre (turn / accel) process noise as a fraction of the
+  // coasted distance. Without it a normal turn looks like a spoof and the
+  // observed false-alarm rate sits orders of magnitude above P_FA.
+  manoeuvre_fraction: 0.25,
   max_gap_s: 120,        // above this the coast prediction is not defensible
   // NACp/NIC: the archive does not carry per-detection NACp. Reported as a gap,
   // never silently assumed.
@@ -83,12 +87,19 @@ function innovations(pings: Ping[]): Innovation[] {
     if (p.lat == null || p.lng == null || c.lat == null || c.lng == null) continue;
     const dt = (new Date(c.ts).getTime() - new Date(p.ts).getTime()) / 1000;
     if (!(dt > 0) || dt > CALIBRATION.max_gap_s) continue; // coast not defensible
-    const spd = Number(p.speed ?? 0), hdg = Number(p.heading ?? 0);
-    const [plat, plng] = Number.isFinite(spd) && spd > 0 && Number.isFinite(hdg)
-      ? coast(p.lat, p.lng, hdg, spd, dt)
-      : [p.lat, p.lng];
+    // A coast needs both a speed and a heading. Without them there is no
+    // defensible prediction and the pair is coverage loss, not a detection.
+    if (p.speed == null || p.heading == null) continue;
+    const spd = Number(p.speed), hdg = Number(p.heading);
+    if (!Number.isFinite(spd) || !Number.isFinite(hdg) || spd <= 0) continue;
+    const [plat, plng] = coast(p.lat, p.lng, hdg, spd, dt);
     const residual = haversineM([plat, plng], [c.lat, c.lng]);
-    const sigma = Math.sqrt(CALIBRATION.sigma0_m ** 2 + (CALIBRATION.drift_rate_m_per_s * dt) ** 2);
+    const coastDist = spd * 0.514444 * dt;
+    const sigma = Math.sqrt(
+      CALIBRATION.sigma0_m ** 2
+      + (CALIBRATION.drift_rate_m_per_s * dt) ** 2
+      + (CALIBRATION.manoeuvre_fraction * coastDist) ** 2,
+    );
     const q = residual / sigma;
     out.push({
       registration: c.registration || p.registration || "UNKNOWN",
@@ -279,9 +290,11 @@ serve(async (req) => {
         q_spread_ratio: Math.round(spread * 100) / 100,
         counties: [...counties.entries()].map(([county, n]) => ({ county, n })).sort((a, b) => b.n - a.n),
         quiet_before_spike: quietBaseline,
-        onset: quietBaseline >= Math.max(3, Math.floor(hits.length * 0.6))
-          ? "SIMULTANEOUS ONSET — these tails were inside threshold in the pre-event baseline and broke together."
-          : "TRENDING ONSET — several tails were already drifting before the event; this is a slower-moving deviation.",
+        onset: hits.length === 0
+          ? "NO ONSET — nothing exceeded threshold inside this window."
+          : quietBaseline >= Math.max(3, Math.floor(hits.length * 0.6))
+            ? "SIMULTANEOUS ONSET — these tails were inside threshold in the pre-event baseline and broke together."
+            : "TRENDING ONSET — several tails were already drifting before the event; this is a slower-moving deviation.",
         classification,
         distribution: hits.map((h) => ({ registration: h.registration, q: h.q_max_event, county: h.county })),
         per_tail: perTail.slice(0, 200),

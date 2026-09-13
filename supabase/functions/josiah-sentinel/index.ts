@@ -67,6 +67,56 @@ function isMilitaryCallsign(reg?: string, callsign?: string): { hit: boolean; pr
   return { hit: false, prefix: null };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// WATCHLIST OVERRIDE — no aircraft already under investigation may buy immunity
+// by broadcasting an airline callsign. A watchlist hit VOIDS every exemption.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Documented federal aerial-surveillance front tails confirmed in this archive
+// (mirrors src/lib/federalFronts.ts CONFIRMED_FRONT_TAILS).
+const CONFIRMED_FRONT_TAILS = ['N125AL', 'N484JB', 'N795DH'];
+const FRONT_OPERATOR_KEYWORDS = [
+  'FVX RESEARCH', 'KQM AVIATION', 'NBR AVIATION', 'PXW SERVICES', 'NG RESEARCH',
+  'OBR LEASING', 'OTV LEASING', 'NBY PRODUCTIONS', 'PSL SURVEYS', 'RKT PRODUCTIONS',
+  'AEROGRAPHICS', 'NATIONAL AIRCRAFT LEASING', 'SILVER CREEK AVIATION',
+  'CHAPARRAL AIR GROUP', 'EARLY DETECTION ALARM', 'GLOBAL GEO MAPPING',
+  'MIDWEST AERIAL IMAGING', 'AIR CERBERUS',
+];
+
+/** Returns the reason this airframe is on the watchlist, or null if it is not. */
+function watchlistHit(d: any, escalatedRegs: Set<string>): string | null {
+  const reg = String(d.registration || '').toUpperCase().trim();
+  const cs = String(d.callsign || '').toUpperCase().trim();
+  const own = String(d.owner_operator || '').toUpperCase();
+  const tag = reg || cs;
+
+  if (tag && [...escalatedRegs].some(r => String(r).toUpperCase() === tag)) {
+    return `${tag} is an escalated repeat offender in the learned-threat register`;
+  }
+  if (isKcsoAircraft(reg, cs, own)) return `${tag} is KCSO fleet`;
+  if (isFlytAircraft(reg, cs)) return `${tag} is FLYT Aviation surveillance fleet`;
+  if (CONFIRMED_FRONT_TAILS.some(t => reg.includes(t) || cs.includes(t))) {
+    return `${tag} is a confirmed federal front-company tail`;
+  }
+  if (FRONT_OPERATOR_KEYWORDS.some(k => own.includes(k))) {
+    return `Registrant "${d.owner_operator}" is a documented federal front company`;
+  }
+  if (THREAT_SIGNATURES.shellCompany.some(r => reg.includes(r) || cs.includes(r))) {
+    return `${tag} is a tracked shell-company airframe`;
+  }
+  if (THREAT_SIGNATURES.medicalCover.some(r => reg.includes(r) || cs.includes(r))) {
+    return `${tag} is a tracked medical-cover airframe`;
+  }
+  if (THREAT_SIGNATURES.droneSignatures.knownDrones.some(r => reg.includes(r) || cs.includes(r))) {
+    return `${tag} is a tracked unmanned/anomalous airframe`;
+  }
+  if (d.shell_auto_detected) return `${tag} is registered to an auto-detected shell entity`;
+  if (d.is_military) return `${tag} is broadcasting as a military asset`;
+  const mil = isMilitaryCallsign(reg, cs);
+  if (mil.hit) return `${tag} carries military callsign prefix ${mil.prefix}`;
+  return null;
+}
+
 
 const KNOWN_SHELL_OPERATORS = [
   '9K AIR', 'FLYEXCLUSIVE', 'FLY EXCLUSIVE', 'NETJETS', 'FLEXJET',
@@ -156,11 +206,13 @@ function nmFromAoi(lat: any, lng: any): number | null {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-// A detection is scheduled commercial overflight when a known airline operates it
-// in Class A / high-altitude cruise. Those are excluded from tactical scoring.
+// A detection is a candidate scheduled overflight only in true airway cruise
+// (FL180+, Class A). Airline callsigns below that are NOT waved through — the
+// 10,000–18,000ft band is where a low approach or a cover profile hides.
+const AIRWAY_CRUISE_FLOOR_FT = 18000;
 function isScheduledOverflight(d: any): boolean {
   const alt = Number(d.altitude || 0);
-  return Boolean(airlineCallsignPrefix(d.callsign)) && alt >= 10000;
+  return Boolean(airlineCallsignPrefix(d.callsign)) && alt >= AIRWAY_CRUISE_FLOOR_FT;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -198,17 +250,24 @@ function buildIdentityIndex(detections: any[]): IdentityIndex {
 }
 
 // Physics envelope for a transport-category jet in Class A cruise.
-const CRUISE_MIN_KTS = 150;
-const CRUISE_MAX_KTS = 650;
-const CRUISE_MAX_ALT_FT = 51000;
+const CRUISE_MIN_KTS = 250;
+const CRUISE_MAX_KTS = 620;
+const CRUISE_MAX_ALT_FT = 45000;
+// An airliner on the transcontinental airway does not pass over the residence
+// at low level. Anything inside this ring is scored, callsign notwithstanding.
+const OVERFLIGHT_NO_EXEMPTION_NM = 8;
 
-function screenScheduledOverflight(d: any, idx: IdentityIndex): OverflightScreen {
+function screenScheduledOverflight(d: any, idx: IdentityIndex, escalatedRegs: Set<string>): OverflightScreen {
   const reasons: string[] = [];
   const alt = Number(d.altitude || 0);
   const spd = Number(d.speed ?? NaN);
   const hex = String(d.icao24 || '').trim().toUpperCase();
   const reg = String(d.registration || '').trim().toUpperCase();
   const cs = String(d.callsign || '').trim().toUpperCase();
+
+  // 0. Watchlist override — an airframe already under investigation gets no pass.
+  const wl = watchlistHit(d, escalatedRegs);
+  if (wl) reasons.push(`Watchlist airframe — ${wl}. Exemption void.`);
 
   // 1. Registration ↔ ICAO hex country-block coherence.
   const hexCheck = checkHexAllocation(d.icao24, d.registration);
@@ -227,12 +286,17 @@ function screenScheduledOverflight(d: any, idx: IdentityIndex): OverflightScreen
     reasons.push(`Callsign ${cs} flown simultaneously by ${idx.callsignToHexes.get(cs)!.size} different airframes`);
   }
 
-  // 3. An airline callsign with no airframe identity at all cannot be verified.
+  // 3. Identity must be complete. A partial identity is not a verified one.
   if (!reg && !/^[0-9A-F]{6}$/.test(hex)) {
     reasons.push(`Airline callsign ${cs} carries no registration and no valid ICAO hex — identity unverifiable`);
+  } else if (!reg || !/^[0-9A-F]{6}$/.test(hex)) {
+    reasons.push(`Airline callsign ${cs} is missing ${!reg ? 'a registration' : 'a valid ICAO hex'} — identity only half-verified`);
   }
 
   // 4. Physics envelope for the cruise regime it claims to be in.
+  if (!Number.isFinite(spd) || spd <= 0) {
+    reasons.push(`No velocity reported at ${alt}ft — cruise claim cannot be verified`);
+  }
   if (Number.isFinite(spd) && spd > 0 && spd < CRUISE_MIN_KTS) {
     reasons.push(`${Math.round(spd)}kt at ${alt}ft — below transport-jet cruise envelope, telemetry not physically consistent`);
   }
@@ -243,8 +307,16 @@ function screenScheduledOverflight(d: any, idx: IdentityIndex): OverflightScreen
     reasons.push(`${alt}ft exceeds the service ceiling of any scheduled airliner`);
   }
 
+  // 5. Geography. Scheduled traffic transits the airway; it does not sit over the AOI.
+  const dist = nmFromAoi(d.latitude, d.longitude);
+  if (dist !== null && dist <= OVERFLIGHT_NO_EXEMPTION_NM) {
+    reasons.push(`${dist.toFixed(1)}nm from the residence — inside the ${OVERFLIGHT_NO_EXEMPTION_NM}nm no-exemption ring`);
+  }
+
   return { verdict: reasons.length ? 'RETAIN' : 'EXCLUDE', reasons };
 }
+
+
 
 
 const ESCALATION_THRESHOLDS = [
@@ -752,8 +824,9 @@ serve(async (req) => {
     // ========== STEP 4: SHELL COMPANY ACTIVITY (KCSO aircraft excluded — they are operator-owned LE) ==========
     const shellActivity = recentDetections.filter((d: any) => {
       if (isKcsoAircraft(d.registration, d.callsign, d.owner_operator)) return false;
-      // Scheduled airline metal (Aeromexico, Volaris, Korean Air…) is never a shell.
-      if (airlineCallsignPrefix(d.callsign)) return false;
+      // Scheduled airline metal is never a shell — unless the airframe is already
+      // on the watchlist, in which case the callsign buys it nothing.
+      if (airlineCallsignPrefix(d.callsign) && !watchlistHit(d, adaptedRegistrations)) return false;
 
       const regMatch = THREAT_SIGNATURES.shellCompany.some(reg => d.registration?.includes(reg) || d.callsign?.includes(reg));
       const ownOp = String(d.owner_operator || '').toUpperCase();
@@ -836,7 +909,7 @@ serve(async (req) => {
     const screenOverflight = (detection: any): boolean => {
       if (!isScheduledOverflight(detection)) return false;
       overflightsScreened += 1;
-      const screen = screenScheduledOverflight(detection, identityIndex);
+      const screen = screenScheduledOverflight(detection, identityIndex, adaptedRegistrations);
       if (screen.verdict === 'EXCLUDE') return true;
       const key = `${detection.callsign}|${detection.icao24}|${screen.reasons.join('|')}`;
       if (!overflightFindingKeys.has(key)) {
@@ -903,36 +976,49 @@ serve(async (req) => {
         timestamp: hour + ':00:00Z', relatedAircraft: Array.from(tails)
       });
     }
-    // Commercial-overflight exemption audit — every exclusion is now earned.
+    // Commercial-overflight exemption audit — every exclusion is earned, never assumed.
     const commercialOverflightAudit = {
       screened: overflightsScreened,
       excluded_verified: convergenceExcludedOverflights,
       retained_failed_screening: overflightFindings.length,
       checks_applied: [
+        'Watchlist override — KCSO, FLYT, shell, medical-cover, federal front, military and escalated repeat offenders are never exempt',
+        `Airway cruise floor: exemption considered only at or above ${AIRWAY_CRUISE_FLOOR_FT}ft`,
+        `No-exemption ring: anything within ${OVERFLIGHT_NO_EXEMPTION_NM}nm of the residence is scored`,
         'Registration ↔ ICAO hex country-block coherence',
         'One hex ↔ one registration (and the reverse)',
         'Callsign not flown by two airframes at once',
-        'Identity present and parseable',
-        `Cruise physics envelope (${CRUISE_MIN_KTS}–${CRUISE_MAX_KTS}kt, ceiling ${CRUISE_MAX_ALT_FT}ft)`,
+        'Complete identity — registration AND valid ICAO hex',
+        `Cruise physics envelope (${CRUISE_MIN_KTS}–${CRUISE_MAX_KTS}kt, ceiling ${CRUISE_MAX_ALT_FT}ft, velocity required)`,
       ],
       findings: overflightFindings.slice(0, 50),
     };
 
     if (convergenceExcludedOverflights > 0) {
-      proactiveAlerts.push(`ℹ️ ${convergenceExcludedOverflights} scheduled airline detections screened and verified (identity and physics coherent), then excluded from convergence scoring — transcontinental airway, not tactical.`);
+      proactiveAlerts.push(`ℹ️ ${convergenceExcludedOverflights} airline detections passed all eight exemption checks and are set aside as airway traffic. Every one is logged in the exemption audit.`);
     }
     for (const f of overflightFindings) {
+      const watchlisted = f.reasons.some(r => r.startsWith('Watchlist airframe'));
       violations.push({
-        type: 'PATTERN_ANOMALY_COMMERCIAL_IDENTITY',
-        severity: 'high',
+        type: watchlisted ? 'WATCHLIST_UNDER_COMMERCIAL_CALLSIGN' : 'PATTERN_ANOMALY_COMMERCIAL_IDENTITY',
+        severity: 'critical',
         registration: f.registration || f.callsign || 'UNKNOWN',
-        details: `Detection broadcasting scheduled-airline callsign ${f.callsign} failed commercial-identity screening and was RETAINED in tactical scoring: ${f.reasons.join('; ')}. An airline callsign is a claim, not verification.`,
+        details: watchlisted
+          ? `${f.registration || f.callsign} is a watchlist airframe flying under the airline callsign ${f.callsign}. It gets no exemption and is scored in full: ${f.reasons.join('; ')}.`
+          : `${f.callsign} claims to be a scheduled airliner and the claim fails: ${f.reasons.join('; ')}. Scored in full.`,
         timestamp: f.timestamp || new Date().toISOString(),
         altitude: f.altitude ?? undefined,
       });
     }
     if (overflightFindings.length > 0) {
-      proactiveAlerts.push(`🚨 COMMERCIAL COVER SUSPECTED: ${overflightFindings.length} detection(s) using airline callsigns failed identity or physics screening — ${overflightFindings.slice(0, 5).map(f => f.callsign).join(', ')}. Exemption denied; these are scored as tactical.`);
+      const wl = overflightFindings.filter(f => f.reasons.some(r => r.startsWith('Watchlist airframe')));
+      if (wl.length > 0) {
+        proactiveAlerts.push(`🚨 WATCHLIST AIRCRAFT UNDER AIRLINE CALLSIGN: ${wl.slice(0, 5).map(f => `${f.registration || f.callsign} as ${f.callsign}`).join(', ')}. Exemption refused — scored as tactical.`);
+      }
+      const others = overflightFindings.length - wl.length;
+      if (others > 0) {
+        proactiveAlerts.push(`🚨 COMMERCIAL COVER: ${others} detection(s) broadcasting airline callsigns they cannot substantiate — ${overflightFindings.filter(f => !wl.includes(f)).slice(0, 5).map(f => f.callsign).join(', ')}. Scored as tactical.`);
+      }
     }
 
 

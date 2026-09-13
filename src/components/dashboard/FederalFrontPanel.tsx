@@ -77,18 +77,28 @@ export default function FederalFrontPanel() {
       setFleet(fleetRows);
 
       const hexes = Array.from(new Set(fleetRows.map((r) => r.hex).filter(Boolean)));
+      const tails = Array.from(new Set(fleetRows.map((r) => r.tail).filter(Boolean)));
       if (hexes.length) {
-        // icao24 is stored in mixed case; query both forms so the btree index is used.
-        const list = hexes
+        // icao24 is stored in mixed case; query both forms so the btree index is used,
+        // then fold the results together on UPPER(hex) so one airframe is one row.
+        const hexList = hexes
           .flatMap((h) => [h.toUpperCase(), h.toLowerCase()])
           .map((h) => `'${h.replace(/'/g, "")}'`)
           .join(",");
+        const tailList = tails.map((t) => `'${t.replace(/'/g, "")}'`).join(",");
         const hitRows = await runQuery<HitRow>(`
-          SELECT icao24 AS hex, max(registration) AS tail, count(*)::int AS pings,
-                 min(detection_timestamp) AS first_seen, max(detection_timestamp) AS last_seen,
-                 round(min(altitude))::int AS minalt, round(max(altitude))::int AS maxalt
+          SELECT upper(icao24) AS hex,
+                 max(upper(registration)) AS tail,
+                 count(*)::int AS pings,
+                 count(DISTINCT date_trunc('day', detection_timestamp))::int AS days_active,
+                 min(detection_timestamp) AS first_seen,
+                 max(detection_timestamp) AS last_seen,
+                 round(min(altitude))::int AS minalt,
+                 round(max(altitude))::int AS maxalt,
+                 count(*) FILTER (WHERE altitude > 0 AND altitude < 3000)::int AS low_pings
           FROM live_flight_detections_rows
-          WHERE icao24 IN (${list})
+          WHERE icao24 IN (${hexList})
+             ${tailList ? `OR upper(registration) IN (${tailList})` : ""}
           GROUP BY 1
           ORDER BY pings DESC
           LIMIT 100

@@ -334,7 +334,7 @@ async function build(sql: ReturnType<typeof postgres>, body: Record<string, unkn
 
   return {
     ok: true, action: "build", days,
-    copresence_pairs: cop.length, flagged_entities: flagged,
+    copresence_pairs: cop.length, behavior_pairs: behaviorEdges, flagged_entities: flagged,
     stats: stats[0] || {}, elapsed_ms: Date.now() - t0,
   };
 }

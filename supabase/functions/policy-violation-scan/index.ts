@@ -62,11 +62,11 @@ function rules(lookbackDays: number): Rule[] {
       severity: "high",
       sql: `
         WITH lowslow AS (
-          SELECT icao24, callsign, detection_timestamp, altitude, ground_speed, latitude, longitude
+          SELECT icao24, callsign, detection_timestamp, altitude, speed, latitude, longitude
           FROM live_flight_detections_rows
           WHERE detection_timestamp >= ${since}
             AND altitude IS NOT NULL AND altitude < 500
-            AND ground_speed IS NOT NULL AND ground_speed < 30
+            AND speed IS NOT NULL AND speed < 30
             AND ${KCSO_CALLSIGN_LIKE}
         ),
         cluster AS (
@@ -117,13 +117,13 @@ function rules(lookbackDays: number): Rule[] {
         SELECT icao24 AS icao, callsign, detection_timestamp AS detected_at,
                jsonb_build_object(
                  'altitude_ft', altitude,
-                 'ground_speed_kts', ground_speed,
+                 'ground_speed_kts', speed,
                  'rule', 'exec_transport_profile'
                ) AS evidence
         FROM live_flight_detections_rows
         WHERE detection_timestamp >= ${since}
           AND altitude BETWEEN 5000 AND 12000
-          AND ground_speed > 130
+          AND speed > 130
           AND ${KCSO_CALLSIGN_LIKE}
         LIMIT 500
       `,

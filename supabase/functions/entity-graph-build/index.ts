@@ -217,6 +217,37 @@ async function build(sql: ReturnType<typeof postgres>, body: Record<string, unkn
     RETURNING 1
   `) as unknown[];
 
+  // ── 3b. Behaviour edges from GPU dossier embeddings (nearest twins) ──────
+  let behaviorEdges = 0;
+  try {
+    const beh = await sql.unsafe(`
+      WITH twins AS (
+        SELECT UPPER(e.registration) AS r1,
+               UPPER(n->>'registration') AS r2,
+               (n->>'similarity')::numeric AS sim
+        FROM aircraft_dossier_embeddings e
+        CROSS JOIN LATERAL jsonb_array_elements(COALESCE(e.neighbors, '[]'::jsonb)) n
+        WHERE (n->>'similarity')::numeric >= 0.85
+      ),
+      pairs AS (
+        SELECT LEAST(r1, r2) AS a, GREATEST(r1, r2) AS b, MAX(sim) AS sim
+        FROM twins WHERE r1 <> r2 GROUP BY 1, 2
+      )
+      INSERT INTO entity_graph_edges (src, dst, edge_type, weight, detail, updated_at)
+      SELECT 'AC:' || p.a, 'AC:' || p.b, 'behavior', p.sim,
+             'behavioural embedding similarity ' || ROUND(p.sim, 3), NOW()
+      FROM pairs p
+      WHERE EXISTS (SELECT 1 FROM entity_graph_nodes n WHERE n.node_id = 'AC:' || p.a)
+        AND EXISTS (SELECT 1 FROM entity_graph_nodes n WHERE n.node_id = 'AC:' || p.b)
+      ON CONFLICT (src, dst, edge_type) DO UPDATE SET
+        weight = EXCLUDED.weight, detail = EXCLUDED.detail, updated_at = NOW()
+      RETURNING 1
+    `) as unknown[];
+    behaviorEdges = beh.length;
+  } catch { /* embeddings table optional */ }
+
+
+
   // ── 4. Flag / violation counts from the Supabase forensic tables ─────────
   let flagged = 0;
   try {
@@ -303,7 +334,7 @@ async function build(sql: ReturnType<typeof postgres>, body: Record<string, unkn
 
   return {
     ok: true, action: "build", days,
-    copresence_pairs: cop.length, flagged_entities: flagged,
+    copresence_pairs: cop.length, behavior_pairs: behaviorEdges, flagged_entities: flagged,
     stats: stats[0] || {}, elapsed_ms: Date.now() - t0,
   };
 }

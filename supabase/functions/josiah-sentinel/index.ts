@@ -67,6 +67,56 @@ function isMilitaryCallsign(reg?: string, callsign?: string): { hit: boolean; pr
   return { hit: false, prefix: null };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// WATCHLIST OVERRIDE — no aircraft already under investigation may buy immunity
+// by broadcasting an airline callsign. A watchlist hit VOIDS every exemption.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Documented federal aerial-surveillance front tails confirmed in this archive
+// (mirrors src/lib/federalFronts.ts CONFIRMED_FRONT_TAILS).
+const CONFIRMED_FRONT_TAILS = ['N125AL', 'N484JB', 'N795DH'];
+const FRONT_OPERATOR_KEYWORDS = [
+  'FVX RESEARCH', 'KQM AVIATION', 'NBR AVIATION', 'PXW SERVICES', 'NG RESEARCH',
+  'OBR LEASING', 'OTV LEASING', 'NBY PRODUCTIONS', 'PSL SURVEYS', 'RKT PRODUCTIONS',
+  'AEROGRAPHICS', 'NATIONAL AIRCRAFT LEASING', 'SILVER CREEK AVIATION',
+  'CHAPARRAL AIR GROUP', 'EARLY DETECTION ALARM', 'GLOBAL GEO MAPPING',
+  'MIDWEST AERIAL IMAGING', 'AIR CERBERUS',
+];
+
+/** Returns the reason this airframe is on the watchlist, or null if it is not. */
+function watchlistHit(d: any, escalatedRegs: Set<string>): string | null {
+  const reg = String(d.registration || '').toUpperCase().trim();
+  const cs = String(d.callsign || '').toUpperCase().trim();
+  const own = String(d.owner_operator || '').toUpperCase();
+  const tag = reg || cs;
+
+  if (tag && [...escalatedRegs].some(r => String(r).toUpperCase() === tag)) {
+    return `${tag} is an escalated repeat offender in the learned-threat register`;
+  }
+  if (isKcsoAircraft(reg, cs, own)) return `${tag} is KCSO fleet`;
+  if (isFlytAircraft(reg, cs)) return `${tag} is FLYT Aviation surveillance fleet`;
+  if (CONFIRMED_FRONT_TAILS.some(t => reg.includes(t) || cs.includes(t))) {
+    return `${tag} is a confirmed federal front-company tail`;
+  }
+  if (FRONT_OPERATOR_KEYWORDS.some(k => own.includes(k))) {
+    return `Registrant "${d.owner_operator}" is a documented federal front company`;
+  }
+  if (THREAT_SIGNATURES.shellCompany.some(r => reg.includes(r) || cs.includes(r))) {
+    return `${tag} is a tracked shell-company airframe`;
+  }
+  if (THREAT_SIGNATURES.medicalCover.some(r => reg.includes(r) || cs.includes(r))) {
+    return `${tag} is a tracked medical-cover airframe`;
+  }
+  if (THREAT_SIGNATURES.droneSignatures.knownDrones.some(r => reg.includes(r) || cs.includes(r))) {
+    return `${tag} is a tracked unmanned/anomalous airframe`;
+  }
+  if (d.shell_auto_detected) return `${tag} is registered to an auto-detected shell entity`;
+  if (d.is_military) return `${tag} is broadcasting as a military asset`;
+  const mil = isMilitaryCallsign(reg, cs);
+  if (mil.hit) return `${tag} carries military callsign prefix ${mil.prefix}`;
+  return null;
+}
+
 
 const KNOWN_SHELL_OPERATORS = [
   '9K AIR', 'FLYEXCLUSIVE', 'FLY EXCLUSIVE', 'NETJETS', 'FLEXJET',

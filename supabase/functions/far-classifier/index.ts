@@ -82,8 +82,11 @@ async function classify(det: Detection, sql: ReturnType<typeof postgres>): Promi
   let farRows: Array<{ citation: string; text: string }> = [];
   try {
     const rows = await sql.unsafe(
-      `SELECT citation, text FROM public.faa_regulations WHERE citation = ANY($1::text[])`,
-      [wantedCitations],
+      `SELECT section AS citation, content AS text
+         FROM public.faa_regulations
+        WHERE section = ANY($1::text[])
+           OR section ILIKE ANY($2::text[])`,
+      [wantedCitations, wantedCitations.map((c) => `%${c}%`)],
     );
     farRows = rows as any[];
   } catch {

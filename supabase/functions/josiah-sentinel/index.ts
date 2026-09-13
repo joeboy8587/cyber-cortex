@@ -163,6 +163,89 @@ function isScheduledOverflight(d: any): boolean {
   return Boolean(airlineCallsignPrefix(d.callsign)) && alt >= 10000;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SCHEDULED-OVERFLIGHT SCREENING — an airline callsign is a CLAIM, not proof.
+// Before a detection is excluded from tactical scoring we verify the claim.
+// Anything that fails screening is RETAINED (scored normally) and reported, so
+// an impostor cannot buy immunity simply by broadcasting "UAL" in the callsign.
+// ─────────────────────────────────────────────────────────────────────────────
+export type OverflightScreen = { verdict: 'EXCLUDE' | 'RETAIN'; reasons: string[] };
+
+type IdentityIndex = {
+  hexToRegs: Map<string, Set<string>>;
+  regToHexes: Map<string, Set<string>>;
+  callsignToHexes: Map<string, Set<string>>;
+};
+
+function buildIdentityIndex(detections: any[]): IdentityIndex {
+  const hexToRegs = new Map<string, Set<string>>();
+  const regToHexes = new Map<string, Set<string>>();
+  const callsignToHexes = new Map<string, Set<string>>();
+  const add = (m: Map<string, Set<string>>, k: string, v: string) => {
+    if (!k || !v) return;
+    if (!m.has(k)) m.set(k, new Set());
+    m.get(k)!.add(v);
+  };
+  for (const d of detections) {
+    const hex = String(d.icao24 || '').trim().toUpperCase();
+    const reg = String(d.registration || '').trim().toUpperCase();
+    const cs = String(d.callsign || '').trim().toUpperCase();
+    add(hexToRegs, hex, reg);
+    add(regToHexes, reg, hex);
+    add(callsignToHexes, cs, hex);
+  }
+  return { hexToRegs, regToHexes, callsignToHexes };
+}
+
+// Physics envelope for a transport-category jet in Class A cruise.
+const CRUISE_MIN_KTS = 150;
+const CRUISE_MAX_KTS = 650;
+const CRUISE_MAX_ALT_FT = 51000;
+
+function screenScheduledOverflight(d: any, idx: IdentityIndex): OverflightScreen {
+  const reasons: string[] = [];
+  const alt = Number(d.altitude || 0);
+  const spd = Number(d.speed ?? NaN);
+  const hex = String(d.icao24 || '').trim().toUpperCase();
+  const reg = String(d.registration || '').trim().toUpperCase();
+  const cs = String(d.callsign || '').trim().toUpperCase();
+
+  // 1. Registration ↔ ICAO hex country-block coherence.
+  const hexCheck = checkHexAllocation(d.icao24, d.registration);
+  if (hexCheck.status === 'MISMATCH') {
+    reasons.push(`ICAO hex ${hex} is outside the ${hexCheck.country} allocation block for registration ${reg}`);
+  }
+
+  // 2. One hex must map to exactly one airframe, and back.
+  if ((idx.hexToRegs.get(hex)?.size ?? 0) > 1) {
+    reasons.push(`ICAO hex ${hex} broadcast under ${idx.hexToRegs.get(hex)!.size} different registrations in this window`);
+  }
+  if (reg && (idx.regToHexes.get(reg)?.size ?? 0) > 1) {
+    reasons.push(`Registration ${reg} broadcast under ${idx.regToHexes.get(reg)!.size} different ICAO hexes in this window`);
+  }
+  if (cs && (idx.callsignToHexes.get(cs)?.size ?? 0) > 1) {
+    reasons.push(`Callsign ${cs} flown simultaneously by ${idx.callsignToHexes.get(cs)!.size} different airframes`);
+  }
+
+  // 3. An airline callsign with no airframe identity at all cannot be verified.
+  if (!reg && !/^[0-9A-F]{6}$/.test(hex)) {
+    reasons.push(`Airline callsign ${cs} carries no registration and no valid ICAO hex — identity unverifiable`);
+  }
+
+  // 4. Physics envelope for the cruise regime it claims to be in.
+  if (Number.isFinite(spd) && spd > 0 && spd < CRUISE_MIN_KTS) {
+    reasons.push(`${Math.round(spd)}kt at ${alt}ft — below transport-jet cruise envelope, telemetry not physically consistent`);
+  }
+  if (Number.isFinite(spd) && spd > CRUISE_MAX_KTS) {
+    reasons.push(`${Math.round(spd)}kt exceeds the transport-jet envelope — fabricated or corrupted velocity`);
+  }
+  if (alt > CRUISE_MAX_ALT_FT) {
+    reasons.push(`${alt}ft exceeds the service ceiling of any scheduled airliner`);
+  }
+
+  return { verdict: reasons.length ? 'RETAIN' : 'EXCLUDE', reasons };
+}
+
 
 const ESCALATION_THRESHOLDS = [
   { level: 2, minViolations: 10 },

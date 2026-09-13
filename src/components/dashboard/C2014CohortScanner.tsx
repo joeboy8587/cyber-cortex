@@ -21,6 +21,9 @@ interface CohortResult {
     hammerAnvilEvents: number;
     shellEntities: number;
     loiterSignatures: number;
+    windowDays?: number;
+    partial?: boolean;
+    degradedSections?: string[];
   };
 }
 

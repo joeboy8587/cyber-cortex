@@ -821,8 +821,39 @@ serve(async (req) => {
     // ========== STEP 6: FLEET CONVERGENCE ==========
     // CORRECTED RULE: only aircraft operating BELOW 3,000 ft AND inside the 5 nm
     // AOI radius can form a convergence. Class A cruise traffic on the
-    // transcontinental airway is excluded, as is scheduled airline metal.
+    // transcontinental airway is excluded — but ONLY after the airline identity
+    // claim survives screening. A failed claim is retained and scored.
     let convergenceExcludedOverflights = 0;
+    const identityIndex = buildIdentityIndex(recentDetections);
+    const overflightFindings: Array<{
+      callsign: string; registration: string | null; icao24: string | null;
+      altitude: number | null; speed: number | null; timestamp: string | null; reasons: string[];
+    }> = [];
+    const overflightFindingKeys = new Set<string>();
+    let overflightsScreened = 0;
+
+    // Screen every airline-callsign detection, at any altitude, before it is trusted.
+    const screenOverflight = (detection: any): boolean => {
+      if (!isScheduledOverflight(detection)) return false;
+      overflightsScreened += 1;
+      const screen = screenScheduledOverflight(detection, identityIndex);
+      if (screen.verdict === 'EXCLUDE') return true;
+      const key = `${detection.callsign}|${detection.icao24}|${screen.reasons.join('|')}`;
+      if (!overflightFindingKeys.has(key)) {
+        overflightFindingKeys.add(key);
+        overflightFindings.push({
+          callsign: String(detection.callsign || '').toUpperCase(),
+          registration: detection.registration ?? null,
+          icao24: detection.icao24 ?? null,
+          altitude: detection.altitude != null ? Number(detection.altitude) : null,
+          speed: detection.speed != null ? Number(detection.speed) : null,
+          timestamp: detection.detection_timestamp ?? null,
+          reasons: screen.reasons,
+        });
+      }
+      return false; // failed screening — do NOT grant the commercial exemption
+    };
+
     const hourlyGroups = new Map<string, { tails: Set<string>; minAlt: Map<string, number> }>();
     for (const detection of recentDetections) {
       const ts = (detection as any).detection_timestamp;
@@ -831,12 +862,14 @@ serve(async (req) => {
       const reg = detection.registration || detection.callsign;
       if (!reg) continue;
 
+      const exempt = screenOverflight(detection);
       const alt = Number(detection.altitude || 0);
       if (!(alt > 0 && alt < CONVERGENCE_ALT_CEILING_FT)) {
-        if (isScheduledOverflight(detection)) convergenceExcludedOverflights += 1;
+        if (exempt) convergenceExcludedOverflights += 1;
         continue;
       }
-      if (isScheduledOverflight(detection)) { convergenceExcludedOverflights += 1; continue; }
+      if (exempt) { convergenceExcludedOverflights += 1; continue; }
+
 
       const dist = nmFromAoi(detection.latitude, detection.longitude);
       if (dist === null || dist > AOI_RADIUS_NM) continue;

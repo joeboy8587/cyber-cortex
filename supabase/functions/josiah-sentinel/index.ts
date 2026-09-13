@@ -206,11 +206,13 @@ function nmFromAoi(lat: any, lng: any): number | null {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-// A detection is scheduled commercial overflight when a known airline operates it
-// in Class A / high-altitude cruise. Those are excluded from tactical scoring.
+// A detection is a candidate scheduled overflight only in true airway cruise
+// (FL180+, Class A). Airline callsigns below that are NOT waved through — the
+// 10,000–18,000ft band is where a low approach or a cover profile hides.
+const AIRWAY_CRUISE_FLOOR_FT = 18000;
 function isScheduledOverflight(d: any): boolean {
   const alt = Number(d.altitude || 0);
-  return Boolean(airlineCallsignPrefix(d.callsign)) && alt >= 10000;
+  return Boolean(airlineCallsignPrefix(d.callsign)) && alt >= AIRWAY_CRUISE_FLOOR_FT;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

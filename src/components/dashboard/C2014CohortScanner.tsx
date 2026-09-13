@@ -35,18 +35,21 @@ export function C2014CohortScanner() {
   const runCohortScan = async () => {
     setScanning(true);
     try {
-      const { data, error } = await supabase.functions.invoke('neon-query', {
-        body: {
-          action: 'c2014CohortScan',
-          registrations: ['N528AM','N786FA','N6196P','N256AA','N789FA','N912KC','N913KC','N597E','N791FA','N790FA','N435CA','N436CA','N224AM','N229AM','N230AM']
-        }
+      const { data, error } = await neonQuery({
+        action: 'c2014CohortScan',
+        days: 120,
+        registrations: ['N528AM','N786FA','N6196P','N256AA','N789FA','N912KC','N913KC','N597E','N791FA','N790FA','N435CA','N436CA','N224AM','N229AM','N230AM']
       });
       if (error) throw error;
       const result = data as CohortResult;
       if ((result as any)?.error) throw new Error((result as any).error);
       if (!result?.meta) throw new Error('No data returned from scan');
       setResults(result);
-      toast({ title: "C2014 Cohort Scan Complete", description: `${result.meta.cohortSize || 0} aircraft profiled, ${result.meta.hammerAnvilEvents || 0} coordination events detected` });
+      const skipped = result.meta.degradedSections?.length || 0;
+      toast({
+        title: skipped ? "C2014 Cohort Scan — Partial Results" : "C2014 Cohort Scan Complete",
+        description: `${result.meta.cohortSize || 0} aircraft profiled, ${result.meta.hammerAnvilEvents || 0} coordination events detected${skipped ? ` · ${skipped} section(s) timed out` : ''}`
+      });
     } catch (err) {
       toast({ title: "Scan failed", description: (err as Error).message, variant: "destructive" });
     } finally {

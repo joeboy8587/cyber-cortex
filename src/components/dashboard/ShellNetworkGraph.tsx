@@ -42,18 +42,6 @@ interface NetworkData {
   totalExposure: number;
 }
 
-// Fallback only used if Neon query fails
-const FALLBACK_ENTERPRISE: Array<{
-  name: string;
-  type: NetworkNode["type"];
-  tier: number;
-  ricoIndicators: string[];
-  threatScore: number;
-  linkedAircraft: string[];
-  linkedEntities: string[];
-}> = [];
-
-
 // KCSO operator-owned fleet — never classify as shell
 const KCSO_FLEET_REGS = new Set(['N912KC', 'N913KC', 'N957E', 'N597E', 'N788FA', 'N911KC', 'N914KC', 'N915KC']);
 const KCSO_OPERATOR_KEYWORDS = ['KERN COUNTY SHERIFF', 'KCSO', 'KERN CO SHERIFF'];
@@ -64,6 +52,29 @@ const isKcsoEntity = (name?: string) => {
   return KCSO_OPERATOR_KEYWORDS.some(k => raw.includes(k));
 };
 
+const GOV_KEYWORDS = ['SHERIFF', 'POLICE', 'COUNTY OF', 'CITY OF', 'STATE OF', 'UNITED STATES',
+  'U S ', 'US DEPT', 'DEPARTMENT OF', 'NATIONAL GUARD', 'FEDERAL', 'CUSTOMS', 'FIRE DEPT'];
+const SHELL_KEYWORDS = ['LLC', 'L L C', 'LEASING', 'TRUST', 'HOLDINGS', 'HOLDING', 'CAPITAL',
+  'VENTURES', 'PARTNERS', 'PROPERTIES', 'GROUP LLC', 'INVESTMENT'];
+
+const classifyOperator = (name: string): NetworkNode["type"] => {
+  const n = String(name || '').toUpperCase();
+  if (isKcsoEntity(n) || GOV_KEYWORDS.some(k => n.includes(k))) return 'agency';
+  if (SHELL_KEYWORDS.some(k => n.includes(k))) return 'shell';
+  return 'contractor';
+};
+
+interface GraphNodeRow {
+  node_id: string; node_type: string; label?: string; registration?: string;
+  operator?: string; operator_type?: string; operator_state?: string;
+  aircraft_type?: string; detections?: number; aoi_pings?: number;
+  low_alt_pct?: number; sub_stall_pct?: number; night_pct?: number;
+  flag_count?: number; critical_flags?: number; risk_score?: number;
+}
+interface GraphEdgeRow {
+  src: string; dst: string; edge_type: string; weight?: number; detail?: string;
+}
+
 export function ShellNetworkGraph() {
   const [isLoading, setIsLoading] = useState(false);
   const [networkData, setNetworkData] = useState<NetworkData | null>(null);
@@ -73,155 +84,77 @@ export function ShellNetworkGraph() {
     setIsLoading(true);
 
     try {
-      // Query live enterprise config from Neon
-      const [configResp, entityResp] = await Promise.all([
-        supabase.functions.invoke("neon-query", {
-          body: { action: "getInvestigationConfig" }
-        }),
-        supabase.from("entity_registry")
-          .select("canonical_identifier, entity_type, threat_classification, aliases, metadata")
-          .in("entity_type", ["shell_company", "contractor", "agency", "operator"])
-          .limit(50),
-      ]);
+      const callGraph = async () =>
+        await supabase.functions.invoke("entity-graph-build", {
+          body: { action: "graph", limit: 200 },
+        });
 
-      const config = configResp.data || {};
-      const enterpriseHierarchy = extractNeonData(config.enterprise_hierarchy) || [];
-      const shellCompanies = extractNeonData(config.shell_companies) || [];
-      const kcsoFleet = extractNeonData(config.kcso_fleet) || [];
+      let { data, error } = await callGraph();
+      if (error) throw error;
 
-      const nodes: NetworkNode[] = [];
-      const links: NetworkLink[] = [];
+      // Empty graph → build it once from Neon, then re-read.
+      if (!data?.nodes?.length) {
+        toast.info("Building the entity graph from the flight archive…");
+        await supabase.functions.invoke("entity-graph-build", {
+          body: { action: "build", days: 90 },
+        });
+        const retry = await callGraph();
+        data = retry.data;
+      }
+
+      const rawNodes: GraphNodeRow[] = data?.nodes || [];
+      const rawEdges: GraphEdgeRow[] = data?.edges || [];
+
       const nodeMap = new Map<string, NetworkNode>();
 
-      const addNode = (node: NetworkNode) => {
-        if (!nodeMap.has(node.id)) {
-          nodes.push(node);
-          nodeMap.set(node.id, node);
+      rawNodes.forEach((r) => {
+        const isAircraft = r.node_type === "aircraft";
+        const name = String(r.label || r.registration || r.operator || r.node_id);
+        const type: NetworkNode["type"] = isAircraft ? "aircraft" : classifyOperator(name);
+        const indicators: string[] = [];
+        if (isAircraft) {
+          if (Number(r.critical_flags) > 0) indicators.push("CRITICAL_FLAGS");
+          if (Number(r.sub_stall_pct) > 0.05) indicators.push("SUB_STALL_TELEMETRY");
+          if (Number(r.low_alt_pct) > 0.2) indicators.push("LOW_ALTITUDE_PATTERN");
+          if (Number(r.night_pct) > 0.3) indicators.push("NIGHT_OPERATIONS");
+          if (Number(r.aoi_pings) > 0) indicators.push("AOI_PRESENCE");
+        } else {
+          indicators.push(type === "agency" ? "LAW_ENFORCEMENT_OPERATOR" : "REGISTRANT_OF_RECORD");
+          if (r.operator_type) indicators.push(String(r.operator_type).toUpperCase());
         }
-        return nodeMap.get(node.id)!;
-      };
-
-      const addLink = (source: string, target: string, type: NetworkLink["type"], strength: number) => {
-        if (nodeMap.has(source) && nodeMap.has(target)) {
-          links.push({ source, target, type, strength });
-          nodeMap.get(source)!.connections++;
-          nodeMap.get(target)!.connections++;
-        }
-      };
-
-      // 1. Build from live enterprise hierarchy (from criminal_enterprise_command_structure)
-      enterpriseHierarchy.forEach((entity: any) => {
-        const entityId = (entity.entity_name || '').toLowerCase().replace(/[\s\/]+/g, "_");
-        const linkedAircraft = Array.isArray(entity.linked_aircraft) ? entity.linked_aircraft : 
-          typeof entity.linked_aircraft === 'string' ? entity.linked_aircraft.replace(/[{}]/g, '').split(',').filter(Boolean) : [];
-        const linkedEntities = Array.isArray(entity.linked_entities) ? entity.linked_entities :
-          typeof entity.linked_entities === 'string' ? entity.linked_entities.replace(/[{}]/g, '').split(',').filter(Boolean) : [];
-        const ricoIndicators = Array.isArray(entity.rico_indicators) ? entity.rico_indicators :
-          typeof entity.rico_indicators === 'string' ? entity.rico_indicators.replace(/[{}]/g, '').split(',').filter(Boolean) : [];
-
-        addNode({
-          id: entityId,
-          name: entity.entity_name || entityId,
-          type: entity.entity_type === 'shell_company' ? 'shell' :
-                entity.entity_type === 'agency' ? 'agency' :
-                entity.entity_type === 'contractor' ? 'contractor' : 'individual',
-          tier: parseInt(String(entity.tier || '3')),
-          ricoIndicators: ricoIndicators,
+        nodeMap.set(r.node_id, {
+          id: r.node_id,
+          name,
+          type,
+          tier: isAircraft ? 4 : type === "agency" ? 1 : type === "shell" ? 2 : 3,
+          ricoIndicators: indicators.filter(Boolean).slice(0, 4),
           connections: 0,
-          threatScore: parseInt(String(entity.threat_score || '50'))
-        });
-
-        linkedAircraft.forEach((reg: string) => {
-          const aircraftId = reg.trim().toLowerCase();
-          if (!aircraftId) return;
-          addNode({ id: aircraftId, name: reg.trim(), type: "aircraft", tier: 4, ricoIndicators: [], connections: 0, threatScore: 40 });
-          addLink(entityId, aircraftId, "ownership", 0.9);
-        });
-
-        linkedEntities.forEach((target: string) => {
-          const targetId = target.trim().toLowerCase().replace(/[\s\/]+/g, "_");
-          if (nodeMap.has(targetId)) addLink(entityId, targetId, "operational", 0.7);
+          threatScore: Math.round(Number(r.risk_score) || 0),
         });
       });
 
-      // 1b. Add shell companies from shell_companies table (skip KCSO operator-owned aircraft)
-      shellCompanies.forEach((sc: any) => {
-        if (isKcsoEntity(sc.company_name)) return;
-        const scId = (sc.company_name || '').toLowerCase().replace(/[\s\/]+/g, "_");
-        if (!scId || nodeMap.has(scId)) return;
-        addNode({
-          id: scId, name: sc.company_name, type: "shell", tier: 2,
-          ricoIndicators: sc.rico_indicators ? [sc.rico_indicators] : ["SHELL_STRUCTURE"],
-          connections: 0, threatScore: parseInt(String(sc.risk_score || '70'))
-        });
+      const links: NetworkLink[] = [];
+      rawEdges.forEach((e) => {
+        const src = nodeMap.get(e.src);
+        const dst = nodeMap.get(e.dst);
+        if (!src || !dst) return;
+        const type: NetworkLink["type"] =
+          e.edge_type === "registrant" ? "ownership"
+          : e.edge_type === "behavior" ? "funding"
+          : "operational";
+        links.push({ source: e.src, target: e.dst, type, strength: Number(e.weight) || 1 });
+        src.connections++;
+        dst.connections++;
       });
 
-      // Ensure KCSO agency node exists so fleet links resolve
-      const kcsoAgencyId = "kcso_aviation_unit";
-      if (!nodeMap.has(kcsoAgencyId)) {
-        addNode({
-          id: kcsoAgencyId, name: "Kern County Sheriff Aviation Unit",
-          type: "agency", tier: 1, ricoIndicators: ["LAW_ENFORCEMENT_OPERATOR"],
-          connections: 0, threatScore: 70
-        });
-      }
-
-      // 1c. Add KCSO fleet aircraft
-      kcsoFleet.forEach((f: any) => {
-        const aircraftId = (f.tail_number || '').toLowerCase();
-        if (!aircraftId) return;
-        addNode({ id: aircraftId, name: f.tail_number, type: "aircraft", tier: 4, ricoIndicators: [], connections: 0, threatScore: 45 });
-        // Link to KCSO if it exists
-        const kcsoId = "kcso_aviation_unit";
-        if (nodeMap.has(kcsoId)) addLink(kcsoId, aircraftId, "ownership", 0.95);
-      });
-
-      // If no enterprise data was loaded, use fallback
-      if (enterpriseHierarchy.length === 0 && FALLBACK_ENTERPRISE.length > 0) {
-        FALLBACK_ENTERPRISE.forEach(entity => {
-          const entityId = entity.name.toLowerCase().replace(/[\s\/]+/g, "_");
-          addNode({ id: entityId, name: entity.name, type: entity.type, tier: entity.tier, ricoIndicators: [...entity.ricoIndicators], connections: 0, threatScore: entity.threatScore });
-          entity.linkedAircraft.forEach(reg => {
-            const aircraftId = reg.toLowerCase();
-            addNode({ id: aircraftId, name: reg, type: "aircraft", tier: 4, ricoIndicators: [], connections: 0, threatScore: 40 });
-            addLink(entityId, aircraftId, "ownership", 0.9);
-          });
-        });
-      }
-
-      // 2. Enrich from entity_registry (Supabase)
-      const entities = entityResp.data || [];
-      entities.forEach((e: any) => {
-        const isKcso = isKcsoEntity(e.canonical_identifier);
-        const entityId = (e.canonical_identifier || "").toLowerCase().replace(/[\s\/]+/g, "_");
-        if (entityId && !nodeMap.has(entityId)) {
-          const resolvedType: NetworkNode["type"] = isKcso
-            ? (KCSO_FLEET_REGS.has(String(e.canonical_identifier || '').toUpperCase().replace(/\s+/g, '')) ? "aircraft" : "agency")
-            : e.entity_type === "shell_company" ? "shell"
-            : e.entity_type === "agency" ? "agency"
-            : e.entity_type === "contractor" ? "contractor" : "individual";
-          addNode({
-            id: entityId,
-            name: e.canonical_identifier,
-            type: resolvedType,
-            tier: resolvedType === "aircraft" ? 4 : resolvedType === "shell" ? 2 : resolvedType === "agency" ? 1 : 3,
-            ricoIndicators: isKcso ? ["LAW_ENFORCEMENT_OPERATOR"] : (e.threat_classification ? [e.threat_classification] : []),
-            connections: 0,
-            threatScore: 50
-          });
-          if (resolvedType === "aircraft" && isKcso) {
-            addLink("kcso_aviation_unit", entityId, "ownership", 0.95);
-          }
-        }
-      });
-
-      // Calculate RICO score
-      const tier0 = nodes.filter(n => n.tier === 0).length;
-      const tier1 = nodes.filter(n => n.tier === 1).length;
+      const nodes = [...nodeMap.values()];
       const shellCount = nodes.filter(n => n.type === "shell").length;
-      const ricoScore = Math.min(100, (tier0 * 25) + (tier1 * 15) + (shellCount * 5) + 10);
+      const linkedShare = nodes.length ? nodes.filter(n => n.connections > 0).length / nodes.length : 0;
+      const avgRisk = nodes.length
+        ? nodes.reduce((s, n) => s + n.threatScore, 0) / nodes.length
+        : 0;
+      const ricoScore = Math.round(Math.min(100, (shellCount * 4) + (linkedShare * 40) + (avgRisk * 0.3)));
 
-      // Estimate total legal exposure based on entity count and tier
       const totalExposure = nodes.reduce((sum, n) => {
         const tierMultiplier = [50, 20, 10, 5, 1][Math.min(n.tier, 4)];
         return sum + (tierMultiplier * 100000);

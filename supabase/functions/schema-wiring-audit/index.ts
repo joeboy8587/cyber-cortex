@@ -126,6 +126,15 @@ Deno.serve(async (req) => {
           });
           continue;
         }
+        if (ref.columns.length === 0) {
+          report.push({
+            source_type: ref.source_type, source_path: ref.source_path,
+            table_name: ref.table, column_ref: null,
+            status: "ok", suggested_fix: "Columns resolved dynamically at runtime — table exists.",
+            severity: "info", scanned_at: now,
+          });
+          continue;
+        }
         for (const col of ref.columns) {
           if (found.has(col.toLowerCase())) {
             report.push({

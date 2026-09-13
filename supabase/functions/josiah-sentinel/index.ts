@@ -903,8 +903,36 @@ serve(async (req) => {
         timestamp: hour + ':00:00Z', relatedAircraft: Array.from(tails)
       });
     }
+    // Commercial-overflight exemption audit — every exclusion is now earned.
+    const commercialOverflightAudit = {
+      screened: overflightsScreened,
+      excluded_verified: convergenceExcludedOverflights,
+      retained_failed_screening: overflightFindings.length,
+      checks_applied: [
+        'Registration ↔ ICAO hex country-block coherence',
+        'One hex ↔ one registration (and the reverse)',
+        'Callsign not flown by two airframes at once',
+        'Identity present and parseable',
+        `Cruise physics envelope (${CRUISE_MIN_KTS}–${CRUISE_MAX_KTS}kt, ceiling ${CRUISE_MAX_ALT_FT}ft)`,
+      ],
+      findings: overflightFindings.slice(0, 50),
+    };
+
     if (convergenceExcludedOverflights > 0) {
-      proactiveAlerts.push(`ℹ️ ${convergenceExcludedOverflights} scheduled high-altitude airline detections excluded from convergence scoring (transcontinental airway, not tactical).`);
+      proactiveAlerts.push(`ℹ️ ${convergenceExcludedOverflights} scheduled airline detections screened and verified (identity and physics coherent), then excluded from convergence scoring — transcontinental airway, not tactical.`);
+    }
+    for (const f of overflightFindings) {
+      violations.push({
+        type: 'PATTERN_ANOMALY_COMMERCIAL_IDENTITY',
+        severity: 'high',
+        registration: f.registration || f.callsign || 'UNKNOWN',
+        details: `Detection broadcasting scheduled-airline callsign ${f.callsign} failed commercial-identity screening and was RETAINED in tactical scoring: ${f.reasons.join('; ')}. An airline callsign is a claim, not verification.`,
+        timestamp: f.timestamp || new Date().toISOString(),
+        altitude: f.altitude ?? undefined,
+      });
+    }
+    if (overflightFindings.length > 0) {
+      proactiveAlerts.push(`🚨 COMMERCIAL COVER SUSPECTED: ${overflightFindings.length} detection(s) using airline callsigns failed identity or physics screening — ${overflightFindings.slice(0, 5).map(f => f.callsign).join(', ')}. Exemption denied; these are scored as tactical.`);
     }
 
 

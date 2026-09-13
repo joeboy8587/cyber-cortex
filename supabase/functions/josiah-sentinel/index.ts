@@ -250,17 +250,24 @@ function buildIdentityIndex(detections: any[]): IdentityIndex {
 }
 
 // Physics envelope for a transport-category jet in Class A cruise.
-const CRUISE_MIN_KTS = 150;
-const CRUISE_MAX_KTS = 650;
-const CRUISE_MAX_ALT_FT = 51000;
+const CRUISE_MIN_KTS = 250;
+const CRUISE_MAX_KTS = 620;
+const CRUISE_MAX_ALT_FT = 45000;
+// An airliner on the transcontinental airway does not pass over the residence
+// at low level. Anything inside this ring is scored, callsign notwithstanding.
+const OVERFLIGHT_NO_EXEMPTION_NM = 8;
 
-function screenScheduledOverflight(d: any, idx: IdentityIndex): OverflightScreen {
+function screenScheduledOverflight(d: any, idx: IdentityIndex, escalatedRegs: Set<string>): OverflightScreen {
   const reasons: string[] = [];
   const alt = Number(d.altitude || 0);
   const spd = Number(d.speed ?? NaN);
   const hex = String(d.icao24 || '').trim().toUpperCase();
   const reg = String(d.registration || '').trim().toUpperCase();
   const cs = String(d.callsign || '').trim().toUpperCase();
+
+  // 0. Watchlist override — an airframe already under investigation gets no pass.
+  const wl = watchlistHit(d, escalatedRegs);
+  if (wl) reasons.push(`Watchlist airframe — ${wl}. Exemption void.`);
 
   // 1. Registration ↔ ICAO hex country-block coherence.
   const hexCheck = checkHexAllocation(d.icao24, d.registration);
@@ -279,12 +286,17 @@ function screenScheduledOverflight(d: any, idx: IdentityIndex): OverflightScreen
     reasons.push(`Callsign ${cs} flown simultaneously by ${idx.callsignToHexes.get(cs)!.size} different airframes`);
   }
 
-  // 3. An airline callsign with no airframe identity at all cannot be verified.
+  // 3. Identity must be complete. A partial identity is not a verified one.
   if (!reg && !/^[0-9A-F]{6}$/.test(hex)) {
     reasons.push(`Airline callsign ${cs} carries no registration and no valid ICAO hex — identity unverifiable`);
+  } else if (!reg || !/^[0-9A-F]{6}$/.test(hex)) {
+    reasons.push(`Airline callsign ${cs} is missing ${!reg ? 'a registration' : 'a valid ICAO hex'} — identity only half-verified`);
   }
 
   // 4. Physics envelope for the cruise regime it claims to be in.
+  if (!Number.isFinite(spd) || spd <= 0) {
+    reasons.push(`No velocity reported at ${alt}ft — cruise claim cannot be verified`);
+  }
   if (Number.isFinite(spd) && spd > 0 && spd < CRUISE_MIN_KTS) {
     reasons.push(`${Math.round(spd)}kt at ${alt}ft — below transport-jet cruise envelope, telemetry not physically consistent`);
   }
@@ -295,8 +307,16 @@ function screenScheduledOverflight(d: any, idx: IdentityIndex): OverflightScreen
     reasons.push(`${alt}ft exceeds the service ceiling of any scheduled airliner`);
   }
 
+  // 5. Geography. Scheduled traffic transits the airway; it does not sit over the AOI.
+  const dist = nmFromAoi(d.latitude, d.longitude);
+  if (dist !== null && dist <= OVERFLIGHT_NO_EXEMPTION_NM) {
+    reasons.push(`${dist.toFixed(1)}nm from the residence — inside the ${OVERFLIGHT_NO_EXEMPTION_NM}nm no-exemption ring`);
+  }
+
   return { verdict: reasons.length ? 'RETAIN' : 'EXCLUDE', reasons };
 }
+
+
 
 
 const ESCALATION_THRESHOLDS = [

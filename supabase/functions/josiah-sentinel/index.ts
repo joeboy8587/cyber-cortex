@@ -1703,6 +1703,7 @@ REGISTRATION | ACTION | PRIORITY (critical/high/medium)`;
       hall_of_shame: hallOfShame,
       hall_of_shame_meta: hosMeta,
       convergence_altitude_breakdown: convergenceBreakdown,
+      commercial_overflight_audit: commercialOverflightAudit,
     };
 
     console.log(`Sentinel scan complete in ${Date.now() - startTime}ms: ${violations.length} violations, threat=${threatLevel}`);

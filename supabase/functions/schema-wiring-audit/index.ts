@@ -64,20 +64,21 @@ Deno.serve(async (req) => {
       const REFERENCE_MAP: Array<{ source_type: string; source_path: string; table: string; columns: string[] }> = [
         // Edge functions that broke recently
         { source_type: "edge_function", source_path: "sentinel-ml-score", table: "live_flight_detections_rows",
-          columns: ["icao24","registration","callsign","latitude","longitude","altitude","gs","timestamp"] },
+          columns: ["icao24","registration","callsign","latitude","longitude","altitude","speed","detection_timestamp"] },
         { source_type: "edge_function", source_path: "far-classifier", table: "live_flight_detections_rows",
-          columns: ["icao24","registration","callsign","latitude","longitude","altitude","timestamp","ground_speed"] },
+          columns: ["icao24","registration","callsign","latitude","longitude","altitude","detection_timestamp","speed"] },
         { source_type: "edge_function", source_path: "neon-query", table: "live_flight_detections_rows",
-          columns: ["icao24","altitude","timestamp"] },
+          columns: ["icao24","altitude","detection_timestamp"] },
         { source_type: "edge_function", source_path: "policy-violation-scan", table: "live_flight_detections_rows",
-          columns: ["icao24","altitude","latitude","longitude","timestamp"] },
+          columns: ["icao24","altitude","latitude","longitude","speed","detection_timestamp"] },
         { source_type: "edge_function", source_path: "policy-violation-scan", table: "policy_violations",
           columns: ["policy_code","severity","aircraft_registration","detection_timestamp"] },
+        // wtpr-cases resolves its table + columns dynamically at runtime — table-level check only
         { source_type: "edge_function", source_path: "wtpr-cases", table: "wtpr_registry",
-          columns: ["case_id","status"] },
-        // FAA registry family
+          columns: [] },
+        // FAA regulations
         { source_type: "edge_function", source_path: "far-classifier", table: "faa_regulations",
-          columns: ["citation","text"] },
+          columns: ["section","content"] },
         // UI components
         { source_type: "ui_component", source_path: "src/components/dashboard/EvidenceSourcesPanel.tsx", table: "discovered_evidence_sources",
           columns: ["schema_name","table_name","row_estimate","forensic_score","join_keys","added_to_investigation"] },

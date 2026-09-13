@@ -2,7 +2,7 @@ import { useState } from "react";
 import { CyberPanel } from "@/components/ui/cyber-panel";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { supabase } from "@/integrations/supabase/client";
+import { neonQuery } from "@/lib/neonQueryRetry";
 import { useToast } from "@/hooks/use-toast";
 import { Search, Shield, Crosshair, Building2, HeartPulse, Plane, AlertTriangle, Loader2 } from "lucide-react";
 
@@ -21,6 +21,9 @@ interface CohortResult {
     hammerAnvilEvents: number;
     shellEntities: number;
     loiterSignatures: number;
+    windowDays?: number;
+    partial?: boolean;
+    degradedSections?: string[];
   };
 }
 
@@ -32,18 +35,21 @@ export function C2014CohortScanner() {
   const runCohortScan = async () => {
     setScanning(true);
     try {
-      const { data, error } = await supabase.functions.invoke('neon-query', {
-        body: {
-          action: 'c2014CohortScan',
-          registrations: ['N528AM','N786FA','N6196P','N256AA','N789FA','N912KC','N913KC','N597E','N791FA','N790FA','N435CA','N436CA','N224AM','N229AM','N230AM']
-        }
+      const { data, error } = await neonQuery({
+        action: 'c2014CohortScan',
+        days: 120,
+        registrations: ['N528AM','N786FA','N6196P','N256AA','N789FA','N912KC','N913KC','N597E','N791FA','N790FA','N435CA','N436CA','N224AM','N229AM','N230AM']
       });
       if (error) throw error;
       const result = data as CohortResult;
       if ((result as any)?.error) throw new Error((result as any).error);
       if (!result?.meta) throw new Error('No data returned from scan');
       setResults(result);
-      toast({ title: "C2014 Cohort Scan Complete", description: `${result.meta.cohortSize || 0} aircraft profiled, ${result.meta.hammerAnvilEvents || 0} coordination events detected` });
+      const skipped = result.meta.degradedSections?.length || 0;
+      toast({
+        title: skipped ? "C2014 Cohort Scan — Partial Results" : "C2014 Cohort Scan Complete",
+        description: `${result.meta.cohortSize || 0} aircraft profiled, ${result.meta.hammerAnvilEvents || 0} coordination events detected${skipped ? ` · ${skipped} section(s) timed out` : ''}`
+      });
     } catch (err) {
       toast({ title: "Scan failed", description: (err as Error).message, variant: "destructive" });
     } finally {
@@ -76,6 +82,14 @@ export function C2014CohortScanner() {
 
         {results && (
           <div className="space-y-4">
+            {results.meta.partial && (
+              <div className="flex items-start gap-2 rounded border border-destructive/40 bg-destructive/10 p-3">
+                <AlertTriangle className="w-3.5 h-3.5 mt-0.5 text-destructive shrink-0" />
+                <p className="text-[11px] font-mono text-destructive">
+                  PARTIAL SCAN — these sections took too long and were skipped: {results.meta.degradedSections?.join(', ')}. Everything else below is complete and accurate.
+                </p>
+              </div>
+            )}
             {/* Meta Summary */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               {[

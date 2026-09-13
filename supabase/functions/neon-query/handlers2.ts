@@ -259,31 +259,121 @@ export async function handleAction2(action: string, body: Record<string, any>, s
     case 'c2014CohortScan': {
       try {
         const targetRegs: string[] = body.registrations || ['N528AM','N786FA','N6196P','N256AA','N789FA','N912KC','N913KC','N597E','N789FA','N791FA','N790FA'];
-        const targetHexCodes = body.hexCodes || [];
-        // Format as PostgreSQL array literal for sql.unsafe usage
+        // Archive-wide aggregates are expensive (6.4M rows); keep the sweep window tight.
+        const windowDays = Math.min(Number(body.days) || 14, 90);
         const pgArray = `{${targetRegs.join(',')}}`;
         const pgArrayNNumbers = `{${targetRegs.map((r: string) => r.replace('N','')).join(',')}}`;
 
-        // 1. Procurement Cohort: Aircraft with 2014-era registration/first-seen dates
-        const procurementCohort = await sql.unsafe(`
-          SELECT registration, icao_code as hex, owner_operator, aircraft_type, aircraft_type_desc,
-            MIN(detection_timestamp) as first_seen,
-            MAX(detection_timestamp) as last_seen,
-            COUNT(*)::int as total_detections,
-            ROUND(AVG(altitude::numeric),0) as avg_altitude,
-            ROUND(AVG(speed::numeric),1) as avg_speed,
-            shell_auto_detected,
-            is_military,
-            taxonomy_tag
-          FROM live_flight_detections_rows
-          WHERE registration = ANY($1::text[])
-          GROUP BY registration, icao_code, owner_operator, aircraft_type, aircraft_type_desc,
-            shell_auto_detected, is_military, taxonomy_tag
-          ORDER BY total_detections DESC
-        `, [pgArray]);
+        const started = Date.now();
+        const BUDGET_MS = 110_000;
+        const remaining = () => BUDGET_MS - (Date.now() - started);
 
-        // 2. Behavioral Signatures: "Sensor Loitering" (speed <5kts, alt 0-400ft, extended dwell)
-        const sensorLoitering = await sql`
+        try { await sql.unsafe(`SET statement_timeout = '35s'`); } catch { /* ignore */ }
+
+        const degraded: string[] = [];
+        const safe = async <T,>(name: string, run: () => Promise<T>): Promise<T | []> => {
+          if (remaining() < 20_000) {
+            degraded.push(name);
+            return [];
+          }
+          try {
+            return await run();
+          } catch (e) {
+            console.warn(`c2014CohortScan section "${name}" degraded: ${(e as Error).message}`);
+            degraded.push(name);
+            return [];
+          }
+        };
+
+        // Targeted (indexed by registration) queries run together and are fast.
+        const [
+          procurementCohort,
+          hammerAnvil,
+          biometricCorrelation,
+          faaRegistry,
+        ] = await Promise.all([
+          // 1. Procurement cohort — target fleet only (indexed registration filter)
+          safe('cohort', () => sql.unsafe(`
+            SELECT registration, icao_code as hex, owner_operator, aircraft_type, aircraft_type_desc,
+              MIN(detection_timestamp) as first_seen,
+              MAX(detection_timestamp) as last_seen,
+              COUNT(*)::int as total_detections,
+              ROUND(AVG(altitude::numeric),0) as avg_altitude,
+              ROUND(AVG(speed::numeric),1) as avg_speed,
+              shell_auto_detected, is_military, taxonomy_tag
+            FROM live_flight_detections_rows
+            WHERE registration = ANY($1::text[])
+            GROUP BY registration, icao_code, owner_operator, aircraft_type, aircraft_type_desc,
+              shell_auto_detected, is_military, taxonomy_tag
+            ORDER BY total_detections DESC
+          `, [pgArray])),
+
+
+          // 4. Hammer-Anvil coordination — target fleet, bounded window
+          safe('hammerAnvil', () => sql.unsafe(`
+            WITH gridded AS (
+              SELECT registration, altitude::numeric as alt, speed::numeric as spd,
+                ROUND(latitude::numeric, 2) as grid_lat, ROUND(longitude::numeric, 2) as grid_lng,
+                DATE_TRUNC('minute', detection_timestamp) as time_slot
+              FROM live_flight_detections_rows
+              WHERE registration = ANY($1::text[])
+                AND detection_timestamp > NOW() - INTERVAL '30 days'
+                AND latitude IS NOT NULL AND longitude IS NOT NULL
+            )
+            SELECT a.time_slot, a.grid_lat, a.grid_lng,
+              a.registration as aircraft_a, a.alt as alt_a, a.spd as speed_a,
+              b.registration as aircraft_b, b.alt as alt_b, b.spd as speed_b,
+              ABS(a.alt - b.alt) as altitude_diff,
+              CASE
+                WHEN a.alt < 1000 AND b.alt > 2000 THEN 'HAMMER-ANVIL'
+                WHEN a.alt > 2000 AND b.alt < 1000 THEN 'ANVIL-HAMMER'
+                WHEN ABS(a.alt - b.alt) < 500 THEN 'FORMATION'
+                ELSE 'COORDINATION'
+              END as pattern_type
+            FROM gridded a
+            JOIN gridded b ON a.time_slot = b.time_slot
+              AND a.grid_lat = b.grid_lat AND a.grid_lng = b.grid_lng
+              AND a.registration < b.registration
+            ORDER BY a.time_slot DESC
+            LIMIT 50
+          `, [pgArray])),
+
+          // 3. Biometric correlation for target fleet
+          safe('biometricCorrelation', () => sql.unsafe(`
+            SELECT b.registration as aircraft_registration,
+              COUNT(*)::int as correlation_count,
+              ROUND(AVG(COALESCE(b.bradford_hill_score, b.threat_score)::numeric),2) as avg_score,
+              MAX(b.biometric_timestamp) as latest_correlation
+            FROM master_biometric_aircraft_correlations b
+            WHERE b.registration = ANY($1::text[])
+            GROUP BY b.registration
+            ORDER BY correlation_count DESC
+          `, [pgArray])),
+
+          // 4. FAA registry cross-reference (aircraft_registry schema)
+          safe('faaRegistry', () => sql.unsafe(`
+            SELECT LTRIM(tail_number, 'Nn') as n_number,
+              registered_owner as registrant_name,
+              manufacturer as aircraft_manufacturer,
+              model as aircraft_model,
+              registration_date::text as certificate_issue_date,
+              NULL::text as airworthiness_date,
+              icao_hex as mode_s_hex,
+              NULL::text as registrant_street,
+              NULL::text as registrant_city,
+              registration_country as registrant_state,
+              year_manufactured,
+              pattern_classification as status
+            FROM aircraft_registry
+            WHERE UPPER(tail_number) = ANY($2::text[])
+              OR UPPER(LTRIM(tail_number, 'Nn')) = ANY($1::text[])
+            ORDER BY registration_date
+          `, [pgArrayNNumbers, pgArray])),
+        ]);
+
+        // Archive-wide sweeps run one at a time inside whatever budget is left,
+        // so a slow sweep degrades that section instead of killing the request.
+        const sensorLoitering = await safe('sensorLoitering', () => sql.unsafe(`
           SELECT registration, icao_code as hex, owner_operator,
             COUNT(*)::int as loiter_detections,
             ROUND(AVG(altitude::numeric),0) as avg_alt,
@@ -292,98 +382,46 @@ export async function handleAction2(action: string, body: Record<string, any>, s
             MAX(detection_timestamp) as last_loiter,
             COUNT(DISTINCT DATE(detection_timestamp))::int as loiter_days
           FROM live_flight_detections_rows
-          WHERE speed::numeric < 5 AND altitude::numeric BETWEEN 0 AND 400
-            AND altitude::numeric > 0
+          WHERE detection_timestamp > NOW() - INTERVAL '${windowDays} days'
+            AND speed::numeric < 5
+            AND altitude::numeric > 0 AND altitude::numeric <= 400
           GROUP BY registration, icao_code, owner_operator
           HAVING COUNT(*) > 2
           ORDER BY loiter_detections DESC
           LIMIT 25
-        `;
+        `));
 
-        // 3. High-Altitude Signatures (>60000ft - U-2/ER-2 class)
-        const highAltitude = await sql`
+        const highAltitude = await safe('highAltitude', () => sql.unsafe(`
           SELECT registration, icao_code as hex, owner_operator, aircraft_type,
             MAX(altitude::numeric) as max_altitude,
             COUNT(*)::int as high_alt_detections,
             MIN(detection_timestamp) as first_seen,
             MAX(detection_timestamp) as last_seen
           FROM live_flight_detections_rows
-          WHERE altitude::numeric > 60000
+          WHERE detection_timestamp > NOW() - INTERVAL '${windowDays} days'
+            AND altitude::numeric > 60000
           GROUP BY registration, icao_code, owner_operator, aircraft_type
           ORDER BY max_altitude DESC
           LIMIT 20
-        `;
+        `));
 
-        // 4. Hammer-Anvil Coordination: Same 1nm grid, same minute, different aircraft
-        const hammerAnvil = await sql.unsafe(`
-          WITH gridded AS (
-            SELECT registration, icao_code as hex, owner_operator, altitude::numeric as alt, speed::numeric as spd,
-              ROUND(latitude::numeric, 2) as grid_lat, ROUND(longitude::numeric, 2) as grid_lng,
-              DATE_TRUNC('minute', detection_timestamp) as time_slot,
-              detection_timestamp
-            FROM live_flight_detections_rows
-            WHERE registration = ANY($1::text[])
-              AND detection_timestamp > NOW() - INTERVAL '30 days'
-          )
-          SELECT a.time_slot, a.grid_lat, a.grid_lng,
-            a.registration as aircraft_a, a.alt as alt_a, a.spd as speed_a,
-            b.registration as aircraft_b, b.alt as alt_b, b.spd as speed_b,
-            ABS(a.alt - b.alt) as altitude_diff,
-            CASE
-              WHEN a.alt < 1000 AND b.alt > 2000 THEN 'HAMMER-ANVIL'
-              WHEN a.alt > 2000 AND b.alt < 1000 THEN 'ANVIL-HAMMER'
-              WHEN ABS(a.alt - b.alt) < 500 THEN 'FORMATION'
-              ELSE 'COORDINATION'
-            END as pattern_type
-          FROM gridded a
-          JOIN gridded b ON a.time_slot = b.time_slot
-            AND a.grid_lat = b.grid_lat AND a.grid_lng = b.grid_lng
-            AND a.registration < b.registration
-          ORDER BY a.time_slot DESC
-          LIMIT 50
-        `, [pgArray]);
-
-        // 5. Shell Company Node Analysis: Delaware mail-drop addresses
-        const shellNodes = await sql`
+        const shellNodes = await safe('shellNodes', () => sql.unsafe(`
           SELECT registration, icao_code as hex, owner_operator,
             COUNT(*)::int as total_detections,
-            shell_auto_detected,
-            taxonomy_tag,
+            shell_auto_detected, taxonomy_tag,
             MIN(detection_timestamp) as first_seen,
             MAX(detection_timestamp) as last_seen,
             COUNT(DISTINCT DATE(detection_timestamp))::int as active_days
           FROM live_flight_detections_rows
-          WHERE (owner_operator ILIKE '%LLC%' OR owner_operator ILIKE '%Holdings%'
-            OR owner_operator ILIKE '%Trust%' OR owner_operator ILIKE '%Equities%'
-            OR shell_auto_detected = true)
+          WHERE detection_timestamp > NOW() - INTERVAL '${windowDays} days'
+            AND (shell_auto_detected = true
+              OR owner_operator ILIKE '%LLC%' OR owner_operator ILIKE '%Holdings%'
+              OR owner_operator ILIKE '%Trust%' OR owner_operator ILIKE '%Equities%')
           GROUP BY registration, icao_code, owner_operator, shell_auto_detected, taxonomy_tag
           ORDER BY total_detections DESC
           LIMIT 30
-        `;
+        `));
 
-        // 6. Biometric Correlation for target fleet
-        const biometricCorrelation = await sql.unsafe(`
-          SELECT b.registration as aircraft_registration,
-            COUNT(*)::int as correlation_count,
-            ROUND(AVG(b.correlation_score::numeric),2) as avg_score,
-            MAX(b.biometric_timestamp) as latest_correlation
-          FROM master_biometric_aircraft_correlations b
-          WHERE b.registration = ANY($1::text[])
-          GROUP BY b.registration
-          ORDER BY correlation_count DESC
-        `, [pgArray]).catch(() => []);
-
-        // 7. FAA Registry cross-ref for 2014 procurement dates
-        const faaRegistry = await sql.unsafe(`
-          SELECT n_number, registrant_name, aircraft_manufacturer, aircraft_model,
-            certificate_issue_date, airworthiness_date, mode_s_hex,
-            registrant_street, registrant_city, registrant_state,
-            year_manufactured, status
-          FROM aircraft_registry
-          WHERE n_number = ANY($1::text[])
-            OR ('N' || n_number) = ANY($2::text[])
-          ORDER BY certificate_issue_date
-        `, [pgArrayNNumbers, pgArray]).catch(() => []);
 
         return {
           cohort: procurementCohort,
@@ -396,10 +434,13 @@ export async function handleAction2(action: string, body: Record<string, any>, s
           meta: {
             scanTimestamp: new Date().toISOString(),
             targetRegistrations: targetRegs,
-            cohortSize: procurementCohort.length,
-            hammerAnvilEvents: hammerAnvil.length,
-            shellEntities: shellNodes.length,
-            loiterSignatures: sensorLoitering.length
+            windowDays,
+            degradedSections: degraded,
+            partial: degraded.length > 0,
+            cohortSize: (procurementCohort as unknown[]).length,
+            hammerAnvilEvents: (hammerAnvil as unknown[]).length,
+            shellEntities: (shellNodes as unknown[]).length,
+            loiterSignatures: (sensorLoitering as unknown[]).length
           }
         };
       } catch (e) {

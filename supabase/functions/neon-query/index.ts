@@ -457,8 +457,22 @@ Deno.serve(async (req) => {
             result = await runCustomQueryWithTimeout(sql, query, parseTimeoutMs(body.timeoutMs ?? body.timeout));
           } catch (e) {
             const err = e as any;
-            console.warn('customQuery non-fatal database error:', { code: String(err?.code || ''), message: String(err?.message || 'Query failed') });
-            result = { data: [], nonFatal: true, code: String(err?.code || ''), error: String(err?.message || 'Query failed') };
+            const rawMsg = String(err?.message || 'Query failed');
+            const code = String(err?.code || '');
+            // Distinguish "we gave up waiting" from "genuinely returned zero rows" so
+            // dashboard panels don't silently render empty/zero states for timeouts.
+            const isTimeout = code === '57014' || /safety window|statement timeout|timeout/i.test(rawMsg);
+            console.warn('customQuery non-fatal database error:', { code, message: rawMsg, isTimeout });
+            result = {
+              data: [],
+              nonFatal: true,
+              timedOut: isTimeout,
+              code,
+              error: rawMsg,
+              message: isTimeout
+                ? 'This query timed out before completing — try narrowing the date range or adding filters.'
+                : rawMsg,
+            };
           }
           break;
         }

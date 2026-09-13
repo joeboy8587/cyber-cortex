@@ -1,7 +1,5 @@
-import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.86.2";
-import { Client } from "https://deno.land/x/postgres@v0.17.0/mod.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -36,25 +34,55 @@ function fail(message: string, status = 400, details?: Json) {
   });
 }
 
-async function getNeonClient(timeoutMs = 15000) {
+// Neon `Client` is imported lazily (dynamic import) so a failure to resolve it,
+// or its own module-scope side effects, cannot take down the whole worker's boot
+// (which previously caused every request -- including OPTIONS preflight -- to 503).
+async function getNeonClient(timeoutMs = 12000) {
   const neonUrl = Deno.env.get("NEON_DATABASE_URL");
   if (!neonUrl) throw new Error("NEON_DATABASE_URL not configured");
-  
+
+  const { Client } = await import("https://deno.land/x/postgres@v0.17.0/mod.ts");
+  // Effectively max:1 — a single, short-lived connection per invocation, never
+  // held at module scope, with a hard connect timeout.
   const client = new Client(neonUrl);
-  
-  // Race against a connection timeout to prevent hanging
+
   const connectTimeout = new Promise<never>((_, reject) =>
     setTimeout(() => reject(new Error("Neon connection timeout")), timeoutMs)
   );
   await Promise.race([client.connect(), connectTimeout]);
-  // Set a longer timeout for Neon queries to avoid statement timeouts
-  await client.queryObject(`SET statement_timeout = '${timeoutMs}ms'`);
+  // Cap statement execution so a single slow query can't exhaust the whole request budget.
+  await client.queryObject(`SET statement_timeout = '${Math.min(timeoutMs, 10000)}ms'`);
   return client;
 }
 
 serve(async (req) => {
+  // OPTIONS must return instantly, before anything else executes.
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
+  // Hard wall-clock budget for the whole request so a slow action can never
+  // hang the worker past the platform's own limits — we bail out with a
+  // clear 503-avoiding JSON error instead.
+  const REQUEST_BUDGET_MS = 25000;
+  let budgetTimer: number | undefined;
+  const budgetTimeout = new Promise<never>((_, reject) => {
+    budgetTimer = setTimeout(
+      () => reject(new Error(`forensic-linker exceeded ${REQUEST_BUDGET_MS / 1000}s request budget`)),
+      REQUEST_BUDGET_MS,
+    ) as unknown as number;
+  });
+
+  try {
+    return await Promise.race([handleRequest(req), budgetTimeout]);
+  } catch (err) {
+    const msg = (err as Error)?.message || String(err) || "Unknown server error";
+    console.error("[forensic-linker] Unhandled/budget error:", msg);
+    return fail(msg, 503);
+  } finally {
+    if (budgetTimer !== undefined) clearTimeout(budgetTimer);
+  }
+});
+
+async function handleRequest(req: Request): Promise<Response> {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -918,7 +946,7 @@ serve(async (req) => {
       // 1. Get high-confidence verified events
       const eventsRes = await supabase
         .from("master_forensic_events")
-        .select("forensic_event_id, event_timestamp, event_type, primary_entity_id, primary_entity_type, confidence_score, bradford_hill_score, factor_count, is_physical_verified, summary, chain_[...]")
+        .select("forensic_event_id, event_timestamp, event_type, primary_entity_id, primary_entity_type, confidence_score, bradford_hill_score, factor_count, is_physical_verified, summary")
         .gte("bradford_hill_score", minBH)
         .order("bradford_hill_score", { ascending: false })
         .limit(limit);
@@ -998,4 +1026,4 @@ serve(async (req) => {
     console.error("[forensic-linker] Unhandled error:", msg);
     return fail(msg, 500);
   }
-});
+}

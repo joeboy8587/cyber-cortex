@@ -53,23 +53,35 @@ export default function CrossCallsignTracker() {
 
   const loadStats = useCallback(async () => {
     try {
-      const [entityRes, threatRes, flagRes] = await Promise.all([
-        supabase.from('entity_registry').select('entity_id, aliases', { count: 'exact' }),
-        supabase.from('sentinel_learned_threats').select('id', { count: 'exact' }),
-        supabase.from('watchtower_autonomous_flags').select('id', { count: 'exact' }).eq('flag_type', 'GHOST_AIRCRAFT_XXB_QUARANTINED'),
+      const [entityCountRes, entitySampleRes, threatRes, flagRes] = await Promise.all([
+        supabase.from('entity_registry').select('entity_id', { count: 'exact', head: true }),
+        supabase.from('entity_registry').select('aliases').limit(1000),
+        supabase.from('sentinel_learned_threats').select('id', { count: 'exact', head: true }),
+        supabase
+          .from('watchtower_autonomous_flags')
+          .select('id', { count: 'exact', head: true })
+          .eq('flag_type', 'GHOST_AIRCRAFT_XXB_QUARANTINED'),
       ]);
 
-      const ents = entityRes.data || [];
-      const totalAliases = ents.reduce((sum, e) => sum + (e.aliases?.length || 0), 0);
+      const firstError =
+        entityCountRes.error || entitySampleRes.error || threatRes.error || flagRes.error;
+      if (firstError) {
+        console.error('Stats load error:', firstError);
+        toast.error(`Stats failed to load: ${firstError.message}`);
+      }
+
+      const ents = entitySampleRes.data || [];
+      const totalAliases = ents.reduce((sum, e: any) => sum + (e.aliases?.length || 0), 0);
 
       setStats({
-        entities: entityRes.count || 0,
+        entities: entityCountRes.count || 0,
         aliases: totalAliases,
         threats: threatRes.count || 0,
         ghostFlags: flagRes.count || 0,
       });
-    } catch (err) {
+    } catch (err: any) {
       console.error('Stats load error:', err);
+      toast.error(`Stats failed to load: ${err.message ?? err}`);
     }
   }, []);
 
@@ -82,11 +94,14 @@ export default function CrossCallsignTracker() {
     try {
       const q = searchQuery.trim().toUpperCase();
 
-      // Search entity_registry by canonical_identifier or aliases
-      const { data: entityData } = await supabase
+      // Search entity_registry by canonical_identifier, bounded and error-checked
+      const { data: entityData, error: entityErr } = await supabase
         .from('entity_registry')
         .select('*')
-        .or(`canonical_identifier.ilike.%${q}%`);
+        .or(`canonical_identifier.ilike.%${q}%`)
+        .limit(50);
+
+      if (entityErr) throw entityErr;
 
       const mapped: UnifiedIdentity[] = (entityData || []).map((e: any) => ({
         id: e.entity_id,
@@ -101,13 +116,17 @@ export default function CrossCallsignTracker() {
         metadata: (e.metadata as Record<string, unknown>) || {},
       }));
 
-      // Also search by alias match
-      const { data: aliasData } = await supabase
+      // Also search by alias match, done server-side via array containment/overlap
+      // so we never pull the whole entity_registry to the client.
+      const { data: aliasData, error: aliasErr } = await supabase
         .from('entity_registry')
-        .select('*');
+        .select('*')
+        .contains('aliases', [q])
+        .limit(50);
+
+      if (aliasErr) throw aliasErr;
 
       const aliasMatches = (aliasData || [])
-        .filter((e: any) => (e.aliases || []).some((a: string) => a.toUpperCase().includes(q)))
         .filter((e: any) => !mapped.some(m => m.id === e.entity_id))
         .map((e: any) => ({
           id: e.entity_id,
@@ -125,7 +144,7 @@ export default function CrossCallsignTracker() {
       setEntities([...mapped, ...aliasMatches]);
 
       // Search Neon archive for cross-table callsign matches
-      const { data: neonData } = await supabase.functions.invoke('neon-query', {
+      const { data: neonData, error: neonErr } = await supabase.functions.invoke('neon-query', {
         body: {
           action: 'customQuery',
           query: `
@@ -153,6 +172,10 @@ export default function CrossCallsignTracker() {
           `
         }
       });
+
+      if (neonErr || neonData?.error) {
+        throw new Error(neonErr?.message || neonData?.error || 'Archive query failed');
+      }
 
       if (neonData?.data) {
         const grouped = new Map<string, NeonCallsignMatch>();
@@ -193,10 +216,23 @@ export default function CrossCallsignTracker() {
   const scanMergeCandidates = useCallback(async () => {
     setScanLoading(true);
     try {
-      // Pull all entities and look for merge opportunities
-      const { data: allEntities } = await supabase.from('entity_registry').select('*');
-      const { data: threats } = await supabase.from('sentinel_learned_threats').select('registration, threat_type');
-      const { data: flags } = await supabase.from('watchtower_autonomous_flags').select('registration, flag_type, description');
+      // Pull entities and look for merge opportunities, bounded so this can't hit a
+      // statement timeout against large tables.
+      const { data: allEntities, error: allEntitiesErr } = await supabase
+        .from('entity_registry')
+        .select('canonical_identifier')
+        .limit(2000);
+      const { data: threats, error: threatsErr } = await supabase
+        .from('sentinel_learned_threats')
+        .select('registration, threat_type')
+        .limit(1000);
+      const { data: flags, error: flagsErr } = await supabase
+        .from('watchtower_autonomous_flags')
+        .select('registration, flag_type, description')
+        .limit(1000);
+
+      const firstErr = allEntitiesErr || threatsErr || flagsErr;
+      if (firstErr) throw firstErr;
 
       const candidates: MergeCandidate[] = [];
 
@@ -244,7 +280,7 @@ export default function CrossCallsignTracker() {
       ];
 
       // Scan Neon for military callsigns not yet tracked
-      const { data: milData } = await supabase.functions.invoke('neon-query', {
+      const { data: milData, error: milErr } = await supabase.functions.invoke('neon-query', {
         body: {
           action: 'customQuery',
           query: `
@@ -257,6 +293,10 @@ export default function CrossCallsignTracker() {
           `
         }
       });
+
+      if (milErr || milData?.error) {
+        throw new Error(milErr?.message || milData?.error || 'Military callsign scan failed');
+      }
 
       for (const row of (milData?.data || [])) {
         const cs = row.callsign;

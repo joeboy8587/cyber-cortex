@@ -19,7 +19,7 @@ interface FleetRow {
 }
 
 interface HitRow {
-  hex: string;
+  hex: string | null;
   tail: string | null;
   pings: number;
   days_active: number | null;
@@ -151,9 +151,12 @@ export default function FederalFrontPanel() {
   const daysAgo = (iso: string) => Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 86400000));
 
   const enriched = hits.map((h) => {
+    const hHex = h.hex ? h.hex.toUpperCase() : null;
+    const hTail = (h.tail ?? "").toUpperCase();
     const match =
-      fleet.find((f) => f.hex.toUpperCase() === h.hex.toUpperCase()) ||
-      fleet.find((f) => f.tail === (h.tail ?? "").toUpperCase());
+      (hHex && fleet.find((f) => f.hex && f.hex.toUpperCase() === hHex)) ||
+      (hTail && fleet.find((f) => f.tail === hTail)) ||
+      undefined;
     return { h, match, front: match ? AGENCY_FOR(match.registrant) : undefined, posture: posture(h) };
   });
 
@@ -184,7 +187,7 @@ export default function FederalFrontPanel() {
     const lines = enriched.map(({ h, match, front, posture: p }) =>
       [
         h.tail || match?.tail || "",
-        h.hex,
+        h.hex || "NO HEX",
         match?.registrant ?? "",
         front?.agency ?? "",
         p.label,
@@ -280,7 +283,10 @@ export default function FederalFrontPanel() {
                   const watched = CONFIRMED_FRONT_TAILS.includes((h.tail || match?.tail || "").toUpperCase());
                   const since = daysAgo(h.last_seen);
                   return (
-                    <TableRow key={h.hex} className={p.tone === "destructive" ? "bg-destructive/5" : undefined}>
+                    <TableRow
+                      key={h.hex ?? `tail-${h.tail ?? "unknown"}`}
+                      className={p.tone === "destructive" ? "bg-destructive/5" : undefined}
+                    >
                       <TableCell className="font-mono font-bold">
                         {h.tail || match?.tail || "—"}
                         {watched && (
@@ -289,7 +295,9 @@ export default function FederalFrontPanel() {
                           </Badge>
                         )}
                       </TableCell>
-                      <TableCell className="font-mono text-xs uppercase">{h.hex}</TableCell>
+                      <TableCell className="font-mono text-xs uppercase">
+                        {h.hex ?? <span className="text-muted-foreground">NO HEX</span>}
+                      </TableCell>
                       <TableCell className="text-xs">
                         {match?.registrant ?? "—"}
                         {front && (

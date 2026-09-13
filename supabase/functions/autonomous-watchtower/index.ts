@@ -97,8 +97,15 @@ serve(async (req) => {
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    const sql = postgres(NEON_DATABASE_URL, { ssl: "require", max: 2, idle_timeout: 20 });
-    await sql`SET statement_timeout = '25s'`;
+    const sql = postgres(NEON_DATABASE_URL, {
+      ssl: "require",
+      max: 2,
+      idle_timeout: 20,
+      connect_timeout: 10,
+      // Applied to every connection in the pool (not just whichever one ran an
+      // initial `SET` statement) so no query can silently run without a cap.
+      connection: { statement_timeout: 20000 },
+    });
     const supabase = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
       ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY) : null;
 
@@ -107,45 +114,75 @@ serve(async (req) => {
     const learningInsights: string[] = [];
     const startTime = Date.now();
 
+    const phase1Issues: string[] = [];
+
+    // Per-query wall-clock guard, independent of the DB-side statement_timeout, so a
+    // hung connection can never block the rest of the scan.
+    async function budgeted<T>(label: string, fallback: T, ms: number, fn: () => Promise<T>): Promise<T> {
+      try {
+        const timeout = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`${label} exceeded ${ms}ms budget`)), ms)
+        );
+        return await Promise.race([fn(), timeout]);
+      } catch (e) {
+        const msg = (e as any)?.message || String(e);
+        console.warn(`[Phase 1] ${label} failed/timed out (non-fatal):`, msg);
+        phase1Issues.push(`${label}: ${msg}`);
+        return fallback;
+      }
+    }
+
     try {
       // ===== PHASE 1: STATISTICAL BASELINE + MULTI-MODAL INTELLIGENCE =====
-      const [baselineStats, recentDetections, biometricBaseline] = await Promise.all([
-        sql`
-          SELECT registration, COUNT(*)::int as total_detections,
-            AVG(altitude::numeric) as mean_altitude, STDDEV(altitude::numeric) as stddev_altitude,
-            AVG(speed::numeric) as mean_speed, STDDEV(speed::numeric) as stddev_speed,
-            MIN(detection_timestamp) as first_seen, MAX(detection_timestamp) as last_seen,
-            COUNT(DISTINCT DATE(detection_timestamp))::int as active_days
-          FROM live_flight_detections_rows
-          WHERE registration IS NOT NULL AND registration != ''
-            AND detection_timestamp > NOW() - INTERVAL '90 days'
-          GROUP BY registration HAVING COUNT(*) >= 3
-          ORDER BY COUNT(*) DESC
-        `,
-        sql`
-          SELECT id, registration, callsign, altitude, latitude, longitude,
-            detection_timestamp, icao_code, speed, heading, vertical_rate,
-            taxonomy_tag, threat_score, flagged, network_classification
-          FROM live_flight_detections_rows
-          WHERE detection_timestamp > NOW() - INTERVAL '24 hours'
-          ORDER BY detection_timestamp DESC LIMIT 10000
-        `,
-        sql`
+      // Rewritten as budgeted, SEQUENTIAL queries (not Promise.all) so each one has its
+      // own time budget + fallback, bounded time windows to avoid full-table scans, and
+      // a LIMIT on the GROUP BY so a registration explosion can't blow the budget either.
+      const baselineStats: any[] = await budgeted('baseline_stats', [], 15000, () => sql`
+        SELECT registration, COUNT(*)::int as total_detections,
+          AVG(altitude::numeric) as mean_altitude, STDDEV(altitude::numeric) as stddev_altitude,
+          AVG(speed::numeric) as mean_speed, STDDEV(speed::numeric) as stddev_speed,
+          MIN(detection_timestamp) as first_seen, MAX(detection_timestamp) as last_seen,
+          COUNT(DISTINCT DATE(detection_timestamp))::int as active_days
+        FROM live_flight_detections_rows
+        WHERE registration IS NOT NULL AND registration != ''
+          AND detection_timestamp > NOW() - INTERVAL '14 days'
+        GROUP BY registration HAVING COUNT(*) >= 3
+        ORDER BY COUNT(*) DESC
+        LIMIT 3000
+      `);
+
+      const recentDetections: any[] = await budgeted('recent_detections', [], 12000, () => sql`
+        SELECT id, registration, callsign, altitude, latitude, longitude,
+          detection_timestamp, icao_code, speed, heading, vertical_rate,
+          taxonomy_tag, threat_score, flagged, network_classification
+        FROM live_flight_detections_rows
+        WHERE detection_timestamp > NOW() - INTERVAL '24 hours'
+        ORDER BY detection_timestamp DESC LIMIT 10000
+      `);
+
+      const biometricBaseline: any[] = await budgeted(
+        'biometric_baseline',
+        [{ mean_hr: 72, stddev_hr: 12, mean_hrv: 55, stddev_hrv: 15, mean_stress: 40, stddev_stress: 15, total_readings: 0 }],
+        8000,
+        () => sql`
           SELECT AVG(heart_rate) as mean_hr, STDDEV(heart_rate) as stddev_hr,
             AVG(hrv) as mean_hrv, STDDEV(hrv) as stddev_hrv,
             AVG(stress_level) as mean_stress, STDDEV(stress_level) as stddev_stress,
             COUNT(*)::int as total_readings
           FROM biometric_monitoring
-          WHERE measurement_timestamp > NOW() - INTERVAL '90 days'
-        `.catch(() => [{ mean_hr: 72, stddev_hr: 12, mean_hrv: 55, stddev_hrv: 15, mean_stress: 40, stddev_stress: 15, total_readings: 0 }])
-      ]);
+          WHERE measurement_timestamp > NOW() - INTERVAL '30 days'
+        `
+      );
 
       const baselineMap = new Map<string, any>();
       for (const b of baselineStats) baselineMap.set(b.registration, b);
       const bioBase = biometricBaseline[0] || { mean_hr: 72, stddev_hr: 12, mean_hrv: 55, stddev_hrv: 15, mean_stress: 40, stddev_stress: 15 };
 
-      learningInsights.push(`ALL-AIRCRAFT ANALYSIS: Baselines computed for ${baselineStats.length} aircraft over 90 days — zero cherry-picking, zero pre-selection`);
+      learningInsights.push(`ALL-AIRCRAFT ANALYSIS: Baselines computed for ${baselineStats.length} aircraft over 14 days (bounded window) — zero cherry-picking, zero pre-selection`);
       learningInsights.push(`Biometric baseline: HR ${Math.round(Number(bioBase.mean_hr))}±${Math.round(Number(bioBase.stddev_hr))}`);
+      if (phase1Issues.length > 0) {
+        learningInsights.push(`Phase 1 partial degradation: ${phase1Issues.join('; ')}`);
+      }
 
       // ===== PHASE 2: XXB TAXONOMY INTELLIGENCE SCAN =====
       let taxonomyIntel: any[] = [];
@@ -1035,8 +1072,25 @@ Analyze: 1) Top 3 statistically significant patterns 2) Population-scale vs indi
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
     } catch (dbErr) {
-      await sql.end();
-      throw dbErr;
+      // Return a 200 partial result describing what completed instead of a 500 —
+      // callers/dashboards can render whatever flags/insights were gathered before
+      // the failure (e.g. a late-phase statement timeout) rather than getting nothing.
+      console.error("Autonomous Watchtower partial failure:", dbErr);
+      await sql.end().catch(() => {});
+      return new Response(JSON.stringify({
+        success: false,
+        partial: true,
+        scan_id: scanId,
+        version: VERSION,
+        timestamp: new Date().toISOString(),
+        execution_time_ms: Date.now() - startTime,
+        error: (dbErr as Error)?.message || String(dbErr),
+        summary: {
+          flags_generated: flags.length,
+        },
+        flags: flags.sort((a, b) => b.confidence_score - a.confidence_score),
+        learning_insights: learningInsights,
+      }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
   } catch (err) {
     console.error("Autonomous Watchtower error:", err);

@@ -4,8 +4,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Loader2, RefreshCw, ShieldAlert, Plane, Building2, Radio } from "lucide-react";
-import { AGENCY_FOR, FEDERAL_FRONTS, FRONT_CALLSIGN_REGEX, FRONT_REGEX } from "@/lib/federalFronts";
+import { Loader2, RefreshCw, ShieldAlert, Plane, Building2, Radio, Download } from "lucide-react";
+import { AGENCY_FOR, CONFIRMED_FRONT_TAILS, FEDERAL_FRONTS, FRONT_CALLSIGN_REGEX, FRONT_REGEX } from "@/lib/federalFronts";
 import { toast } from "sonner";
 
 interface FleetRow {

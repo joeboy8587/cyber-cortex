@@ -342,7 +342,7 @@ export async function handleAction2(action: string, body: Record<string, any>, s
           safe('biometricCorrelation', () => sql.unsafe(`
             SELECT b.registration as aircraft_registration,
               COUNT(*)::int as correlation_count,
-              ROUND(AVG(b.correlation_score::numeric),2) as avg_score,
+              ROUND(AVG(COALESCE(b.bradford_hill_score, b.threat_score)::numeric),2) as avg_score,
               MAX(b.biometric_timestamp) as latest_correlation
             FROM master_biometric_aircraft_correlations b
             WHERE b.registration = ANY($1::text[])
@@ -350,16 +350,24 @@ export async function handleAction2(action: string, body: Record<string, any>, s
             ORDER BY correlation_count DESC
           `, [pgArray])),
 
-          // 4. FAA registry cross-reference
+          // 4. FAA registry cross-reference (aircraft_registry schema)
           safe('faaRegistry', () => sql.unsafe(`
-            SELECT n_number, registrant_name, aircraft_manufacturer, aircraft_model,
-              certificate_issue_date, airworthiness_date, mode_s_hex,
-              registrant_street, registrant_city, registrant_state,
-              year_manufactured, status
+            SELECT LTRIM(tail_number, 'Nn') as n_number,
+              registered_owner as registrant_name,
+              manufacturer as aircraft_manufacturer,
+              model as aircraft_model,
+              registration_date::text as certificate_issue_date,
+              NULL::text as airworthiness_date,
+              icao_hex as mode_s_hex,
+              NULL::text as registrant_street,
+              NULL::text as registrant_city,
+              registration_country as registrant_state,
+              year_manufactured,
+              pattern_classification as status
             FROM aircraft_registry
-            WHERE n_number = ANY($1::text[])
-              OR ('N' || n_number) = ANY($2::text[])
-            ORDER BY certificate_issue_date
+            WHERE UPPER(tail_number) = ANY($2::text[])
+              OR UPPER(LTRIM(tail_number, 'Nn')) = ANY($1::text[])
+            ORDER BY registration_date
           `, [pgArrayNNumbers, pgArray])),
         ]);
 

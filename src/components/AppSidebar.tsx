@@ -156,7 +156,14 @@ const navigationItems = [
     icon: ShieldCheck,
     description: "Index Health · SHA-256 · Merkle Chain"
   },
+  {
+    title: "System Learning",
+    url: "/learning",
+    icon: Brain,
+    description: "Beliefs · Patterns · Corrections · Open Questions"
+  },
 ];
+
 
 
 export function AppSidebar() {

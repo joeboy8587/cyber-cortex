@@ -1700,6 +1700,18 @@ export type Database = {
       }
       is_admin: { Args: never; Returns: boolean }
       is_investigator_or_admin: { Args: never; Returns: boolean }
+      learning_monthly_counts: {
+        Args: { months_back?: number }
+        Returns: {
+          case_files: number
+          documents: number
+          extractions: number
+          flags: number
+          month: string
+          threats: number
+          violations: number
+        }[]
+      }
       match_rag_chunks: {
         Args: {
           match_count?: number

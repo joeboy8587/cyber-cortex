@@ -30,6 +30,8 @@ import TankerNetwork from "./pages/TankerNetwork";
 import NetworkIntel from "./pages/NetworkIntel";
 import AircraftProfiles from "./pages/AircraftProfiles";
 import ArchiveIntegrity from "./pages/ArchiveIntegrity";
+import SystemLearning from "./pages/SystemLearning";
+
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 2, staleTime: 5000 } },
@@ -176,6 +178,12 @@ const App = () => (
                 <ArchiveIntegrity />
               </ProtectedRoute>
             } />
+            <Route path="/learning" element={
+              <ProtectedRoute>
+                <SystemLearning />
+              </ProtectedRoute>
+            } />
+
 
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />

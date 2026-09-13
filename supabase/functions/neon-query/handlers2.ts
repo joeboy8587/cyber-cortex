@@ -308,39 +308,6 @@ export async function handleAction2(action: string, body: Record<string, any>, s
             ORDER BY total_detections DESC
           `, [pgArray])),
 
-          // 2. Sensor loitering — bounded window
-          safe('sensorLoitering', () => sql.unsafe(`
-            SELECT registration, icao_code as hex, owner_operator,
-              COUNT(*)::int as loiter_detections,
-              ROUND(AVG(altitude::numeric),0) as avg_alt,
-              ROUND(AVG(speed::numeric),1) as avg_speed,
-              MIN(detection_timestamp) as first_loiter,
-              MAX(detection_timestamp) as last_loiter,
-              COUNT(DISTINCT DATE(detection_timestamp))::int as loiter_days
-            FROM live_flight_detections_rows
-            WHERE detection_timestamp > NOW() - INTERVAL '${windowDays} days'
-              AND speed::numeric < 5
-              AND altitude::numeric > 0 AND altitude::numeric <= 400
-            GROUP BY registration, icao_code, owner_operator
-            HAVING COUNT(*) > 2
-            ORDER BY loiter_detections DESC
-            LIMIT 25
-          `)),
-
-          // 3. High-altitude signatures — bounded window
-          safe('highAltitude', () => sql.unsafe(`
-            SELECT registration, icao_code as hex, owner_operator, aircraft_type,
-              MAX(altitude::numeric) as max_altitude,
-              COUNT(*)::int as high_alt_detections,
-              MIN(detection_timestamp) as first_seen,
-              MAX(detection_timestamp) as last_seen
-            FROM live_flight_detections_rows
-            WHERE detection_timestamp > NOW() - INTERVAL '${windowDays} days'
-              AND altitude::numeric > 60000
-            GROUP BY registration, icao_code, owner_operator, aircraft_type
-            ORDER BY max_altitude DESC
-            LIMIT 20
-          `)),
 
           // 4. Hammer-Anvil coordination — target fleet, bounded window
           safe('hammerAnvil', () => sql.unsafe(`

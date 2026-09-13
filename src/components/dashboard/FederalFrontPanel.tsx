@@ -246,7 +246,17 @@ export default function FederalFrontPanel() {
           <Stat icon={Radio} label="Detection pings" value={totalPings} tone="destructive" />
         </div>
 
-        {hits.length > 0 && (
+        {byAgency.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {byAgency.map(([agency, count]) => (
+              <Badge key={agency} variant={agency === "UNATTRIBUTED" ? "outline" : "destructive"}>
+                {agency}: {count} airframe{count === 1 ? "" : "s"} seen here
+              </Badge>
+            ))}
+          </div>
+        )}
+
+        {enriched.length > 0 && (
           <div>
             <h3 className="mb-2 font-display text-sm uppercase tracking-wider text-destructive">
               Confirmed presence in our airspace
@@ -257,19 +267,28 @@ export default function FederalFrontPanel() {
                   <TableHead>Tail</TableHead>
                   <TableHead>Hex</TableHead>
                   <TableHead>Front / Agency</TableHead>
+                  <TableHead>Posture</TableHead>
                   <TableHead className="text-right">Pings</TableHead>
+                  <TableHead className="text-right">Days seen</TableHead>
                   <TableHead className="text-right">Alt band (ft)</TableHead>
                   <TableHead>Window</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {hits.map((h) => {
-                  const match = fleet.find((f) => f.hex.toUpperCase() === h.hex.toUpperCase());
-                  const front = match ? AGENCY_FOR(match.registrant) : undefined;
+                {enriched.map(({ h, match, front, posture: p }) => {
                   const ground = (h.maxalt ?? 0) === 0;
+                  const watched = CONFIRMED_FRONT_TAILS.includes((h.tail || match?.tail || "").toUpperCase());
+                  const since = daysAgo(h.last_seen);
                   return (
-                    <TableRow key={h.hex}>
-                      <TableCell className="font-mono font-bold">{h.tail || match?.tail || "—"}</TableCell>
+                    <TableRow key={h.hex} className={p.tone === "destructive" ? "bg-destructive/5" : undefined}>
+                      <TableCell className="font-mono font-bold">
+                        {h.tail || match?.tail || "—"}
+                        {watched && (
+                          <Badge variant="destructive" className="ml-2 text-[10px]">
+                            WATCHLIST
+                          </Badge>
+                        )}
+                      </TableCell>
                       <TableCell className="font-mono text-xs uppercase">{h.hex}</TableCell>
                       <TableCell className="text-xs">
                         {match?.registrant ?? "—"}
@@ -279,12 +298,22 @@ export default function FederalFrontPanel() {
                           </Badge>
                         )}
                       </TableCell>
+                      <TableCell>
+                        <Badge variant={p.tone === "destructive" ? "destructive" : "outline"} className="text-[10px]">
+                          {p.label}
+                        </Badge>
+                      </TableCell>
                       <TableCell className="text-right font-mono">{h.pings}</TableCell>
+                      <TableCell className="text-right font-mono text-xs">{h.days_active ?? "—"}</TableCell>
                       <TableCell className="text-right font-mono text-xs">
                         {ground ? "GROUND (0)" : `${h.minalt?.toLocaleString()}–${h.maxalt?.toLocaleString()}`}
+                        {Number(h.low_pings ?? 0) > 0 && (
+                          <span className="ml-1 text-destructive">· {h.low_pings} low</span>
+                        )}
                       </TableCell>
                       <TableCell className="text-xs opacity-80">
                         {new Date(h.first_seen).toLocaleDateString()} → {new Date(h.last_seen).toLocaleDateString()}
+                        <span className="ml-1 opacity-70">({since}d ago)</span>
                       </TableCell>
                     </TableRow>
                   );
@@ -292,8 +321,9 @@ export default function FederalFrontPanel() {
               </TableBody>
             </Table>
             <p className="mt-2 text-xs text-muted-foreground">
-              Presence is not proof of a mission. Ground-state squitters (0 ft) mean the airframe was parked;
-              high-altitude transits with no orbit are logged, not escalated.
+              Presence is not proof of a mission. Ground squitters (0 ft) mean the airframe was parked; high transits
+              with no orbit are logged, not escalated. Aircraft are matched by Mode-S hex and by tail number, and both
+              spellings of a hex are folded into one row so a single airframe is never counted twice.
             </p>
           </div>
         )}

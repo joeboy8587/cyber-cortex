@@ -18,7 +18,7 @@ import {
   screenClockCandidate,
   type ArbitrationResult,
 } from '@/lib/timestampArbitration';
-import { Eye, Upload, Loader2, ShieldAlert, Clock, Plane, Activity, EyeOff, Database, Archive } from 'lucide-react';
+import { Eye, Upload, Loader2, ShieldAlert, Clock, Plane, Activity, EyeOff, Database, Archive, AlertCircle as AlertCircleIcon } from 'lucide-react';
 
 interface SceneRow {
   id: string;
@@ -64,16 +64,32 @@ const SceneExtractionPanel: React.FC = () => {
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
   const [skipProcessed, setSkipProcessed] = useState(true);
-  const [archive, setArchive] = useState({ total: 0, masked: 0, review: 0, dated: 0 });
+  const [archive, setArchive] = useState({ total: 0, masked: 0, review: 0, dated: 0, failed: 0 });
 
   const loadArchive = useCallback(async () => {
-    const [{ count: total }, { count: masked }, { count: review }, { count: dated }] = await Promise.all([
-      supabase.from('vlm_scene_extractions').select('*', { count: 'exact', head: true }),
-      supabase.from('vlm_scene_extractions').select('*', { count: 'exact', head: true }).eq('masked_contact', true),
-      supabase.from('vlm_scene_extractions').select('*', { count: 'exact', head: true }).eq('needs_review', true),
-      supabase.from('vlm_scene_extractions').select('*', { count: 'exact', head: true }).not('captured_at_utc', 'is', null),
-    ]);
-    setArchive({ total: total ?? 0, masked: masked ?? 0, review: review ?? 0, dated: dated ?? 0 });
+    // Successful extractions only (error IS NULL) count toward the archive totals;
+    // failed rows are surfaced separately so they don't inflate "scenes read".
+    const [{ count: total }, { count: masked }, { count: review }, { count: dated }, { count: failed }] =
+      await Promise.all([
+        supabase.from('vlm_scene_extractions').select('*', { count: 'exact', head: true }).is('error', null),
+        supabase
+          .from('vlm_scene_extractions')
+          .select('*', { count: 'exact', head: true })
+          .is('error', null)
+          .eq('masked_contact', true),
+        supabase
+          .from('vlm_scene_extractions')
+          .select('*', { count: 'exact', head: true })
+          .is('error', null)
+          .eq('needs_review', true),
+        supabase
+          .from('vlm_scene_extractions')
+          .select('*', { count: 'exact', head: true })
+          .is('error', null)
+          .not('captured_at_utc', 'is', null),
+        supabase.from('vlm_scene_extractions').select('*', { count: 'exact', head: true }).not('error', 'is', null),
+      ]);
+    setArchive({ total: total ?? 0, masked: masked ?? 0, review: review ?? 0, dated: dated ?? 0, failed: failed ?? 0 });
   }, []);
 
   useEffect(() => {
@@ -114,9 +130,13 @@ const SceneExtractionPanel: React.FC = () => {
           for (let i = 0; i < prints.length; i += 200) {
             const { data } = await supabase
               .from('vlm_scene_extractions')
-              .select('file_fingerprint')
+              .select('file_fingerprint, error')
               .in('file_fingerprint', prints.slice(i, i + 200));
-            (data ?? []).forEach((d: any) => seen.add(d.file_fingerprint));
+            // Only skip fingerprints that succeeded (error IS NULL) so failed
+            // extractions are retried instead of being excluded forever.
+            (data ?? []).forEach((d: any) => {
+              if (d.error == null) seen.add(d.file_fingerprint);
+            });
           }
           const before = images.length;
           images = images.filter((f) => !seen.has(fingerprint(f)));
@@ -268,11 +288,12 @@ const SceneExtractionPanel: React.FC = () => {
           backfilled in sittings — already-read files are skipped automatically.
         </p>
 
-        <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+        <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
           <ArchiveStat icon={Archive} label="Scenes in archive" value={archive.total} />
           <ArchiveStat icon={EyeOff} label="Masked contacts" value={archive.masked} tone />
           <ArchiveStat icon={Clock} label="Defensible capture time" value={archive.dated} />
           <ArchiveStat icon={ShieldAlert} label="Need time review" value={archive.review} tone />
+          <ArchiveStat icon={AlertCircleIcon} label="Failed, will retry" value={archive.failed} tone />
         </div>
 
         <div className="flex flex-wrap items-center gap-3">

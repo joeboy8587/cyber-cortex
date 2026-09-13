@@ -379,33 +379,49 @@ export function JosiahChatInterface() {
 
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
+      let buffer = "";
+
+      const applyContent = (content: string) => {
+        assistantContent += content;
+        setMessages(prev => {
+          const last = prev[prev.length - 1];
+          if (last?.role === "assistant") {
+            return [...prev.slice(0, -1), { ...last, content: assistantContent }];
+          }
+          return [...prev, { role: "assistant", content: assistantContent, timestamp: new Date() }];
+        });
+      };
+
+      const consumeLine = (rawLine: string) => {
+        let line = rawLine;
+        if (line.endsWith("\r")) line = line.slice(0, -1);
+        if (!line.startsWith("data: ") || line === "data: [DONE]") return;
+        try {
+          const json = JSON.parse(line.slice(6));
+          const content = json.choices?.[0]?.delta?.content;
+          if (content) applyContent(content);
+        } catch {
+          // Incomplete JSON split across chunks; ignore, buffer handles reassembly.
+        }
+      };
 
       if (reader) {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-          
-          const chunk = decoder.decode(value, { stream: true });
-          const lines = chunk.split("\n");
-          
-          for (const line of lines) {
-            if (line.startsWith("data: ") && line !== "data: [DONE]") {
-              try {
-                const json = JSON.parse(line.slice(6));
-                const content = json.choices?.[0]?.delta?.content;
-                if (content) {
-                  assistantContent += content;
-                  setMessages(prev => {
-                    const last = prev[prev.length - 1];
-                    if (last?.role === "assistant") {
-                      return [...prev.slice(0, -1), { ...last, content: assistantContent }];
-                    }
-                    return [...prev, { role: "assistant", content: assistantContent, timestamp: new Date() }];
-                  });
-                }
-              } catch {}
-            }
+
+          buffer += decoder.decode(value, { stream: true });
+
+          let newlineIdx: number;
+          while ((newlineIdx = buffer.indexOf("\n")) !== -1) {
+            const line = buffer.slice(0, newlineIdx);
+            buffer = buffer.slice(newlineIdx + 1);
+            consumeLine(line);
           }
+        }
+
+        if (buffer.trim()) {
+          consumeLine(buffer);
         }
       }
     } catch (err) {

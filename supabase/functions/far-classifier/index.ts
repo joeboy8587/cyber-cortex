@@ -82,8 +82,11 @@ async function classify(det: Detection, sql: ReturnType<typeof postgres>): Promi
   let farRows: Array<{ citation: string; text: string }> = [];
   try {
     const rows = await sql.unsafe(
-      `SELECT citation, text FROM public.faa_regulations WHERE citation = ANY($1::text[])`,
-      [wantedCitations],
+      `SELECT section AS citation, content AS text
+         FROM public.faa_regulations
+        WHERE section = ANY($1::text[])
+           OR section ILIKE ANY($2::text[])`,
+      [wantedCitations, wantedCitations.map((c) => `%${c}%`)],
     );
     farRows = rows as any[];
   } catch {
@@ -203,13 +206,13 @@ Deno.serve(async (req) => {
         try {
           const r = await sql.unsafe(
             `SELECT icao24 AS icao, registration, callsign, latitude AS lat, longitude AS lon,
-                    altitude, timestamp, ground_speed
+                    altitude, detection_timestamp AS timestamp, speed AS ground_speed
              FROM ${t}
              WHERE altitude IS NOT NULL
                AND altitude::int < 1000
                AND latitude IS NOT NULL AND longitude IS NOT NULL
-               AND timestamp > now() - ($1 || ' hours')::interval
-             ORDER BY timestamp DESC
+               AND detection_timestamp > now() - ($1 || ' hours')::interval
+             ORDER BY detection_timestamp DESC
              LIMIT ${limit}`,
             [String(hours)],
           );

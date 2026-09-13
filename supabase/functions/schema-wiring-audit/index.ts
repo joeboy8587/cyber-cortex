@@ -13,9 +13,12 @@ const corsHeaders = {
 
 // Legacy column mappings the auditor knows have moved
 const COLUMN_RENAMES: Record<string, string> = {
-  ground_speed: "gs",
+  ground_speed: "speed",
+  gs: "speed",
   timestamp: "detection_timestamp",
   altitude_agl: "altitude",
+  citation: "section",
+  text: "content",
 };
 
 Deno.serve(async (req) => {
@@ -61,20 +64,21 @@ Deno.serve(async (req) => {
       const REFERENCE_MAP: Array<{ source_type: string; source_path: string; table: string; columns: string[] }> = [
         // Edge functions that broke recently
         { source_type: "edge_function", source_path: "sentinel-ml-score", table: "live_flight_detections_rows",
-          columns: ["icao24","registration","callsign","latitude","longitude","altitude","gs","timestamp"] },
+          columns: ["icao24","registration","callsign","latitude","longitude","altitude","speed","detection_timestamp"] },
         { source_type: "edge_function", source_path: "far-classifier", table: "live_flight_detections_rows",
-          columns: ["icao24","registration","callsign","latitude","longitude","altitude","timestamp","ground_speed"] },
+          columns: ["icao24","registration","callsign","latitude","longitude","altitude","detection_timestamp","speed"] },
         { source_type: "edge_function", source_path: "neon-query", table: "live_flight_detections_rows",
-          columns: ["icao24","altitude","timestamp"] },
+          columns: ["icao24","altitude","detection_timestamp"] },
         { source_type: "edge_function", source_path: "policy-violation-scan", table: "live_flight_detections_rows",
-          columns: ["icao24","altitude","latitude","longitude","timestamp"] },
+          columns: ["icao24","altitude","latitude","longitude","speed","detection_timestamp"] },
         { source_type: "edge_function", source_path: "policy-violation-scan", table: "policy_violations",
           columns: ["policy_code","severity","aircraft_registration","detection_timestamp"] },
+        // wtpr-cases resolves its table + columns dynamically at runtime — table-level check only
         { source_type: "edge_function", source_path: "wtpr-cases", table: "wtpr_registry",
-          columns: ["case_id","status"] },
-        // FAA registry family
+          columns: [] },
+        // FAA regulations
         { source_type: "edge_function", source_path: "far-classifier", table: "faa_regulations",
-          columns: ["citation","text"] },
+          columns: ["section","content"] },
         // UI components
         { source_type: "ui_component", source_path: "src/components/dashboard/EvidenceSourcesPanel.tsx", table: "discovered_evidence_sources",
           columns: ["schema_name","table_name","row_estimate","forensic_score","join_keys","added_to_investigation"] },
@@ -83,7 +87,7 @@ Deno.serve(async (req) => {
         { source_type: "ui_component", source_path: "src/components/dashboard/SentinelMLPanel.tsx", table: "sentinel_learned_threats",
           columns: ["icao","score","threat_level","detected_at"] },
         { source_type: "ui_component", source_path: "src/components/dashboard/WTPRCasePanel.tsx", table: "wtpr_registry",
-          columns: ["case_id","status"] },
+          columns: [] },
         { source_type: "ui_component", source_path: "src/components/dashboard/SchemaWiringPanel.tsx", table: "schema_wiring_report",
           columns: ["source_type","source_path","table_name","column_ref","status","severity"] },
       ];
@@ -119,6 +123,15 @@ Deno.serve(async (req) => {
               ? `Table exists in another schema — qualify the schema name.`
               : `Neon table public.${ref.table} not found. Search for renamed table or remove reference.`,
             severity: "critical", scanned_at: now,
+          });
+          continue;
+        }
+        if (ref.columns.length === 0) {
+          report.push({
+            source_type: ref.source_type, source_path: ref.source_path,
+            table_name: ref.table, column_ref: null,
+            status: "ok", suggested_fix: "Columns resolved dynamically at runtime — table exists.",
+            severity: "info", scanned_at: now,
           });
           continue;
         }

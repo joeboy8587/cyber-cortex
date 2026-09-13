@@ -87,7 +87,7 @@ Deno.serve(async (req) => {
         { source_type: "ui_component", source_path: "src/components/dashboard/SentinelMLPanel.tsx", table: "sentinel_learned_threats",
           columns: ["icao","score","threat_level","detected_at"] },
         { source_type: "ui_component", source_path: "src/components/dashboard/WTPRCasePanel.tsx", table: "wtpr_registry",
-          columns: ["case_id","status"] },
+          columns: [] },
         { source_type: "ui_component", source_path: "src/components/dashboard/SchemaWiringPanel.tsx", table: "schema_wiring_report",
           columns: ["source_type","source_path","table_name","column_ref","status","severity"] },
       ];

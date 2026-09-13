@@ -137,6 +137,80 @@ export default function FederalFrontPanel() {
 
   const totalPings = hits.reduce((s, h) => s + Number(h.pings), 0);
 
+  /** Plain-language posture for one airframe, from what the track actually shows. */
+  const posture = (h: HitRow) => {
+    const maxalt = h.maxalt ?? 0;
+    const low = Number(h.low_pings ?? 0);
+    if (maxalt === 0) return { label: "PARKED (ground squitter)", tone: "muted" as const };
+    if (low > 0 && maxalt < 5000) return { label: "LOW OVER OUR AREA", tone: "destructive" as const };
+    if ((h.days_active ?? 1) > 2) return { label: "REPEAT VISITOR", tone: "destructive" as const };
+    if (maxalt >= 18000) return { label: "HIGH TRANSIT", tone: "muted" as const };
+    return { label: "SINGLE PASS", tone: "muted" as const };
+  };
+
+  const daysAgo = (iso: string) => Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 86400000));
+
+  const enriched = hits.map((h) => {
+    const match =
+      fleet.find((f) => f.hex.toUpperCase() === h.hex.toUpperCase()) ||
+      fleet.find((f) => f.tail === (h.tail ?? "").toUpperCase());
+    return { h, match, front: match ? AGENCY_FOR(match.registrant) : undefined, posture: posture(h) };
+  });
+
+  const byAgency = Object.entries(
+    enriched.reduce<Record<string, number>>((acc, e) => {
+      const a = e.front?.agency ?? "UNATTRIBUTED";
+      acc[a] = (acc[a] ?? 0) + 1;
+      return acc;
+    }, {}),
+  ).sort((a, b) => b[1] - a[1]);
+
+  const exportCsv = () => {
+    const header = [
+      "tail",
+      "hex",
+      "front_company",
+      "agency",
+      "posture",
+      "pings",
+      "days_active",
+      "low_alt_pings",
+      "min_alt_ft",
+      "max_alt_ft",
+      "first_seen",
+      "last_seen",
+      "days_since_last_seen",
+    ];
+    const lines = enriched.map(({ h, match, front, posture: p }) =>
+      [
+        h.tail || match?.tail || "",
+        h.hex,
+        match?.registrant ?? "",
+        front?.agency ?? "",
+        p.label,
+        h.pings,
+        h.days_active ?? "",
+        h.low_pings ?? "",
+        h.minalt ?? "",
+        h.maxalt ?? "",
+        h.first_seen,
+        h.last_seen,
+        daysAgo(h.last_seen),
+      ]
+        .map((v) => `"${String(v).replace(/"/g, '""')}"`)
+        .join(","),
+    );
+    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    const blob = new Blob([[header.join(","), ...lines].join("\n")], { type: "text/csv" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${stamp}_FEDFRONTS_EXHIBIT_federal_front_detections.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    toast.success("Front-company detections exported.");
+  };
+
+
   return (
     <Card className="border-destructive/40">
       <CardHeader>

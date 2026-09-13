@@ -99,6 +99,12 @@ export default function Surveillance() {
             </TabsList>
           </div>
 
+          <TabsContent value="gnss" className="space-y-6">
+            <section>
+              <GnssIntegrityMonitor />
+            </section>
+          </TabsContent>
+
           <TabsContent value="squawk" className="space-y-6">
             <section>
               <SquawkDeceptionDashboard />

@@ -96,7 +96,7 @@ export function ShellNetworkGraph() {
       if (!data?.nodes?.length) {
         toast.info("Building the entity graph from the flight archive…");
         await supabase.functions.invoke("entity-graph-build", {
-          body: { action: "build", days: 90 },
+          body: { action: "build", days: 10, maxPairs: 5000 },
         });
         const retry = await callGraph();
         data = retry.data;

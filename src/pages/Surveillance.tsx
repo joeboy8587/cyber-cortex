@@ -46,6 +46,7 @@ import { OpenFieldStagingPanel } from "@/components/dashboard/OpenFieldStagingPa
 import { EnrichedAircraftIntelligencePanel } from "@/components/dashboard/EnrichedAircraftIntelligencePanel";
 import FederalFrontPanel from "@/components/dashboard/FederalFrontPanel";
 import SceneExtractionPanel from "@/components/dashboard/SceneExtractionPanel";
+import GnssIntegrityMonitor from "@/components/dashboard/GnssIntegrityMonitor";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export default function Surveillance() {

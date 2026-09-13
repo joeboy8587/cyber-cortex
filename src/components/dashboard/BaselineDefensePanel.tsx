@@ -20,6 +20,7 @@ interface VerifiedStats {
 export default function BaselineDefensePanel() {
   const [stats, setStats] = useState<VerifiedStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [timedOut, setTimedOut] = useState(false);
 
   useEffect(() => {
     const fetchVerifiedStats = async () => {
@@ -54,6 +55,10 @@ export default function BaselineDefensePanel() {
             body: { action: "customQuery", query: "SELECT MAX(heart_rate) as peak, AVG(heart_rate) as avg, MIN(heart_rate) as min FROM biometric_monitoring WHERE heart_rate IS NOT NULL" }
           })
         ]);
+
+        const anyTimedOut = [tableCountRes, biometricRes, flightRes, flaggedRes, registryRes, hrStatsRes]
+          .some((r) => (r as any)?.data?.data?.timedOut === true || (r as any)?.data?.timedOut === true);
+        setTimedOut(anyTimedOut);
 
         setStats({
           totalTables: parseInt(tableCountRes.data?.data?.[0]?.count || "0"),
@@ -120,6 +125,20 @@ export default function BaselineDefensePanel() {
       icon={<Shield className="text-success" />}
       className="col-span-full"
     >
+      {timedOut && (
+        <div className="bg-warning/10 border border-warning/30 rounded-lg p-4 mb-4">
+          <div className="flex items-center gap-3">
+            <AlertTriangle className="h-5 w-5 text-warning" />
+            <div>
+              <h3 className="font-display text-warning font-bold text-sm">Query timed out</h3>
+              <p className="text-xs text-muted-foreground mt-1">
+                One or more of these stats timed out before completing (not necessarily zero records). Try again or narrow the range.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header Alert */}
       <div className="bg-success/10 border border-success/30 rounded-lg p-4 mb-6">
         <div className="flex items-center gap-3">

@@ -193,6 +193,12 @@ export default function Surveillance() {
             </section>
           </TabsContent>
 
+          <TabsContent value="scenes" className="space-y-6">
+            <section>
+              <SceneExtractionPanel />
+            </section>
+          </TabsContent>
+
           <TabsContent value="fedfronts" className="space-y-6">
             <section>
               <FederalFrontPanel />

@@ -1,9 +1,11 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { CyberPanel } from '@/components/ui/cyber-panel';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Progress } from '@/components/ui/progress';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { formatPacific, formatUtc } from '@/lib/timezone';
@@ -16,7 +18,7 @@ import {
   screenClockCandidate,
   type ArbitrationResult,
 } from '@/lib/timestampArbitration';
-import { Eye, Upload, Loader2, ShieldAlert, Clock, Plane, Activity, EyeOff } from 'lucide-react';
+import { Eye, Upload, Loader2, ShieldAlert, Clock, Plane, Activity, EyeOff, Database, Archive } from 'lucide-react';
 
 interface SceneRow {
   id: string;
@@ -26,9 +28,13 @@ interface SceneRow {
   provider?: string;
   model?: string;
   error?: string;
+  saved?: boolean;
 }
 
 const BATCH = 4;
+
+/** Stable identity for a file so the same screenshot is never read twice. */
+const fingerprint = (f: File) => `${f.name}|${f.size}|${f.lastModified}`;
 
 /** Read EXIF DateTimeOriginal without pulling a heavy parser for non-JPEGs. */
 async function readExifOriginal(file: File): Promise<string | null> {
@@ -57,9 +63,25 @@ const SceneExtractionPanel: React.FC = () => {
   const [rows, setRows] = useState<SceneRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [skipProcessed, setSkipProcessed] = useState(true);
+  const [archive, setArchive] = useState({ total: 0, masked: 0, review: 0, dated: 0 });
+
+  const loadArchive = useCallback(async () => {
+    const [{ count: total }, { count: masked }, { count: review }, { count: dated }] = await Promise.all([
+      supabase.from('vlm_scene_extractions').select('*', { count: 'exact', head: true }),
+      supabase.from('vlm_scene_extractions').select('*', { count: 'exact', head: true }).eq('masked_contact', true),
+      supabase.from('vlm_scene_extractions').select('*', { count: 'exact', head: true }).eq('needs_review', true),
+      supabase.from('vlm_scene_extractions').select('*', { count: 'exact', head: true }).not('captured_at_utc', 'is', null),
+    ]);
+    setArchive({ total: total ?? 0, masked: masked ?? 0, review: review ?? 0, dated: dated ?? 0 });
+  }, []);
+
+  useEffect(() => {
+    loadArchive();
+  }, [loadArchive]);
 
   const stats = useMemo(() => {
-    const masked = rows.filter((r) => r.scene?.masked_contact_count > 0).length;
+    const masked = rows.filter((r) => r.scene?.fr24_selected?.masked).length;
     const review = rows.filter((r) => r.arbitration.needsReview).length;
     const failed = rows.filter((r) => r.error).length;
     return { masked, review, failed, total: rows.length };
@@ -69,7 +91,7 @@ const SceneExtractionPanel: React.FC = () => {
     async (fileList: FileList | null) => {
       if (!fileList || fileList.length === 0) return;
       const all = Array.from(fileList);
-      const images = all.filter((f) => /^image\//.test(f.type) || /\.(png|jpe?g|webp|heic)$/i.test(f.name));
+      let images = all.filter((f) => /^image\//.test(f.type) || /\.(png|jpe?g|webp|heic)$/i.test(f.name));
       const sidecars = new Map<string, File>();
       all
         .filter((f) => /\.json$/i.test(f.name))
@@ -85,6 +107,31 @@ const SceneExtractionPanel: React.FC = () => {
       const collected: SceneRow[] = [];
 
       try {
+        // Resume: drop anything already read into the archive.
+        if (skipProcessed) {
+          const prints = images.map(fingerprint);
+          const seen = new Set<string>();
+          for (let i = 0; i < prints.length; i += 200) {
+            const { data } = await supabase
+              .from('vlm_scene_extractions')
+              .select('file_fingerprint')
+              .in('file_fingerprint', prints.slice(i, i + 200));
+            (data ?? []).forEach((d: any) => seen.add(d.file_fingerprint));
+          }
+          const before = images.length;
+          images = images.filter((f) => !seen.has(fingerprint(f)));
+          if (before !== images.length) {
+            toast({ title: 'Resuming backfill', description: `${before - images.length} already read, ${images.length} left to do.` });
+          }
+          if (images.length === 0) {
+            setBusy(false);
+            return;
+          }
+        }
+
+        const { data: userData } = await supabase.auth.getUser();
+        const uid = userData?.user?.id ?? null;
+
         for (let i = 0; i < images.length; i += BATCH) {
           const slice = images.slice(i, i + BATCH);
 
@@ -135,6 +182,8 @@ const SceneExtractionPanel: React.FC = () => {
           if (error) throw error;
 
           const results: any[] = data?.results ?? [];
+          const toPersist: any[] = [];
+
           prepared.forEach((p, idx) => {
             const res = results.find((r) => r.id === `${i + idx}`) ?? {};
             const scene = res.scene ?? null;
@@ -155,15 +204,49 @@ const SceneExtractionPanel: React.FC = () => {
               model: res.model,
               error: res.error,
             });
+
+            const sel = scene?.fr24_selected ?? null;
+            toPersist.push({
+              uploaded_by: uid,
+              filename: p.file.name,
+              file_size: p.file.size,
+              file_fingerprint: fingerprint(p.file),
+              shot_type: scene?.shot_type ?? null,
+              captured_at_utc: withClock.capturedAtUtc ?? null,
+              timestamp_source: withClock.chosen ?? null,
+              timestamp_confidence: withClock.confidence ?? null,
+              agreement_count: withClock.agreementCount ?? 0,
+              needs_review: !!withClock.needsReview,
+              disagreements: withClock.disagreements ?? [],
+              selected_reg: sel?.reg ?? null,
+              selected_callsign: sel?.callsign ?? null,
+              selected_hex: sel?.hex ?? null,
+              masked_contact: !!sel?.masked,
+              contact_count: scene?.contact_count ?? null,
+              track_geometry: scene?.track_geometry ?? null,
+              area_hint: scene?.area_hint ?? null,
+              map_labels: scene?.fr24_map_labels ?? [],
+              biometrics: scene?.biometrics ?? null,
+              scene: scene ?? {},
+              provider: res.provider ?? null,
+              model: res.model ?? null,
+              error: res.error ?? null,
+            });
           });
+
+          const { error: saveErr } = await supabase
+            .from('vlm_scene_extractions')
+            .upsert(toPersist, { onConflict: 'file_fingerprint' });
+          if (saveErr) console.error('scene persist failed', saveErr);
 
           setRows([...collected]);
           setProgress(Math.round(((i + slice.length) / images.length) * 100));
         }
 
+        await loadArchive();
         toast({
           title: 'Scene extraction complete',
-          description: `${collected.length} screenshots read as scenes, not text blobs.`,
+          description: `${collected.length} screenshots read as scenes and filed into the archive.`,
         });
       } catch (e: any) {
         toast({ title: 'Extraction failed', description: e.message?.slice(0, 200), variant: 'destructive' });
@@ -171,7 +254,7 @@ const SceneExtractionPanel: React.FC = () => {
         setBusy(false);
       }
     },
-    [toast],
+    [toast, skipProcessed, loadArchive],
   );
 
   return (
@@ -181,8 +264,16 @@ const SceneExtractionPanel: React.FC = () => {
           Screenshots are structured scenes, not text blobs. A vision model returns a typed scene graph where
           <span className="text-destructive font-semibold"> REG: N/A means MASKED</span>, never absent. Capture time is
           arbitrated across four signals (takeout sidecar → EXIF/PNG tEXt → file time → status-bar clock); disagreements
-          are flagged for review, never silently resolved.
+          are flagged for review, never silently resolved. Every read is filed permanently, so a large folder can be
+          backfilled in sittings — already-read files are skipped automatically.
         </p>
+
+        <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+          <ArchiveStat icon={Archive} label="Scenes in archive" value={archive.total} />
+          <ArchiveStat icon={EyeOff} label="Masked contacts" value={archive.masked} tone />
+          <ArchiveStat icon={Clock} label="Defensible capture time" value={archive.dated} />
+          <ArchiveStat icon={ShieldAlert} label="Need time review" value={archive.review} tone />
+        </div>
 
         <div className="flex flex-wrap items-center gap-3">
           <label>
@@ -202,11 +293,22 @@ const SceneExtractionPanel: React.FC = () => {
             </Button>
           </label>
 
+          <div className="flex items-center gap-2">
+            <Switch id="skip-processed" checked={skipProcessed} onCheckedChange={setSkipProcessed} disabled={busy} />
+            <Label htmlFor="skip-processed" className="text-xs text-muted-foreground">
+              Skip files already read
+            </Label>
+          </div>
+
+          <Button size="sm" variant="ghost" onClick={loadArchive} disabled={busy}>
+            <Database className="w-4 h-4 mr-2" /> Refresh archive totals
+          </Button>
+
           {stats.total > 0 && (
             <>
-              <Badge variant="outline">{stats.total} scenes</Badge>
-              <Badge variant="destructive">{stats.masked} with masked contacts</Badge>
-              <Badge variant="secondary">{stats.review} need timestamp review</Badge>
+              <Badge variant="outline">{stats.total} this session</Badge>
+              <Badge variant="destructive">{stats.masked} masked</Badge>
+              <Badge variant="secondary">{stats.review} need review</Badge>
               {stats.failed > 0 && <Badge variant="outline">{stats.failed} failed</Badge>}
             </>
           )}
@@ -305,5 +407,19 @@ const SceneExtractionPanel: React.FC = () => {
     </CyberPanel>
   );
 };
+
+function ArchiveStat({ icon: Icon, label, value, tone }: { icon: any; label: string; value: number; tone?: boolean }) {
+  return (
+    <div className="rounded border border-border/60 bg-card/40 p-3">
+      <div className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-muted-foreground">
+        <Icon className={`h-3.5 w-3.5 ${tone ? 'text-destructive' : ''}`} />
+        {label}
+      </div>
+      <div className={`mt-1 font-display text-2xl ${tone ? 'text-destructive' : 'text-primary'}`}>
+        {value.toLocaleString()}
+      </div>
+    </div>
+  );
+}
 
 export default SceneExtractionPanel;

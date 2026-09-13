@@ -4,8 +4,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Loader2, RefreshCw, ShieldAlert, Plane, Building2, Radio } from "lucide-react";
-import { AGENCY_FOR, FEDERAL_FRONTS, FRONT_CALLSIGN_REGEX, FRONT_REGEX } from "@/lib/federalFronts";
+import { Loader2, RefreshCw, ShieldAlert, Plane, Building2, Radio, Download } from "lucide-react";
+import { AGENCY_FOR, CONFIRMED_FRONT_TAILS, FEDERAL_FRONTS, FRONT_CALLSIGN_REGEX, FRONT_REGEX } from "@/lib/federalFronts";
 import { toast } from "sonner";
 
 interface FleetRow {
@@ -22,10 +22,12 @@ interface HitRow {
   hex: string;
   tail: string | null;
   pings: number;
+  days_active: number | null;
   first_seen: string;
   last_seen: string;
   minalt: number | null;
   maxalt: number | null;
+  low_pings: number | null;
 }
 
 interface CallsignRow {
@@ -75,18 +77,28 @@ export default function FederalFrontPanel() {
       setFleet(fleetRows);
 
       const hexes = Array.from(new Set(fleetRows.map((r) => r.hex).filter(Boolean)));
+      const tails = Array.from(new Set(fleetRows.map((r) => r.tail).filter(Boolean)));
       if (hexes.length) {
-        // icao24 is stored in mixed case; query both forms so the btree index is used.
-        const list = hexes
+        // icao24 is stored in mixed case; query both forms so the btree index is used,
+        // then fold the results together on UPPER(hex) so one airframe is one row.
+        const hexList = hexes
           .flatMap((h) => [h.toUpperCase(), h.toLowerCase()])
           .map((h) => `'${h.replace(/'/g, "")}'`)
           .join(",");
+        const tailList = tails.map((t) => `'${t.replace(/'/g, "")}'`).join(",");
         const hitRows = await runQuery<HitRow>(`
-          SELECT icao24 AS hex, max(registration) AS tail, count(*)::int AS pings,
-                 min(detection_timestamp) AS first_seen, max(detection_timestamp) AS last_seen,
-                 round(min(altitude))::int AS minalt, round(max(altitude))::int AS maxalt
+          SELECT upper(icao24) AS hex,
+                 max(upper(registration)) AS tail,
+                 count(*)::int AS pings,
+                 count(DISTINCT date_trunc('day', detection_timestamp))::int AS days_active,
+                 min(detection_timestamp) AS first_seen,
+                 max(detection_timestamp) AS last_seen,
+                 round(min(altitude))::int AS minalt,
+                 round(max(altitude))::int AS maxalt,
+                 count(*) FILTER (WHERE altitude > 0 AND altitude < 3000)::int AS low_pings
           FROM live_flight_detections_rows
-          WHERE icao24 IN (${list})
+          WHERE icao24 IN (${hexList})
+             ${tailList ? `OR upper(registration) IN (${tailList})` : ""}
           GROUP BY 1
           ORDER BY pings DESC
           LIMIT 100
@@ -125,6 +137,80 @@ export default function FederalFrontPanel() {
 
   const totalPings = hits.reduce((s, h) => s + Number(h.pings), 0);
 
+  /** Plain-language posture for one airframe, from what the track actually shows. */
+  const posture = (h: HitRow) => {
+    const maxalt = h.maxalt ?? 0;
+    const low = Number(h.low_pings ?? 0);
+    if (maxalt === 0) return { label: "PARKED (ground squitter)", tone: "muted" as const };
+    if (low > 0 && maxalt < 5000) return { label: "LOW OVER OUR AREA", tone: "destructive" as const };
+    if ((h.days_active ?? 1) > 2) return { label: "REPEAT VISITOR", tone: "destructive" as const };
+    if (maxalt >= 18000) return { label: "HIGH TRANSIT", tone: "muted" as const };
+    return { label: "SINGLE PASS", tone: "muted" as const };
+  };
+
+  const daysAgo = (iso: string) => Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 86400000));
+
+  const enriched = hits.map((h) => {
+    const match =
+      fleet.find((f) => f.hex.toUpperCase() === h.hex.toUpperCase()) ||
+      fleet.find((f) => f.tail === (h.tail ?? "").toUpperCase());
+    return { h, match, front: match ? AGENCY_FOR(match.registrant) : undefined, posture: posture(h) };
+  });
+
+  const byAgency = Object.entries(
+    enriched.reduce<Record<string, number>>((acc, e) => {
+      const a = e.front?.agency ?? "UNATTRIBUTED";
+      acc[a] = (acc[a] ?? 0) + 1;
+      return acc;
+    }, {}),
+  ).sort((a, b) => b[1] - a[1]);
+
+  const exportCsv = () => {
+    const header = [
+      "tail",
+      "hex",
+      "front_company",
+      "agency",
+      "posture",
+      "pings",
+      "days_active",
+      "low_alt_pings",
+      "min_alt_ft",
+      "max_alt_ft",
+      "first_seen",
+      "last_seen",
+      "days_since_last_seen",
+    ];
+    const lines = enriched.map(({ h, match, front, posture: p }) =>
+      [
+        h.tail || match?.tail || "",
+        h.hex,
+        match?.registrant ?? "",
+        front?.agency ?? "",
+        p.label,
+        h.pings,
+        h.days_active ?? "",
+        h.low_pings ?? "",
+        h.minalt ?? "",
+        h.maxalt ?? "",
+        h.first_seen,
+        h.last_seen,
+        daysAgo(h.last_seen),
+      ]
+        .map((v) => `"${String(v).replace(/"/g, '""')}"`)
+        .join(","),
+    );
+    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    const blob = new Blob([[header.join(","), ...lines].join("\n")], { type: "text/csv" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${stamp}_FEDFRONTS_EXHIBIT_federal_front_detections.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    toast.success("Front-company detections exported.");
+  };
+
+
   return (
     <Card className="border-destructive/40">
       <CardHeader>
@@ -140,10 +226,16 @@ export default function FederalFrontPanel() {
               {ranAt && <span className="ml-1 opacity-70">Last scan {ranAt}.</span>}
             </CardDescription>
           </div>
-          <Button size="sm" variant="outline" onClick={scan} disabled={loading}>
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            <span className="ml-2">Re-scan</span>
-          </Button>
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={exportCsv} disabled={loading || !enriched.length}>
+              <Download className="h-4 w-4" />
+              <span className="ml-2">Export CSV</span>
+            </Button>
+            <Button size="sm" variant="outline" onClick={scan} disabled={loading}>
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              <span className="ml-2">Re-scan</span>
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-6">
@@ -154,7 +246,17 @@ export default function FederalFrontPanel() {
           <Stat icon={Radio} label="Detection pings" value={totalPings} tone="destructive" />
         </div>
 
-        {hits.length > 0 && (
+        {byAgency.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {byAgency.map(([agency, count]) => (
+              <Badge key={agency} variant={agency === "UNATTRIBUTED" ? "outline" : "destructive"}>
+                {agency}: {count} airframe{count === 1 ? "" : "s"} seen here
+              </Badge>
+            ))}
+          </div>
+        )}
+
+        {enriched.length > 0 && (
           <div>
             <h3 className="mb-2 font-display text-sm uppercase tracking-wider text-destructive">
               Confirmed presence in our airspace
@@ -165,19 +267,28 @@ export default function FederalFrontPanel() {
                   <TableHead>Tail</TableHead>
                   <TableHead>Hex</TableHead>
                   <TableHead>Front / Agency</TableHead>
+                  <TableHead>Posture</TableHead>
                   <TableHead className="text-right">Pings</TableHead>
+                  <TableHead className="text-right">Days seen</TableHead>
                   <TableHead className="text-right">Alt band (ft)</TableHead>
                   <TableHead>Window</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {hits.map((h) => {
-                  const match = fleet.find((f) => f.hex.toUpperCase() === h.hex.toUpperCase());
-                  const front = match ? AGENCY_FOR(match.registrant) : undefined;
+                {enriched.map(({ h, match, front, posture: p }) => {
                   const ground = (h.maxalt ?? 0) === 0;
+                  const watched = CONFIRMED_FRONT_TAILS.includes((h.tail || match?.tail || "").toUpperCase());
+                  const since = daysAgo(h.last_seen);
                   return (
-                    <TableRow key={h.hex}>
-                      <TableCell className="font-mono font-bold">{h.tail || match?.tail || "—"}</TableCell>
+                    <TableRow key={h.hex} className={p.tone === "destructive" ? "bg-destructive/5" : undefined}>
+                      <TableCell className="font-mono font-bold">
+                        {h.tail || match?.tail || "—"}
+                        {watched && (
+                          <Badge variant="destructive" className="ml-2 text-[10px]">
+                            WATCHLIST
+                          </Badge>
+                        )}
+                      </TableCell>
                       <TableCell className="font-mono text-xs uppercase">{h.hex}</TableCell>
                       <TableCell className="text-xs">
                         {match?.registrant ?? "—"}
@@ -187,12 +298,22 @@ export default function FederalFrontPanel() {
                           </Badge>
                         )}
                       </TableCell>
+                      <TableCell>
+                        <Badge variant={p.tone === "destructive" ? "destructive" : "outline"} className="text-[10px]">
+                          {p.label}
+                        </Badge>
+                      </TableCell>
                       <TableCell className="text-right font-mono">{h.pings}</TableCell>
+                      <TableCell className="text-right font-mono text-xs">{h.days_active ?? "—"}</TableCell>
                       <TableCell className="text-right font-mono text-xs">
                         {ground ? "GROUND (0)" : `${h.minalt?.toLocaleString()}–${h.maxalt?.toLocaleString()}`}
+                        {Number(h.low_pings ?? 0) > 0 && (
+                          <span className="ml-1 text-destructive">· {h.low_pings} low</span>
+                        )}
                       </TableCell>
                       <TableCell className="text-xs opacity-80">
                         {new Date(h.first_seen).toLocaleDateString()} → {new Date(h.last_seen).toLocaleDateString()}
+                        <span className="ml-1 opacity-70">({since}d ago)</span>
                       </TableCell>
                     </TableRow>
                   );
@@ -200,8 +321,9 @@ export default function FederalFrontPanel() {
               </TableBody>
             </Table>
             <p className="mt-2 text-xs text-muted-foreground">
-              Presence is not proof of a mission. Ground-state squitters (0 ft) mean the airframe was parked;
-              high-altitude transits with no orbit are logged, not escalated.
+              Presence is not proof of a mission. Ground squitters (0 ft) mean the airframe was parked; high transits
+              with no orbit are logged, not escalated. Aircraft are matched by Mode-S hex and by tail number, and both
+              spellings of a hex are folded into one row so a single airframe is never counted twice.
             </p>
           </div>
         )}

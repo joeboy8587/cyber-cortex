@@ -1412,6 +1412,96 @@ export type Database = {
         }
         Relationships: []
       }
+      vlm_scene_extractions: {
+        Row: {
+          agreement_count: number
+          area_hint: string | null
+          biometrics: Json | null
+          captured_at_utc: string | null
+          contact_count: number | null
+          created_at: string
+          disagreements: Json
+          error: string | null
+          file_fingerprint: string
+          file_size: number | null
+          filename: string
+          id: string
+          map_labels: Json
+          masked_contact: boolean
+          model: string | null
+          needs_review: boolean
+          provider: string | null
+          scene: Json
+          selected_callsign: string | null
+          selected_hex: string | null
+          selected_reg: string | null
+          shot_type: string | null
+          timestamp_confidence: string | null
+          timestamp_source: string | null
+          track_geometry: string | null
+          updated_at: string
+          uploaded_by: string | null
+        }
+        Insert: {
+          agreement_count?: number
+          area_hint?: string | null
+          biometrics?: Json | null
+          captured_at_utc?: string | null
+          contact_count?: number | null
+          created_at?: string
+          disagreements?: Json
+          error?: string | null
+          file_fingerprint: string
+          file_size?: number | null
+          filename: string
+          id?: string
+          map_labels?: Json
+          masked_contact?: boolean
+          model?: string | null
+          needs_review?: boolean
+          provider?: string | null
+          scene?: Json
+          selected_callsign?: string | null
+          selected_hex?: string | null
+          selected_reg?: string | null
+          shot_type?: string | null
+          timestamp_confidence?: string | null
+          timestamp_source?: string | null
+          track_geometry?: string | null
+          updated_at?: string
+          uploaded_by?: string | null
+        }
+        Update: {
+          agreement_count?: number
+          area_hint?: string | null
+          biometrics?: Json | null
+          captured_at_utc?: string | null
+          contact_count?: number | null
+          created_at?: string
+          disagreements?: Json
+          error?: string | null
+          file_fingerprint?: string
+          file_size?: number | null
+          filename?: string
+          id?: string
+          map_labels?: Json
+          masked_contact?: boolean
+          model?: string | null
+          needs_review?: boolean
+          provider?: string | null
+          scene?: Json
+          selected_callsign?: string | null
+          selected_hex?: string | null
+          selected_reg?: string | null
+          shot_type?: string | null
+          timestamp_confidence?: string | null
+          timestamp_source?: string | null
+          track_geometry?: string | null
+          updated_at?: string
+          uploaded_by?: string | null
+        }
+        Relationships: []
+      }
       watchtower_autonomous_flags: {
         Row: {
           auto_resolved: boolean | null

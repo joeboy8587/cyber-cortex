@@ -2,7 +2,7 @@ import { useState } from "react";
 import { CyberPanel } from "@/components/ui/cyber-panel";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { supabase } from "@/integrations/supabase/client";
+import { neonQuery } from "@/lib/neonQueryRetry";
 import { useToast } from "@/hooks/use-toast";
 import { Search, Shield, Crosshair, Building2, HeartPulse, Plane, AlertTriangle, Loader2 } from "lucide-react";
 

@@ -13,9 +13,12 @@ const corsHeaders = {
 
 // Legacy column mappings the auditor knows have moved
 const COLUMN_RENAMES: Record<string, string> = {
-  ground_speed: "gs",
+  ground_speed: "speed",
+  gs: "speed",
   timestamp: "detection_timestamp",
   altitude_agl: "altitude",
+  citation: "section",
+  text: "content",
 };
 
 Deno.serve(async (req) => {

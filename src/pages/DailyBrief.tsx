@@ -116,7 +116,8 @@ export default function DailyBrief() {
       lines.push(`## ${title}`);
       if (!rows.length) lines.push("(none)");
       rows.forEach((f) => {
-        lines.push(`- [${f.layer === "integrity" ? "INTEGRITY" : "REGISTRY/IDENTITY"}] ${f.subject} — ${f.claim}`);
+        const layer = f.layer === "integrity" ? "INTEGRITY" : f.layer === "registry" ? "REGISTRY/IDENTITY" : "BEHAVIOUR";
+        lines.push(`- [${layer}] ${f.subject} — ${f.claim}`);
         lines.push(`  confidence ${pct(f.confidence)} · seen ${f.occurrences}× · first ${when(f.first_seen)} · last ${when(f.last_seen)}`);
       });
       lines.push("");

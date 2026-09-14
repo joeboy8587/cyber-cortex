@@ -35,7 +35,9 @@ function Row({ f, children }: { f: Finding; children?: React.ReactNode }) {
       <div className="flex items-center justify-between gap-2">
         <span className="font-mono text-sm text-primary">{f.subject}</span>
         <div className="flex items-center gap-2">
-          <Badge variant="outline">{f.layer === "integrity" ? "Integrity" : "Registry / identity"}</Badge>
+          <Badge variant="outline">
+            {f.layer === "integrity" ? "Integrity" : f.layer === "registry" ? "Registry / identity" : "Behaviour"}
+          </Badge>
           <span className="font-mono text-xs text-muted-foreground">{pct(f.confidence)}</span>
         </div>
       </div>

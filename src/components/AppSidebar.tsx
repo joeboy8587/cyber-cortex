@@ -162,6 +162,18 @@ const navigationItems = [
     icon: Brain,
     description: "Beliefs · Patterns · Corrections · Open Questions"
   },
+  {
+    title: "Investigator",
+    url: "/investigator",
+    icon: Brain,
+    description: "Findings · Reasoning Chains · Your Verdicts"
+  },
+  {
+    title: "Daily Brief",
+    url: "/daily-brief",
+    icon: ShieldCheck,
+    description: "What's New · Needs Your Call · Packet Export"
+  },
 ];
 
 

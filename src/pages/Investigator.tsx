@@ -285,7 +285,13 @@ export default function Investigator() {
                         <span>confidence {pct(selected.confidence)}</span>
                         <span>supported {selected.times_corroborated}×</span>
                         <span>contradicted {selected.times_contradicted}×</span>
-                        <span>{selected.layer === "integrity" ? "Integrity layer" : "Registry / identity layer"}</span>
+                        <span>
+                          {selected.layer === "integrity"
+                            ? "Integrity layer"
+                            : selected.layer === "registry"
+                              ? "Registry / identity layer"
+                              : "Behaviour layer"}
+                        </span>
                       </div>
                     </div>
 

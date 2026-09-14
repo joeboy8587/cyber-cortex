@@ -270,6 +270,15 @@ async function sense(sql: any, hours: number, cap: number) {
       .filter((t: any) => /HELI|ROTOR|SIKORSKY|ROBINSON|BELL |EUROCOPTER|AIRBUS HELI|MD HELI|AS3|EC1|R44|R66|UH-|BK117/i.test(t.aircraft_type))
       .map((t: any) => t.reg),
   );
+  // Retire stall-speed findings raised against rotorcraft before the class check existed.
+  if (rotor.size) {
+    await safe(sql`
+      UPDATE wt_findings SET status = 'dismissed', updated_at = now()
+      WHERE rule_code = 'SUB_STALL_PHYSICS'
+        AND status NOT IN ('confirmed','dismissed')
+        AND subject = ANY(string_to_array(${[...rotor].join("|")}, '|'))
+    `, null);
+  }
 
   for (const r of recent) {
     const h: any = histMap.get(r.reg) || {};

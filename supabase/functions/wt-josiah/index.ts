@@ -318,18 +318,28 @@ async function chat(sql: any, body: any) {
 
   const trace: any[] = [];
   let answer = "";
+  const deadline = Date.now() + 100_000;
 
-  for (let turn = 0; turn < 6; turn++) {
-    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "google/gemini-3.8-flash",
-        max_tokens: 2000,
-        messages,
-        tools: Object.values(TOOLS).map((t) => t.def),
-      }),
-    });
+  for (let turn = 0; turn < 4; turn++) {
+    if (Date.now() > deadline) {
+      answer = "I ran out of time on that one. Ask me a narrower question and I'll get you an answer.";
+      break;
+    }
+    let res: Response;
+    try {
+      res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "openai/gpt-6-astra",
+          messages,
+          tools: Object.values(TOOLS).map((t) => t.def),
+        }),
+        signal: AbortSignal.timeout(90_000),
+      });
+    } catch (e) {
+      return { ok: false, error: `Josiah could not reach the model (${(e as Error).name}). Try again.` };
+    }
 
     if (res.status === 429) return { ok: false, error: "Josiah is rate limited — try again in a moment." };
     if (res.status === 402 || res.status === 403) {
@@ -337,15 +347,15 @@ async function chat(sql: any, body: any) {
     }
     if (!res.ok) return { ok: false, error: `AI error ${res.status}: ${(await res.text()).slice(0, 300)}` };
 
-    const d = await res.json();
-    const msg = d.choices?.[0]?.message;
+    const d = await res.json().catch(() => null);
+    const msg = d?.choices?.[0]?.message;
     if (!msg) return { ok: false, error: "Empty response from the model." };
 
     const calls = msg.tool_calls ?? [];
     if (!calls.length) { answer = msg.content ?? ""; break; }
 
     messages.push(msg);
-    for (const c of calls) {
+    for (const c of calls.slice(0, 6)) {
       const name = c.function?.name as ToolKey;
       let args: any = {};
       try { args = JSON.parse(c.function?.arguments || "{}"); } catch { /* ignore */ }
@@ -363,6 +373,7 @@ async function chat(sql: any, body: any) {
   }
 
   if (!answer) answer = "I ran the checks but did not get a written answer back. Ask again and I'll try a narrower question.";
+
 
   await safe(sql`INSERT INTO wt_finding_chat (finding_id, role, content, attachments)
     VALUES (${findingId}, 'user', ${userText}, ${sql.json(attachments.map(() => "image"))})`, null);

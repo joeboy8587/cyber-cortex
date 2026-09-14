@@ -150,3 +150,6 @@ verify_jwt = false
 
 [functions.medical-cover-scan]
 verify_jwt = false
+
+[functions.wt-josiah]
+verify_jwt = false

@@ -197,6 +197,7 @@ async function upsertFinding(sql: any, f: {
       updated_at = now(),
       claim = EXCLUDED.claim,
       evidence = EXCLUDED.evidence,
+      layer = EXCLUDED.layer,
       confidence = GREATEST(wt_findings.confidence, EXCLUDED.confidence),
       status = CASE WHEN wt_findings.status IN ('confirmed','wrong','dismissed')
                     THEN wt_findings.status ELSE EXCLUDED.status END

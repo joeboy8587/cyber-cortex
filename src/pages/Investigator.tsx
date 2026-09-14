@@ -375,6 +375,8 @@ export default function Investigator() {
                     ))}
                   </div>
                 </ScrollArea>
+                  </TabsContent>
+                </Tabs>
               )}
             </CardContent>
           </Card>

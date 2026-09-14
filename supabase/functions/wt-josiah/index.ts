@@ -332,6 +332,8 @@ async function chat(sql: any, body: any) {
         headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           model: "openai/gpt-6-astra",
+          reasoning_effort: "none",
+
           messages,
           tools: Object.values(TOOLS).map((t) => t.def),
         }),

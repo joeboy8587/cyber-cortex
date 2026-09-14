@@ -383,29 +383,36 @@ async function chat(sql: any, body: any) {
   return { ok: true, answer, trace };
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   let sql: any;
   try {
     const body = await req.json().catch(() => ({}));
+    const findingId = String(body.finding_id ?? "");
+    if (!UUID.test(findingId)) {
+      return json({ ok: false, error: "No finding was selected — pick a finding first." });
+    }
     sql = neon();
     await migrate(sql);
 
     if (body.action === "history") {
       const rows = await safe(sql`SELECT id, role, content, tool_trace, created_at
-        FROM wt_finding_chat WHERE finding_id = ${String(body.finding_id)}
+        FROM wt_finding_chat WHERE finding_id = ${findingId}
         ORDER BY created_at ASC LIMIT 60`, [] as any[]);
       return json({ ok: true, messages: rows });
     }
     if (body.action === "clear") {
-      await safe(sql`DELETE FROM wt_finding_chat WHERE finding_id = ${String(body.finding_id)}`, null);
+      await safe(sql`DELETE FROM wt_finding_chat WHERE finding_id = ${findingId}`, null);
       return json({ ok: true, cleared: true });
     }
-    return json(await chat(sql, body));
+    return json(await chat(sql, { ...body, finding_id: findingId }));
   } catch (e) {
     console.error("wt-josiah error:", e);
-    return json({ ok: false, error: (e as Error).message }, 500);
+    return json({ ok: false, error: (e as Error).message });
   } finally {
+
     try { await sql?.end(); } catch { /* ignore */ }
   }
 });

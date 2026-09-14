@@ -282,7 +282,10 @@ async function chat(sql: any, body: any) {
     WHERE finding_id = ${findingId} ORDER BY created_at DESC LIMIT 1`, [] as any[]);
 
   const userText = String(body.message ?? "").slice(0, 20000);
-  const attachments: string[] = Array.isArray(body.attachments) ? body.attachments.slice(0, 4) : [];
+  const attachments: string[] = (Array.isArray(body.attachments) ? body.attachments : [])
+    .filter((a: unknown) => typeof a === "string" && a.length < 3_000_000)
+    .slice(0, 3);
+
 
   const system = [
     "You are Josiah, the Watchtower investigator, working side by side with a non-technical investigator.",
@@ -315,18 +318,32 @@ async function chat(sql: any, body: any) {
 
   const trace: any[] = [];
   let answer = "";
+  const deadline = Date.now() + 100_000;
 
-  for (let turn = 0; turn < 6; turn++) {
-    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "google/gemini-3.8-flash",
-        max_tokens: 2000,
-        messages,
-        tools: Object.values(TOOLS).map((t) => t.def),
-      }),
-    });
+  for (let turn = 0; turn < 4; turn++) {
+    if (Date.now() > deadline) {
+      answer = "I ran out of time on that one. Ask me a narrower question and I'll get you an answer.";
+      break;
+    }
+    let res: Response;
+    try {
+      res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          // gpt-6-astra cannot use function tools on /v1/chat/completions; this
+          // conversation is tool-driven, so it stays on a tool-capable model.
+          model: "google/gemini-3.8-flash",
+
+
+          messages,
+          tools: Object.values(TOOLS).map((t) => t.def),
+        }),
+        signal: AbortSignal.timeout(90_000),
+      });
+    } catch (e) {
+      return { ok: false, error: `Josiah could not reach the model (${(e as Error).name}). Try again.` };
+    }
 
     if (res.status === 429) return { ok: false, error: "Josiah is rate limited — try again in a moment." };
     if (res.status === 402 || res.status === 403) {
@@ -334,15 +351,15 @@ async function chat(sql: any, body: any) {
     }
     if (!res.ok) return { ok: false, error: `AI error ${res.status}: ${(await res.text()).slice(0, 300)}` };
 
-    const d = await res.json();
-    const msg = d.choices?.[0]?.message;
+    const d = await res.json().catch(() => null);
+    const msg = d?.choices?.[0]?.message;
     if (!msg) return { ok: false, error: "Empty response from the model." };
 
     const calls = msg.tool_calls ?? [];
     if (!calls.length) { answer = msg.content ?? ""; break; }
 
     messages.push(msg);
-    for (const c of calls) {
+    for (const c of calls.slice(0, 6)) {
       const name = c.function?.name as ToolKey;
       let args: any = {};
       try { args = JSON.parse(c.function?.arguments || "{}"); } catch { /* ignore */ }
@@ -361,6 +378,7 @@ async function chat(sql: any, body: any) {
 
   if (!answer) answer = "I ran the checks but did not get a written answer back. Ask again and I'll try a narrower question.";
 
+
   await safe(sql`INSERT INTO wt_finding_chat (finding_id, role, content, attachments)
     VALUES (${findingId}, 'user', ${userText}, ${sql.json(attachments.map(() => "image"))})`, null);
   await safe(sql`INSERT INTO wt_finding_chat (finding_id, role, content, tool_trace)
@@ -369,29 +387,36 @@ async function chat(sql: any, body: any) {
   return { ok: true, answer, trace };
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   let sql: any;
   try {
     const body = await req.json().catch(() => ({}));
+    const findingId = String(body.finding_id ?? "");
+    if (!UUID.test(findingId)) {
+      return json({ ok: false, error: "No finding was selected — pick a finding first." });
+    }
     sql = neon();
     await migrate(sql);
 
     if (body.action === "history") {
       const rows = await safe(sql`SELECT id, role, content, tool_trace, created_at
-        FROM wt_finding_chat WHERE finding_id = ${String(body.finding_id)}
+        FROM wt_finding_chat WHERE finding_id = ${findingId}
         ORDER BY created_at ASC LIMIT 60`, [] as any[]);
       return json({ ok: true, messages: rows });
     }
     if (body.action === "clear") {
-      await safe(sql`DELETE FROM wt_finding_chat WHERE finding_id = ${String(body.finding_id)}`, null);
+      await safe(sql`DELETE FROM wt_finding_chat WHERE finding_id = ${findingId}`, null);
       return json({ ok: true, cleared: true });
     }
-    return json(await chat(sql, body));
+    return json(await chat(sql, { ...body, finding_id: findingId }));
   } catch (e) {
     console.error("wt-josiah error:", e);
-    return json({ ok: false, error: (e as Error).message }, 500);
+    return json({ ok: false, error: (e as Error).message });
   } finally {
+
     try { await sql?.end(); } catch { /* ignore */ }
   }
 });

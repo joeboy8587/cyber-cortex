@@ -331,8 +331,10 @@ async function chat(sql: any, body: any) {
         method: "POST",
         headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "openai/gpt-6-astra",
-          reasoning_effort: "none",
+          // gpt-6-astra cannot use function tools on /v1/chat/completions; this
+          // conversation is tool-driven, so it stays on a tool-capable model.
+          model: "google/gemini-3.8-flash",
+
 
           messages,
           tools: Object.values(TOOLS).map((t) => t.def),

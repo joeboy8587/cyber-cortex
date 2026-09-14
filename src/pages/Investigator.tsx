@@ -354,7 +354,9 @@ export default function Investigator() {
                   <div className="text-xs font-medium">{PLAIN_RULE[rr.rule_code] ?? rr.rule_code}</div>
                   <div className="text-lg font-mono">{pct(rr.reliability)}</div>
                   <div className="text-[11px] text-muted-foreground">
-                    {rr.hits} confirmed · {rr.misses} rejected
+                    {rr.hits <= 1 && rr.misses <= 1
+                      ? "starting weight — no verdicts yet"
+                      : `${rr.hits} confirmed · ${rr.misses} rejected`}
                   </div>
                 </div>
               );

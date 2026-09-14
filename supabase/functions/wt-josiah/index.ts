@@ -282,7 +282,10 @@ async function chat(sql: any, body: any) {
     WHERE finding_id = ${findingId} ORDER BY created_at DESC LIMIT 1`, [] as any[]);
 
   const userText = String(body.message ?? "").slice(0, 20000);
-  const attachments: string[] = Array.isArray(body.attachments) ? body.attachments.slice(0, 4) : [];
+  const attachments: string[] = (Array.isArray(body.attachments) ? body.attachments : [])
+    .filter((a: unknown) => typeof a === "string" && a.length < 3_000_000)
+    .slice(0, 3);
+
 
   const system = [
     "You are Josiah, the Watchtower investigator, working side by side with a non-technical investigator.",

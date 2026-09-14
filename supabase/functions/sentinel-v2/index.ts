@@ -107,7 +107,10 @@ serve(async (req) => {
 
     const neonUrl = Deno.env.get("NEON_DATABASE_URL");
     if (!neonUrl) throw new Error("NEON_DATABASE_URL not configured");
-    sql = postgres(neonUrl, { ssl: "require", max: 3, idle_timeout: 20, connect_timeout: 10 });
+    sql = postgres(neonUrl, {
+      ssl: "require", max: 3, idle_timeout: 20, connect_timeout: 10, prepare: false,
+      connection: { application_name: "sentinel-v2", statement_timeout: 25000 },
+    });
 
     const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
@@ -181,37 +184,35 @@ serve(async (req) => {
         WHERE UPPER(registration) = ANY(${uniqueTails})
           AND detection_timestamp > NOW() - INTERVAL '90 days'
         GROUP BY UPPER(registration)
-      `;
+      `.catch((e: any) => { console.warn("pattern query skipped:", e?.message); return []; });
       const patternMap = new Map(patternRows.map((r: any) => [r.reg, r]));
 
-      // 3b. Coordination partners — tails seen within ±15min of any flagged event on this tail
+      // 3b. Coordination partners — co-presence in shared 15-minute buckets inside the AOI box.
+      // Bucketed equi-join (not a ±15min range self-join) and a 14-day window keep this bounded;
+      // the old 90-day range join could not finish inside the function's time limit.
       const coordRows = await sql`
-        WITH targets AS (
-          SELECT UPPER(registration) AS reg, detection_timestamp AS ts
+        WITH box AS (
+          SELECT UPPER(registration) AS reg,
+                 FLOOR(EXTRACT(EPOCH FROM detection_timestamp) / 900)::bigint AS bucket
           FROM live_flight_detections_rows
-          WHERE UPPER(registration) = ANY(${uniqueTails})
-            AND detection_timestamp > NOW() - INTERVAL '90 days'
+          WHERE detection_timestamp > NOW() - INTERVAL '14 days'
+            AND registration IS NOT NULL AND registration <> ''
             AND latitude BETWEEN ${AOI.lat - padDeg} AND ${AOI.lat + padDeg}
             AND longitude BETWEEN ${AOI.lng - padDeg / Math.cos(AOI.lat * Math.PI / 180)}
                               AND ${AOI.lng + padDeg / Math.cos(AOI.lat * Math.PI / 180)}
+          GROUP BY 1, 2
         ),
-        pairs AS (
-          SELECT t.reg AS target, UPPER(o.registration) AS partner, COUNT(*)::int AS co_events
-          FROM targets t
-          JOIN live_flight_detections_rows o
-            ON o.detection_timestamp BETWEEN t.ts - INTERVAL '15 minutes' AND t.ts + INTERVAL '15 minutes'
-           AND UPPER(o.registration) <> t.reg
-           AND o.registration IS NOT NULL
-           AND o.latitude BETWEEN ${AOI.lat - padDeg} AND ${AOI.lat + padDeg}
-           AND o.longitude BETWEEN ${AOI.lng - padDeg / Math.cos(AOI.lat * Math.PI / 180)}
-                               AND ${AOI.lng + padDeg / Math.cos(AOI.lat * Math.PI / 180)}
-          GROUP BY t.reg, UPPER(o.registration)
+        targets AS (
+          SELECT reg, bucket FROM box WHERE reg = ANY(${uniqueTails})
         )
-        SELECT target, partner, co_events
-        FROM pairs
-        WHERE co_events >= 2
-        ORDER BY target, co_events DESC
-      `;
+        SELECT t.reg AS target, o.reg AS partner, COUNT(*)::int AS co_events
+        FROM targets t
+        JOIN box o ON o.bucket = t.bucket AND o.reg <> t.reg
+        GROUP BY t.reg, o.reg
+        HAVING COUNT(*) >= 2
+        ORDER BY t.reg, co_events DESC
+        LIMIT 2000
+      `.catch((e: any) => { console.warn("coordination query skipped:", e?.message); return []; });
       const coordMap = new Map<string, Array<{ partner: string; co_events: number }>>();
       for (const r of coordRows) {
         const arr = coordMap.get(r.target) || [];

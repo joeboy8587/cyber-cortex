@@ -265,7 +265,7 @@ export default function Investigator() {
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm uppercase tracking-wider flex items-center gap-2">
-                <Brain className="h-4 w-4" /> What the system checked
+                <Brain className="h-4 w-4" /> The investigation
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -275,6 +275,38 @@ export default function Investigator() {
                 </div>
               )}
               {selected && (
+                <Tabs defaultValue="josiah">
+                  <TabsList className="mb-3">
+                    <TabsTrigger value="josiah">Work it with Josiah</TabsTrigger>
+                    <TabsTrigger value="checks">What the system checked</TabsTrigger>
+                  </TabsList>
+
+                  <TabsContent value="josiah" className="space-y-3">
+                    <div>
+                      <div className="font-mono text-primary">{selected.subject}</div>
+                      <div className="text-sm">{selected.claim}</div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button size="sm" variant="secondary" onClick={() => runInvestigate(selected.id)} disabled={busy === selected.id}>
+                        {busy === selected.id ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Brain className="h-4 w-4 mr-1" />}
+                        Run the automatic checks
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => sendVerdict(selected.id, "real")}>
+                        <CheckCircle2 className="h-4 w-4 mr-1" /> This is real
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => sendVerdict(selected.id, "not_real")}>
+                        <XCircle className="h-4 w-4 mr-1" /> Not real
+                      </Button>
+                    </div>
+                    <JosiahFindingChat
+                      key={selected.id}
+                      findingId={selected.id}
+                      subject={selected.subject}
+                      claim={selected.claim}
+                    />
+                  </TabsContent>
+
+                  <TabsContent value="checks">
                 <ScrollArea className="h-[620px] pr-3">
                   <div className="space-y-4">
                     <div>

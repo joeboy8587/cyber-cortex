@@ -298,7 +298,10 @@ async function sense(sql: any, hours: number, cap: number) {
 
     const emit = async (rule: string, claim: string, evidence: Record<string, unknown>, sigExtra?: string) => {
       const conf = scoreOf(rule, w[rule] ?? 0.5, 0, 0);
-      const row = await safe(upsertFinding(sql, { rule, subject: r.reg, claim, evidence, confidence: conf, sigExtra }), null as any);
+      const row = await safe(upsertFinding(sql, {
+        rule, subject: r.reg, claim, evidence, confidence: conf, sigExtra,
+        layer: RULE_LAYER[rule] ?? "behaviour",
+      }), null as any);
       if (row) created.push({ id: row.id, rule, subject: r.reg, claim, confidence: conf, isNew: row.inserted });
     };
 

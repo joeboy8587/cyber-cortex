@@ -29,6 +29,16 @@ const RULES: Record<string, { base: number; title: string }> = {
   REPEAT_DAYS: { base: 0.55, title: "Returned on multiple separate days" },
 };
 
+// Behaviour/integrity observations stay separate from registry-identity claims.
+const RULE_LAYER: Record<string, string> = {
+  NEW_SUBJECT_IN_AOI: "behaviour",
+  FREQUENCY_SPIKE: "behaviour",
+  SUB_STALL_PHYSICS: "integrity",
+  LOW_ALTITUDE_RESIDENCE: "behaviour",
+  NIGHT_PRESENCE: "behaviour",
+  REPEAT_DAYS: "behaviour",
+};
+
 const AUTO_ACCEPT = 0.75;
 const REVIEW_FLOOR = 0.45;
 

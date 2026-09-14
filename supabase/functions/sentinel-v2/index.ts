@@ -107,7 +107,10 @@ serve(async (req) => {
 
     const neonUrl = Deno.env.get("NEON_DATABASE_URL");
     if (!neonUrl) throw new Error("NEON_DATABASE_URL not configured");
-    sql = postgres(neonUrl, { ssl: "require", max: 3, idle_timeout: 20, connect_timeout: 10 });
+    sql = postgres(neonUrl, {
+      ssl: "require", max: 3, idle_timeout: 20, connect_timeout: 10, prepare: false,
+      connection: { application_name: "sentinel-v2", statement_timeout: 25000 },
+    });
 
     const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 

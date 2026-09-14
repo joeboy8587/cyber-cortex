@@ -4,6 +4,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { JosiahFindingChat } from "@/components/investigator/JosiahFindingChat";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import {

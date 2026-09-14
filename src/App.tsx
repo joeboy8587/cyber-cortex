@@ -31,6 +31,8 @@ import NetworkIntel from "./pages/NetworkIntel";
 import AircraftProfiles from "./pages/AircraftProfiles";
 import ArchiveIntegrity from "./pages/ArchiveIntegrity";
 import SystemLearning from "./pages/SystemLearning";
+import Investigator from "./pages/Investigator";
+import DailyBrief from "./pages/DailyBrief";
 
 
 const queryClient = new QueryClient({
@@ -181,6 +183,16 @@ const App = () => (
             <Route path="/learning" element={
               <ProtectedRoute>
                 <SystemLearning />
+              </ProtectedRoute>
+            } />
+            <Route path="/investigator" element={
+              <ProtectedRoute>
+                <Investigator />
+              </ProtectedRoute>
+            } />
+            <Route path="/daily-brief" element={
+              <ProtectedRoute>
+                <DailyBrief />
               </ProtectedRoute>
             } />
 

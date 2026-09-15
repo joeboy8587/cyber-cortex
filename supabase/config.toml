@@ -153,3 +153,6 @@ verify_jwt = false
 
 [functions.wt-josiah]
 verify_jwt = false
+
+[functions.wt-focus]
+verify_jwt = false

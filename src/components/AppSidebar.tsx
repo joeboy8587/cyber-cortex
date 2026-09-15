@@ -22,7 +22,8 @@ import {
   Fingerprint,
   HeartPulse,
   Fuel,
-  Plane
+  Plane,
+  Target
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useAuth } from "@/hooks/useAuth";
@@ -167,6 +168,12 @@ const navigationItems = [
     url: "/investigator",
     icon: Brain,
     description: "Findings · Reasoning Chains · Your Verdicts"
+  },
+  {
+    title: "Focus Fire",
+    url: "/focus",
+    icon: Target,
+    description: "Conflicts · Deep Dive · Pairs · Exhibits"
   },
   {
     title: "Daily Brief",

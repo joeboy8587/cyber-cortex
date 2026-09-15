@@ -169,6 +169,12 @@ const navigationItems = [
     description: "Findings · Reasoning Chains · Your Verdicts"
   },
   {
+    title: "Focus Fire",
+    url: "/focus",
+    icon: Target,
+    description: "Conflicts · Deep Dive · Pairs · Exhibits"
+  },
+  {
     title: "Daily Brief",
     url: "/daily-brief",
     icon: ShieldCheck,

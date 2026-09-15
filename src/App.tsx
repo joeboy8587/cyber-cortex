@@ -33,6 +33,7 @@ import ArchiveIntegrity from "./pages/ArchiveIntegrity";
 import SystemLearning from "./pages/SystemLearning";
 import Investigator from "./pages/Investigator";
 import DailyBrief from "./pages/DailyBrief";
+import FocusFire from "./pages/FocusFire";
 
 
 const queryClient = new QueryClient({
@@ -188,6 +189,11 @@ const App = () => (
             <Route path="/investigator" element={
               <ProtectedRoute>
                 <Investigator />
+              </ProtectedRoute>
+            } />
+            <Route path="/focus" element={
+              <ProtectedRoute>
+                <FocusFire />
               </ProtectedRoute>
             } />
             <Route path="/daily-brief" element={

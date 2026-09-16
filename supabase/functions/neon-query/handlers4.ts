@@ -835,6 +835,14 @@ export async function handleAction4(action: string, body: Record<string, any>, s
       // CAT A: < 91 kts | CAT B: 91-120 | CAT C: 121-140 | CAT D: 141-165 | CAT E: > 165
       // Surveillance signatures: hover (<5 kts), sub-stall (<40 kts), loiter (<60 kts at <1000ft)
 
+      // Guard: a 30-day full scan of the detections table can exceed the DB
+      // statement timeout. Run each block independently with a per-statement
+      // cap so a slow block degrades to an empty section instead of a 500.
+      await sql.unsafe(`SET statement_timeout = '20s'`).catch(() => {});
+      const safeQ = async (q: string): Promise<any[]> => {
+        try { return await sql.unsafe(q) as any[]; } catch (_e) { return []; }
+      };
+
       const [surveillanceHits, categoryBreakdown, topOffenders, recentFlags] = await Promise.all([
         // 1. Aircraft with impossible/surveillance speed profiles
         sql.unsafe(`

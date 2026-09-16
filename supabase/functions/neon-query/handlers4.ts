@@ -956,6 +956,8 @@ export async function handleAction4(action: string, body: Record<string, any>, s
         `)
       ]);
 
+      await sql.unsafe(`SET statement_timeout = '25s'`).catch(() => {});
+
       const totalSurveillanceHits = surveillanceHits.reduce((sum: number, r: any) => sum + r.surveillance_total, 0);
       const hoverCount = surveillanceHits.reduce((sum: number, r: any) => sum + r.hover_detections, 0);
       const subStallCount = surveillanceHits.reduce((sum: number, r: any) => sum + r.sub_stall_detections, 0);

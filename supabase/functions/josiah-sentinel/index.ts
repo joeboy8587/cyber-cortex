@@ -286,11 +286,13 @@ function screenScheduledOverflight(d: any, idx: IdentityIndex, escalatedRegs: Se
     reasons.push(`Callsign ${cs} flown simultaneously by ${idx.callsignToHexes.get(cs)!.size} different airframes`);
   }
 
-  // 3. Identity must be complete. A partial identity is not a verified one.
+  // 3. Identity must be resolvable. One strong identifier (registration OR a
+  //    valid ICAO hex) is enough to identify the airframe; our feed simply does
+  //    not always carry both fields. A single missing field is a FEED GAP on our
+  //    side, not concealment by the operator, and is never scored as a finding.
+  //    Only a detection with neither identifier is unverifiable.
   if (!reg && !/^[0-9A-F]{6}$/.test(hex)) {
     reasons.push(`Airline callsign ${cs} carries no registration and no valid ICAO hex — identity unverifiable`);
-  } else if (!reg || !/^[0-9A-F]{6}$/.test(hex)) {
-    reasons.push(`Airline callsign ${cs} is missing ${!reg ? 'a registration' : 'a valid ICAO hex'} — identity only half-verified`);
   }
 
   // 4. Physics envelope for the cruise regime it claims to be in.

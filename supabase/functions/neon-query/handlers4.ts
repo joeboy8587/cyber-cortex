@@ -845,7 +845,7 @@ export async function handleAction4(action: string, body: Record<string, any>, s
 
       const [surveillanceHits, categoryBreakdown, topOffenders, recentFlags] = await Promise.all([
         // 1. Aircraft with impossible/surveillance speed profiles
-        sql.unsafe(`
+        safeQ(`
           SELECT
             registration,
             COUNT(*)::int as total_detections,
@@ -879,7 +879,7 @@ export async function handleAction4(action: string, body: Record<string, any>, s
         `),
 
         // 2. IFR category distribution for all low-altitude traffic
-        sql.unsafe(`
+        safeQ(`
           SELECT
             CASE
               WHEN speed < 5 THEN 'HOVER (0-5 kts)'
@@ -905,7 +905,7 @@ export async function handleAction4(action: string, body: Record<string, any>, s
         `),
 
         // 3. Top offenders with FAA registry cross-ref
-        sql.unsafe(`
+        safeQ(`
           SELECT
             d.registration,
             COUNT(*)::int as surveillance_detections,
@@ -931,7 +931,7 @@ export async function handleAction4(action: string, body: Record<string, any>, s
         `),
 
         // 4. Most recent surveillance-pattern detections
-        sql.unsafe(`
+        safeQ(`
           SELECT
             registration,
             speed,

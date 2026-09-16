@@ -869,8 +869,8 @@ export async function handleAction4(action: string, body: Record<string, any>, s
           WHERE detection_timestamp > NOW() - INTERVAL '${timeWindow}'
             AND speed IS NOT NULL AND speed >= 0
             AND altitude IS NOT NULL AND altitude > 0
-            AND altitude < 3000
-            AND (speed < 60 OR (speed < 91 AND altitude < 500))
+            AND altitude < 1500
+            AND speed < 91
             ${geoFilter}
           GROUP BY registration
           HAVING COUNT(CASE WHEN speed < 60 AND altitude < 1000 THEN 1 END) > 0
@@ -898,7 +898,8 @@ export async function handleAction4(action: string, body: Record<string, any>, s
           WHERE detection_timestamp > NOW() - INTERVAL '${timeWindow}'
             AND speed IS NOT NULL AND speed >= 0
             AND altitude IS NOT NULL AND altitude > 0
-            AND altitude < 3000
+            AND altitude < 1500
+            AND speed < 200
             ${geoFilter}
           GROUP BY 1
           ORDER BY MIN(speed)

@@ -239,7 +239,10 @@ function buildIdentityIndex(detections: any[]): IdentityIndex {
     m.get(k)!.add(v);
   };
   for (const d of detections) {
-    const hex = String(d.icao24 || '').trim().toUpperCase();
+    const rawHex = String(d.icao24 || '').trim().toUpperCase();
+    // Only index real 6-char ICAO hexes; blanks and junk would otherwise collide
+    // into one key and fabricate "one hex, many registrations" conflicts.
+    const hex = /^[0-9A-F]{6}$/.test(rawHex) ? rawHex : '';
     const reg = String(d.registration || '').trim().toUpperCase();
     const cs = String(d.callsign || '').trim().toUpperCase();
     add(hexToRegs, hex, reg);

@@ -661,9 +661,15 @@ serve(async (req) => {
     if (sbSql) {
       try {
         learnedThreats = await withTimeout(
+          // Rows retired with the withdrawn airline-identity rule, and the
+          // callsign rule that fed on them, are excluded: a watchlist entry may
+          // never be justified by the finding it produced in an earlier scan.
           sbSql`SELECT registration, threat_type, total_violations, escalation_level, avg_altitude, 
                  countermeasure_status, countermeasure_actions, ai_threat_profile
-           FROM sentinel_learned_threats WHERE escalation_level >= 3`,
+           FROM sentinel_learned_threats
+           WHERE escalation_level >= 3
+             AND COALESCE(countermeasure_status, '') <> 'RETIRED_RULE'
+             AND threat_type NOT IN ('PATTERN_ANOMALY_COMMERCIAL_IDENTITY','WATCHLIST_UNDER_COMMERCIAL_CALLSIGN')`,
           5000, "learned_threats_query"
         );
       } catch (e) { console.warn("Could not load learned threats:", e instanceof Error ? e.message : e); }

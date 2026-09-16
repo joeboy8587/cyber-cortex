@@ -46,15 +46,6 @@ const knownMilitaryRegistrations = [
   { reg: "168599", agency: "US Navy", type: "C-40A", callsigns: ["LBRTY53", "LBRTY51"] },
 ];
 
-// Known agencies involved
-const knownAgencies = [
-  { name: "USAF", description: "United States Air Force - C-12, MC-12W, HH-60G detections" },
-  { name: "US Navy", description: "Naval Aviation - KC-130J, C-40A, E-6B Mercury, C-2A" },
-  { name: "US Army", description: "Army Aviation - UC-35 Executive Transport" },
-  { name: "Point Mugu Naval Base", description: "Naval Air Weapons Station - Local ops" },
-  { name: "DOD Contractors", description: "Defense Department Contractor Aircraft" },
-];
-
 export function MilitaryAircraftPanel() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -77,16 +68,20 @@ export function MilitaryAircraftPanel() {
     if (initial) setLoading(true);
     else setRefreshing(true);
     try {
-      const { data, error } = await supabase.functions.invoke("neon-query", {
+      // getMilitaryAircraft is hosted by neon-query-h8. Call that function
+      // directly so this panel uses the handler that owns the military query.
+      const { data, error } = await supabase.functions.invoke("neon-query-h8", {
         body: { action: "getMilitaryAircraft" },
       });
 
       if (error) throw error;
 
-      const militaryEvents = Array.isArray(data?.militaryFlights) ? data.militaryFlights : [];
+      const militaryEvents = Array.isArray(data?.militaryFlights)
+        ? data.militaryFlights
+        : [];
 
       const totalEvents = militaryEvents.reduce(
-        (sum: number, e: any) => sum + parseInt(e.detection_count || "0"),
+        (sum: number, e: any) => sum + Number(e.detection_count || 0),
         0,
       );
 
@@ -94,14 +89,13 @@ export function MilitaryAircraftPanel() {
         const known = knownMilitaryRegistrations.find((k) => event.registration === k.reg);
         return {
           registration: event.registration,
-          detectionCount: parseInt(event.detection_count || "0"),
+          detectionCount: Number(event.detection_count || 0),
           agency: known?.agency || "Military/Gov",
           aircraftType: known?.type || event.callsign || "Unidentified",
-          avgAltitude: Math.round(parseFloat(event.avg_altitude || "0")),
+          avgAltitude: Math.round(Number(event.avg_altitude || 0)),
         };
       });
 
-      // Derive first/last seen from any timestamp fields the backend returns
       const timestamps = militaryEvents
         .flatMap((e: any) => [e.first_seen, e.last_seen, e.first_detection, e.last_detection])
         .filter(Boolean)
@@ -110,20 +104,14 @@ export function MilitaryAircraftPanel() {
       const firstSeen = timestamps.length ? new Date(Math.min(...timestamps)).toISOString() : null;
       const lastSeen = timestamps.length ? new Date(Math.max(...timestamps)).toISOString() : null;
 
-      // Derive agencies dynamically from known registrations actually seen
-      const seenAgencies = new Set<string>();
-      militaryEvents.forEach((e: any) => {
-        const known = knownMilitaryRegistrations.find((k) => e.registration === k.reg);
-        if (known) seenAgencies.add(known.agency);
-      });
-      const agencyList = seenAgencies.size > 0
-        ? Array.from(seenAgencies)
-        : ["USAF", "US Navy", "US Army", "Point Mugu Naval Base", "DOD Contractors"];
+      // Only report agencies represented by the live result. Do not mask an
+      // empty query with a hardcoded agency list.
+      const agenciesIdentified = Array.from(new Set(topMilitaryAircraft.map((aircraft) => aircraft.agency)));
 
       setStats({
         totalMilitaryEvents: totalEvents,
-        uniqueRegistrations: militaryEvents.length,
-        agenciesIdentified: agencyList,
+        uniqueRegistrations: new Set(militaryEvents.map((event: any) => event.registration).filter(Boolean)).size,
+        agenciesIdentified,
         topMilitaryAircraft,
         firstSeen,
         lastSeen,
@@ -334,7 +322,7 @@ export function MilitaryAircraftPanel() {
                         month: "short",
                         day: "numeric",
                       }).toUpperCase()
-                    : "NOV 7"}
+                    : "—"}
                 </div>
                 <div className="text-xs text-muted-foreground">First Coordination Event</div>
               </div>
@@ -346,23 +334,31 @@ export function MilitaryAircraftPanel() {
                 <MapPin className="w-4 h-4" />
                 Military/Government Agencies Identified
               </h4>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {knownAgencies.map((agency) => (
-                  <div
-                    key={agency.name}
-                    className="p-3 bg-card/50 border border-warning/20 rounded-lg"
-                  >
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="font-display text-sm text-warning">{agency.name}</span>
-                      <Badge variant="outline" className="text-xs">LOGGED</Badge>
+              {stats.agenciesIdentified.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {stats.agenciesIdentified.map((agencyName) => (
+                    <div
+                      key={agencyName}
+                      className="p-3 bg-card/50 border border-warning/20 rounded-lg"
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="font-display text-sm text-warning">{agencyName}</span>
+                        <Badge variant="outline" className="text-xs">LIVE</Badge>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {knownMilitaryRegistrations.find((aircraft) => aircraft.agency === agencyName)
+                          ? "Identified from live military aircraft detections"
+                          : "Identified from live military/government classification"}
+                      </p>
                     </div>
-                    <p className="text-xs text-muted-foreground">{agency.description}</p>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">No military agencies identified in the current result set.</p>
+              )}
             </div>
 
-            {/* Known Military Registrations */}
+            {/* Live Military Registrations */}
             <div>
               <h4 className="font-display text-sm text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
                 <AlertTriangle className="w-4 h-4 text-destructive" />
@@ -374,21 +370,27 @@ export function MilitaryAircraftPanel() {
                     <tr className="border-b border-border">
                       <th className="text-left p-2 text-muted-foreground">Registration</th>
                       <th className="text-left p-2 text-muted-foreground">Agency</th>
-                      <th className="text-left p-2 text-muted-foreground">Type</th>
-                      <th className="text-right p-2 text-muted-foreground">Status</th>
+                      <th className="text-left p-2 text-muted-foreground">Type / Callsign</th>
+                      <th className="text-right p-2 text-muted-foreground">Detections</th>
+                      <th className="text-right p-2 text-muted-foreground">Avg altitude</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {knownMilitaryRegistrations.map((aircraft) => (
-                      <tr key={aircraft.reg} className="border-b border-border/50 hover:bg-muted/20">
-                        <td className="p-2 font-mono text-primary">{aircraft.reg}</td>
+                    {stats.topMilitaryAircraft.length > 0 ? stats.topMilitaryAircraft.map((aircraft) => (
+                      <tr key={`${aircraft.registration}-${aircraft.aircraftType}`} className="border-b border-border/50 hover:bg-muted/20">
+                        <td className="p-2 font-mono text-primary">{aircraft.registration}</td>
                         <td className="p-2 text-warning">{aircraft.agency}</td>
-                        <td className="p-2 text-muted-foreground">{aircraft.type}</td>
-                        <td className="p-2 text-right">
-                          <Badge variant="destructive" className="text-xs">LOGGED</Badge>
+                        <td className="p-2 text-muted-foreground">{aircraft.aircraftType}</td>
+                        <td className="p-2 text-right font-mono">{aircraft.detectionCount.toLocaleString()}</td>
+                        <td className="p-2 text-right font-mono">{aircraft.avgAltitude.toLocaleString()} ft</td>
+                      </tr>
+                    )) : (
+                      <tr>
+                        <td colSpan={5} className="p-4 text-center text-muted-foreground">
+                          No live military aircraft detections found.
                         </td>
                       </tr>
-                    ))}
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -430,8 +432,8 @@ export function MilitaryAircraftPanel() {
               <p className="text-xs text-muted-foreground">
                 The scale and sophistication of this operation - involving KCSO, medical aircraft (Mercy Air), 
                 shell companies linked to private equity ($6.4B AUM), and military assets - suggests this 
-                cannot be simple harassment of one disabled civilian. The operational cost alone indicates 
-                a larger purpose: potential testing ground for surveillance technology, training exercise, 
+                cannot be simple harassment of one disabled civilian. The operational cost alone indicates a 
+                larger purpose: potential testing ground for surveillance technology, training exercise, 
                 or contractor capability demonstration connected to national security infrastructure.
               </p>
               <div className="mt-3 flex items-center gap-2">

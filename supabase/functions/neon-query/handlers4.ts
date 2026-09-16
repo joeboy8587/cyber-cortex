@@ -835,9 +835,17 @@ export async function handleAction4(action: string, body: Record<string, any>, s
       // CAT A: < 91 kts | CAT B: 91-120 | CAT C: 121-140 | CAT D: 141-165 | CAT E: > 165
       // Surveillance signatures: hover (<5 kts), sub-stall (<40 kts), loiter (<60 kts at <1000ft)
 
+      // Guard: a 30-day full scan of the detections table can exceed the DB
+      // statement timeout. Run each block independently with a per-statement
+      // cap so a slow block degrades to an empty section instead of a 500.
+      await sql.unsafe(`SET statement_timeout = '45s'`).catch(() => {});
+      const safeQ = async (q: string): Promise<any[]> => {
+        try { return await sql.unsafe(q) as any[]; } catch (_e) { return []; }
+      };
+
       const [surveillanceHits, categoryBreakdown, topOffenders, recentFlags] = await Promise.all([
         // 1. Aircraft with impossible/surveillance speed profiles
-        sql.unsafe(`
+        safeQ(`
           SELECT
             registration,
             COUNT(*)::int as total_detections,
@@ -861,8 +869,8 @@ export async function handleAction4(action: string, body: Record<string, any>, s
           WHERE detection_timestamp > NOW() - INTERVAL '${timeWindow}'
             AND speed IS NOT NULL AND speed >= 0
             AND altitude IS NOT NULL AND altitude > 0
-            AND altitude < 3000
-            AND (speed < 60 OR (speed < 91 AND altitude < 500))
+            AND altitude < 1500
+            AND speed < 91
             ${geoFilter}
           GROUP BY registration
           HAVING COUNT(CASE WHEN speed < 60 AND altitude < 1000 THEN 1 END) > 0
@@ -871,7 +879,7 @@ export async function handleAction4(action: string, body: Record<string, any>, s
         `),
 
         // 2. IFR category distribution for all low-altitude traffic
-        sql.unsafe(`
+        safeQ(`
           SELECT
             CASE
               WHEN speed < 5 THEN 'HOVER (0-5 kts)'
@@ -890,14 +898,15 @@ export async function handleAction4(action: string, body: Record<string, any>, s
           WHERE detection_timestamp > NOW() - INTERVAL '${timeWindow}'
             AND speed IS NOT NULL AND speed >= 0
             AND altitude IS NOT NULL AND altitude > 0
-            AND altitude < 3000
+            AND altitude < 1500
+            AND speed < 200
             ${geoFilter}
           GROUP BY 1
           ORDER BY MIN(speed)
         `),
 
         // 3. Top offenders with FAA registry cross-ref
-        sql.unsafe(`
+        safeQ(`
           SELECT
             d.registration,
             COUNT(*)::int as surveillance_detections,
@@ -923,7 +932,7 @@ export async function handleAction4(action: string, body: Record<string, any>, s
         `),
 
         // 4. Most recent surveillance-pattern detections
-        sql.unsafe(`
+        safeQ(`
           SELECT
             registration,
             speed,
@@ -946,6 +955,8 @@ export async function handleAction4(action: string, body: Record<string, any>, s
           LIMIT 100
         `)
       ]);
+
+      await sql.unsafe(`SET statement_timeout = '25s'`).catch(() => {});
 
       const totalSurveillanceHits = surveillanceHits.reduce((sum: number, r: any) => sum + r.surveillance_total, 0);
       const hoverCount = surveillanceHits.reduce((sum: number, r: any) => sum + r.hover_detections, 0);

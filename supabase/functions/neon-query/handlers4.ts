@@ -838,7 +838,7 @@ export async function handleAction4(action: string, body: Record<string, any>, s
       // Guard: a 30-day full scan of the detections table can exceed the DB
       // statement timeout. Run each block independently with a per-statement
       // cap so a slow block degrades to an empty section instead of a 500.
-      await sql.unsafe(`SET statement_timeout = '20s'`).catch(() => {});
+      await sql.unsafe(`SET statement_timeout = '45s'`).catch(() => {});
       const safeQ = async (q: string): Promise<any[]> => {
         try { return await sql.unsafe(q) as any[]; } catch (_e) { return []; }
       };

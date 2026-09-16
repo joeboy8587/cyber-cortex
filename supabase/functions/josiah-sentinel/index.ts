@@ -239,7 +239,10 @@ function buildIdentityIndex(detections: any[]): IdentityIndex {
     m.get(k)!.add(v);
   };
   for (const d of detections) {
-    const hex = String(d.icao24 || '').trim().toUpperCase();
+    const rawHex = String(d.icao24 || '').trim().toUpperCase();
+    // Only index real 6-char ICAO hexes; blanks and junk would otherwise collide
+    // into one key and fabricate "one hex, many registrations" conflicts.
+    const hex = /^[0-9A-F]{6}$/.test(rawHex) ? rawHex : '';
     const reg = String(d.registration || '').trim().toUpperCase();
     const cs = String(d.callsign || '').trim().toUpperCase();
     add(hexToRegs, hex, reg);
@@ -286,11 +289,13 @@ function screenScheduledOverflight(d: any, idx: IdentityIndex, escalatedRegs: Se
     reasons.push(`Callsign ${cs} flown simultaneously by ${idx.callsignToHexes.get(cs)!.size} different airframes`);
   }
 
-  // 3. Identity must be complete. A partial identity is not a verified one.
+  // 3. Identity must be resolvable. One strong identifier (registration OR a
+  //    valid ICAO hex) is enough to identify the airframe; our feed simply does
+  //    not always carry both fields. A single missing field is a FEED GAP on our
+  //    side, not concealment by the operator, and is never scored as a finding.
+  //    Only a detection with neither identifier is unverifiable.
   if (!reg && !/^[0-9A-F]{6}$/.test(hex)) {
     reasons.push(`Airline callsign ${cs} carries no registration and no valid ICAO hex — identity unverifiable`);
-  } else if (!reg || !/^[0-9A-F]{6}$/.test(hex)) {
-    reasons.push(`Airline callsign ${cs} is missing ${!reg ? 'a registration' : 'a valid ICAO hex'} — identity only half-verified`);
   }
 
   // 4. Physics envelope for the cruise regime it claims to be in.
@@ -656,9 +661,15 @@ serve(async (req) => {
     if (sbSql) {
       try {
         learnedThreats = await withTimeout(
+          // Rows retired with the withdrawn airline-identity rule, and the
+          // callsign rule that fed on them, are excluded: a watchlist entry may
+          // never be justified by the finding it produced in an earlier scan.
           sbSql`SELECT registration, threat_type, total_violations, escalation_level, avg_altitude, 
                  countermeasure_status, countermeasure_actions, ai_threat_profile
-           FROM sentinel_learned_threats WHERE escalation_level >= 3`,
+           FROM sentinel_learned_threats
+           WHERE escalation_level >= 3
+             AND COALESCE(countermeasure_status, '') <> 'RETIRED_RULE'
+             AND threat_type NOT IN ('PATTERN_ANOMALY_COMMERCIAL_IDENTITY','WATCHLIST_UNDER_COMMERCIAL_CALLSIGN')`,
           5000, "learned_threats_query"
         );
       } catch (e) { console.warn("Could not load learned threats:", e instanceof Error ? e.message : e); }

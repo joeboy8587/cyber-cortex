@@ -545,6 +545,12 @@ Deno.serve(async (req) => {
     if (action === "pairs") {
       return json(await pairs(sql, Math.min(180, Number(body?.days) || 30), Math.max(3, Number(body?.min_shared) || 6)));
     }
+    if (action === "handoffs") {
+      return json(await handoffs(sql, Math.min(90, Number(body?.days) || 30), Math.min(60, Number(body?.gap_minutes) || 20)));
+    }
+    if (action === "fronts") {
+      return json(await fronts(sql, Math.min(3650, Number(body?.days) || 365)));
+    }
     return json({ ok: false, error: `Unknown action: ${action}` }, 400);
   } catch (err) {
     console.error("wt-focus error:", err);

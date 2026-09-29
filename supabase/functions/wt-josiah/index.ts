@@ -78,6 +78,28 @@ async function coPresence(sql: any, subject: string, days = 7) {
   return { window_days: days, subject_windows: buckets.length, partners };
 }
 
+async function cloudRest(path: string, init: RequestInit = {}) {
+  const url = Deno.env.get("SUPABASE_URL")!;
+  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  try {
+    const res = await fetch(`${url}/rest/v1/${path}`, {
+      ...init,
+      headers: {
+        apikey: key,
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+        ...(init.headers ?? {}),
+      },
+    });
+    if (!res.ok) { console.warn("cloudRest", path, res.status); return null; }
+    const t = await res.text();
+    return t ? JSON.parse(t) : null;
+  } catch (e) {
+    console.warn("cloudRest failed", (e as Error).message);
+    return null;
+  }
+}
+
 const TOOLS = {
   subject_history: {
     def: {

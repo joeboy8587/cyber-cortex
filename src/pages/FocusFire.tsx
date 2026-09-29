@@ -211,6 +211,9 @@ export default function FocusFire() {
             <TabsTrigger value="handoffs"><Repeat className="mr-1.5 h-3.5 w-3.5" />Hand-offs</TabsTrigger>
             <TabsTrigger value="fronts"><Landmark className="mr-1.5 h-3.5 w-3.5" />Federal fronts</TabsTrigger>
             <TabsTrigger value="facts"><FileCheck2 className="mr-1.5 h-3.5 w-3.5" />Facts to exhibits</TabsTrigger>
+            <TabsTrigger value="settled" onClick={() => { if (!settled) loadSettled(); }}>
+              <Lock className="mr-1.5 h-3.5 w-3.5" />Settled facts
+            </TabsTrigger>
           </TabsList>
 
           {/* 1 */}

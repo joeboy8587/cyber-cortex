@@ -1331,6 +1331,81 @@ export type Database = {
         }
         Relationships: []
       }
+      settled_facts: {
+        Row: {
+          case_id: string | null
+          created_at: string
+          evidence_hash: string
+          exhibit_id: string | null
+          fact_class: string
+          headline: string
+          id: string
+          lifecycle_stage: string
+          locked_at: string
+          locked_by: string | null
+          proof_summary: string
+          subject: string
+          subject_type: string
+          superseded: boolean
+          superseded_reason: string | null
+          supporting_sources: Json
+          updated_at: string
+        }
+        Insert: {
+          case_id?: string | null
+          created_at?: string
+          evidence_hash: string
+          exhibit_id?: string | null
+          fact_class: string
+          headline: string
+          id?: string
+          lifecycle_stage?: string
+          locked_at?: string
+          locked_by?: string | null
+          proof_summary: string
+          subject: string
+          subject_type?: string
+          superseded?: boolean
+          superseded_reason?: string | null
+          supporting_sources?: Json
+          updated_at?: string
+        }
+        Update: {
+          case_id?: string | null
+          created_at?: string
+          evidence_hash?: string
+          exhibit_id?: string | null
+          fact_class?: string
+          headline?: string
+          id?: string
+          lifecycle_stage?: string
+          locked_at?: string
+          locked_by?: string | null
+          proof_summary?: string
+          subject?: string
+          subject_type?: string
+          superseded?: boolean
+          superseded_reason?: string | null
+          supporting_sources?: Json
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "settled_facts_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "cases"
+            referencedColumns: ["case_id"]
+          },
+          {
+            foreignKeyName: "settled_facts_exhibit_id_fkey"
+            columns: ["exhibit_id"]
+            isOneToOne: false
+            referencedRelation: "exhibits"
+            referencedColumns: ["exhibit_id"]
+          },
+        ]
+      }
       unmasked_hq_locations: {
         Row: {
           ai_assessment: string | null

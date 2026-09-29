@@ -155,6 +155,8 @@ export default function FocusFire() {
             <TabsTrigger value="conflicts"><ShieldCheck className="mr-1.5 h-3.5 w-3.5" />Identity conflicts</TabsTrigger>
             <TabsTrigger value="dossier"><Plane className="mr-1.5 h-3.5 w-3.5" />Deep dive</TabsTrigger>
             <TabsTrigger value="pairs"><Users className="mr-1.5 h-3.5 w-3.5" />Flying together</TabsTrigger>
+            <TabsTrigger value="handoffs"><Repeat className="mr-1.5 h-3.5 w-3.5" />Hand-offs</TabsTrigger>
+            <TabsTrigger value="fronts"><Landmark className="mr-1.5 h-3.5 w-3.5" />Federal fronts</TabsTrigger>
             <TabsTrigger value="facts"><FileCheck2 className="mr-1.5 h-3.5 w-3.5" />Facts to exhibits</TabsTrigger>
           </TabsList>
 

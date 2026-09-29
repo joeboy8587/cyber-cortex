@@ -252,6 +252,7 @@ async function upsertFinding(sql: any, f: {
 // ---------------------------------------------------------------- sense pass
 async function sense(sql: any, hours: number, cap: number) {
   const started = Date.now();
+  await loadSettled();
   const w = await weights(sql);
   const created: any[] = [];
   const skipped: string[] = [];

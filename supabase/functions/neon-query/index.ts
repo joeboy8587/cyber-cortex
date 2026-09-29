@@ -449,10 +449,22 @@ Deno.serve(async (req) => {
 
         case 'customQuery': {
           if (!query) throw new Error('Query is required');
-          const normalizedQuery = query.trim().toUpperCase();
-          const isSelectQuery = normalizedQuery.startsWith('SELECT') || normalizedQuery.startsWith('WITH');
-          const hasDangerousKeywords = /\b(INSERT|UPDATE|DELETE|DROP|TRUNCATE|ALTER|CREATE|GRANT|REVOKE)\b/i.test(query);
-          if (!isSelectQuery || hasDangerousKeywords) throw new Error('Only SELECT queries are allowed');
+          // Strip comments and string literals before checking, so text like
+          // 'updated' inside quotes or a leading "-- note" doesn't cause false rejections.
+          const stripped = String(query)
+            .replace(/--[^\n]*/g, ' ')
+            .replace(/\/\*[\s\S]*?\*\//g, ' ')
+            .replace(/'(?:[^']|'')*'/g, "''")
+            .trim()
+            .replace(/^\(+\s*/, '');
+          const normalizedQuery = stripped.toUpperCase();
+          const isSelectQuery = /^(SELECT|WITH|VALUES|TABLE|EXPLAIN\s+SELECT)\b/.test(normalizedQuery);
+          const hasDangerousKeywords = /\b(INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM|DROP|TRUNCATE|ALTER|CREATE|GRANT|REVOKE)\b/i.test(stripped);
+          if (!isSelectQuery || hasDangerousKeywords) {
+            console.warn('customQuery rejected (read-only guard):', normalizedQuery.slice(0, 120));
+            result = { data: [], nonFatal: true, rejected: true, error: 'Only read-only queries are allowed', message: 'This panel sent a query that is not read-only, so it was skipped.' };
+            break;
+          }
           try {
             result = await runCustomQueryWithTimeout(sql, query, parseTimeoutMs(body.timeoutMs ?? body.timeout));
           } catch (e) {

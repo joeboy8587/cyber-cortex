@@ -592,6 +592,10 @@ KEY FORENSIC FINDINGS:
 - XXB taxonomy: ${corrCounts.xxb_ghost_records?.toLocaleString() || 0} aircraft broadcasting MLAT-only (no ADS-B), avg altitude ~416ft
 - Top harmful aircraft: BH405 (harm 104.65, military ISR), N71FF/FF22 LLC (harm 100, shell company), N791FA (8 corroborating sources)
 
+AIRCRAFT NAMED IN THIS QUESTION (live lookup, exact tail as typed):
+${tailFacts.join('\n') || '- none named'}
+RULE: Never "correct" a tail number the user typed into a different one (e.g. N72FF is NOT N71FF — both are real, separate aircraft). Answer about the exact tail. Never blame an "infrastructure reset" for zeros; if a lookup timed out, say it timed out.
+
 TOP HARM AIRCRAFT (Statistically Significant):
 ${(topHarmAircraft as any[]).map((a: any) => `- ${a.registration}: harm=${a.combined_harm_score}, level=${a.harm_level}, p=${Number(a.p_value || 1).toFixed(4)}, encounters=${a.total_encounters}, significant=${a.statistically_significant}`).join('\n') || 'No harm data available'}
 

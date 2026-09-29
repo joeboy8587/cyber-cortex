@@ -357,6 +357,7 @@ async function sense(sql: any, hours: number, cap: number) {
         rule, subject: r.reg, claim, evidence, confidence: conf, sigExtra,
         layer: RULE_LAYER[rule] ?? "behaviour",
       }), null as any);
+      if (row?.settled) { skipped.push(`${r.reg}: ${rule} already settled`); return; }
       if (row) created.push({ id: row.id, rule, subject: r.reg, claim, confidence: conf, isNew: row.inserted });
     };
 

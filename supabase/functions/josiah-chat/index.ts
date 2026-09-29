@@ -459,27 +459,15 @@ ${(recentHypotheses as any[]).map((h: any) => `- ${(h.hypothesis || '').slice(0,
           FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
           WHERE c.relkind = 'r' AND n.nspname = 'public'
           ORDER BY c.reltuples DESC`, [] as any),
-      cap(sql`SELECT
-            (SELECT COUNT(*) FROM live_flight_detections_rows) as flights,
-            (SELECT COUNT(*) FROM unified_biometric_aircraft_correlation_final) as biometrics,
-            (SELECT COUNT(*) FROM criminal_enterprise_command_structure) as enterprise,
-            (SELECT COUNT(*) FROM shell_companies) as shells,
-            (SELECT COUNT(*) FROM josiah_reflections_rows) as reflections,
-            (SELECT COUNT(*) FROM aircraft_registry_enriched) as aircraft,
-            (SELECT COUNT(*) FROM unified_biometric_aircraft_correlation_final WHERE legal_evidence = true) as bio_correlations,
-            (SELECT COUNT(*) FROM live_flight_detections_rows WHERE flagged = true) as flagged_aircraft,
-            (SELECT COUNT(*) FROM four_factor_correlations) as correlations
-        `, [{}] as any),
-      cap(sql`SELECT
-            (SELECT COUNT(*) FROM unified_biometric_aircraft_correlation_final) as bio_correlations_confirmed,
-            (SELECT COUNT(DISTINCT aircraft_registration) FROM unified_biometric_aircraft_correlation_final WHERE aircraft_registration IS NOT NULL) as matrix_aircraft,
-            (SELECT COUNT(DISTINCT aircraft_registration) FROM unified_biometric_aircraft_correlation_final WHERE threat_level IN ('CRITICAL','HIGH')) as high_harm_aircraft,
-            (SELECT COUNT(*) FROM flight_ocr_correlations) as ocr_unmasking_records,
-            (SELECT COUNT(*) FROM biometric_screenshots_ocr) as screenshot_bio_links,
-            (SELECT COUNT(*) FROM coordinated_operations_analysis) as coordinated_ops,
-            (SELECT COUNT(*) FROM live_flight_detections_rows WHERE taxonomy_tag LIKE 'xxb_%') as xxb_ghost_records,
-            (SELECT COUNT(*) FROM complete_aircraft_trace) as traced_aircraft
-        `, [{}] as any),
+      // Filtered counts run individually so one slow table can't zero out the rest.
+      Promise.all([
+        cap(sql`SELECT COUNT(*)::bigint AS n FROM unified_biometric_aircraft_correlation_final WHERE legal_evidence = true`, [] as any, 12000),
+        cap(sql`SELECT COUNT(*)::bigint AS n FROM flagged_aircraft_main`, [] as any, 12000),
+      ]).then(([a, b]: any[]) => [{ bio_correlations: a[0]?.n, flagged_aircraft: b[0]?.n }]),
+      Promise.all([
+        cap(sql`SELECT COUNT(DISTINCT aircraft_registration)::bigint AS n FROM unified_biometric_aircraft_correlation_final WHERE aircraft_registration IS NOT NULL`, [] as any, 12000),
+        cap(sql`SELECT COUNT(DISTINCT aircraft_registration)::bigint AS n FROM unified_biometric_aircraft_correlation_final WHERE threat_level IN ('CRITICAL','HIGH')`, [] as any, 12000),
+      ]).then(([a, b]: any[]) => [{ matrix_aircraft: a[0]?.n, high_harm_aircraft: b[0]?.n }]),
       cap(sql`SELECT reflection_content, trigger_type, created_at FROM josiah_reflections_rows ORDER BY created_at DESC LIMIT 10`, [] as any),
       cap(sql`SELECT registration, callsign, altitude, speed, detection_timestamp, taxonomy_tag
           FROM live_flight_detections_rows ORDER BY detection_timestamp DESC LIMIT 20`, [] as any),
@@ -507,9 +495,47 @@ ${(recentHypotheses as any[]).map((h: any) => `- ${(h.hypothesis || '').slice(0,
     ]);
 
 
-    const counts: any = evidenceCounts[0] || {};
-    const corrCounts: any = correlationCounts[0] || {};
-    const totalRecords = (allTables as any[]).reduce((sum: number, t: any) => sum + Number(t.row_count || 0), 0);
+    // Whole-table sizes come from the catalogue estimate (instant) instead of COUNT(*) on
+    // multi-million-row tables, which timed out and made Josiah report "0 correlations".
+    const est = (name: string) => {
+      const r = (allTables as any[]).find((t: any) => t.table_name === name);
+      return r ? Math.max(0, Number(r.row_count || 0)) : undefined;
+    };
+    const counts: any = {
+      flights: est('live_flight_detections_rows'),
+      biometrics: est('unified_biometric_aircraft_correlation_final'),
+      enterprise: est('criminal_enterprise_command_structure'),
+      shells: est('shell_companies'),
+      reflections: est('josiah_reflections_rows'),
+      aircraft: est('aircraft_registry_enriched'),
+      correlations: est('four_factor_correlations'),
+      ...(evidenceCounts[0] || {}),
+    };
+    const corrCounts: any = {
+      bio_correlations_confirmed: est('unified_biometric_aircraft_correlation_final'),
+      ocr_unmasking_records: est('flight_ocr_correlations'),
+      screenshot_bio_links: est('biometric_screenshots_ocr'),
+      coordinated_ops: est('coordinated_operations_analysis'),
+      traced_aircraft: est('complete_aircraft_trace'),
+      ...(correlationCounts[0] || {}),
+    };
+    const totalRecords = (allTables as any[]).reduce((sum: number, t: any) => sum + Math.max(0, Number(t.row_count || 0)), 0);
+
+    // Per-aircraft lookup for every tail number named in the question — exactly as typed.
+    const tails = Array.from(new Set(String(message || '').toUpperCase().match(/\bN[1-9][0-9A-Z]{0,4}\b/g) || [])).slice(0, 4);
+    const tailFacts = await Promise.all(tails.map(async (t) => {
+      const [bio, det] = await Promise.all([
+        cap(sql`SELECT COUNT(*)::int AS events, MAX(threat_level) AS level, ROUND(AVG(bradford_hill_score)::numeric,2) AS bh,
+                  ROUND(MAX(heart_rate_bpm)::numeric,0) AS max_hr, MIN(biometric_timestamp_utc) AS first_ts, MAX(biometric_timestamp_utc) AS last_ts
+                FROM unified_biometric_aircraft_correlation_final WHERE aircraft_registration = ${t}`, [] as any, 15000),
+        cap(sql`SELECT COUNT(*)::int AS n, MIN(altitude) AS min_alt, MAX(detection_timestamp) AS last_seen
+                FROM live_flight_detections_rows WHERE registration = ${t}`, [] as any, 15000),
+      ]);
+      const b: any = bio[0]; const d: any = det[0];
+      const bioLine = b ? `${b.events} biometric correlations${b.events ? ` (level ${b.level || 'n/a'}, avg Bradford Hill ${b.bh ?? 'n/a'}, peak HR ${b.max_hr ?? 'n/a'}, ${b.first_ts ? new Date(b.first_ts).toISOString().slice(0,10) : '?'} → ${b.last_ts ? new Date(b.last_ts).toISOString().slice(0,10) : '?'})` : ''}` : 'biometric lookup timed out (NOT zero — say so)';
+      const detLine = d ? `${d.n} live detections${d.n ? `, lowest ${d.min_alt ?? '?'} ft, last seen ${d.last_seen ? new Date(d.last_seen).toISOString() : '?'}` : ''}` : 'detection lookup timed out (NOT zero — say so)';
+      return `- ${t}: ${bioLine}; ${detLine}`;
+    }));
 
     await sql.end().catch(() => {});
 
@@ -565,6 +591,10 @@ KEY FORENSIC FINDINGS:
 - Mode-switching proof: ${corrCounts.ocr_unmasking_records || 0} FR24 screenshots show transponder toggling (18 U.S.C. § 1001 violation)
 - XXB taxonomy: ${corrCounts.xxb_ghost_records?.toLocaleString() || 0} aircraft broadcasting MLAT-only (no ADS-B), avg altitude ~416ft
 - Top harmful aircraft: BH405 (harm 104.65, military ISR), N71FF/FF22 LLC (harm 100, shell company), N791FA (8 corroborating sources)
+
+AIRCRAFT NAMED IN THIS QUESTION (live lookup, exact tail as typed):
+${tailFacts.join('\n') || '- none named'}
+RULE: Never "correct" a tail number the user typed into a different one (e.g. N72FF is NOT N71FF — both are real, separate aircraft). Answer about the exact tail. Never blame an "infrastructure reset" for zeros; if a lookup timed out, say it timed out.
 
 TOP HARM AIRCRAFT (Statistically Significant):
 ${(topHarmAircraft as any[]).map((a: any) => `- ${a.registration}: harm=${a.combined_harm_score}, level=${a.harm_level}, p=${Number(a.p_value || 1).toFixed(4)}, encounters=${a.total_encounters}, significant=${a.statistically_significant}`).join('\n') || 'No harm data available'}

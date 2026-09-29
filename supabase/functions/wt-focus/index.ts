@@ -613,6 +613,8 @@ async function lockSettledFact(b: any) {
       status: "active",
     }).select("exhibit_id").maybeSingle();
     exhibitId = ex?.exhibit_id ?? null;
+    if (!exhibitId && exErr) exhibitError = exErr.message;
+
     if (exhibitId) {
       await db.from("settled_facts").update({ exhibit_id: exhibitId }).eq("id", data?.id);
       await db.from("exhibit_audit_trail").insert({

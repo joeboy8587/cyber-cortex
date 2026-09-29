@@ -605,6 +605,153 @@ export default function FocusFire() {
               </CardContent>
             </Card>
           </TabsContent>
+
+          {/* 5 */}
+          <TabsContent value="settled" className="mt-3">
+            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_380px]">
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between">
+                  <CardTitle className="text-base">What is settled</CardTitle>
+                  <Button size="sm" variant="outline" onClick={loadSettled} disabled={!!busy}>
+                    {spin("settled") ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                  </Button>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <p className="text-xs text-muted-foreground">
+                    Anything locked here is proven and finished. The automatic sweeps stop treating it as an
+                    open question, and Josiah speaks about it as established fact instead of working it out again.
+                  </p>
+                  {settled && (
+                    <div className="flex flex-wrap gap-2 text-xs">
+                      <Badge variant="outline">{settled.locked_count} locked</Badge>
+                      <Badge variant="outline">{settled.subjects_locked} aircraft or companies</Badge>
+                      <Badge variant="outline">{settled.with_exhibit} filed as exhibits</Badge>
+                    </div>
+                  )}
+                  <ScrollArea className="h-[520px] pr-3">
+                    <div className="space-y-2">
+                      {(settled?.facts ?? []).map((f: any) => (
+                        <div
+                          key={f.id}
+                          className={`rounded border p-3 ${f.superseded ? "border-border/40 bg-card/20 opacity-60" : "border-border/60 bg-card/40"}`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-mono text-sm text-primary">{f.subject}</span>
+                            <div className="flex items-center gap-2">
+                              <Badge variant="outline">{String(f.fact_class).replace(/_/g, " ")}</Badge>
+                              {f.exhibit_id && <Badge>Exhibit filed</Badge>}
+                              {f.superseded && <Badge variant="secondary">Reopened</Badge>}
+                            </div>
+                          </div>
+                          <div className="mt-1 text-sm font-medium">{f.headline}</div>
+                          <div className="mt-1 text-[12px] text-muted-foreground">{f.proof_summary}</div>
+                          <div className="mt-2 flex items-center justify-between gap-2">
+                            <span className="font-mono text-[10px] text-muted-foreground">
+                              {String(f.evidence_hash).slice(0, 16)}… · locked {when(f.locked_at)}
+                            </span>
+                            {!f.superseded && (
+                              <Button size="sm" variant="ghost" disabled={!!busy} onClick={() => supersede(f.id)}>
+                                <Unlock className="mr-1.5 h-3.5 w-3.5" />Reopen
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                      {settled && (settled.facts ?? []).length === 0 && (
+                        <div className="p-6 text-center text-sm text-muted-foreground">
+                          Nothing locked yet. Use the panel to the right for the first one.
+                        </div>
+                      )}
+                    </div>
+                  </ScrollArea>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Lock something as settled</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div>
+                    <label className="text-[11px] uppercase tracking-wider text-muted-foreground">Aircraft or company</label>
+                    <Input
+                      value={lockForm.subject}
+                      onChange={(e) => setLockForm((f) => ({ ...f, subject: e.target.value }))}
+                      placeholder="N916HT"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[11px] uppercase tracking-wider text-muted-foreground">Kind of subject</label>
+                      <select
+                        value={lockForm.subject_type}
+                        onChange={(e) => setLockForm((f) => ({ ...f, subject_type: e.target.value }))}
+                        className="h-9 w-full rounded border border-border bg-background px-2 text-sm"
+                      >
+                        <option value="aircraft">Aircraft</option>
+                        <option value="company">Company</option>
+                        <option value="pattern">Pattern</option>
+                        <option value="location">Location</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[11px] uppercase tracking-wider text-muted-foreground">Kind of fact</label>
+                      <select
+                        value={lockForm.fact_class}
+                        onChange={(e) => setLockForm((f) => ({ ...f, fact_class: e.target.value }))}
+                        className="h-9 w-full rounded border border-border bg-background px-2 text-sm"
+                      >
+                        <option value="operator_identity">Who owns it</option>
+                        <option value="shell_link">Holding-company link</option>
+                        <option value="front_company">Documented front company</option>
+                        <option value="flight_pattern">Established flight pattern</option>
+                        <option value="physics_anomaly">Physics anomaly</option>
+                        <option value="cleared">Checked and cleared</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[11px] uppercase tracking-wider text-muted-foreground">Headline</label>
+                    <Input
+                      value={lockForm.headline}
+                      onChange={(e) => setLockForm((f) => ({ ...f, headline: e.target.value }))}
+                      placeholder="Registered to 9K Air LLC, Newark, Delaware"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] uppercase tracking-wider text-muted-foreground">The proof</label>
+                    <Textarea
+                      rows={5}
+                      value={lockForm.proof}
+                      onChange={(e) => setLockForm((f) => ({ ...f, proof: e.target.value }))}
+                      placeholder="What establishes this, and where it came from."
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] uppercase tracking-wider text-muted-foreground">File it under a case (optional)</label>
+                    <select
+                      value={lockCase}
+                      onChange={(e) => setLockCase(e.target.value)}
+                      className="h-9 w-full rounded border border-border bg-background px-2 text-sm"
+                    >
+                      <option value="">Do not file an exhibit</option>
+                      {(settled?.cases ?? cases).map((c: any) => (
+                        <option key={c.case_id} value={c.case_id}>{c.case_code} — {c.case_name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <Button className="w-full" onClick={lockFact} disabled={!!busy}>
+                    {spin("lock") ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Lock className="mr-1.5 h-3.5 w-3.5" />}
+                    Lock as settled
+                  </Button>
+                  <p className="text-[11px] text-muted-foreground">
+                    Locking stamps the fact with a fingerprint so it can never be quietly changed. Nothing is ever deleted —
+                    reopening a fact keeps the original record.
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
+          </TabsContent>
         </Tabs>
       </div>
     </DashboardLayout>

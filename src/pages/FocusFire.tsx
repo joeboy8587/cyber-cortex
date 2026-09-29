@@ -41,6 +41,10 @@ export default function FocusFire() {
   // 3. pairs
   const [pairs, setPairs] = useState<any[] | null>(null);
 
+  // 3b. handoffs / 3c. federal fronts
+  const [handoffs, setHandoffs] = useState<any>(null);
+  const [fronts, setFronts] = useState<any>(null);
+
   // 4. facts
   const [facts, setFacts] = useState<Fact[] | null>(null);
   const [cases, setCases] = useState<CaseRow[]>([]);

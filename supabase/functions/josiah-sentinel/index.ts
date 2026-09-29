@@ -817,23 +817,51 @@ serve(async (req) => {
         if (minAlt < THREAT_SIGNATURES.criticalAltitude) { score += 3; factors.push(`${minAlt}ft (below 500ft)`); }
         else if (minAlt < 1000) { score += 2; factors.push(`${minAlt}ft (below 1,000ft floor)`); }
         else if (minAlt < THREAT_SIGNATURES.lowAltitudeThreshold) { score += 1; factors.push(`${minAlt}ft low`); }
-        // Turning: accumulated heading change between consecutive pings.
-        let turn = 0; let hMin = 360, hMax = 0;
+        // Turning: SIGNED heading integration → completed closed loops.
+        // Aldhous/Seife (BuzzFeed) feature set: a camera or SIGINT turret must hold a
+        // sustained tight circle over the subject, so we measure net rotation, not jitter.
+        let turn = 0; let signedTurn = 0; let hMin = 360, hMax = 0;
         for (let i = 0; i < rows.length; i++) {
           const h = Number(rows[i].heading);
           if (!Number.isFinite(h)) continue;
           hMin = Math.min(hMin, h); hMax = Math.max(hMax, h);
           if (i > 0) {
             const p = Number(rows[i - 1].heading);
-            if (Number.isFinite(p)) { let dh = Math.abs(h - p) % 360; if (dh > 180) dh = 360 - dh; turn += dh; }
+            if (Number.isFinite(p)) {
+              let dh = ((h - p + 540) % 360) - 180; // signed, -180..180
+              signedTurn += dh;
+              const ab = Math.abs(dh); turn += ab;
+            }
           }
         }
+        const loops = Math.floor(Math.abs(signedTurn) / 360);
         const dists = rows.map(r => nmFromAoi(r.latitude, r.longitude)).filter((x): x is number => x !== null);
         const closest = dists.length ? Math.min(...dists) : 99;
+        // Orbit geometry: track centroid and bounding radius.
+        const pts = rows
+          .map(r => ({ la: Number(r.latitude), lo: Number(r.longitude) }))
+          .filter(p => Number.isFinite(p.la) && Number.isFinite(p.lo) && !(p.la === 0 && p.lo === 0));
+        let centroidNm: number | null = null; let orbitRadiusNm = 99;
+        if (pts.length >= 3) {
+          const cLa = pts.reduce((s, p) => s + p.la, 0) / pts.length;
+          const cLo = pts.reduce((s, p) => s + p.lo, 0) / pts.length;
+          centroidNm = nmFromAoi(cLa, cLo);
+          const kLat = 60, kLon = 60 * Math.cos(cLa * Math.PI / 180);
+          orbitRadiusNm = Math.max(...pts.map(p => Math.hypot((p.la - cLa) * kLat, (p.lo - cLo) * kLon)));
+        }
         const dwellMin = rows.length > 1
           ? (new Date(rows[rows.length - 1].detection_timestamp).getTime() - new Date(rows[0].detection_timestamp).getTime()) / 60000 : 0;
-        const orbit = turn >= 300 && rows.length >= 4;
-        if (orbit) { score += 2; factors.push(`tight orbit (${Math.round(turn)}° of turning)`); }
+        const tightLoiter = orbitRadiusNm <= 1.5 && centroidNm !== null && centroidNm <= 2;
+        const orbit = (turn >= 300 && rows.length >= 4) || loops >= 1;
+        if (loops >= 2 && tightLoiter) {
+          score += 3;
+          factors.push(`persistent surveillance orbit — ${loops} closed loops, ${orbitRadiusNm.toFixed(1)}nm radius centred ${centroidNm!.toFixed(1)}nm from the residence`);
+        } else if (loops >= 1 && tightLoiter) {
+          score += 2;
+          factors.push(`closed orbit over the residence (${orbitRadiusNm.toFixed(1)}nm radius, ${centroidNm!.toFixed(1)}nm from the residence)`);
+        } else if (orbit) {
+          score += 2; factors.push(`tight orbit (${Math.round(turn)}° of turning)`);
+        }
         if (dwellMin >= 10) { score += 1; factors.push(`${Math.round(dwellMin)} min over the area`); }
         if (closest <= 1) { score += 1; factors.push(`${closest.toFixed(1)}nm from residence`); }
         const night = rows.some(r => { const h = (new Date(r.detection_timestamp).getUTCHours() + 17) % 24; return h < 6 || h >= 22; });

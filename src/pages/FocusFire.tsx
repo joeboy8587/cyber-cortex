@@ -9,7 +9,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { Loader2, RefreshCw, ShieldCheck, Plane, Users, FileCheck2, Search } from "lucide-react";
+import { Loader2, RefreshCw, ShieldCheck, Plane, Users, FileCheck2, Search, Repeat, Landmark } from "lucide-react";
 
 const when = (v?: string | null) => (v ? new Date(v).toLocaleString() : "—");
 
@@ -40,6 +40,10 @@ export default function FocusFire() {
 
   // 3. pairs
   const [pairs, setPairs] = useState<any[] | null>(null);
+
+  // 3b. handoffs / 3c. federal fronts
+  const [handoffs, setHandoffs] = useState<any>(null);
+  const [fronts, setFronts] = useState<any>(null);
 
   // 4. facts
   const [facts, setFacts] = useState<Fact[] | null>(null);
@@ -106,6 +110,21 @@ export default function FocusFire() {
     } catch (e: any) { toast.error(e.message); } finally { setBusy(null); }
   };
 
+  const runHandoffs = async () => {
+    setBusy("handoffs");
+    try {
+      const d = await call({ action: "handoffs", days: 30, gap_minutes: 20 });
+      if (d.unavailable) toast.message("That lookup was too slow to finish — try a shorter window.");
+      setHandoffs(d);
+    } catch (e: any) { toast.error(e.message); } finally { setBusy(null); }
+  };
+
+  const runFronts = async () => {
+    setBusy("fronts");
+    try { setFronts(await call({ action: "fronts", days: 365 })); }
+    catch (e: any) { toast.error(e.message); } finally { setBusy(null); }
+  };
+
   const promote = async () => {
     const ids = Object.keys(picked).filter((k) => picked[k]);
     if (!ids.length || !caseId) { toast.error("Pick a case and at least one fact."); return; }
@@ -136,6 +155,8 @@ export default function FocusFire() {
             <TabsTrigger value="conflicts"><ShieldCheck className="mr-1.5 h-3.5 w-3.5" />Identity conflicts</TabsTrigger>
             <TabsTrigger value="dossier"><Plane className="mr-1.5 h-3.5 w-3.5" />Deep dive</TabsTrigger>
             <TabsTrigger value="pairs"><Users className="mr-1.5 h-3.5 w-3.5" />Flying together</TabsTrigger>
+            <TabsTrigger value="handoffs"><Repeat className="mr-1.5 h-3.5 w-3.5" />Hand-offs</TabsTrigger>
+            <TabsTrigger value="fronts"><Landmark className="mr-1.5 h-3.5 w-3.5" />Federal fronts</TabsTrigger>
             <TabsTrigger value="facts"><FileCheck2 className="mr-1.5 h-3.5 w-3.5" />Facts to exhibits</TabsTrigger>
           </TabsList>
 
@@ -342,6 +363,124 @@ export default function FocusFire() {
               </CardContent>
             </Card>
           </TabsContent>
+
+          {/* 3b */}
+          <TabsContent value="handoffs" className="mt-3">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between">
+                <CardTitle className="text-base">One aircraft leaves, the next arrives</CardTitle>
+                <Button size="sm" onClick={runHandoffs} disabled={!!busy}>
+                  {spin("handoffs") ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
+                  Run the check
+                </Button>
+              </CardHeader>
+              <CardContent>
+                <p className="mb-3 text-xs text-muted-foreground">
+                  Last 30 days. Only aircraft registered to holding or leasing companies, and only visits
+                  that came below 6,000 ft — anything higher is passing traffic, not time spent over the area.
+                  A hand-off is one aircraft leaving within 20 minutes of another arriving.
+                </p>
+                {handoffs && (
+                  <div className="mb-3 flex flex-wrap gap-2 text-xs">
+                    <Badge variant="outline">{handoffs.shell_tails ?? 0} aircraft</Badge>
+                    <Badge variant="outline">{handoffs.shell_visits ?? 0} visits</Badge>
+                    <Badge variant="outline">{(handoffs.handoffs ?? []).length} hand-offs</Badge>
+                  </div>
+                )}
+                {!!(handoffs?.recurring_relays ?? []).length && (
+                  <div className="mb-3 rounded border border-primary/40 bg-primary/5 p-3">
+                    <div className="text-xs font-semibold">Pairs that hand off repeatedly</div>
+                    <div className="mt-1 space-y-1">
+                      {handoffs.recurring_relays.map((r: any) => (
+                        <div key={r.pair} className="font-mono text-sm text-primary">
+                          {r.pair} <span className="text-muted-foreground">— {r.count} times</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <ScrollArea className="h-[480px] pr-3">
+                  <div className="space-y-2">
+                    {(handoffs?.handoffs ?? []).map((h: any, i: number) => (
+                      <div key={i} className="rounded border border-border/60 bg-card/40 p-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-mono text-sm text-primary">{h.outgoing} → {h.incoming}</span>
+                          <div className="flex gap-2">
+                            {h.same_operator && <Badge>Same owner</Badge>}
+                            <Badge variant="outline">{h.verdict}</Badge>
+                          </div>
+                        </div>
+                        <div className="mt-1 text-sm">
+                          {when(h.handoff_at)} · gap {h.gap_minutes} min
+                          {h.gap_minutes < 0 && " (overlapping — both over the area at once)"}
+                        </div>
+                        <div className="mt-1 text-[11px] text-muted-foreground">
+                          {h.outgoing_operator ?? "owner unknown"} ({h.outgoing_type ?? "type unknown"}), {h.outgoing_dwell_min} min
+                          {h.outgoing_min_alt ? `, lowest ${h.outgoing_min_alt} ft` : ""}
+                          {" → "}
+                          {h.incoming_operator ?? "owner unknown"} ({h.incoming_type ?? "type unknown"}), {h.incoming_dwell_min} min
+                          {h.incoming_min_alt ? `, lowest ${h.incoming_min_alt} ft` : ""}
+                        </div>
+                      </div>
+                    ))}
+                    {handoffs && (handoffs.handoffs ?? []).length === 0 && (
+                      <div className="p-6 text-center text-sm text-muted-foreground">No hand-offs in this window.</div>
+                    )}
+                  </div>
+                </ScrollArea>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* 3c */}
+          <TabsContent value="fronts" className="mt-3">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between">
+                <CardTitle className="text-base">Documented federal front companies</CardTitle>
+                <Button size="sm" onClick={runFronts} disabled={!!busy}>
+                  {spin("fronts") ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
+                  Run the check
+                </Button>
+              </CardHeader>
+              <CardContent>
+                <p className="mb-3 text-xs text-muted-foreground">
+                  The 18 front companies named in the Associated Press, BuzzFeed News and Intercept reporting,
+                  checked against the last year of local air traffic and against the ownership records.
+                </p>
+                {fronts && (
+                  <div className="mb-3 flex flex-wrap gap-2 text-xs">
+                    <Badge variant="outline">{fronts.front_companies_checked} companies checked</Badge>
+                    <Badge variant="outline">{fronts.detected_count} seen overhead</Badge>
+                  </div>
+                )}
+                <ScrollArea className="h-[480px] pr-3">
+                  <div className="space-y-2">
+                    {(fronts?.detected_in_airspace ?? []).map((f: any) => (
+                      <div key={f.registration} className="rounded border border-border/60 bg-card/40 p-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-mono text-sm text-primary">{f.registration}</span>
+                          {f.confirmed_front_tail && <Badge>Confirmed front aircraft</Badge>}
+                        </div>
+                        <div className="mt-1 text-sm">
+                          {f.operator ?? "owner not resolved"}
+                          {f.operator_city ? ` · ${f.operator_city}, ${f.operator_state ?? ""}` : ""}
+                        </div>
+                        <div className="mt-1 text-[11px] text-muted-foreground">
+                          {f.contacts} contacts{f.days_seen ? ` across ${f.days_seen} days` : ""}
+                          {f.min_alt ? ` · lowest ${f.min_alt} ft` : ""} · last seen {when(f.last_seen)}
+                          {f.aircraft_type ? ` · ${f.aircraft_type}` : ""}
+                        </div>
+                      </div>
+                    ))}
+                    {fronts && (fronts.detected_in_airspace ?? []).length === 0 && (
+                      <div className="p-6 text-center text-sm text-muted-foreground">None of the named companies appear in this window.</div>
+                    )}
+                  </div>
+                </ScrollArea>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
 
           {/* 4 */}
           <TabsContent value="facts" className="mt-3">

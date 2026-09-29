@@ -594,6 +594,8 @@ async function lockSettledFact(b: any) {
 
   // Optional: immediately file it as a numbered exhibit.
   let exhibitId: string | null = null;
+  let exhibitError: string | null = null;
+
   if (b.case_id && b.create_exhibit !== false) {
     const { data: caseRow } = await db.from("cases").select("case_code").eq("case_id", b.case_id).maybeSingle();
     const code = caseRow?.case_code ?? "CASE";

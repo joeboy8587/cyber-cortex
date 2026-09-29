@@ -9,7 +9,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { Loader2, RefreshCw, ShieldCheck, Plane, Users, FileCheck2, Search } from "lucide-react";
+import { Loader2, RefreshCw, ShieldCheck, Plane, Users, FileCheck2, Search, Repeat, Landmark } from "lucide-react";
 
 const when = (v?: string | null) => (v ? new Date(v).toLocaleString() : "—");
 

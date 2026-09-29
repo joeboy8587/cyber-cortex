@@ -648,6 +648,12 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const action = String(body?.action ?? "overview");
 
+    if (action === "settled") return json(await settledFacts());
+    if (action === "lock_settled") return json(await lockSettledFact(body));
+    if (action === "supersede_settled") {
+      if (!body?.id) return json({ ok: false, error: "Missing fact id." }, 400);
+      return json(await supersedeSettledFact(String(body.id), String(body?.reason ?? "Superseded by newer evidence.")));
+    }
     if (action === "facts") return json(await facts());
     if (action === "promote_facts") {
       const ids: string[] = Array.isArray(body?.ids) ? body.ids.slice(0, 100) : [];

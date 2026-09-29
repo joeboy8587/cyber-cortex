@@ -9,7 +9,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { Loader2, RefreshCw, ShieldCheck, Plane, Users, FileCheck2, Search, Repeat, Landmark } from "lucide-react";
+import { Loader2, RefreshCw, ShieldCheck, Plane, Users, FileCheck2, Search, Repeat, Landmark, Lock, Unlock } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
 
 const when = (v?: string | null) => (v ? new Date(v).toLocaleString() : "—");
 
@@ -51,6 +52,17 @@ export default function FocusFire() {
   const [caseId, setCaseId] = useState<string>("");
   const [picked, setPicked] = useState<Record<string, boolean>>({});
   const [factStats, setFactStats] = useState<{ total: number; already_promoted: number }>({ total: 0, already_promoted: 0 });
+
+  // 5. settled facts
+  const [settled, setSettled] = useState<any>(null);
+  const [lockCase, setLockCase] = useState<string>("");
+  const [lockForm, setLockForm] = useState({
+    subject: "",
+    subject_type: "aircraft",
+    fact_class: "operator_identity",
+    headline: "",
+    proof: "",
+  });
 
   const call = useCallback(async (body: Record<string, unknown>) => {
     const { data, error } = await supabase.functions.invoke("wt-focus", { body });
@@ -125,6 +137,48 @@ export default function FocusFire() {
     catch (e: any) { toast.error(e.message); } finally { setBusy(null); }
   };
 
+  const loadSettled = useCallback(async () => {
+    setBusy("settled");
+    try {
+      const d = await call({ action: "settled" });
+      setSettled(d);
+      if (!caseId && d.cases?.length) setCaseId(d.cases[0].case_id);
+    } catch (e: any) { toast.error(e.message); } finally { setBusy(null); }
+  }, [caseId]);
+
+  const lockFact = async () => {
+    if (!lockForm.subject.trim() || !lockForm.headline.trim() || !lockForm.proof.trim()) {
+      toast.error("Fill in the aircraft or company, the headline and the proof.");
+      return;
+    }
+    setBusy("lock");
+    try {
+      const d = await call({
+        action: "lock_settled",
+        subject: lockForm.subject,
+        subject_type: lockForm.subject_type,
+        fact_class: lockForm.fact_class,
+        headline: lockForm.headline,
+        proof_summary: lockForm.proof,
+        case_id: lockCase || null,
+        create_exhibit: !!lockCase,
+      });
+      if (!d.ok) { toast.error(d.error ?? "Could not lock this fact."); return; }
+      toast.success(d.exhibit_id ? "Locked and filed as an exhibit" : "Locked as a settled fact");
+      setLockForm({ subject: "", subject_type: "aircraft", fact_class: "operator_identity", headline: "", proof: "" });
+      await loadSettled();
+    } catch (e: any) { toast.error(e.message); } finally { setBusy(null); }
+  };
+
+  const supersede = async (id: string) => {
+    setBusy("supersede");
+    try {
+      await call({ action: "supersede_settled", id, reason: "Reopened by the investigator." });
+      toast.success("Reopened — it will be investigated again.");
+      await loadSettled();
+    } catch (e: any) { toast.error(e.message); } finally { setBusy(null); }
+  };
+
   const promote = async () => {
     const ids = Object.keys(picked).filter((k) => picked[k]);
     if (!ids.length || !caseId) { toast.error("Pick a case and at least one fact."); return; }
@@ -158,6 +212,9 @@ export default function FocusFire() {
             <TabsTrigger value="handoffs"><Repeat className="mr-1.5 h-3.5 w-3.5" />Hand-offs</TabsTrigger>
             <TabsTrigger value="fronts"><Landmark className="mr-1.5 h-3.5 w-3.5" />Federal fronts</TabsTrigger>
             <TabsTrigger value="facts"><FileCheck2 className="mr-1.5 h-3.5 w-3.5" />Facts to exhibits</TabsTrigger>
+            <TabsTrigger value="settled" onClick={() => { if (!settled) loadSettled(); }}>
+              <Lock className="mr-1.5 h-3.5 w-3.5" />Settled facts
+            </TabsTrigger>
           </TabsList>
 
           {/* 1 */}
@@ -547,6 +604,153 @@ export default function FocusFire() {
                 </ScrollArea>
               </CardContent>
             </Card>
+          </TabsContent>
+
+          {/* 5 */}
+          <TabsContent value="settled" className="mt-3">
+            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_380px]">
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between">
+                  <CardTitle className="text-base">What is settled</CardTitle>
+                  <Button size="sm" variant="outline" onClick={loadSettled} disabled={!!busy}>
+                    {spin("settled") ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                  </Button>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <p className="text-xs text-muted-foreground">
+                    Anything locked here is proven and finished. The automatic sweeps stop treating it as an
+                    open question, and Josiah speaks about it as established fact instead of working it out again.
+                  </p>
+                  {settled && (
+                    <div className="flex flex-wrap gap-2 text-xs">
+                      <Badge variant="outline">{settled.locked_count} locked</Badge>
+                      <Badge variant="outline">{settled.subjects_locked} aircraft or companies</Badge>
+                      <Badge variant="outline">{settled.with_exhibit} filed as exhibits</Badge>
+                    </div>
+                  )}
+                  <ScrollArea className="h-[520px] pr-3">
+                    <div className="space-y-2">
+                      {(settled?.facts ?? []).map((f: any) => (
+                        <div
+                          key={f.id}
+                          className={`rounded border p-3 ${f.superseded ? "border-border/40 bg-card/20 opacity-60" : "border-border/60 bg-card/40"}`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-mono text-sm text-primary">{f.subject}</span>
+                            <div className="flex items-center gap-2">
+                              <Badge variant="outline">{String(f.fact_class).replace(/_/g, " ")}</Badge>
+                              {f.exhibit_id && <Badge>Exhibit filed</Badge>}
+                              {f.superseded && <Badge variant="secondary">Reopened</Badge>}
+                            </div>
+                          </div>
+                          <div className="mt-1 text-sm font-medium">{f.headline}</div>
+                          <div className="mt-1 text-[12px] text-muted-foreground">{f.proof_summary}</div>
+                          <div className="mt-2 flex items-center justify-between gap-2">
+                            <span className="font-mono text-[10px] text-muted-foreground">
+                              {String(f.evidence_hash).slice(0, 16)}… · locked {when(f.locked_at)}
+                            </span>
+                            {!f.superseded && (
+                              <Button size="sm" variant="ghost" disabled={!!busy} onClick={() => supersede(f.id)}>
+                                <Unlock className="mr-1.5 h-3.5 w-3.5" />Reopen
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                      {settled && (settled.facts ?? []).length === 0 && (
+                        <div className="p-6 text-center text-sm text-muted-foreground">
+                          Nothing locked yet. Use the panel to the right for the first one.
+                        </div>
+                      )}
+                    </div>
+                  </ScrollArea>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Lock something as settled</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div>
+                    <label className="text-[11px] uppercase tracking-wider text-muted-foreground">Aircraft or company</label>
+                    <Input
+                      value={lockForm.subject}
+                      onChange={(e) => setLockForm((f) => ({ ...f, subject: e.target.value }))}
+                      placeholder="N916HT"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[11px] uppercase tracking-wider text-muted-foreground">Kind of subject</label>
+                      <select
+                        value={lockForm.subject_type}
+                        onChange={(e) => setLockForm((f) => ({ ...f, subject_type: e.target.value }))}
+                        className="h-9 w-full rounded border border-border bg-background px-2 text-sm"
+                      >
+                        <option value="aircraft">Aircraft</option>
+                        <option value="company">Company</option>
+                        <option value="pattern">Pattern</option>
+                        <option value="location">Location</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[11px] uppercase tracking-wider text-muted-foreground">Kind of fact</label>
+                      <select
+                        value={lockForm.fact_class}
+                        onChange={(e) => setLockForm((f) => ({ ...f, fact_class: e.target.value }))}
+                        className="h-9 w-full rounded border border-border bg-background px-2 text-sm"
+                      >
+                        <option value="operator_identity">Who owns it</option>
+                        <option value="shell_link">Holding-company link</option>
+                        <option value="front_company">Documented front company</option>
+                        <option value="flight_pattern">Established flight pattern</option>
+                        <option value="physics_anomaly">Physics anomaly</option>
+                        <option value="cleared">Checked and cleared</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[11px] uppercase tracking-wider text-muted-foreground">Headline</label>
+                    <Input
+                      value={lockForm.headline}
+                      onChange={(e) => setLockForm((f) => ({ ...f, headline: e.target.value }))}
+                      placeholder="Registered to 9K Air LLC, Newark, Delaware"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] uppercase tracking-wider text-muted-foreground">The proof</label>
+                    <Textarea
+                      rows={5}
+                      value={lockForm.proof}
+                      onChange={(e) => setLockForm((f) => ({ ...f, proof: e.target.value }))}
+                      placeholder="What establishes this, and where it came from."
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] uppercase tracking-wider text-muted-foreground">File it under a case (optional)</label>
+                    <select
+                      value={lockCase}
+                      onChange={(e) => setLockCase(e.target.value)}
+                      className="h-9 w-full rounded border border-border bg-background px-2 text-sm"
+                    >
+                      <option value="">Do not file an exhibit</option>
+                      {(settled?.cases ?? cases).map((c: any) => (
+                        <option key={c.case_id} value={c.case_id}>{c.case_code} — {c.case_name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <Button className="w-full" onClick={lockFact} disabled={!!busy}>
+                    {spin("lock") ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Lock className="mr-1.5 h-3.5 w-3.5" />}
+                    Lock as settled
+                  </Button>
+                  <p className="text-[11px] text-muted-foreground">
+                    Locking stamps the fact with a fingerprint so it can never be quietly changed. Nothing is ever deleted —
+                    reopening a fact keeps the original record.
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
           </TabsContent>
         </Tabs>
       </div>

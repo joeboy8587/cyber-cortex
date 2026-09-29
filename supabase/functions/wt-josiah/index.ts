@@ -78,6 +78,28 @@ async function coPresence(sql: any, subject: string, days = 7) {
   return { window_days: days, subject_windows: buckets.length, partners };
 }
 
+async function cloudRest(path: string, init: RequestInit = {}) {
+  const url = Deno.env.get("SUPABASE_URL")!;
+  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  try {
+    const res = await fetch(`${url}/rest/v1/${path}`, {
+      ...init,
+      headers: {
+        apikey: key,
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+        ...(init.headers ?? {}),
+      },
+    });
+    if (!res.ok) { console.warn("cloudRest", path, res.status); return null; }
+    const t = await res.text();
+    return t ? JSON.parse(t) : null;
+  } catch (e) {
+    console.warn("cloudRest failed", (e as Error).message);
+    return null;
+  }
+}
+
 const TOOLS = {
   subject_history: {
     def: {
@@ -235,6 +257,99 @@ const TOOLS = {
       FROM wt_findings WHERE subject = ${String(a.subject).toUpperCase()}
       ORDER BY confidence DESC LIMIT 20`, [] as any[]),
   },
+  doctrine_lookup: {
+    def: {
+      type: "function",
+      function: {
+        name: "doctrine_lookup",
+        description: "Search the Watchtower master dossier and the ingested legal research for precedent, history, statutes and doctrine. Use this before making any historical or legal claim.",
+        parameters: {
+          type: "object",
+          properties: { question: { type: "string", description: "What to look up, in plain words." } },
+          required: ["question"],
+        },
+      },
+    },
+    run: async (_sql: any, a: any) => {
+      const key = Deno.env.get("LOVABLE_API_KEY");
+      const er = await fetch("https://ai.gateway.lovable.dev/v1/embeddings", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "openai/text-embedding-3-small", input: [String(a.question).slice(0, 2000)] }),
+      });
+      if (!er.ok) return { error: "lookup unavailable" };
+      const vec = (await er.json()).data[0].embedding;
+      const res = await cloudRest("rpc/match_rag_chunks", {
+        method: "POST",
+        body: JSON.stringify({ query_embedding: JSON.stringify(vec), match_count: 6, similarity_threshold: 0.3 }),
+      });
+      if (!Array.isArray(res)) return { passages: [] };
+      return {
+        passages: res.map((r: any) => ({
+          source: r.document_title,
+          similarity: Number(r.similarity).toFixed(2),
+          text: String(r.content).slice(0, 1200),
+        })),
+      };
+    },
+  },
+  settled_facts: {
+    def: {
+      type: "function",
+      function: {
+        name: "settled_facts",
+        description: "What has already been proven and locked about a subject. Check this FIRST — never re-investigate a settled fact, state it as established.",
+        parameters: { type: "object", properties: { subject: { type: "string" } }, required: ["subject"] },
+      },
+    },
+    run: async (_sql: any, a: any) => {
+      const subj = String(a.subject ?? "").toUpperCase();
+      const rows = await cloudRest(
+        `settled_facts?superseded=eq.false&subject=eq.${encodeURIComponent(subj)}&select=fact_class,headline,proof_summary,evidence_hash,locked_at,exhibit_id`,
+      );
+      return { subject: subj, settled: Array.isArray(rows) ? rows : [] };
+    },
+  },
+  lock_settled_fact: {
+    def: {
+      type: "function",
+      function: {
+        name: "lock_settled_fact",
+        description: "Lock a proven conclusion so the system stops re-investigating it. Only use when the evidence is conclusive and the user agrees.",
+        parameters: {
+          type: "object",
+          properties: {
+            subject: { type: "string" },
+            fact_class: { type: "string", description: "operator_identity | shell_link | front_company | flight_pattern | physics_anomaly | cleared" },
+            headline: { type: "string", description: "One line stating the fact." },
+            proof_summary: { type: "string", description: "What establishes it and where it came from." },
+          },
+          required: ["subject", "fact_class", "headline", "proof_summary"],
+        },
+      },
+    },
+    run: async (_sql: any, a: any) => {
+      const subject = String(a.subject).toUpperCase();
+      const payload = `${subject}|${a.fact_class}|${a.headline}|${a.proof_summary}|[]`;
+      const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(payload)))]
+        .map((b) => b.toString(16).padStart(2, "0")).join("");
+      const res = await cloudRest("settled_facts", {
+        method: "POST",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify([{
+          subject,
+          subject_type: "aircraft",
+          fact_class: String(a.fact_class),
+          headline: String(a.headline).slice(0, 300),
+          proof_summary: String(a.proof_summary).slice(0, 8000),
+          supporting_sources: [{ source: "josiah_chat" }],
+          evidence_hash: hash,
+        }]),
+      });
+      if (!res) return { locked: false, reason: "That fact is already locked, or it could not be saved." };
+      return { locked: true, evidence_hash: hash };
+    },
+  },
   record_evidence: {
     def: {
       type: "function",
@@ -287,6 +402,14 @@ async function chat(sql: any, body: any) {
     .slice(0, 3);
 
 
+  const alreadySettled = await cloudRest(
+    `settled_facts?superseded=eq.false&subject=eq.${encodeURIComponent(String(f.subject).toUpperCase())}&select=fact_class,headline,proof_summary`,
+  );
+  const settledBlock = Array.isArray(alreadySettled) && alreadySettled.length
+    ? "ALREADY SETTLED about this subject — treat as established, do not re-derive:\n" +
+      alreadySettled.map((s: any) => `- [${s.fact_class}] ${s.headline} — ${s.proof_summary}`).join("\n")
+    : "";
+
   const system = [
     "You are Josiah, the Watchtower investigator, working side by side with a non-technical investigator.",
     "You are looking at ONE finding. Talk plainly, in short paragraphs. No jargon, no hedging.",
@@ -296,6 +419,9 @@ async function chat(sql: any, body: any) {
     "The FAA registry is authoritative for identity; tracking-app labels and icons are crowd-sourced guesses.",
     "Never call anything a civil-rights violation — cite the pattern and the regulation instead.",
     "When the user contributes research, a screenshot, or an observation, call record_evidence to keep it on the record.",
+    "Institutional memory comes first: call settled_facts before re-deriving anything about a subject, and doctrine_lookup before any historical, legal or precedent claim — cite the dossier passage you used.",
+    "When a conclusion is conclusively proven and the user agrees, call lock_settled_fact so the system stops re-investigating it.",
+    settledBlock,
     `Finding under discussion: ${f.claim}`,
     `Pattern: ${f.rule_code} · layer: ${f.layer} · confidence ${Math.round(Number(f.confidence) * 100)}% · status ${f.status}`,
     `Subject: ${f.subject}`,

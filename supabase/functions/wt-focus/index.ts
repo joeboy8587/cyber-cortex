@@ -536,6 +536,111 @@ async function promoteFacts(ids: string[], caseId: string) {
   return { ok: true, promoted: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok), results };
 }
 
+// ───────────────────────── 5. settled facts (institutional memory) ─────────────────────────
+async function sha256(s: string) {
+  return [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)))]
+    .map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function settledFacts() {
+  const db = cloud();
+  const [{ data: rows }, { data: cases }] = await Promise.all([
+    db.from("settled_facts")
+      .select("id, subject, subject_type, fact_class, headline, proof_summary, supporting_sources, case_id, exhibit_id, evidence_hash, locked_at, superseded, superseded_reason")
+      .order("locked_at", { ascending: false })
+      .limit(500),
+    db.from("cases").select("case_id, case_code, case_name").order("case_code"),
+  ]);
+  const live = (rows ?? []).filter((r: any) => !r.superseded);
+  return {
+    facts: rows ?? [],
+    cases: cases ?? [],
+    locked_count: live.length,
+    subjects_locked: new Set(live.map((r: any) => String(r.subject).toUpperCase())).size,
+    with_exhibit: live.filter((r: any) => r.exhibit_id).length,
+  };
+}
+
+async function lockSettledFact(b: any) {
+  const db = cloud();
+  const subject = String(b.subject ?? "").trim().toUpperCase();
+  const factClass = String(b.fact_class ?? "").trim();
+  const headline = String(b.headline ?? "").trim();
+  const proof = String(b.proof_summary ?? "").trim();
+  if (!subject || !factClass || !headline || !proof) {
+    return { ok: false, error: "Subject, what kind of fact, a headline and the proof are all required." };
+  }
+  const sources = Array.isArray(b.supporting_sources) ? b.supporting_sources : [];
+  const hash = await sha256(`${subject}|${factClass}|${headline}|${proof}|${JSON.stringify(sources)}`);
+
+  const { data, error } = await db.from("settled_facts").insert({
+    subject,
+    subject_type: String(b.subject_type ?? "aircraft"),
+    lifecycle_stage: "SETTLED",
+    fact_class: factClass,
+    headline: headline.slice(0, 300),
+    proof_summary: proof.slice(0, 8000),
+    supporting_sources: sources,
+    case_id: b.case_id ?? null,
+    evidence_hash: hash,
+  }).select("id, evidence_hash").maybeSingle();
+
+  if (error) {
+    if (/duplicate key/i.test(error.message)) {
+      return { ok: false, error: "This fact is already locked for that subject." };
+    }
+    return { ok: false, error: error.message };
+  }
+
+  // Optional: immediately file it as a numbered exhibit.
+  let exhibitId: string | null = null;
+  if (b.case_id && b.create_exhibit !== false) {
+    const { data: caseRow } = await db.from("cases").select("case_code").eq("case_id", b.case_id).maybeSingle();
+    const code = caseRow?.case_code ?? "CASE";
+    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    const { data: ex } = await db.from("exhibits").insert({
+      case_id: b.case_id,
+      exhibit_code: `${stamp}_${code}_SETTLED_${subject.replace(/[^A-Z0-9]/g, "").slice(0, 10)}`,
+      exhibit_name: headline.slice(0, 120),
+      tier: 1,
+      evidence_type: `settled_fact:${factClass}`,
+      description: proof.slice(0, 4000),
+      legal_significance: `Settled fact locked for ${subject}. Established through ${sources.length} corroborating source(s); no longer re-litigated by automated scanning.`,
+      file_count: 1,
+      promotion_rule: "focus_fire.settled_fact_lock",
+      sha256_hash: hash,
+      chain_of_custody: { source: "settled_facts", source_id: data?.id, locked_at: new Date().toISOString() },
+      status: "active",
+    }).select("exhibit_id").maybeSingle();
+    exhibitId = ex?.exhibit_id ?? null;
+    if (exhibitId) {
+      await db.from("settled_facts").update({ exhibit_id: exhibitId }).eq("id", data?.id);
+      await db.from("exhibit_audit_trail").insert({
+        case_id: b.case_id,
+        exhibit_id: exhibitId,
+        action: "lock_settled_fact",
+        rule_applied: "focus_fire.settled_fact_lock",
+        result_hash: hash,
+        records_evaluated: 1,
+        records_promoted: 1,
+        performed_by: "focus-fire",
+        metadata: { settled_fact_id: data?.id, subject, fact_class: factClass },
+      }).then(() => {}, () => {});
+    }
+  }
+
+  return { ok: true, id: data?.id, evidence_hash: hash, exhibit_id: exhibitId };
+}
+
+async function supersedeSettledFact(id: string, reason: string) {
+  const db = cloud();
+  const { error } = await db.from("settled_facts")
+    .update({ superseded: true, superseded_reason: reason.slice(0, 1000) })
+    .eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   let sql: any = null;
@@ -543,6 +648,12 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const action = String(body?.action ?? "overview");
 
+    if (action === "settled") return json(await settledFacts());
+    if (action === "lock_settled") return json(await lockSettledFact(body));
+    if (action === "supersede_settled") {
+      if (!body?.id) return json({ ok: false, error: "Missing fact id." }, 400);
+      return json(await supersedeSettledFact(String(body.id), String(body?.reason ?? "Superseded by newer evidence.")));
+    }
     if (action === "facts") return json(await facts());
     if (action === "promote_facts") {
       const ids: string[] = Array.isArray(body?.ids) ? body.ids.slice(0, 100) : [];

@@ -182,10 +182,54 @@ function scoreOf(rule: string, reliability: number, corr: number, contra: number
 
 const statusFor = (c: number) => (c >= AUTO_ACCEPT ? "accepted" : c >= REVIEW_FLOOR ? "review" : "weak");
 
+// ---------------------------------------------- settled-fact shield
+// Anything locked in the settled registry is established. The sweeps stop
+// re-opening it as a fresh question; the record stays, nothing is deleted.
+const SETTLED = new Map<string, Set<string>>();
+
+const RULE_FACT_CLASS: Record<string, string> = {
+  NEW_SUBJECT_IN_AOI: "flight_pattern",
+  FREQUENCY_SPIKE: "flight_pattern",
+  REPEAT_DAYS: "flight_pattern",
+  NIGHT_PRESENCE: "flight_pattern",
+  LOW_ALTITUDE_RESIDENCE: "flight_pattern",
+  SUB_STALL_PHYSICS: "physics_anomaly",
+};
+
+async function loadSettled() {
+  SETTLED.clear();
+  const url = Deno.env.get("SUPABASE_URL");
+  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!url || !key) return;
+  try {
+    const res = await fetch(
+      `${url}/rest/v1/settled_facts?superseded=eq.false&select=subject,fact_class`,
+      { headers: { apikey: key, Authorization: `Bearer ${key}` } },
+    );
+    if (!res.ok) return;
+    for (const r of await res.json()) {
+      const s = String(r.subject).toUpperCase();
+      if (!SETTLED.has(s)) SETTLED.set(s, new Set());
+      SETTLED.get(s)!.add(String(r.fact_class));
+    }
+  } catch (e) {
+    console.warn("settled shield unavailable:", (e as Error).message);
+  }
+}
+
+function isSettled(rule: string, subject: string) {
+  const set = SETTLED.get(subject.toUpperCase());
+  if (!set) return false;
+  if (set.has("cleared")) return true;
+  const cls = RULE_FACT_CLASS[rule];
+  return !!cls && set.has(cls);
+}
+
 async function upsertFinding(sql: any, f: {
   rule: string; subject: string; claim: string; evidence: Record<string, unknown>;
   confidence: number; layer?: string; sigExtra?: string;
 }) {
+  if (isSettled(f.rule, f.subject)) return { id: null, inserted: false, settled: true };
   const signature = `${f.rule}|${f.subject.toUpperCase()}|${f.sigExtra ?? ""}`;
   const rows = await sql`
     INSERT INTO wt_findings (signature, rule_code, subject, claim, confidence, status, layer, evidence)
@@ -208,6 +252,7 @@ async function upsertFinding(sql: any, f: {
 // ---------------------------------------------------------------- sense pass
 async function sense(sql: any, hours: number, cap: number) {
   const started = Date.now();
+  await loadSettled();
   const w = await weights(sql);
   const created: any[] = [];
   const skipped: string[] = [];
@@ -312,6 +357,7 @@ async function sense(sql: any, hours: number, cap: number) {
         rule, subject: r.reg, claim, evidence, confidence: conf, sigExtra,
         layer: RULE_LAYER[rule] ?? "behaviour",
       }), null as any);
+      if (row?.settled) { skipped.push(`${r.reg}: ${rule} already settled`); return; }
       if (row) created.push({ id: row.id, rule, subject: r.reg, claim, confidence: conf, isNew: row.inserted });
     };
 

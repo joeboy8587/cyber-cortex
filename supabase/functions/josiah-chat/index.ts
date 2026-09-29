@@ -459,27 +459,15 @@ ${(recentHypotheses as any[]).map((h: any) => `- ${(h.hypothesis || '').slice(0,
           FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
           WHERE c.relkind = 'r' AND n.nspname = 'public'
           ORDER BY c.reltuples DESC`, [] as any),
-      cap(sql`SELECT
-            (SELECT COUNT(*) FROM live_flight_detections_rows) as flights,
-            (SELECT COUNT(*) FROM unified_biometric_aircraft_correlation_final) as biometrics,
-            (SELECT COUNT(*) FROM criminal_enterprise_command_structure) as enterprise,
-            (SELECT COUNT(*) FROM shell_companies) as shells,
-            (SELECT COUNT(*) FROM josiah_reflections_rows) as reflections,
-            (SELECT COUNT(*) FROM aircraft_registry_enriched) as aircraft,
-            (SELECT COUNT(*) FROM unified_biometric_aircraft_correlation_final WHERE legal_evidence = true) as bio_correlations,
-            (SELECT COUNT(*) FROM live_flight_detections_rows WHERE flagged = true) as flagged_aircraft,
-            (SELECT COUNT(*) FROM four_factor_correlations) as correlations
-        `, [{}] as any),
-      cap(sql`SELECT
-            (SELECT COUNT(*) FROM unified_biometric_aircraft_correlation_final) as bio_correlations_confirmed,
-            (SELECT COUNT(DISTINCT aircraft_registration) FROM unified_biometric_aircraft_correlation_final WHERE aircraft_registration IS NOT NULL) as matrix_aircraft,
-            (SELECT COUNT(DISTINCT aircraft_registration) FROM unified_biometric_aircraft_correlation_final WHERE threat_level IN ('CRITICAL','HIGH')) as high_harm_aircraft,
-            (SELECT COUNT(*) FROM flight_ocr_correlations) as ocr_unmasking_records,
-            (SELECT COUNT(*) FROM biometric_screenshots_ocr) as screenshot_bio_links,
-            (SELECT COUNT(*) FROM coordinated_operations_analysis) as coordinated_ops,
-            (SELECT COUNT(*) FROM live_flight_detections_rows WHERE taxonomy_tag LIKE 'xxb_%') as xxb_ghost_records,
-            (SELECT COUNT(*) FROM complete_aircraft_trace) as traced_aircraft
-        `, [{}] as any),
+      // Filtered counts run individually so one slow table can't zero out the rest.
+      Promise.all([
+        cap(sql`SELECT COUNT(*)::bigint AS n FROM unified_biometric_aircraft_correlation_final WHERE legal_evidence = true`, [] as any, 12000),
+        cap(sql`SELECT COUNT(*)::bigint AS n FROM flagged_aircraft_main`, [] as any, 12000),
+      ]).then(([a, b]: any[]) => [{ bio_correlations: a[0]?.n, flagged_aircraft: b[0]?.n }]),
+      Promise.all([
+        cap(sql`SELECT COUNT(DISTINCT aircraft_registration)::bigint AS n FROM unified_biometric_aircraft_correlation_final WHERE aircraft_registration IS NOT NULL`, [] as any, 12000),
+        cap(sql`SELECT COUNT(DISTINCT aircraft_registration)::bigint AS n FROM unified_biometric_aircraft_correlation_final WHERE threat_level IN ('CRITICAL','HIGH')`, [] as any, 12000),
+      ]).then(([a, b]: any[]) => [{ matrix_aircraft: a[0]?.n, high_harm_aircraft: b[0]?.n }]),
       cap(sql`SELECT reflection_content, trigger_type, created_at FROM josiah_reflections_rows ORDER BY created_at DESC LIMIT 10`, [] as any),
       cap(sql`SELECT registration, callsign, altitude, speed, detection_timestamp, taxonomy_tag
           FROM live_flight_detections_rows ORDER BY detection_timestamp DESC LIMIT 20`, [] as any),

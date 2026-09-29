@@ -884,6 +884,20 @@ serve(async (req) => {
         console.error('Error closing connection:', e);
       }
     }
+    const code = String((err as any)?.code || '');
+    const isTimeout = code === '57014' || /statement timeout|timed out/i.test(error.message || '');
+    if (isTimeout) {
+      // Timeouts are not fatal — return an empty, clearly-labelled result so the page stays up.
+      return new Response(
+        JSON.stringify({
+          data: { correlations: [], scores: [], rows: [] },
+          nonFatal: true,
+          timedOut: true,
+          message: 'This analysis took too long to finish. Try a shorter date range and run it again.',
+        }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
     return new Response(
       JSON.stringify({ error: error.message }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

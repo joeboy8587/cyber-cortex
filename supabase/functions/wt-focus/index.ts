@@ -497,7 +497,7 @@ async function promoteFacts(ids: string[], caseId: string) {
 
     const { data: ex, error: exErr } = await db.from("exhibits").insert({
       case_id: caseId,
-      exhibit_code: `${stamp}_${code}_FACT_${String(r.id).slice(0, 8).toUpperCase()}`,
+      exhibit_code: await nextExhibitCode(db, code),
       exhibit_name: (r.label ?? "Extracted fact").slice(0, 120),
       tier: Number(r.confidence) >= 0.95 ? 1 : 2,
       evidence_type: `document_extraction:${r.extraction_type}`,

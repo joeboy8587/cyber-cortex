@@ -402,6 +402,14 @@ async function chat(sql: any, body: any) {
     .slice(0, 3);
 
 
+  const alreadySettled = await cloudRest(
+    `settled_facts?superseded=eq.false&subject=eq.${encodeURIComponent(String(f.subject).toUpperCase())}&select=fact_class,headline,proof_summary`,
+  );
+  const settledBlock = Array.isArray(alreadySettled) && alreadySettled.length
+    ? "ALREADY SETTLED about this subject — treat as established, do not re-derive:\n" +
+      alreadySettled.map((s: any) => `- [${s.fact_class}] ${s.headline} — ${s.proof_summary}`).join("\n")
+    : "";
+
   const system = [
     "You are Josiah, the Watchtower investigator, working side by side with a non-technical investigator.",
     "You are looking at ONE finding. Talk plainly, in short paragraphs. No jargon, no hedging.",

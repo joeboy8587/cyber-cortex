@@ -561,7 +561,23 @@ async function settledFacts() {
   };
 }
 
+// Exhibit codes are limited to 10 characters, e.g. EX-CIV-007.
+async function nextExhibitCode(db: any, caseCode: string) {
+  const parts = String(caseCode).toUpperCase().split("-").filter(Boolean);
+  const third = (parts[2] ?? "GEN").replace(/[^A-Z]/g, "");
+  const fourth = (parts[3] ?? "").replace(/[^A-Z]/g, "");
+  const prefix = ("EX-" + (fourth ? third.slice(0, 2) + fourth.slice(0, 1) : third.slice(0, 3)).padEnd(3, "X") + "-");
+  const { data } = await db.from("exhibits").select("exhibit_code").like("exhibit_code", `${prefix}%`);
+  let max = 0;
+  for (const r of data ?? []) {
+    const n = parseInt(String(r.exhibit_code).slice(prefix.length), 10);
+    if (Number.isFinite(n) && n > max) max = n;
+  }
+  return `${prefix}${String(max + 1).padStart(3, "0")}`;
+}
+
 async function lockSettledFact(b: any) {
+
   const db = cloud();
   const subject = String(b.subject ?? "").trim().toUpperCase();
   const factClass = String(b.fact_class ?? "").trim();
@@ -633,7 +649,7 @@ async function lockSettledFact(b: any) {
     }
   }
 
-  return { ok: true, id: data?.id, evidence_hash: hash, exhibit_id: exhibitId };
+  return { ok: true, id: data?.id, evidence_hash: hash, exhibit_id: exhibitId, exhibit_error: exhibitError };
 }
 
 async function supersedeSettledFact(id: string, reason: string) {

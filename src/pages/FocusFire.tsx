@@ -125,6 +125,48 @@ export default function FocusFire() {
     catch (e: any) { toast.error(e.message); } finally { setBusy(null); }
   };
 
+  const loadSettled = useCallback(async () => {
+    setBusy("settled");
+    try {
+      const d = await call({ action: "settled" });
+      setSettled(d);
+      if (!caseId && d.cases?.length) setCaseId(d.cases[0].case_id);
+    } catch (e: any) { toast.error(e.message); } finally { setBusy(null); }
+  }, [caseId]);
+
+  const lockFact = async () => {
+    if (!lockForm.subject.trim() || !lockForm.headline.trim() || !lockForm.proof.trim()) {
+      toast.error("Fill in the aircraft or company, the headline and the proof.");
+      return;
+    }
+    setBusy("lock");
+    try {
+      const d = await call({
+        action: "lock_settled",
+        subject: lockForm.subject,
+        subject_type: lockForm.subject_type,
+        fact_class: lockForm.fact_class,
+        headline: lockForm.headline,
+        proof_summary: lockForm.proof,
+        case_id: lockCase || null,
+        create_exhibit: !!lockCase,
+      });
+      if (!d.ok) { toast.error(d.error ?? "Could not lock this fact."); return; }
+      toast.success(d.exhibit_id ? "Locked and filed as an exhibit" : "Locked as a settled fact");
+      setLockForm({ subject: "", subject_type: "aircraft", fact_class: "operator_identity", headline: "", proof: "" });
+      await loadSettled();
+    } catch (e: any) { toast.error(e.message); } finally { setBusy(null); }
+  };
+
+  const supersede = async (id: string) => {
+    setBusy("supersede");
+    try {
+      await call({ action: "supersede_settled", id, reason: "Reopened by the investigator." });
+      toast.success("Reopened — it will be investigated again.");
+      await loadSettled();
+    } catch (e: any) { toast.error(e.message); } finally { setBusy(null); }
+  };
+
   const promote = async () => {
     const ids = Object.keys(picked).filter((k) => picked[k]);
     if (!ids.length || !caseId) { toast.error("Pick a case and at least one fact."); return; }

@@ -264,6 +264,182 @@ async function pairs(sql: any, days: number, minShared: number) {
   return { window_days: days, min_shared: minShared, pairs: enriched };
 }
 
+// ─────────── 3b. shell-to-shell handoffs (the "baton pass") ───────────
+// One tail leaves the sector as another enters. Adversaries avoid holding a
+// single registration over a target for hours; the relay is the signature.
+const SHELL_KEYWORDS = [
+  "WINGSLEASING", "WINGS LEASING", "9K AIR", "FF22", "BEST EQUIPMENT", "BEST AVIATION",
+  "LEASING", "HOLDINGS", "LLC TRUSTEE", "TRUSTEE", "AIRCRAFT HOLDING",
+];
+
+async function handoffs(sql: any, days: number, gapMin: number) {
+  const rows = await safe(sql`
+    SELECT UPPER(d.registration) AS reg, d.detection_timestamp AS ts,
+           d.altitude, COALESCE(a.operator, d.owner_operator) AS operator, a.aircraft_type
+    FROM live_flight_detections_rows d
+    LEFT JOIN aircraft_dossier a ON UPPER(a.registration) = UPPER(d.registration)
+    WHERE d.detection_timestamp > NOW() - make_interval(days => ${days})
+      AND d.registration IS NOT NULL AND d.registration <> ''
+      AND d.latitude BETWEEN ${AOI.lat - PAD} AND ${AOI.lat + PAD}
+      AND d.longitude BETWEEN ${AOI.lng - PAD} AND ${AOI.lng + PAD}
+    ORDER BY d.detection_timestamp ASC
+    LIMIT 40000
+  `, null as any);
+  if (rows === null) return { window_days: days, unavailable: true, handoffs: [] };
+
+  const isShell = (op: string | null) => {
+    const o = String(op ?? "").toUpperCase();
+    return !!o && SHELL_KEYWORDS.some((k) => o.includes(k));
+  };
+
+  // Presence segments: a gap over 25 minutes starts a new visit.
+  type Seg = { reg: string; operator: string | null; type: string | null; start: number; end: number; minAlt: number; pings: number };
+  const segs: Seg[] = [];
+  const open = new Map<string, Seg>();
+  for (const r of rows as any[]) {
+    const t = new Date(r.ts).getTime();
+    const alt = Number(r.altitude);
+    const cur = open.get(r.reg);
+    if (cur && t - cur.end <= 25 * 60000) {
+      cur.end = t; cur.pings++;
+      if (Number.isFinite(alt) && alt > 0) cur.minAlt = Math.min(cur.minAlt, alt);
+    } else {
+      if (cur) segs.push(cur);
+      open.set(r.reg, {
+        reg: r.reg, operator: r.operator ?? null, type: r.aircraft_type ?? null,
+        start: t, end: t, minAlt: Number.isFinite(alt) && alt > 0 ? alt : 99999, pings: 1,
+      });
+    }
+  }
+  for (const s of open.values()) segs.push(s);
+
+  const shellSegs = segs.filter((s) => isShell(s.operator) && s.pings >= 2);
+  shellSegs.sort((a, b) => a.start - b.start);
+
+  const out: any[] = [];
+  for (let i = 0; i < shellSegs.length; i++) {
+    const a = shellSegs[i];
+    for (let j = 0; j < shellSegs.length; j++) {
+      if (i === j) continue;
+      const b = shellSegs[j];
+      if (b.reg === a.reg) continue;
+      const deltaMin = (b.start - a.end) / 60000;
+      if (deltaMin < -5 || deltaMin > gapMin) continue;
+      out.push({
+        outgoing: a.reg, outgoing_operator: a.operator, outgoing_type: a.type,
+        incoming: b.reg, incoming_operator: b.operator, incoming_type: b.type,
+        handoff_at: new Date(a.end).toISOString(),
+        gap_minutes: +deltaMin.toFixed(1),
+        outgoing_dwell_min: +((a.end - a.start) / 60000).toFixed(1),
+        incoming_dwell_min: +((b.end - b.start) / 60000).toFixed(1),
+        outgoing_min_alt: a.minAlt === 99999 ? null : a.minAlt,
+        incoming_min_alt: b.minAlt === 99999 ? null : b.minAlt,
+        same_operator: !!(a.operator && b.operator && a.operator === b.operator),
+        verdict: deltaMin <= 5 ? "tight relay" : deltaMin <= 15 ? "sequential relay" : "loose relay",
+      });
+    }
+  }
+  out.sort((x, y) => x.gap_minutes - y.gap_minutes);
+
+  const byPair = new Map<string, number>();
+  for (const h of out) {
+    const k = [h.outgoing, h.incoming].sort().join(" ↔ ");
+    byPair.set(k, (byPair.get(k) ?? 0) + 1);
+  }
+
+  return {
+    window_days: days,
+    max_gap_minutes: gapMin,
+    shell_visits: shellSegs.length,
+    shell_tails: [...new Set(shellSegs.map((s) => s.reg))].length,
+    recurring_relays: [...byPair.entries()]
+      .filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1]).slice(0, 20)
+      .map(([pair, count]) => ({ pair, count })),
+    handoffs: out.slice(0, 60),
+  };
+}
+
+// ───────── 3c. federal front-company sweep (AP / BuzzFeed / Intercept) ─────────
+const FRONT_NAMES = [
+  "FVX RESEARCH", "KQM AVIATION", "NBR AVIATION", "PXW SERVICES", "NG RESEARCH",
+  "OBR LEASING", "OTV LEASING", "NBY PRODUCTIONS", "PSL SURVEYS", "RKT PRODUCTIONS",
+  "AEROGRAPHICS", "NATIONAL AIRCRAFT LEASING", "SILVER CREEK AVIATION",
+  "CHAPARRAL AIR GROUP", "EARLY DETECTION ALARM", "GLOBAL GEO MAPPING",
+  "MIDWEST AERIAL IMAGING", "AIR CERBERUS",
+];
+const CONFIRMED_FRONT_TAILS = ["N125AL", "N484JB", "N795DH"];
+
+async function fronts(sql: any, days: number) {
+  const regex = FRONT_NAMES.join("|");
+
+  const registry = await safe(sql`
+    SELECT UPPER(registration) AS reg, operator, operator_city, operator_state, aircraft_type
+    FROM aircraft_dossier
+    WHERE UPPER(COALESCE(operator, '')) ~ ${regex}
+    LIMIT 200
+  `, [] as any[]);
+
+  const registryTails = [...new Set((registry ?? []).map((r: any) => r.reg))];
+  const watch = [...new Set([...registryTails, ...CONFIRMED_FRONT_TAILS])];
+
+  const contacts = watch.length
+    ? await safe(sql`
+        SELECT UPPER(registration) AS reg, COUNT(*)::int AS contacts,
+               MIN(detection_timestamp) AS first_seen, MAX(detection_timestamp) AS last_seen,
+               MIN(NULLIF(altitude, 0))::int AS min_alt,
+               COUNT(DISTINCT DATE(detection_timestamp))::int AS days_seen
+        FROM live_flight_detections_rows
+        WHERE UPPER(registration) = ANY(string_to_array(${watch.join("|")}, '|'))
+          AND detection_timestamp > NOW() - make_interval(days => ${days})
+        GROUP BY 1 ORDER BY contacts DESC LIMIT 100
+      `, [] as any[])
+    : [];
+
+  // Owner-string matches straight off the detection feed (catches tails the
+  // dossier has not resolved yet).
+  const feedMatches = await safe(sql`
+    SELECT UPPER(registration) AS reg, owner_operator, COUNT(*)::int AS contacts,
+           MAX(detection_timestamp) AS last_seen
+    FROM live_flight_detections_rows
+    WHERE detection_timestamp > NOW() - make_interval(days => ${days})
+      AND UPPER(COALESCE(owner_operator, '')) ~ ${regex}
+    GROUP BY 1, 2 ORDER BY contacts DESC LIMIT 100
+  `, [] as any[]);
+
+  const byReg = new Map((contacts ?? []).map((c: any) => [c.reg, c]));
+  const regMeta = new Map((registry ?? []).map((r: any) => [r.reg, r]));
+
+  const detected = [...new Set([
+    ...(contacts ?? []).map((c: any) => c.reg),
+    ...(feedMatches ?? []).map((f: any) => f.reg),
+  ])].map((reg) => {
+    const c: any = byReg.get(reg);
+    const m: any = regMeta.get(reg);
+    const f: any = (feedMatches ?? []).find((x: any) => x.reg === reg);
+    return {
+      registration: reg,
+      operator: m?.operator ?? f?.owner_operator ?? null,
+      operator_city: m?.operator_city ?? null,
+      operator_state: m?.operator_state ?? null,
+      aircraft_type: m?.aircraft_type ?? null,
+      contacts: c?.contacts ?? f?.contacts ?? 0,
+      days_seen: c?.days_seen ?? null,
+      min_alt: c?.min_alt ?? null,
+      first_seen: c?.first_seen ?? null,
+      last_seen: c?.last_seen ?? f?.last_seen ?? null,
+      confirmed_front_tail: CONFIRMED_FRONT_TAILS.includes(reg),
+    };
+  }).sort((a, b) => b.contacts - a.contacts);
+
+  return {
+    window_days: days,
+    front_companies_checked: FRONT_NAMES.length,
+    registry_matches: registry ?? [],
+    detected_in_airspace: detected,
+    detected_count: detected.filter((d) => d.contacts > 0).length,
+  };
+}
+
 // ───────────────────────── 4. facts → exhibits ─────────────────────────
 async function facts() {
   const db = cloud();

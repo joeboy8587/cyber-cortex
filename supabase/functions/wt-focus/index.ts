@@ -486,8 +486,8 @@ async function promoteFacts(ids: string[], caseId: string) {
 
   const { data: caseRow } = await db.from("cases").select("case_code").eq("case_id", caseId).maybeSingle();
   const code = caseRow?.case_code ?? "CASE";
-  const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
   const results: any[] = [];
+
 
   for (const r of rows) {
     const body = [r.label, r.value, r.context].filter(Boolean).join(" — ");
@@ -497,7 +497,7 @@ async function promoteFacts(ids: string[], caseId: string) {
 
     const { data: ex, error: exErr } = await db.from("exhibits").insert({
       case_id: caseId,
-      exhibit_code: `${stamp}_${code}_FACT_${String(r.id).slice(0, 8).toUpperCase()}`,
+      exhibit_code: await nextExhibitCode(db, code),
       exhibit_name: (r.label ?? "Extracted fact").slice(0, 120),
       tier: Number(r.confidence) >= 0.95 ? 1 : 2,
       evidence_type: `document_extraction:${r.extraction_type}`,
@@ -561,7 +561,23 @@ async function settledFacts() {
   };
 }
 
+// Exhibit codes are limited to 10 characters, e.g. EX-CIV-007.
+async function nextExhibitCode(db: any, caseCode: string) {
+  const parts = String(caseCode).toUpperCase().split("-").filter(Boolean);
+  const third = (parts[2] ?? "GEN").replace(/[^A-Z]/g, "");
+  const fourth = (parts[3] ?? "").replace(/[^A-Z]/g, "");
+  const prefix = ("EX-" + (fourth ? third.slice(0, 2) + fourth.slice(0, 1) : third.slice(0, 3)).padEnd(3, "X") + "-");
+  const { data } = await db.from("exhibits").select("exhibit_code").like("exhibit_code", `${prefix}%`);
+  let max = 0;
+  for (const r of data ?? []) {
+    const n = parseInt(String(r.exhibit_code).slice(prefix.length), 10);
+    if (Number.isFinite(n) && n > max) max = n;
+  }
+  return `${prefix}${String(max + 1).padStart(3, "0")}`;
+}
+
 async function lockSettledFact(b: any) {
+
   const db = cloud();
   const subject = String(b.subject ?? "").trim().toUpperCase();
   const factClass = String(b.fact_class ?? "").trim();
@@ -594,16 +610,18 @@ async function lockSettledFact(b: any) {
 
   // Optional: immediately file it as a numbered exhibit.
   let exhibitId: string | null = null;
+  let exhibitError: string | null = null;
+
   if (b.case_id && b.create_exhibit !== false) {
     const { data: caseRow } = await db.from("cases").select("case_code").eq("case_id", b.case_id).maybeSingle();
     const code = caseRow?.case_code ?? "CASE";
-    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-    const { data: ex } = await db.from("exhibits").insert({
+    const { data: ex, error: exErr } = await db.from("exhibits").insert({
       case_id: b.case_id,
-      exhibit_code: `${stamp}_${code}_SETTLED_${subject.replace(/[^A-Z0-9]/g, "").slice(0, 10)}`,
-      exhibit_name: headline.slice(0, 120),
+      exhibit_code: await nextExhibitCode(db, code),
+      exhibit_name: headline.slice(0, 255),
       tier: 1,
-      evidence_type: `settled_fact:${factClass}`,
+      evidence_type: `settled_fact:${factClass}`.slice(0, 100),
+
       description: proof.slice(0, 4000),
       legal_significance: `Settled fact locked for ${subject}. Established through ${sources.length} corroborating source(s); no longer re-litigated by automated scanning.`,
       file_count: 1,
@@ -613,6 +631,8 @@ async function lockSettledFact(b: any) {
       status: "active",
     }).select("exhibit_id").maybeSingle();
     exhibitId = ex?.exhibit_id ?? null;
+    if (!exhibitId && exErr) exhibitError = exErr.message;
+
     if (exhibitId) {
       await db.from("settled_facts").update({ exhibit_id: exhibitId }).eq("id", data?.id);
       await db.from("exhibit_audit_trail").insert({
@@ -629,7 +649,7 @@ async function lockSettledFact(b: any) {
     }
   }
 
-  return { ok: true, id: data?.id, evidence_hash: hash, exhibit_id: exhibitId };
+  return { ok: true, id: data?.id, evidence_hash: hash, exhibit_id: exhibitId, exhibit_error: exhibitError };
 }
 
 async function supersedeSettledFact(id: string, reason: string) {

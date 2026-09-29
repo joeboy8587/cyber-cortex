@@ -273,24 +273,37 @@ const SHELL_KEYWORDS = [
 ];
 
 async function handoffs(sql: any, days: number, gapMin: number) {
+  // Step 1 — resolve the shell fleet from the registry (cheap, indexed).
+  const fleet = await safe(sql`
+    SELECT UPPER(registration) AS reg, operator, aircraft_type
+    FROM aircraft_dossier
+    WHERE UPPER(COALESCE(operator, '')) ~ ${SHELL_KEYWORDS.join("|")}
+    LIMIT 400
+  `, [] as any[]);
+  const meta = new Map((fleet ?? []).map((f: any) => [f.reg, f]));
+  const tails = [...meta.keys()];
+  if (!tails.length) return { window_days: days, shell_visits: 0, shell_tails: 0, recurring_relays: [], handoffs: [] };
+
+  // Step 2 — pull only those tails' passes over the AOI.
   const rows = await safe(sql`
-    SELECT UPPER(d.registration) AS reg, d.detection_timestamp AS ts,
-           d.altitude, COALESCE(a.operator, d.owner_operator) AS operator, a.aircraft_type
-    FROM live_flight_detections_rows d
-    LEFT JOIN aircraft_dossier a ON UPPER(a.registration) = UPPER(d.registration)
-    WHERE d.detection_timestamp > NOW() - make_interval(days => ${days})
-      AND d.registration IS NOT NULL AND d.registration <> ''
-      AND d.latitude BETWEEN ${AOI.lat - PAD} AND ${AOI.lat + PAD}
-      AND d.longitude BETWEEN ${AOI.lng - PAD} AND ${AOI.lng + PAD}
-    ORDER BY d.detection_timestamp ASC
-    LIMIT 40000
+    SELECT UPPER(registration) AS reg, detection_timestamp AS ts, altitude
+    FROM live_flight_detections_rows
+    WHERE detection_timestamp > NOW() - make_interval(days => ${days})
+      AND UPPER(registration) = ANY(string_to_array(${tails.join("|")}, '|'))
+      AND latitude BETWEEN ${AOI.lat - PAD} AND ${AOI.lat + PAD}
+      AND longitude BETWEEN ${AOI.lng - PAD} AND ${AOI.lng + PAD}
+    ORDER BY detection_timestamp ASC
+    LIMIT 30000
   `, null as any);
   if (rows === null) return { window_days: days, unavailable: true, handoffs: [] };
+  for (const r of rows as any[]) {
+    const m: any = meta.get(r.reg);
+    r.operator = m?.operator ?? null;
+    r.aircraft_type = m?.aircraft_type ?? null;
+  }
 
-  const isShell = (op: string | null) => {
-    const o = String(op ?? "").toUpperCase();
-    return !!o && SHELL_KEYWORDS.some((k) => o.includes(k));
-  };
+  const isShell = (_op: string | null) => true; // every tail here is already a shell registrant
+
 
   // Presence segments: a gap over 25 minutes starts a new visit.
   type Seg = { reg: string; operator: string | null; type: string | null; start: number; end: number; minAlt: number; pings: number };

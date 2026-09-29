@@ -486,8 +486,8 @@ async function promoteFacts(ids: string[], caseId: string) {
 
   const { data: caseRow } = await db.from("cases").select("case_code").eq("case_id", caseId).maybeSingle();
   const code = caseRow?.case_code ?? "CASE";
-  const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
   const results: any[] = [];
+
 
   for (const r of rows) {
     const body = [r.label, r.value, r.context].filter(Boolean).join(" — ");

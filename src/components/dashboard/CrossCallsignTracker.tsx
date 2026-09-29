@@ -131,7 +131,7 @@ export default function CrossCallsignTracker() {
         (e.aliases || []).some((a: string) => typeof a === 'string' && a.toUpperCase().includes(q))
       );
 
-      const aliasMatches = (aliasData || [])
+      const aliasMatches = aliasRowMatches
         .filter((e: any) => !mapped.some(m => m.id === e.entity_id))
         .map((e: any) => ({
           id: e.entity_id,

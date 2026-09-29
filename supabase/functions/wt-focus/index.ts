@@ -326,7 +326,12 @@ async function handoffs(sql: any, days: number, gapMin: number) {
   }
   for (const s of open.values()) segs.push(s);
 
-  const shellSegs = segs.filter((s) => isShell(s.operator) && s.pings >= 2);
+  // A relay participant has to be IN the sector, not overflying it in cruise.
+  // Anything that never came below 6,000ft is airway traffic, not a loiter.
+  const SECTOR_CEILING_FT = 6000;
+  const shellSegs = segs.filter(
+    (s) => isShell(s.operator) && s.pings >= 2 && s.minAlt <= SECTOR_CEILING_FT,
+  );
   shellSegs.sort((a, b) => a.start - b.start);
 
   const out: any[] = [];

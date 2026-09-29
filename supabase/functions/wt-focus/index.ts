@@ -597,13 +597,13 @@ async function lockSettledFact(b: any) {
   if (b.case_id && b.create_exhibit !== false) {
     const { data: caseRow } = await db.from("cases").select("case_code").eq("case_id", b.case_id).maybeSingle();
     const code = caseRow?.case_code ?? "CASE";
-    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-    const { data: ex } = await db.from("exhibits").insert({
+    const { data: ex, error: exErr } = await db.from("exhibits").insert({
       case_id: b.case_id,
-      exhibit_code: `${stamp}_${code}_SETTLED_${subject.replace(/[^A-Z0-9]/g, "").slice(0, 10)}`,
-      exhibit_name: headline.slice(0, 120),
+      exhibit_code: await nextExhibitCode(db, code),
+      exhibit_name: headline.slice(0, 255),
       tier: 1,
-      evidence_type: `settled_fact:${factClass}`,
+      evidence_type: `settled_fact:${factClass}`.slice(0, 100),
+
       description: proof.slice(0, 4000),
       legal_significance: `Settled fact locked for ${subject}. Established through ${sources.length} corroborating source(s); no longer re-litigated by automated scanning.`,
       file_count: 1,

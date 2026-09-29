@@ -106,6 +106,21 @@ export default function FocusFire() {
     } catch (e: any) { toast.error(e.message); } finally { setBusy(null); }
   };
 
+  const runHandoffs = async () => {
+    setBusy("handoffs");
+    try {
+      const d = await call({ action: "handoffs", days: 30, gap_minutes: 20 });
+      if (d.unavailable) toast.message("That lookup was too slow to finish — try a shorter window.");
+      setHandoffs(d);
+    } catch (e: any) { toast.error(e.message); } finally { setBusy(null); }
+  };
+
+  const runFronts = async () => {
+    setBusy("fronts");
+    try { setFronts(await call({ action: "fronts", days: 365 })); }
+    catch (e: any) { toast.error(e.message); } finally { setBusy(null); }
+  };
+
   const promote = async () => {
     const ids = Object.keys(picked).filter((k) => picked[k]);
     if (!ids.length || !caseId) { toast.error("Pick a case and at least one fact."); return; }

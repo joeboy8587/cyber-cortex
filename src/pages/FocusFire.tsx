@@ -52,6 +52,17 @@ export default function FocusFire() {
   const [picked, setPicked] = useState<Record<string, boolean>>({});
   const [factStats, setFactStats] = useState<{ total: number; already_promoted: number }>({ total: 0, already_promoted: 0 });
 
+  // 5. settled facts
+  const [settled, setSettled] = useState<any>(null);
+  const [lockCase, setLockCase] = useState<string>("");
+  const [lockForm, setLockForm] = useState({
+    subject: "",
+    subject_type: "aircraft",
+    fact_class: "operator_identity",
+    headline: "",
+    proof: "",
+  });
+
   const call = useCallback(async (body: Record<string, unknown>) => {
     const { data, error } = await supabase.functions.invoke("wt-focus", { body });
     if (error) throw new Error(error.message);

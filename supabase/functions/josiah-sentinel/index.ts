@@ -906,7 +906,8 @@ serve(async (req) => {
       const ownOpKeywordHits = SHELL_OWNOP_KEYWORDS.filter(kw => ownOp.includes(kw)).length;
       const ownOpMatch = Boolean(d.shell_auto_detected) ||
         KNOWN_SHELL_OPERATORS.some(op => ownOp.includes(op)) || ownOpKeywordHits >= 2;
-      return regMatch || ownOpMatch;
+      // Merely being registered to a holding company is one point, not a threat.
+      return (regMatch || ownOpMatch) && isThreat(d);
     });
     if (shellActivity.length > 0) {
       const uniqueShell = [...new Set(shellActivity.map((d: any) => d.registration || d.callsign).filter(Boolean))];
@@ -914,7 +915,7 @@ serve(async (req) => {
       violations.push({
         type: 'SHELL_COMPANY', severity: uniqueShell.length >= 2 ? 'critical' : 'high',
         registration: uniqueShell.join(', '),
-        details: `${uniqueShell.length} aircraft over the AOI are registered to holding-company / leasing entities rather than named end users${shellOperators.length ? ` — registrants of record: ${shellOperators.slice(0, 3).join(', ')}` : ''}`,
+        details: `${uniqueShell.length} aircraft scoring ${THREAT_SCORE_MIN}+ warning points over the AOI (${uniqueShell.map(t => `${t}: ${profiles.get(String(t).toUpperCase())?.factors.join(', ') || ''}`).join('; ')}) are registered to holding-company / leasing entities rather than named end users${shellOperators.length ? ` — registrants of record: ${shellOperators.slice(0, 3).join(', ')}` : ''}`,
         timestamp: new Date().toISOString(), relatedAircraft: uniqueShell as string[]
       });
     }

@@ -790,29 +790,91 @@ serve(async (req) => {
     }
 
 
-    // ========== STEP 2: LOW ALTITUDE VIOLATIONS ==========
-    const lowAltitudeViolations = recentDetections.filter((d: any) => {
-      const alt = parseInt(d.altitude || '99999');
-      const isAdapted = adaptedRegistrations.has(d.registration);
-      const threshold = isAdapted ? 3000 : THREAT_SIGNATURES.lowAltitudeThreshold;
-      return alt < threshold && alt > 0;
-    });
+    // ========== STEP 1.9: MULTI-FACTOR THREAT PROFILE (per aircraft) ==========
+    // One ping is not a threat. Each aircraft is scored on the combination of
+    // warning signs it shows in this window; a straight, short pass with one
+    // sign is recorded as PASSING THROUGH and not tagged. Weights:
+    //   below 500ft 3 · below 1,000ft 2 · below 2,000ft 1 · tight orbit 2 ·
+    //   dwell ≥10 min 1 · within 1nm of residence 1 · night 1 · holding/leasing
+    //   registrant 1 · watchlist airframe 2 · fixed-wing below stall speed 2.
+    // Tagged as a threat at THREAT_SCORE_MIN or more.
+    const THREAT_SCORE_MIN = 3;
+    type Profile = { tail: string; score: number; factors: string[]; minAlt: number; transit: boolean; rows: any[] };
+    const profiles = new Map<string, Profile>();
+    {
+      const byTail = new Map<string, any[]>();
+      for (const d of recentDetections) {
+        const t = String(d.registration || d.callsign || '').toUpperCase().trim();
+        if (!t) continue;
+        if (!byTail.has(t)) byTail.set(t, []);
+        byTail.get(t)!.push(d);
+      }
+      for (const [tail, rows] of byTail) {
+        rows.sort((a, b) => new Date(a.detection_timestamp).getTime() - new Date(b.detection_timestamp).getTime());
+        const factors: string[] = []; let score = 0;
+        const alts = rows.map(r => parseInt(r.altitude)).filter(a => Number.isFinite(a) && a > 0);
+        const minAlt = alts.length ? Math.min(...alts) : 99999;
+        if (minAlt < THREAT_SIGNATURES.criticalAltitude) { score += 3; factors.push(`${minAlt}ft (below 500ft)`); }
+        else if (minAlt < 1000) { score += 2; factors.push(`${minAlt}ft (below 1,000ft floor)`); }
+        else if (minAlt < THREAT_SIGNATURES.lowAltitudeThreshold) { score += 1; factors.push(`${minAlt}ft low`); }
+        // Turning: accumulated heading change between consecutive pings.
+        let turn = 0; let hMin = 360, hMax = 0;
+        for (let i = 0; i < rows.length; i++) {
+          const h = Number(rows[i].heading);
+          if (!Number.isFinite(h)) continue;
+          hMin = Math.min(hMin, h); hMax = Math.max(hMax, h);
+          if (i > 0) {
+            const p = Number(rows[i - 1].heading);
+            if (Number.isFinite(p)) { let dh = Math.abs(h - p) % 360; if (dh > 180) dh = 360 - dh; turn += dh; }
+          }
+        }
+        const dists = rows.map(r => nmFromAoi(r.latitude, r.longitude)).filter((x): x is number => x !== null);
+        const closest = dists.length ? Math.min(...dists) : 99;
+        const dwellMin = rows.length > 1
+          ? (new Date(rows[rows.length - 1].detection_timestamp).getTime() - new Date(rows[0].detection_timestamp).getTime()) / 60000 : 0;
+        const orbit = turn >= 300 && rows.length >= 4;
+        if (orbit) { score += 2; factors.push(`tight orbit (${Math.round(turn)}° of turning)`); }
+        if (dwellMin >= 10) { score += 1; factors.push(`${Math.round(dwellMin)} min over the area`); }
+        if (closest <= 1) { score += 1; factors.push(`${closest.toFixed(1)}nm from residence`); }
+        const night = rows.some(r => { const h = (new Date(r.detection_timestamp).getUTCHours() + 17) % 24; return h < 6 || h >= 22; });
+        if (night) { score += 1; factors.push('night'); }
+        const d0 = rows[0];
+        const ownOp = String(d0.owner_operator || '').toUpperCase();
+        const shell = !isKcsoAircraft(d0.registration, d0.callsign, d0.owner_operator) && (Boolean(d0.shell_auto_detected) ||
+          KNOWN_SHELL_OPERATORS.some(op => ownOp.includes(op)) || SHELL_OWNOP_KEYWORDS.filter(kw => ownOp.includes(kw)).length >= 2 ||
+          THREAT_SIGNATURES.shellCompany.some(reg => tail.includes(reg)));
+        if (shell) { score += 1; factors.push('holding/leasing registrant'); }
+        if (watchlistHit(d0, adaptedRegistrations) || adaptedRegistrations.has(d0.registration)) { score += 2; factors.push('watchlist airframe'); }
+        const subStall = rows.some(r => { const s = Number(r.speed); return s > 0 && s < 48 && parseInt(r.altitude) > 0; });
+        if (subStall) { score += 2; factors.push('below fixed-wing stall speed'); }
+        const straight = hMax - hMin <= 45 || (hMax - hMin >= 315);
+        const transit = !orbit && straight && dwellMin < 5;
+        profiles.set(tail, { tail, score, factors, minAlt, transit, rows });
+      }
+    }
+    const tailOf = (d: any) => String(d.registration || d.callsign || '').toUpperCase().trim();
+    const isThreat = (d: any) => (profiles.get(tailOf(d))?.score ?? 0) >= THREAT_SCORE_MIN;
+    const passingThrough = [...profiles.values()].filter(p => p.score < THREAT_SCORE_MIN && p.factors.length > 0);
+    if (passingThrough.length) {
+      proactiveAlerts.push(`✈️ PASSING THROUGH — not tagged (fewer than ${THREAT_SCORE_MIN} points): ${passingThrough.slice(0, 8).map(p => `${p.tail} [${p.factors.join(', ')}]`).join('; ')}${passingThrough.length > 8 ? ` +${passingThrough.length - 8} more` : ''}.`);
+    }
 
-    for (const detection of lowAltitudeViolations) {
-      const alt = parseInt(detection.altitude);
+    // ========== STEP 2: LOW ALTITUDE VIOLATIONS (one per aircraft, multi-factor gated) ==========
+    for (const p of profiles.values()) {
+      if (p.score < THREAT_SCORE_MIN || p.minAlt >= THREAT_SIGNATURES.lowAltitudeThreshold) continue;
+      const detection = p.rows.find(r => parseInt(r.altitude) === p.minAlt) || p.rows[0];
+      const alt = p.minAlt;
       let severity: 'critical' | 'high' | 'medium' = 'medium';
-      if (alt < THREAT_SIGNATURES.criticalAltitude) severity = 'critical';
-      else if (alt < THREAT_SIGNATURES.minimumSafeAltitudeFloor) severity = 'high';
+      if (alt < THREAT_SIGNATURES.criticalAltitude || p.score >= 6) severity = 'critical';
+      else if (alt < THREAT_SIGNATURES.minimumSafeAltitudeFloor || p.score >= 4) severity = 'high';
 
       violations.push({
-        type: severity === 'critical' ? 'FAR_91_119_VIOLATION' : 'PATTERN_ANOMALY_LOW_ALTITUDE',
+        type: alt < THREAT_SIGNATURES.criticalAltitude ? 'FAR_91_119_VIOLATION' : 'PATTERN_ANOMALY_LOW_ALTITUDE',
         severity,
-        registration: detection.registration || detection.callsign || 'UNKNOWN',
-        details: severity === 'critical'
-          ? `Aircraft at ${alt}ft — 14 CFR § 91.119 minimum safe altitude breach (congested-area floor 1,000ft / 500ft other).`
-          : `Aircraft at ${alt}ft over the AOI — below the 14 CFR § 91.119 congested-area floor of 1,000ft. Recorded as a measured altitude fact.`,
+        registration: p.tail,
+        details: `Threat score ${p.score} — ${p.factors.join(' · ')}. Lowest measured altitude ${alt}ft (14 CFR § 91.119 congested-area floor 1,000ft).`,
         timestamp: detection.detection_timestamp, altitude: alt,
-        coordinates: detection.latitude && detection.longitude ? 
+        coordinates: detection.latitude && detection.longitude ?
           { lat: parseFloat(detection.latitude), lng: parseFloat(detection.longitude) } : undefined
       });
     }
@@ -844,7 +906,8 @@ serve(async (req) => {
       const ownOpKeywordHits = SHELL_OWNOP_KEYWORDS.filter(kw => ownOp.includes(kw)).length;
       const ownOpMatch = Boolean(d.shell_auto_detected) ||
         KNOWN_SHELL_OPERATORS.some(op => ownOp.includes(op)) || ownOpKeywordHits >= 2;
-      return regMatch || ownOpMatch;
+      // Merely being registered to a holding company is one point, not a threat.
+      return (regMatch || ownOpMatch) && isThreat(d);
     });
     if (shellActivity.length > 0) {
       const uniqueShell = [...new Set(shellActivity.map((d: any) => d.registration || d.callsign).filter(Boolean))];
@@ -852,7 +915,7 @@ serve(async (req) => {
       violations.push({
         type: 'SHELL_COMPANY', severity: uniqueShell.length >= 2 ? 'critical' : 'high',
         registration: uniqueShell.join(', '),
-        details: `${uniqueShell.length} aircraft over the AOI are registered to holding-company / leasing entities rather than named end users${shellOperators.length ? ` — registrants of record: ${shellOperators.slice(0, 3).join(', ')}` : ''}`,
+        details: `${uniqueShell.length} aircraft scoring ${THREAT_SCORE_MIN}+ warning points over the AOI (${uniqueShell.map(t => `${t}: ${profiles.get(String(t).toUpperCase())?.factors.join(', ') || ''}`).join('; ')}) are registered to holding-company / leasing entities rather than named end users${shellOperators.length ? ` — registrants of record: ${shellOperators.slice(0, 3).join(', ')}` : ''}`,
         timestamp: new Date().toISOString(), relatedAircraft: uniqueShell as string[]
       });
     }

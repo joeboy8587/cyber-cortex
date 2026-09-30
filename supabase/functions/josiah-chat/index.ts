@@ -758,8 +758,36 @@ ${memoryContext}`;
       console.warn("rag-query failed (non-fatal):", (e as Error).message);
     }
 
+    // ==================== SETTLED FACTS: proven, locked, never re-derived ====================
+    let settledContext = "";
+    try {
+      const sfRes = await fetch(
+        `${Deno.env.get("SUPABASE_URL")}/rest/v1/settled_facts?superseded=eq.false&select=subject,fact_class,headline,proof_summary,evidence_hash&order=locked_at.desc&limit=40`,
+        {
+          headers: {
+            apikey: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+            Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          },
+          signal: AbortSignal.timeout(8000),
+        },
+      );
+      if (sfRes.ok) {
+        const rows = await sfRes.json();
+        if (Array.isArray(rows) && rows.length) {
+          settledContext = `\n\n=== SETTLED FACTS (locked, proven, hashed — cite as established, NEVER re-derive or re-open) ===\n` +
+            rows.map((r: any) =>
+              `- [${r.subject} · ${r.fact_class}] ${r.headline}\n  Proof: ${String(r.proof_summary).slice(0, 900)}\n  Hash: ${String(r.evidence_hash).slice(0, 16)}`
+            ).join("\n") +
+            `\n=== END SETTLED FACTS ===\nRULE: If a settled fact answers part of the question, state it as established fact and cite it. Do not recompute it from raw records and do not hedge it.\n`;
+        }
+      }
+    } catch (e) {
+      console.warn("settled_facts fetch failed (non-fatal):", (e as Error).message);
+    }
+
     const messages = [
-      { role: "system", content: systemPrompt + ragContext },
+      { role: "system", content: systemPrompt + ragContext + settledContext },
+
       ...(conversationHistory || []).map((msg: { role: string; content: string }) => ({
         role: msg.role,
         content: msg.content

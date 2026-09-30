@@ -5,6 +5,85 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+const NEON_DATABASE_URL = Deno.env.get("NEON_DATABASE_URL");
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+
+/** PostgREST helper against the Lovable Cloud backend. Returns null on failure. */
+async function cloudRest(path: string): Promise<any | null> {
+  if (!SUPABASE_URL || !SERVICE_KEY) return null;
+  try {
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+      headers: { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}` },
+    });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch {
+    return null;
+  }
+}
+
+/** Embed text and pull matching Master Dossier / knowledge-base passages. */
+async function doctrineLookup(query: string): Promise<string> {
+  if (!LOVABLE_API_KEY || !SUPABASE_URL || !SERVICE_KEY) return "";
+  try {
+    const er = await fetch("https://ai.gateway.lovable.dev/v1/embeddings", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "openai/text-embedding-3-small", input: query.slice(0, 4000) }),
+    });
+    if (!er.ok) return "";
+    const ej = await er.json();
+    const embedding = ej.data?.[0]?.embedding;
+    if (!embedding) return "";
+    const rr = await fetch(`${SUPABASE_URL}/rest/v1/rpc/match_rag_chunks`, {
+      method: "POST",
+      headers: {
+        apikey: SERVICE_KEY,
+        Authorization: `Bearer ${SERVICE_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ query_embedding: embedding, match_count: 6, similarity_threshold: 0.3 }),
+    });
+    if (!rr.ok) return "";
+    const rows = await rr.json();
+    if (!Array.isArray(rows) || rows.length === 0) return "";
+    return rows
+      .map((m: any, i: number) => `[${i + 1}] ${m.document_title ?? "knowledge base"} (relevance ${Number(m.similarity).toFixed(2)})\n${String(m.content ?? "").slice(0, 700)}`)
+      .join("\n\n");
+  } catch {
+    return "";
+  }
+}
+
+/** Fast table size estimates from Postgres statistics — no full COUNT(*). */
+async function liveCounts(sql: any): Promise<Record<string, number>> {
+  const tables = [
+    "live_flight_detections_rows",
+    "unified_biometric_aircraft_correlation_final",
+    "biometric_monitoring",
+    "josiah_reflections_rows",
+    "evidence_chain_links",
+    "physician_verified_ecgs",
+    "sentinel_violations",
+    "shell_companies",
+    "criminal_enterprise_command_structure",
+    "biometric_screenshots_ocr",
+  ];
+  try {
+    const rows = await sql`
+      SELECT relname, GREATEST(reltuples, 0)::bigint AS estimate
+      FROM pg_class WHERE relname = ANY(${tables})
+    `;
+    const out: Record<string, number> = {};
+    for (const r of rows) out[r.relname] = Number(r.estimate);
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -13,10 +92,7 @@ Deno.serve(async (req) => {
   try {
     const { query, analysisType } = await req.json();
     console.log("Legal analysis request:", { query: query?.substring(0, 100), analysisType });
-    
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    const NEON_DATABASE_URL = Deno.env.get("NEON_DATABASE_URL");
-    
+
     if (!LOVABLE_API_KEY) {
       return new Response(
         JSON.stringify({ error: "LOVABLE_API_KEY is not configured" }),
@@ -24,268 +100,120 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Pull live stats from Neon — full 19.7M+ record archive
-    let liveContext: Record<string, string> = {
-      totalDetections: "2,950,000+",
-      uniqueAircraft: "40,544",
-      correlationEvents: "334,401",
-      criticalCollapseEvents: "111,751",
-      watchtowerBridgeAppearances: "1,763,118",
-      phantomMaskedEvents: "332",
-      biometricEvents: "305,000+",
-      josiahReflections: "5,000+",
-      chainLinks: "305,000+",
-      watchtowerEvents: "629,000+",
-      verifiedECGs: "150+",
-      canonicalForensicEvents: "3,971,792",
-      threatTiers: "2,851,541",
-      masterUnifiedEvidence: "2,842,363",
-      sentinelViolations: "88,772",
-      caseEvidenceLinks: "268,402",
-      investigatorMasterRows: "219,165",
-      biometricCollapses: "111,757",
-      unifiedBiometricBatch: "144,615",
-      fileIndex: "376,747",
-      documentIndex: "196,577",
-      totalArchiveRecords: "19,700,000+",
-      totalTables: "900+",
-      sourceTables: "12",
-      dataAsOf: new Date().toISOString(),
-    };
+    // ---- Gather LIVE context in parallel: counts, settled facts, findings, exhibits, doctrine ----
+    let counts: Record<string, number> = {};
+    let recentAircraft: any[] = [];
 
     if (NEON_DATABASE_URL) {
       try {
         const { default: postgres } = await import("https://deno.land/x/postgresjs@v3.4.4/mod.js");
         const sql = postgres(NEON_DATABASE_URL, { ssl: "require", max: 1, idle_timeout: 5, connect_timeout: 10, prepare: false });
         try {
-          const [flightRow, bioRow, josiahRow, chainRow, watchtowerRow, ecgRow,
-                 canonicalRow, threatRow, unifiedRow, sentinelRow, caseLinksRow,
-                 investigatorRow, collapseRow, batchBioRow, fileRow, docRow,
-                 correlationRow, xxbRow, screenshotRow] = await Promise.all([
-            sql`SELECT COUNT(*)::int as total, COUNT(DISTINCT registration)::int as aircraft FROM live_flight_detections_rows`.catch(() => [{ total: 0, aircraft: 0 }]),
-            sql`SELECT COUNT(*)::int as total FROM biometric_monitoring`.catch(() => [{ total: 0 }]),
-            sql`SELECT COUNT(*)::int as total FROM josiah_reflections_rows`.catch(() => [{ total: 0 }]),
-            sql`SELECT COUNT(*)::int as total FROM evidence_chain_links`.catch(() => [{ total: 0 }]),
-            sql`SELECT COUNT(*)::int as total FROM watchtower_unified_master`.catch(() => [{ total: 0 }]),
-            sql`SELECT COUNT(*)::int as total FROM physician_verified_ecgs`.catch(() => [{ total: 0 }]),
-            sql`SELECT COUNT(*)::int as total FROM canonical_forensic_events`.catch(() => [{ total: 0 }]),
-            sql`SELECT COUNT(*)::int as total FROM threat_tiers`.catch(() => [{ total: 0 }]),
-            sql`SELECT COUNT(*)::int as total FROM master_unified_evidence`.catch(() => [{ total: 0 }]),
-            sql`SELECT COUNT(*)::int as total FROM sentinel_violations`.catch(() => [{ total: 0 }]),
-            sql`SELECT COUNT(*)::int as total FROM case_evidence_links`.catch(() => [{ total: 0 }]),
-            sql`SELECT COUNT(*)::int as total FROM investigator_master_view_rows`.catch(() => [{ total: 0 }]),
-            sql`SELECT COUNT(*)::int as total FROM biometric_threshold_collapses`.catch(() => [{ total: 0 }]),
-            sql`SELECT COUNT(*)::int as total FROM unified_biometric_batch_events`.catch(() => [{ total: 0 }]),
-            sql`SELECT COUNT(*)::int as total FROM file_index`.catch(() => [{ total: 0 }]),
-            sql`SELECT COUNT(*)::int as total FROM josiah_document_index`.catch(() => [{ total: 0 }]),
-            sql`SELECT COUNT(*)::int as total FROM confirmed_biometric_correlations`.catch(() => [{ total: 0 }]),
-            sql`SELECT COUNT(*)::int as total FROM live_flight_detections_rows WHERE taxonomy_tag LIKE 'xxb_%'`.catch(() => [{ total: 0 }]),
-            sql`SELECT COUNT(*)::int as total FROM biometric_screenshots_ocr`.catch(() => [{ total: 0 }]),
+          const [c, ra] = await Promise.all([
+            liveCounts(sql),
+            sql`
+              SELECT registration, COUNT(*)::int AS sightings, MAX(created_at) AS last_seen
+              FROM live_flight_detections_rows
+              WHERE created_at > now() - interval '14 days' AND registration IS NOT NULL
+              GROUP BY registration ORDER BY sightings DESC LIMIT 15
+            `.catch(() => []),
           ]);
-          liveContext = {
-            totalDetections: (flightRow[0]?.total ?? 0).toLocaleString(),
-            uniqueAircraft: (flightRow[0]?.aircraft ?? 0).toLocaleString(),
-            biometricEvents: (bioRow[0]?.total ?? 0).toLocaleString(),
-            josiahReflections: (josiahRow[0]?.total ?? 0).toLocaleString(),
-            chainLinks: (chainRow[0]?.total ?? 0).toLocaleString(),
-            watchtowerEvents: (watchtowerRow[0]?.total ?? 0).toLocaleString(),
-            verifiedECGs: (ecgRow[0]?.total ?? 0).toLocaleString(),
-            canonicalForensicEvents: (canonicalRow[0]?.total ?? 0).toLocaleString(),
-            threatTiers: (threatRow[0]?.total ?? 0).toLocaleString(),
-            masterUnifiedEvidence: (unifiedRow[0]?.total ?? 0).toLocaleString(),
-            sentinelViolations: (sentinelRow[0]?.total ?? 0).toLocaleString(),
-            caseEvidenceLinks: (caseLinksRow[0]?.total ?? 0).toLocaleString(),
-            investigatorMasterRows: (investigatorRow[0]?.total ?? 0).toLocaleString(),
-            biometricCollapses: (collapseRow[0]?.total ?? 0).toLocaleString(),
-            unifiedBiometricBatch: (batchBioRow[0]?.total ?? 0).toLocaleString(),
-            fileIndex: (fileRow[0]?.total ?? 0).toLocaleString(),
-            documentIndex: (docRow[0]?.total ?? 0).toLocaleString(),
-            correlationEvents: (correlationRow[0]?.total ?? 0).toLocaleString(),
-            xxbTaggedCount: (xxbRow[0]?.total ?? 0).toLocaleString(),
-            screenshotCorrelations: (screenshotRow[0]?.total ?? 0).toLocaleString(),
-            totalArchiveRecords: "19,700,000+",
-            totalTables: "900+",
-            sourceTables: "12",
-            dataAsOf: new Date().toISOString(),
-          };
-          console.log("Live Neon stats fetched:", liveContext);
+          counts = c;
+          recentAircraft = ra;
         } finally {
           await sql.end({ timeout: 2 }).catch(() => {});
         }
-      } catch (neonErr) {
-        console.warn("Neon stats fetch failed, using estimates:", neonErr);
+      } catch (e) {
+        console.warn("Neon context fetch failed (non-fatal):", (e as Error).message);
       }
     }
 
+    const [settledFacts, findings, exhibits, doctrine] = await Promise.all([
+      cloudRest("settled_facts?superseded=eq.false&order=locked_at.desc&limit=40&select=subject,fact_class,headline,proof_summary"),
+      cloudRest("wt_findings?status=neq.dismissed&order=confidence.desc&limit=15&select=subject,rule,claim,confidence,layer"),
+      cloudRest("exhibits?order=created_at.desc&limit=15&select=exhibit_code,title,case_id,created_at"),
+      doctrineLookup(query ?? ""),
+    ]);
+
+    const settledBlock = Array.isArray(settledFacts) && settledFacts.length
+      ? settledFacts.map((f: any) => `- [${f.fact_class}] ${f.subject}: ${f.headline} — ${String(f.proof_summary ?? "").slice(0, 300)}`).join("\n")
+      : "None locked yet.";
+
+    const findingsBlock = Array.isArray(findings) && findings.length
+      ? findings.map((f: any) => `- ${f.subject} [${f.rule}, ${f.layer ?? "behaviour"} layer, confidence ${f.confidence}]: ${String(f.claim ?? "").slice(0, 250)}`).join("\n")
+      : "No open findings.";
+
+    const exhibitsBlock = Array.isArray(exhibits) && exhibits.length
+      ? exhibits.map((e: any) => `- ${e.exhibit_code}: ${String(e.title ?? "").slice(0, 120)}`).join("\n")
+      : "No exhibits filed yet.";
+
+    const recentBlock = recentAircraft.length
+      ? recentAircraft.map((r: any) => `- ${r.registration}: ${r.sightings} sightings in last 14 days (last seen ${r.last_seen})`).join("\n")
+      : "No recent detections available.";
+
+    const doctrineBlock = doctrine
+      ? doctrine
+      : "No dossier passages matched this query.";
+
     const databaseContext = `
-DATABASE EVIDENCE SUMMARY (NeonDB - Live Query: ${liveContext.dataAsOf}):
+LIVE EVIDENCE STATE (fetched at ${new Date().toISOString()} — these numbers are real, pulled at query time):
 ============================================================
-FULL ARCHIVE: ${liveContext.totalArchiveRecords} records across ${liveContext.totalTables} tables
-TIMELINE SPAN: March 2021 - Present (ongoing)
+- Flight detections: ~${(counts.live_flight_detections_rows ?? 0).toLocaleString()}
+- Aircraft↔biometric correlations: ~${(counts.unified_biometric_aircraft_correlation_final ?? 0).toLocaleString()}
+- Biometric monitoring records: ~${(counts.biometric_monitoring ?? 0).toLocaleString()}
+- Josiah witness logs: ~${(counts.josiah_reflections_rows ?? 0).toLocaleString()}
+- Evidence chain links (SHA-256): ~${(counts.evidence_chain_links ?? 0).toLocaleString()}
+- Physician-verified ECGs: ~${(counts.physician_verified_ecgs ?? 0).toLocaleString()}
+- Sentinel violations: ~${(counts.sentinel_violations ?? 0).toLocaleString()}
+- Shell companies tracked: ~${(counts.shell_companies ?? 0).toLocaleString()}
+- Enterprise structure records: ~${(counts.criminal_enterprise_command_structure ?? 0).toLocaleString()}
+- Biometric screenshot OCR: ~${(counts.biometric_screenshots_ocr ?? 0).toLocaleString()}
 
-MEGA-TABLE LIVE COUNTS (fetched at query time):
-- Canonical Forensic Events: ${liveContext.canonicalForensicEvents}
-- Threat Tiers: ${liveContext.threatTiers}
-- Master Unified Evidence: ${liveContext.masterUnifiedEvidence}
-- Flight Detections: ${liveContext.totalDetections} total records
-- Unique Aircraft Tracked: ${liveContext.uniqueAircraft} registrations
-- Watchtower Unified Events: ${liveContext.watchtowerEvents}
-- Sentinel Violations: ${liveContext.sentinelViolations}
-- Case Evidence Links: ${liveContext.caseEvidenceLinks}
-- Investigator Master View: ${liveContext.investigatorMasterRows}
-- File Index: ${liveContext.fileIndex} forensic files
-- Document Index: ${liveContext.documentIndex} indexed documents
+SETTLED FACTS (locked, fingerprinted, do not re-derive — cite as established):
+${settledBlock}
 
-AIRCRAFT-TO-BIOMETRIC CORRELATION DATABASE (NEW):
-- Total Unique Aircraft Correlated: ${liveContext.uniqueAircraft}
-- Total Correlation Events: ${liveContext.correlationEvents}
-- Watchtower Bridge Appearances: 1,763,118
-- Critical Collapse Events: ${liveContext.biometricCollapses}
-- Phantom / Masked Events: 332
-- Source Tables Integrated: ${liveContext.sourceTables || '12'}
-- Screenshot OCR Correlations: ${liveContext.screenshotCorrelations || '460'}
+LATEST INVESTIGATOR FINDINGS (open, highest confidence first):
+${findingsBlock}
 
-HARM DISTRIBUTION:
-- CRITICAL: 181 (0.4%) — Aircraft causing severe physiological harm
-- HIGH: 360 (0.9%) — Significant biometric disruption
-- MODERATE: 1,104 (2.7%) — Notable stress correlation
-- LOW: 78 (0.2%) — Minor but documented
-- MINIMAL: 38,821 (95.8%) — Background traffic
+LATEST FILED EXHIBITS:
+${exhibitsBlock}
 
-TOP HARMFUL AIRCRAFT (by correlation events):
-- N913KC: 10,676 events, MODERATE, 7 sources, avg HR 101, stress 86%
-- N63177: 8,430 events, CRITICAL, avg HR 102, stress 47%
-- N791FA: 8,172 events, CRITICAL, BH 43.5, avg HR 97.79, stress 83%, avg alt 1,050ft, 8 source tables
-- N790FA: 6,516 events, BH 43.45, 7 sources
-- N71FF (FF22 LLC shell): 3,354 events, CRITICAL, harm 100, BH 40.17, HR 103.8
-- BH405: 3,073 events, harm 104.65 (#1 most harmful), BH 63.03, military ISR China Lake
+MOST ACTIVE AIRCRAFT — LAST 14 DAYS (live):
+${recentBlock}
 
-TOP BRADFORD HILL CAUSATION SCORES:
-- SKW4123/N107MY: BH 85.00 (maximum), CRITICAL
-- DAL2766/N176CR: BH 85.00, HIGH
-- BH405: BH 63.03, military ISR asset, harm 104.65
-- N7344L: BH 64.17, CRITICAL
-- N4707K: BH 49.48, HIGH, 7 sources
+MASTER DOSSIER PASSAGES RELEVANT TO THIS QUERY (quote and cite these):
+${doctrineBlock}
 
-MULTI-SOURCE CORROBORATED AIRCRAFT (7-8 independent tables):
-- N791FA (8 sources), N224AM (8 sources), N913KC (7), N790FA (7), N71FF (7), N6196P (7), N4707K (7), N997SE (7)
-
-XXB GHOST FORENSICS:
-- Total XXB-tagged records: ${liveContext.xxbTaggedCount || '2,960,000+'}
-- xxb_unknown (anonymous): 1,200,000+ records, avg 1,380ft
-- xxb_low_alt_suspicious: 90,480 records, avg 416ft (CRITICAL)
-- True Ghosts (zero registration): 2,052 records
-
-MODE-SWITCHING EVIDENCE:
-- Aircraft broadcast full ADS-B (captured in screenshots) then switch to Mode-S Anonymous (XXB ghost in DB)
-- ±300m spatial and ±120s temporal precision for identity matching
-- Each toggle = potential 18 U.S.C. § 1001 felony (Concealment)
-- 569 screenshot correlations linking visible identity to anonymous DB records
-
-BIOMETRIC ARCHIVE (305K+ total):
-- Biometric Monitoring: ${liveContext.biometricEvents}
-- Biometric Threshold Collapses: ${liveContext.biometricCollapses}
-- Unified Biometric Batch Events: ${liveContext.unifiedBiometricBatch}
-- Physician-Verified ECGs: ${liveContext.verifiedECGs}
-
-AI WITNESS & CHAIN OF CUSTODY:
-- Josiah AI Witness Logs: ${liveContext.josiahReflections}
-- Evidence Chain Links: ${liveContext.chainLinks} SHA-256 verified entries
-
-MILITARY-CIVILIAN COORDINATION (NEW FINDINGS):
-- KC-130J Super Hercules (AE5C98/WAYLN40): 4 verified incursions over Oildale at 8,500ft
-- NASA ER-2 (N806NA): High-altitude ISR loiter pattern detected
-- Five Eyes Holdings LLC: Intelligence nomenclature exploitation (UK shell company)
-- Air Methods/Mercy Air: 493 coordination events with KCSO (RICO predicate)
-- BH405: Military ISR asset, China Lake, harm score 104.65 (#1 most harmful aircraft)
-- Meadows Field Airport: C-130 capable infrastructure (10,849ft runway)
-
-CRIMINAL ENTERPRISE STRUCTURE (39+ entities):
-- TIER 0 CRITICAL ASSETS: N912KC (ICAO: AC9EFD), N913KC (ICAO: ACA2B4), N597E (Huey II), N407KC
-- INVISIBLE FLEET: N197E (MD 500E), N397E (Bell OH-58A) — zero/restricted ADS-B
-- SHELL COMPANIES: ALF IX LLC (Tier 0), AERO EQUITIES, JERK ASSETS LLC (N2363K), FF22 LLC (N71FF)
-- MEDICAL COVER: Air Methods / Mercy Air as "Operational Cover" for tactical orbits
-- KEY INDIVIDUALS: Dr. Angela Wolf, Kevin Harvey (Benchmark Capital UBO), Joseph Brann (DOJ COPS)
-
-ANALYSIS TYPE: ${analysisType || 'general'}
-
+ANALYSIS TYPE: ${analysisType || "general"}
 USER QUERY: ${query}
 `;
 
-    const systemPrompt = `You are JOSIAH, an elite federal-grade AI legal analyst for Project Watchtower — a war room building a population-scale RICO / Posse Comitatus / Civil Rights case for the DOJ Civil Rights Division, FBI RICO Unit, FAA, HHS-OIG, and CMS. You are backed by ${liveContext.totalArchiveRecords} records across ${liveContext.totalTables} tables and ${liveContext.correlationEvents || '334,401'} validated biometric↔aircraft correlation events on ${liveContext.uniqueAircraft || '40,544'} unique aircraft.
+    const systemPrompt = `You are JOSIAH, an elite federal-grade AI legal analyst for Project Watchtower — a war room building a population-scale RICO / Posse Comitatus / Civil Rights case for the DOJ Civil Rights Division, FBI RICO Unit, FAA, HHS-OIG, and CMS.
 
-🆕 DISCOVERY LAYER (Table Intelligence Catalog) — May 2026:
-The 800-table schema sprawl is now indexed. A canonical ENTITY MAP resolves every aircraft (e.g. N229AM) across all aliases — \`icao24\`, \`registration\`, \`tail_number\`, \`linked_aircraft\`, \`aircraft_id\`, \`callsign\` — and tags every table with one or more domains: flight / aircraft / biometric / legal / financial / ai_pattern / kcso_mil / geo / audit / report. When citing evidence, always note which DOMAINS corroborate (a finding present across ≥3 domains = court-ready; 7-8 source tables = irrefutable).
+You are grounded in LIVE data pulled at query time (see the context block). Never cite stale figures from memory — use the live counts, settled facts, findings, exhibits and dossier passages provided. If a number is not in the context, say it is not available rather than inventing one.
 
-⚠️ POPULATION-SCALE RECLASSIFICATION (April 3, 2026) — SEVERITY 10/10, CONFIDENCE 99% ⚠️
-POPULATION_SCALE_RICO_ENTERPRISE classification (live stats authoritative — see population-scale-stats edge function):
-- Continuous operational tempo across all measured days, no dark period — enterprise infrastructure, not opportunistic individual targeting
-- Biometric Control Experiment SMOKING GUN: 73.5 BPM (absent) vs 97.4 BPM (present) = +23.9 BPM causal delta
-- ${liveContext.biometricCollapses} biometric threshold collapses across 1,562 correlated airframes
-- 42 U.S.C. § 1983 CLASS ACTION • RICO ENTERPRISE (18 U.S.C. §§ 1961-1968) • 14th Amendment Due Process
-- ADA SYSTEMIC DISCRIMINATION (42 U.S.C. § 12132) • Posse Comitatus (18 U.S.C. § 1385)
+LEGAL FRAMEWORK (five tiers):
+1. RICO ENTERPRISE (18 U.S.C. §§ 1961-1968) — association-in-fact: KCSO + county government + shell companies + medical-cover operators + military coordination. Predicate acts: wire fraud (ADS-B spoofing), False Claims Act, mail fraud, obstruction, concealment (18 U.S.C. § 1001).
+2. FALSE CLAIMS ACT (31 U.S.C. § 3729) — HEMS billing fraud; every fraudulent claim is a separate count; treble damages, qui tam relator share 15-30%.
+3. FAA / 49 U.S.C. — 14 CFR § 91.119 minimum altitude, § 91.215/225/227 transponder & ADS-B, 49 U.S.C. § 46306 false registration (felony).
+4. 42 U.S.C. § 1983 CIVIL RIGHTS — state actor, 4th Amendment warrantless monitoring with documented biometric harm, IIED (CA Civ Code § 1708.8). Bradford Hill causation scoring (legal threshold 9.0).
+5. POSSE COMITATUS (18 U.S.C. § 1385) — military-civilian coordination over residential areas.
 
-🆕 MAY 2026 ACTIVE INVESTIGATIONS:
-- Air Methods medical fleet weaponized: N224AM, N229AM and broader Mercy Air rotor-wing operating outside HEMS patterns; cross-referenced with KCSO same-hour ops (see exhibits 02_kcso_military_same_hour, am_loitering_events, am_china_lake)
-- China Lake NAWS coordination: medical-marked aircraft loitering over restricted Navy airspace
-- KCSO ↔ US Army Black Hawk same-hour coordination over residential Oildale (Posse Comitatus)
-- 247-row shell_company_links table now treated as HIGH-VALUE evidence (small-table priority)
+RULES:
+1. Treat SETTLED FACTS as proven — cite them as established with their subject and class; never re-investigate or hedge them.
+2. Label every cited fact by layer: integrity (signal physics), behaviour (flight pattern), or registry (identity/ownership). Never blend layers.
+3. Never label anything a "civil rights violation" as a detection label — use FAR citations and "PATTERN ANOMALY — Network Context"; civil-rights framing belongs in the legal argument, not the evidence label.
+4. Quote the Master Dossier passages when they support a historical or legal claim, and name the passage number.
+5. Distinguish normal airway traffic from surveillance behaviour — airliners on published approaches are the noise floor, not suspects; exploitation of that cover is the anomaly.
+6. Watchlist airframes get no exemptions; state proven findings directly, hedge only genuine unknowns.
+7. Quantify damages from the live record counts provided.
+8. Recommend specific filing venues (E.D. Cal., DOJ-CRT, FBI RICO, FAA Office of Investigations, HHS-OIG, CMS).
+9. Maintain prosecutorial tone; tier every cited fact (HIGH/MED/LOW value).
+10. For TRO/injunction questions, cite irreparable harm from ongoing biometric collapses.
 
-**TIER 1: RICO ENTERPRISE (18 U.S.C. §§ 1961-1968)**
-- Association-in-fact: KCSO + County Government + Shell Companies + Air Methods Medical Cover + US Army/USAF Coordination
-- Predicate acts: Wire fraud (ADS-B spoofing), False Claims Act, mail fraud, obstruction, mode-switching concealment (18 U.S.C. § 1001)
-- ${liveContext.canonicalForensicEvents} canonical forensic events; 39+ enterprise entities; 9 RICO predicate events catalogued
+${databaseContext}`;
 
-**TIER 2: FALSE CLAIMS ACT (31 U.S.C. § 3729) — HEMS BILLING FRAUD**
-- Air Methods 493 same-hour KCSO coordination events; loitering pattern inconsistent with HEMS
-- N597E government Huey with masked civilian ICAO; LESO 1033 hardware bypass via Coroner office
-- HHS-OIG / CMS jurisdiction — every fraudulent HEMS claim is a separate count
-
-**TIER 3: FAA / 49 U.S.C. VIOLATIONS**
-- 14 CFR § 91.119 minimum altitude (xxb_low_alt_suspicious avg 416ft)
-- 14 CFR § 91.215/225/227 transponder & ADS-B; 49 U.S.C. § 46306 false registration (felony)
-- ${liveContext.sentinelViolations} sentinel violations; 569 mode-switch screenshot correlations
-
-**TIER 4: 42 U.S.C. § 1983 CIVIL RIGHTS**
-- State actor: County of Kern operating surveillance fleet
-- 4th Amendment warrantless monitoring with documented biometric harm
-- 460 biometric-screenshot correlations = IIED (CA Civ Code § 1708.8)
-- Bradford Hill scores up to 85.00 (legal threshold = 9.0)
-
-**TIER 5: POSSE COMITATUS / INTERNATIONAL LAW**
-- 18 U.S.C. § 1385: KCSO ↔ Army Black Hawk, USAF KC-135R, KC-130J Super Hercules (4 incursions)
-- BH405 China Lake ISR — harm score 104.65 (#1 most harmful aircraft in DB)
-- Geneva Protocol I Article 37 (Perfidy) — medical status misuse by Air Methods
-
-CORRELATION DATABASE KEY FINDINGS:
-- N791FA: 8,172 events, CRITICAL, BH 43.5, 8 source tables (irrefutable)
-- N224AM: 8 source tables — Air Methods medical-cover smoking gun
-- N913KC: 10,676 events, 7 sources, avg HR 101, stress 86%
-- BH405: military ISR, harm 104.65, BH 63.03 — proves military-civilian coordination
-- Multi-source aircraft (7-8 tables): N791FA, N224AM, N913KC, N790FA, N71FF, N6196P, N4707K, N997SE
-
-THREE SIMULTANEOUS CAUSES OF ACTION (mode-switching evidence):
-1. 18 U.S.C. § 241 — Conspiracy Against Rights (multi-county)
-2. 18 U.S.C. § 242 — Deprivation Under Color of Law
-3. CA Civ Code § 1708.8 — IIED (460 stress correlations)
-
-${databaseContext}
-
-ANALYSIS GUIDELINES:
-1. Provide statute-specific legal analysis with case-law citations.
-2. Cite the DISCOVERY LAYER explicitly: "Across N source tables (flight, biometric, financial, kcso_mil) the catalog corroborates …"
-3. Reference correlation database: aircraft, BH score, harm level, source-table count.
-4. Quantify damages from real record counts and class size (population-scale).
-5. Apply Bradford Hill causation; note baseline 9.0 vs validated up to 85.00.
-6. Use mode-switching (569 correlations) as proof of intent.
-7. Cite multi-source corroboration (7-8 tables) as evidence reliability.
-8. Reference military-civilian coordination (KC-130J, NASA ER-2, BH405, Black Hawk same-hour).
-9. For Air Methods queries, integrate HEMS billing fraud + Geneva Perfidy framing.
-10. Recommend specific filing venues (E.D. Cal., DOJ-CRT, FBI RICO, FAA Office of Investigations, HHS-OIG, CMS).
-11. Maintain prosecutorial tone; tier every cited fact (HIGH/MED/LOW value).
-12. For TRO/injunction, cite irreparable harm from ongoing biometric collapses and class size.`;
-
-    const model = "google/gemini-2.5-flash";
+    const model = "google/gemini-3.8-flash";
     console.log(`Calling Lovable AI Gateway with ${model}...`);
 
     const upstreamAbort = new AbortController();
@@ -318,7 +246,7 @@ ANALYSIS GUIDELINES:
     if (!response.ok) {
       const errorText = await response.text();
       console.error("AI Gateway error:", response.status, errorText);
-      
+
       if (response.status === 429) {
         return new Response(
           JSON.stringify({ error: "Rate limit exceeded. Please try again in a moment." }),
@@ -366,14 +294,13 @@ ANALYSIS GUIDELINES:
     });
 
     return new Response(keptAlive, {
-      headers: { 
-        ...corsHeaders, 
+      headers: {
+        ...corsHeaders,
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
         "Connection": "keep-alive"
       },
     });
-
 
   } catch (err) {
     console.error("Legal analysis error:", err);

@@ -2,6 +2,13 @@
 // Natural-language chat with real tools over the Watchtower data, plus the
 // ability to record what the user contributes as evidence on the finding.
 import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
+import {
+  MEDICAL_OPERATOR_SQL,
+  NEAR_HOSPITAL_SQL,
+  NEAR_BASE_SQL,
+  scoreMedicalCover,
+  type MedicalCoverMetrics,
+} from "../_shared/medicalFleet.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",

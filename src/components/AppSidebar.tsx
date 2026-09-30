@@ -41,6 +41,7 @@ import {
 } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 const navigationItems = [
   { 
@@ -187,7 +188,8 @@ const navigationItems = [
 
 export function AppSidebar() {
   const { state } = useSidebar();
-  const collapsed = state === "collapsed";
+  const isMobile = useIsMobile();
+  const collapsed = !isMobile && state === "collapsed";
   const location = useLocation();
   const navigate = useNavigate();
   const { signOut } = useAuth();

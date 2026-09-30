@@ -162,23 +162,33 @@ serve(async (req) => {
       await client.queryObject(`SET statement_timeout = '25000'`);
 
       if (action === 'analyze') {
-        const biometricStats = await client.queryObject`
-          SELECT DATE(measurement_timestamp) as date,
-                 COUNT(*)::int as biometric_count,
-                 AVG(heart_rate) as avg_hr,
-                 AVG(stress_level) as avg_stress
+        // Each section runs on its own short budget; a slow section returns
+        // empty instead of failing the whole response (no blank screens).
+        await client.queryObject(`SET statement_timeout = '12000'`);
+        const timedOut: string[] = [];
+        const safe = async <T,>(label: string, fn: () => Promise<{ rows: T[] }>): Promise<T[]> => {
+          try { return (await fn()).rows; } catch (e) {
+            console.warn(`[analyze] ${label} skipped:`, e instanceof Error ? e.message : e);
+            timedOut.push(label);
+            return [];
+          }
+        };
+        const biometricRows = await safe('biometric', () => client.queryObject`
+          SELECT DATE(measurement_timestamp)::text as date, COUNT(*)::int as biometric_count
           FROM biometric_monitoring
           WHERE measurement_timestamp >= ${start} AND measurement_timestamp < ${end}
-          GROUP BY DATE(measurement_timestamp) ORDER BY date
-        `;
-        const flightStats = await client.queryObject`
-          SELECT DATE(detection_timestamp) as date,
-                 COUNT(*)::int as flight_count,
-                 COUNT(DISTINCT registration)::int as unique_aircraft
+          GROUP BY 1 ORDER BY 1
+        `);
+        // Flight table is huge: limit to the most recent 30 days of the window.
+        const flightStart = new Date(Math.max(new Date(start).getTime(), new Date(end).getTime() - 30 * 24 * 3600 * 1000)).toISOString();
+        const flightRows = await safe('flights', () => client.queryObject`
+          SELECT DATE(detection_timestamp)::text as date, COUNT(*)::int as flight_count
           FROM live_flight_detections_rows
-          WHERE detection_timestamp >= ${start} AND detection_timestamp < ${end}
-          GROUP BY DATE(detection_timestamp) ORDER BY date
-        `;
+          WHERE detection_timestamp >= ${flightStart} AND detection_timestamp < ${end}
+          GROUP BY 1 ORDER BY 1
+        `);
+        const biometricStats = { rows: biometricRows };
+        const flightStats = { rows: flightRows };
         let existingCorrelationsCount = 0;
         try {
           const ec = await client.queryObject<{ count: number }>`
@@ -186,11 +196,12 @@ serve(async (req) => {
             WHERE biometric_timestamp >= ${start} AND biometric_timestamp < ${end}
           `;
           existingCorrelationsCount = Number(ec.rows[0]?.count || 0);
-        } catch { /* table may not exist */ }
+        } catch { timedOut.push('correlations'); }
 
         return new Response(JSON.stringify({
           success: true,
           window: { start, end },
+          timedOut,
           analysis: {
             biometricDays: biometricStats.rows.length,
             flightDays: flightStats.rows.length,
@@ -236,8 +247,9 @@ serve(async (req) => {
   } catch (error: unknown) {
     console.error('Historical enrichment error:', error);
     const message = error instanceof Error ? error.message : 'Unknown error';
-    return new Response(JSON.stringify({ success: false, error: message }), {
-      status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    const isTimeout = /statement timeout|57014/i.test(message);
+    return new Response(JSON.stringify({ success: false, timedOut: isTimeout, error: isTimeout ? 'Query took too long — showing what is available.' : message }), {
+      status: isTimeout ? 200 : 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
 });

@@ -45,7 +45,7 @@ export function HistoricalEnrichmentPanel() {
       });
 
       if (error) throw error;
-      setStats(data.stats);
+      if (data?.stats) setStats(data.stats);
     } catch (error: any) {
       console.error('Stats error:', error);
     } finally {
@@ -69,7 +69,10 @@ export function HistoricalEnrichmentPanel() {
       });
 
       if (error) throw error;
-      setAnalysis(data.analysis);
+      if (data?.analysis) setAnalysis(data.analysis);
+      if (data?.timedOut && (data.timedOut === true || data.timedOut.length)) {
+        toast({ title: 'Partial results', description: 'Some counts took too long and were skipped.' });
+      }
     } catch (error: any) {
       toast({
         title: 'Analysis Error',

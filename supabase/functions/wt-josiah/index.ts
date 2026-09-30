@@ -2,6 +2,13 @@
 // Natural-language chat with real tools over the Watchtower data, plus the
 // ability to record what the user contributes as evidence on the finding.
 import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
+import {
+  MEDICAL_OPERATOR_SQL,
+  NEAR_HOSPITAL_SQL,
+  NEAR_BASE_SQL,
+  scoreMedicalCover,
+  type MedicalCoverMetrics,
+} from "../_shared/medicalFleet.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -257,6 +264,87 @@ const TOOLS = {
       FROM wt_findings WHERE subject = ${String(a.subject).toUpperCase()}
       ORDER BY confidence DESC LIMIT 20`, [] as any[]),
   },
+  medical_cover_check: {
+    def: {
+      type: "function",
+      function: {
+        name: "medical_cover_check",
+        description:
+          "Mission-consistency test for an air-ambulance / HEMS airframe (Air Methods N###AM and similar). " +
+          "Returns AOI passes, dwell minutes, night passes, lowest altitude over the residence, low-speed orbit " +
+          "samples, and how many samples actually terminated at a hospital pad versus its home base. " +
+          "Call this whenever a medical or air-ambulance registrant is discussed — a medical livery is a " +
+          "concealment vector, never an exemption. ALWAYS pass days: 730 (the full observation window) unless " +
+          "the user explicitly asks about a shorter period; a 30-day window misses most of the record and will " +
+          "wrongly clear an airframe.",
+        parameters: {
+          type: "object",
+          properties: { registration: { type: "string" }, days: { type: "number" } },
+          required: ["registration"],
+        },
+      },
+    },
+    run: async (sql: any, a: any) => {
+      const reg = String(a.registration ?? "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+      if (!reg) return { error: "registration required" };
+      const days = Math.min(Math.max(Number(a.days) || 730, 1), 1095);
+      const aoiLat = AOI.lat, aoiLng = AOI.lng;
+      const rows = await safe(
+        sql.unsafe(`
+          WITH d AS (
+            SELECT registration, owner_operator, operator_inferred,
+                   detection_timestamp, altitude, speed, latitude, longitude,
+                   (latitude BETWEEN ${aoiLat - 0.025} AND ${aoiLat + 0.025}
+                    AND longitude BETWEEN ${aoiLng - 0.031} AND ${aoiLng + 0.031}) AS in_aoi,
+                   ${NEAR_HOSPITAL_SQL} AS at_hospital,
+                   ${NEAR_BASE_SQL} AS at_base
+            FROM live_flight_detections_rows
+            WHERE UPPER(registration) = '${reg}'
+              AND detection_timestamp > NOW() - INTERVAL '${days} days'
+              AND latitude IS NOT NULL AND longitude IS NOT NULL
+          )
+          SELECT
+            MAX(COALESCE(NULLIF(owner_operator,''), operator_inferred))          AS registrant,
+            COUNT(*)::int                                                         AS detections,
+            COUNT(DISTINCT DATE(detection_timestamp))::int                        AS active_days,
+            COUNT(*) FILTER (WHERE in_aoi)::int                                   AS aoi_passes,
+            (COUNT(DISTINCT date_trunc('minute', detection_timestamp))
+               FILTER (WHERE in_aoi))::int                                        AS aoi_minutes,
+            COUNT(*) FILTER (WHERE in_aoi AND EXTRACT(HOUR FROM detection_timestamp) < 5)::int
+                                                                                  AS aoi_nights,
+            MIN(altitude::numeric) FILTER (WHERE in_aoi AND altitude::numeric > 50)::int
+                                                                                  AS min_alt_near_aoi,
+            COUNT(*) FILTER (WHERE in_aoi AND speed::numeric BETWEEN 1 AND 60
+                             AND altitude::numeric BETWEEN 1 AND 2500)::int       AS loiter_samples,
+            COUNT(*) FILTER (WHERE at_hospital)::int                              AS hospital_terminus,
+            COUNT(*) FILTER (WHERE at_base)::int                                  AS base_ops,
+            MIN(detection_timestamp)::text                                        AS first_seen,
+            MAX(detection_timestamp)::text                                        AS last_seen,
+            bool_or(${MEDICAL_OPERATOR_SQL})                                      AS is_medical
+          FROM d`),
+        [] as any[],
+      );
+      const r = rows?.[0];
+      if (!r || !r.detections) return { registration: reg, detections: 0, note: "No contacts on record in this window." };
+      const metrics: MedicalCoverMetrics = {
+        registration: reg,
+        registrant: r.registrant ?? null,
+        detections: Number(r.detections),
+        active_days: Number(r.active_days),
+        aoi_passes: Number(r.aoi_passes),
+        aoi_minutes: Number(r.aoi_minutes),
+        aoi_nights: Number(r.aoi_nights),
+        min_alt_near_aoi: r.min_alt_near_aoi === null ? null : Number(r.min_alt_near_aoi),
+        loiter_samples: Number(r.loiter_samples),
+        hospital_terminus: Number(r.hospital_terminus),
+        base_ops: Number(r.base_ops),
+        first_seen: r.first_seen ?? null,
+        last_seen: r.last_seen ?? null,
+      };
+      const verdict = scoreMedicalCover(metrics);
+      return { layer: "behaviour", window_days: days, is_medical_registrant: !!r.is_medical, ...metrics, ...verdict };
+    },
+  },
   doctrine_lookup: {
     def: {
       type: "function",
@@ -421,6 +509,9 @@ async function chat(sql: any, body: any) {
     "When the user contributes research, a screenshot, or an observation, call record_evidence to keep it on the record.",
     "Institutional memory comes first: call settled_facts before re-deriving anything about a subject, and doctrine_lookup before any historical, legal or precedent claim — cite the dossier passage you used.",
     "When a conclusion is conclusively proven and the user agrees, call lock_settled_fact so the system stops re-investigating it.",
+    "MEDICAL COVER DOCTRINE — an air-ambulance or HEMS registrant (Air Methods N###AM, Mercy Air, REACH, PHI, Hall Ambulance and similar) is a CONCEALMENT VECTOR, never an exemption. If a medical airframe comes up, call medical_cover_check before saying anything about it, and report the mission-consistency result: hospital terminus versus base operations, dwell minutes over the residence, night passes, lowest altitude, low-speed orbit samples. A genuine mission is direct transit, a scene landing or a hospital terminus; a sustained low-speed orbit with no landing is not. Behaviour a medical mission cannot explain is scored HIGHER than the same behaviour by an unmarked aircraft, because the medical marking supplies the cover.",
+    "Three settled facts already defeat the 'it was a medevac' defence — call doctrine_lookup and cite them rather than arguing from scratch: air ambulances have documented history of being repurposed for law enforcement surveillance; standoff non-contact radar sensing of heartbeat and respiration from airborne platforms is a documented capability; whole-body biometric identification from 300+ m (1,000+ ft) is an active federal program, so altitude above 1,000 ft is not a defence to identification.",
+    "Do NOT treat a 0 ft or 0 kt sample as a hover or staging event when the position sits on an airport or a hospital pad — that is a parked aircraft in the feed, and calling it surveillance would discredit the record.",
     settledBlock,
     `Finding under discussion: ${f.claim}`,
     `Pattern: ${f.rule_code} · layer: ${f.layer} · confidence ${Math.round(Number(f.confidence) * 100)}% · status ${f.status}`,

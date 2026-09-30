@@ -785,8 +785,28 @@ ${memoryContext}`;
       console.warn("settled_facts fetch failed (non-fatal):", (e as Error).message);
     }
 
+    const medicalCoverDoctrine = `
+
+=== MEDICAL COVER DOCTRINE (applies whenever an air-ambulance / HEMS airframe is discussed) ===
+Medical airframes in scope: the Air Methods block (N###AM — e.g. N224AM, N229AM, N223AM, N528AM, N645AM, N184AM, N579AM) and Mercy Air, REACH, PHI Air Medical, CALSTAR, Air Evac, Guardian Flight, Classic Air Medical, Rocky Mountain Holdings, Med-Trans, Hall Ambulance.
+
+RULE 1 — A medical registrant is a CONCEALMENT VECTOR, never an exemption. An air-ambulance livery is the single most effective cover for low-altitude loitering, because analysts instinctively write it off as "a medevac". Do not write it off.
+RULE 2 — Apply the MISSION CONSISTENCY test, not a whitelist. A genuine HEMS mission is direct transit, a scene landing, a hospital terminus, or a base return. Behaviour that matches that scores ZERO. Behaviour a medical mission cannot explain — sustained low-speed orbit over the residence, repeat night passes, dwell with no landing, no hospital terminus in the whole window — is scored HIGHER than the same behaviour by an unmarked aircraft.
+RULE 3 — Always separate hospital terminus samples from home-base (Meadows Field / KBFL) samples. Base operations are legitimate and are NOT evidence. Kern County hospital pads: Kern Medical Center, Bakersfield Memorial, Adventist Health Bakersfield, Mercy Southwest, Mercy Downtown, Bakersfield Heart, Delano Regional, Ridgecrest Regional, Tehachapi Valley.
+RULE 4 — Never treat a 0 ft or 0 kt sample as a hover or staging event when the position sits on an airport or hospital pad. That is a parked aircraft in the feed. Calling it surveillance discredits the record.
+RULE 5 — Label the flight forensically ("MEDICAL_PROFILE_ANOMALY", "TACTICAL LOITER — REBUTTAL APPLIED (NON-TERMINAL FLIGHT PATH)"), never accusatorially. Legal framing belongs in the briefs.
+
+THREE LOCKED FACTS DEFEAT THE "IT WAS A MEDEVAC" DEFENCE — cite them as established, do not re-argue them:
+1. Air ambulance platforms have documented history of being repurposed for law enforcement surveillance of a civilian population. A medical designation is therefore not self-authenticating.
+2. Standoff non-contact sensing of heartbeat and respiration from airborne platforms is a documented capability (UAV-borne Doppler life-sensing through obstructions, 35 GHz standoff vital-signs monitoring, Doppler microwave HRV through clothing and building materials). This establishes mechanism for a loiter/physiological-event correlation — capability only, not payload proof for any specific airframe.
+3. Whole-body biometric identification (gait, morphology, face) from elevated platforms beyond 300 m / 1,000 ft is an active federal program. Altitude at or above 1,000 ft AGL is therefore NOT a defence to an identification-based privacy claim.
+
+LEGAL HOOKS when a medical airframe fails the mission-consistency test and public funds subsidise it: 31 U.S.C. § 3729 (False Claims Act) and 18 U.S.C. § 1347 (health care fraud) under CASE-003-RICO-HEALTH; 14 CFR § 91.119 minimum safe altitude under CASE-003-FAA; purpose-limitation / function-creep and HIPAA PHI handling under CASE-004-CIVIL-RIGHTS.
+=== END MEDICAL COVER DOCTRINE ===
+`;
+
     const messages = [
-      { role: "system", content: systemPrompt + ragContext + settledContext },
+      { role: "system", content: systemPrompt + ragContext + settledContext + medicalCoverDoctrine },
 
       ...(conversationHistory || []).map((msg: { role: string; content: string }) => ({
         role: msg.role,

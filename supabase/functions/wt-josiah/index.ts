@@ -264,6 +264,85 @@ const TOOLS = {
       FROM wt_findings WHERE subject = ${String(a.subject).toUpperCase()}
       ORDER BY confidence DESC LIMIT 20`, [] as any[]),
   },
+  medical_cover_check: {
+    def: {
+      type: "function",
+      function: {
+        name: "medical_cover_check",
+        description:
+          "Mission-consistency test for an air-ambulance / HEMS airframe (Air Methods N###AM and similar). " +
+          "Returns AOI passes, dwell minutes, night passes, lowest altitude over the residence, low-speed orbit " +
+          "samples, and how many samples actually terminated at a hospital pad versus its home base. " +
+          "Call this whenever a medical or air-ambulance registrant is discussed — a medical livery is a " +
+          "concealment vector, never an exemption.",
+        parameters: {
+          type: "object",
+          properties: { registration: { type: "string" }, days: { type: "number" } },
+          required: ["registration"],
+        },
+      },
+    },
+    run: async (sql: any, a: any) => {
+      const reg = String(a.registration ?? "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+      if (!reg) return { error: "registration required" };
+      const days = Math.min(Math.max(Number(a.days) || 365, 1), 1095);
+      const aoiLat = AOI.lat, aoiLng = AOI.lng;
+      const rows = await safe(
+        sql.unsafe(`
+          WITH d AS (
+            SELECT registration, owner_operator, operator_inferred,
+                   detection_timestamp, altitude, speed, latitude, longitude,
+                   (latitude BETWEEN ${aoiLat - 0.025} AND ${aoiLat + 0.025}
+                    AND longitude BETWEEN ${aoiLng - 0.031} AND ${aoiLng + 0.031}) AS in_aoi,
+                   ${NEAR_HOSPITAL_SQL} AS at_hospital,
+                   ${NEAR_BASE_SQL} AS at_base
+            FROM live_flight_detections_rows
+            WHERE UPPER(registration) = '${reg}'
+              AND detection_timestamp > NOW() - INTERVAL '${days} days'
+              AND latitude IS NOT NULL AND longitude IS NOT NULL
+          )
+          SELECT
+            MAX(COALESCE(NULLIF(owner_operator,''), operator_inferred))          AS registrant,
+            COUNT(*)::int                                                         AS detections,
+            COUNT(DISTINCT DATE(detection_timestamp))::int                        AS active_days,
+            COUNT(*) FILTER (WHERE in_aoi)::int                                   AS aoi_passes,
+            (COUNT(DISTINCT date_trunc('minute', detection_timestamp))
+               FILTER (WHERE in_aoi))::int                                        AS aoi_minutes,
+            COUNT(*) FILTER (WHERE in_aoi AND EXTRACT(HOUR FROM detection_timestamp) < 5)::int
+                                                                                  AS aoi_nights,
+            MIN(altitude::numeric) FILTER (WHERE in_aoi AND altitude::numeric > 50)::int
+                                                                                  AS min_alt_near_aoi,
+            COUNT(*) FILTER (WHERE in_aoi AND speed::numeric BETWEEN 1 AND 60
+                             AND altitude::numeric BETWEEN 1 AND 2500)::int       AS loiter_samples,
+            COUNT(*) FILTER (WHERE at_hospital)::int                              AS hospital_terminus,
+            COUNT(*) FILTER (WHERE at_base)::int                                  AS base_ops,
+            MIN(detection_timestamp)::text                                        AS first_seen,
+            MAX(detection_timestamp)::text                                        AS last_seen,
+            bool_or(${MEDICAL_OPERATOR_SQL})                                      AS is_medical
+          FROM d`),
+        [] as any[],
+      );
+      const r = rows?.[0];
+      if (!r || !r.detections) return { registration: reg, detections: 0, note: "No contacts on record in this window." };
+      const metrics: MedicalCoverMetrics = {
+        registration: reg,
+        registrant: r.registrant ?? null,
+        detections: Number(r.detections),
+        active_days: Number(r.active_days),
+        aoi_passes: Number(r.aoi_passes),
+        aoi_minutes: Number(r.aoi_minutes),
+        aoi_nights: Number(r.aoi_nights),
+        min_alt_near_aoi: r.min_alt_near_aoi === null ? null : Number(r.min_alt_near_aoi),
+        loiter_samples: Number(r.loiter_samples),
+        hospital_terminus: Number(r.hospital_terminus),
+        base_ops: Number(r.base_ops),
+        first_seen: r.first_seen ?? null,
+        last_seen: r.last_seen ?? null,
+      };
+      const verdict = scoreMedicalCover(metrics);
+      return { layer: "behaviour", window_days: days, is_medical_registrant: !!r.is_medical, ...metrics, ...verdict };
+    },
+  },
   doctrine_lookup: {
     def: {
       type: "function",

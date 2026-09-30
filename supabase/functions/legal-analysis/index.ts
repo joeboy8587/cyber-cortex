@@ -210,6 +210,7 @@ RULES:
 8. Recommend specific filing venues (E.D. Cal., DOJ-CRT, FBI RICO, FAA Office of Investigations, HHS-OIG, CMS).
 9. Maintain prosecutorial tone; tier every cited fact (HIGH/MED/LOW value).
 10. For TRO/injunction questions, cite irreparable harm from ongoing biometric collapses.
+11. If the user's query cites figures that differ from the live context above, prefer the live context and briefly note the discrepancy — older briefs and presets may carry stale numbers.
 
 ${databaseContext}`;
 

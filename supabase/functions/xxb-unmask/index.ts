@@ -34,6 +34,7 @@ const SOURCES = [
   "live_flight_detections_rows",
   "live_flight_detections",
   "quarantine.evidence_flight_dump_20260103_sealed",
+  "public.evidence_flight_dump_20260103_unsealed",
 ];
 
 function json(b: unknown, s = 200) {
@@ -649,6 +650,199 @@ Deno.serve(async (req) => {
     if (action === "consensus") {
       const rows = await sql`SELECT * FROM public.xxb_attribution_consensus ORDER BY consensus_confidence DESC LIMIT 500`;
       return json({ ok: true, count: rows.length, top: rows });
+    }
+
+    // ───────────────────────────────────────────── FULL-ARCHIVE SWEEP
+    // Walks a source table in time slices (resumable cursor + lease lock).
+    // Each slice runs: hex bridge (tier 1), track continuity (tier 2), and
+    // target-hex attribution for the watch fleet (deterministic FAA hex).
+    if (action === "sweep_init") {
+      checkSource(source);
+      await sql.unsafe(`
+        CREATE TABLE IF NOT EXISTS public.xxb_sweep_progress (
+          source_table text PRIMARY KEY,
+          start_ts timestamptz, end_ts timestamptz, cursor_ts timestamptz,
+          slice_minutes integer NOT NULL DEFAULT 60,
+          status text NOT NULL DEFAULT 'running',
+          slices_done integer NOT NULL DEFAULT 0,
+          inserted bigint NOT NULL DEFAULT 0,
+          targets text[] NOT NULL DEFAULT '{}',
+          lease_until timestamptz,
+          last_error text,
+          updated_at timestamptz DEFAULT now()
+        );`);
+      const targets: string[] = (body.targets || ["N912KC", "N913KC", "N911KC", "N597E"]).map((t: string) => String(t).toUpperCase().replace(/[^A-Z0-9-]/g, ""));
+      const b = await sql.unsafe(`SELECT min(detection_timestamp) AS a, max(detection_timestamp) AS z FROM ${source}`);
+      await sql`
+        INSERT INTO public.xxb_sweep_progress (source_table, start_ts, end_ts, cursor_ts, targets, status, slices_done, inserted)
+        VALUES (${source}, ${b[0].a}, ${b[0].z}, ${b[0].a}, ${targets}, 'running', 0, 0)
+        ON CONFLICT (source_table) DO UPDATE SET targets = EXCLUDED.targets,
+          end_ts = EXCLUDED.end_ts, status = 'running', updated_at = now(),
+          start_ts = COALESCE(xxb_sweep_progress.start_ts, EXCLUDED.start_ts),
+          cursor_ts = COALESCE(xxb_sweep_progress.cursor_ts, EXCLUDED.cursor_ts)`;
+      return json({ ok: true, source, start: b[0].a, end: b[0].z, targets });
+    }
+
+    if (action === "sweep_step") {
+      checkSource(source);
+      const budgetMs = Math.min(Number(body.budget_ms) || 110_000, 130_000);
+      const t0 = Date.now();
+      const lease = await sql`
+        UPDATE public.xxb_sweep_progress SET lease_until = now() + interval '4 minutes'
+        WHERE source_table = ${source} AND status = 'running'
+          AND (lease_until IS NULL OR lease_until < now())
+        RETURNING *`;
+      if (body.restart) {
+        await sql`UPDATE public.xxb_sweep_progress SET cursor_ts = start_ts, slice_minutes = 60 WHERE source_table = ${source}`;
+        const again = await sql`SELECT * FROM public.xxb_sweep_progress WHERE source_table = ${source}`;
+        lease.splice(0, lease.length, ...again);
+      }
+      if (lease.length === 0) return json({ ok: true, skipped: "locked, finished or not initialised" });
+      let p = lease[0];
+      const targets: string[] = p.targets || [];
+      // Target hexes: FAA-assigned codes seen on registered rows of the watch fleet.
+      const hexRows = targets.length ? await sql.unsafe(`
+        SELECT lower(icao_code) AS h, upper(registration) AS r, count(*) AS n FROM live_flight_detections_rows
+        WHERE upper(registration) = ANY($1) AND icao_code ~ '^[0-9a-fA-F]{6}$'
+          AND detection_timestamp > now() - interval '400 days'
+        GROUP BY 1,2 ORDER BY 3 DESC`, [targets]).catch(() => []) : [];
+      const hexMap = new Map<string, string>();
+      for (const h of hexRows as any[]) if (!hexMap.has(h.h)) hexMap.set(h.h, h.r);
+      const hexes = [...hexMap.keys()];
+      // Keep earlier target_hex rows aligned with the owning airframe (most-seen registration per hex).
+      for (const [h, r] of hexMap) {
+        await sql`UPDATE public.xxb_attributions SET attributed_reg = ${r}
+          WHERE attribution_method = 'target_hex' AND attributed_icao24 = ${h} AND attributed_reg <> ${r}`.catch(() => {});
+      }
+      let slice = p.slice_minutes as number;
+      let cursor = new Date(p.cursor_ts);
+      const end = new Date(p.end_ts);
+      let inserted = 0, slices = 0, lastErr: string | null = null;
+      const X = isXxb("registration");
+      while (Date.now() - t0 < budgetMs && cursor < end) {
+        const a = cursor.toISOString();
+        const z = new Date(Math.min(cursor.getTime() + slice * 60_000, end.getTime() + 1000)).toISOString();
+        try {
+          await sql.begin(async (tx: any) => {
+            await tx.unsafe(`SET LOCAL statement_timeout = '40s'`);
+            let n = 0;
+            // Tier 1 — exact hex bridge within ±60 s
+            const r1 = await tx.unsafe(`
+              INSERT INTO public.xxb_attributions (xxb_record_id, source_table, xxb_timestamp, xxb_lat, xxb_lng, xxb_alt,
+                attributed_icao24, attributed_reg, attribution_tier, attribution_method, bridge_record_id, bridge_table,
+                time_delta_sec, confidence, evidence_refs, attributed_by)
+              SELECT x.id::text, '${source}', x.detection_timestamp, x.latitude, x.longitude, round(x.altitude::numeric)::int,
+                lower(x.icao_code), b.registration, 1, 'icao_bridge', b.id::text, '${source}',
+                abs(extract(epoch from b.detection_timestamp - x.detection_timestamp)), 1.00,
+                '{"method":"exact_hex_match_within_60s","sweep":true}'::jsonb, 'auto:xxb-unmask/sweep'
+              FROM ${source} x
+              JOIN LATERAL (SELECT id, registration, detection_timestamp FROM ${source}
+                WHERE icao_code = x.icao_code AND NOT (${X})
+                  AND detection_timestamp BETWEEN x.detection_timestamp - interval '60 seconds' AND x.detection_timestamp + interval '60 seconds'
+                LIMIT 1) b ON true
+              WHERE x.detection_timestamp >= '${a}' AND x.detection_timestamp < '${z}'
+                AND ${isXxb("x.registration")} AND x.icao_code ~ '^[0-9a-fA-F]{6}$'
+              ON CONFLICT DO NOTHING`);
+            n += r1.count || 0;
+            // Tier 2 — kinematic continuity (<500 m, ±30 s) to a registered track
+            const r2 = await tx.unsafe(`
+              INSERT INTO public.xxb_attributions (xxb_record_id, source_table, xxb_timestamp, xxb_lat, xxb_lng, xxb_alt,
+                attributed_icao24, attributed_reg, attribution_tier, attribution_method, bridge_record_id, bridge_table,
+                time_delta_sec, space_delta_m, confidence, evidence_refs, attributed_by)
+              SELECT x.id::text, '${source}', x.detection_timestamp, x.latitude, x.longitude, round(x.altitude::numeric)::int,
+                lower(r.icao_code), r.registration, 2, 'track_continuity', r.id::text, '${source}',
+                extract(epoch from r.detection_timestamp - x.detection_timestamp), r.d, 0.95,
+                '{"method":"kinematic_continuity_500m_30s","sweep":true}'::jsonb, 'auto:xxb-unmask/sweep'
+              FROM ${source} x
+              JOIN LATERAL (SELECT id, registration, icao_code, detection_timestamp,
+                  111320*sqrt(power(latitude-x.latitude,2)+power((longitude-x.longitude)*cos(radians(x.latitude)),2)) AS d
+                FROM ${source}
+                WHERE NOT (${X}) AND registration IS NOT NULL
+                  AND detection_timestamp BETWEEN x.detection_timestamp - interval '30 seconds' AND x.detection_timestamp + interval '30 seconds'
+                  AND latitude BETWEEN x.latitude - 0.005 AND x.latitude + 0.005
+                  AND longitude BETWEEN x.longitude - 0.006 AND x.longitude + 0.006
+                ORDER BY 5 LIMIT 1) r ON r.d < 500
+              WHERE x.detection_timestamp >= '${a}' AND x.detection_timestamp < '${z}'
+                AND ${isXxb("x.registration")} AND x.latitude IS NOT NULL
+              ON CONFLICT DO NOTHING`);
+            n += r2.count || 0;
+            // Tier 2b — cross-archive continuity: XXB in this archive vs a registered live-feed track
+            if (source !== "live_flight_detections_rows") {
+              const r2b = await tx.unsafe(`
+                INSERT INTO public.xxb_attributions (xxb_record_id, source_table, xxb_timestamp, xxb_lat, xxb_lng, xxb_alt,
+                  attributed_icao24, attributed_reg, attribution_tier, attribution_method, bridge_record_id, bridge_table,
+                  time_delta_sec, space_delta_m, confidence, evidence_refs, attributed_by)
+                SELECT x.id::text, '${source}', x.detection_timestamp, x.latitude, x.longitude, round(x.altitude::numeric)::int,
+                  lower(r.icao_code), r.registration, 2, 'cross_archive_continuity', r.id::text, 'live_flight_detections_rows',
+                  extract(epoch from r.detection_timestamp - x.detection_timestamp), r.d, 0.92,
+                  '{"method":"cross_archive_continuity_500m_30s","sweep":true}'::jsonb, 'auto:xxb-unmask/sweep'
+                FROM ${source} x
+                JOIN LATERAL (SELECT id, registration, icao_code, detection_timestamp,
+                    111320*sqrt(power(latitude-x.latitude,2)+power((longitude-x.longitude)*cos(radians(x.latitude)),2)) AS d
+                  FROM live_flight_detections_rows
+                  WHERE NOT (${X}) AND registration IS NOT NULL
+                    AND detection_timestamp BETWEEN x.detection_timestamp - interval '30 seconds' AND x.detection_timestamp + interval '30 seconds'
+                    AND latitude BETWEEN x.latitude - 0.005 AND x.latitude + 0.005
+                    AND longitude BETWEEN x.longitude - 0.006 AND x.longitude + 0.006
+                  ORDER BY 5 LIMIT 1) r ON r.d < 500
+                WHERE x.detection_timestamp >= '${a}' AND x.detection_timestamp < '${z}'
+                  AND ${isXxb("x.registration")} AND x.latitude IS NOT NULL
+                ON CONFLICT DO NOTHING`);
+              n += r2b.count || 0;
+            }
+            // Target fleet — XXB row broadcasting a watch-fleet FAA hex
+            if (hexes.length) {
+              const cases = [...hexMap].map(([h, r]) => `WHEN '${h}' THEN '${r}'`).join(" ");
+              const r3 = await tx.unsafe(`
+                INSERT INTO public.xxb_attributions (xxb_record_id, source_table, xxb_timestamp, xxb_lat, xxb_lng, xxb_alt,
+                  attributed_icao24, attributed_reg, attribution_tier, attribution_method, confidence, evidence_refs, attributed_by)
+                SELECT x.id::text, '${source}', x.detection_timestamp, x.latitude, x.longitude, round(x.altitude::numeric)::int,
+                  lower(x.icao_code), CASE lower(x.icao_code) ${cases} END, 1, 'target_hex', 0.98,
+                  '{"method":"watch_fleet_hex_under_mlat_tag","sweep":true}'::jsonb, 'auto:xxb-unmask/sweep'
+                FROM ${source} x
+                WHERE x.detection_timestamp >= '${a}' AND x.detection_timestamp < '${z}'
+                  AND ${isXxb("x.registration")} AND lower(x.icao_code) = ANY($1)
+                ON CONFLICT DO NOTHING`, [hexes]);
+              n += r3.count || 0;
+            }
+            inserted += n;
+          });
+          cursor = new Date(z);
+          slices++;
+          if (slice < 360) slice = Math.min(360, Math.round(slice * 1.5));
+        } catch (e) {
+          lastErr = e instanceof Error ? e.message : String(e);
+          if (slice <= 2) { cursor = new Date(z); lastErr = `skipped slice ${a}: ${lastErr}`; }
+          slice = Math.max(2, Math.floor(slice / 2));
+        }
+      }
+      const done = cursor >= end;
+      await sql`
+        UPDATE public.xxb_sweep_progress SET cursor_ts = ${cursor.toISOString()}, slice_minutes = ${slice},
+          slices_done = slices_done + ${slices}, inserted = inserted + ${inserted},
+          status = ${done ? "done" : "running"}, last_error = ${lastErr}, lease_until = NULL, updated_at = now()
+        WHERE source_table = ${source}`;
+      return json({ ok: true, source, cursor: cursor.toISOString(), end: end.toISOString(), slices, inserted, slice_minutes: slice, done, target_hexes: Object.fromEntries(hexMap), last_error: lastErr });
+    }
+
+    if (action === "sweep_status") {
+      const prog = await sql`SELECT * FROM public.xxb_sweep_progress ORDER BY source_table`.catch(() => []);
+      const targets: string[] = (body.targets || ["N912KC", "N913KC", "N911KC", "N597E"]).map((t: string) => String(t).toUpperCase());
+      const fleet = await sql`
+        SELECT upper(attributed_reg) AS reg, attribution_method AS method, source_table,
+               count(*)::int AS n, min(xxb_timestamp) AS first, max(xxb_timestamp) AS last
+        FROM public.xxb_attributions WHERE upper(attributed_reg) = ANY(${targets})
+        GROUP BY 1,2,3 ORDER BY 1, 4 DESC`;
+      const monthly = await sql`
+        SELECT upper(attributed_reg) AS reg, date_trunc('month', xxb_timestamp)::date AS month, count(DISTINCT xxb_record_id)::int AS n
+        FROM public.xxb_attributions WHERE upper(attributed_reg) = ANY(${targets})
+        GROUP BY 1,2 ORDER BY 1,2`;
+      const top = await sql`
+        SELECT upper(attributed_reg) AS reg, count(DISTINCT xxb_record_id)::int AS n,
+               array_agg(DISTINCT attribution_method) AS methods
+        FROM public.xxb_attributions WHERE attributed_reg IS NOT NULL
+        GROUP BY 1 ORDER BY 2 DESC LIMIT 25`;
+      return json({ ok: true, progress: prog, fleet, monthly, top_unmasked: top });
     }
 
     return json({

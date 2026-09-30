@@ -274,7 +274,7 @@ export function LegalAnalysisAI() {
 
   return (
     <CyberPanel
-      title="Legal Analysis AI (Gemini Pro · 19.7M Records · 334K Correlations)"
+      title="Legal Analysis AI (Live data · Settled facts · Master Dossier)"
       icon={<Scale className="w-4 h-4" />}
       className="h-full"
     >
@@ -470,11 +470,11 @@ export function LegalAnalysisAI() {
         <div className="flex items-center gap-2 mb-3 text-xs flex-wrap">
           <Database className="w-3 h-3 text-primary" />
           <span className="text-muted-foreground">
-            NeonDB: {liveStats ? `${(liveStats.totalDetections).toLocaleString()} detections · ${(liveStats.uniqueAircraft).toLocaleString()} aircraft · 330+ tables` : "330+ tables, 15M+ records"}
+            NeonDB: {liveStats ? `${(liveStats.totalDetections).toLocaleString()} detections · ${(liveStats.uniqueAircraft).toLocaleString()} aircraft · live counts` : "Live counts loading"}
           </span>
           <span className="text-primary">•</span>
           <Brain className="w-3 h-3 text-secondary" />
-          <span className="text-muted-foreground">Gemini 3 Flash Preview</span>
+          <span className="text-muted-foreground">Grounded in settled facts + dossier</span>
           <span className="text-primary">•</span>
           <Activity className="w-3 h-3 text-success" />
           <span className="text-success">LIVE · auto-refresh 5m</span>

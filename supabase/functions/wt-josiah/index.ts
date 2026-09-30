@@ -274,7 +274,9 @@ const TOOLS = {
           "Returns AOI passes, dwell minutes, night passes, lowest altitude over the residence, low-speed orbit " +
           "samples, and how many samples actually terminated at a hospital pad versus its home base. " +
           "Call this whenever a medical or air-ambulance registrant is discussed — a medical livery is a " +
-          "concealment vector, never an exemption.",
+          "concealment vector, never an exemption. ALWAYS pass days: 730 (the full observation window) unless " +
+          "the user explicitly asks about a shorter period; a 30-day window misses most of the record and will " +
+          "wrongly clear an airframe.",
         parameters: {
           type: "object",
           properties: { registration: { type: "string" }, days: { type: "number" } },

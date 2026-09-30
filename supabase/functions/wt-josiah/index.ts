@@ -287,7 +287,7 @@ const TOOLS = {
     run: async (sql: any, a: any) => {
       const reg = String(a.registration ?? "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
       if (!reg) return { error: "registration required" };
-      const days = Math.min(Math.max(Number(a.days) || 365, 1), 1095);
+      const days = Math.min(Math.max(Number(a.days) || 730, 1), 1095);
       const aoiLat = AOI.lat, aoiLng = AOI.lng;
       const rows = await safe(
         sql.unsafe(`

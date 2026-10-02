@@ -34,6 +34,7 @@ import SystemLearning from "./pages/SystemLearning";
 import Investigator from "./pages/Investigator";
 import DailyBrief from "./pages/DailyBrief";
 import FocusFire from "./pages/FocusFire";
+import DataMap from "./pages/DataMap";
 
 
 const queryClient = new QueryClient({
@@ -194,6 +195,11 @@ const App = () => (
             <Route path="/focus" element={
               <ProtectedRoute>
                 <FocusFire />
+              </ProtectedRoute>
+            } />
+            <Route path="/data-map" element={
+              <ProtectedRoute>
+                <DataMap />
               </ProtectedRoute>
             } />
             <Route path="/daily-brief" element={

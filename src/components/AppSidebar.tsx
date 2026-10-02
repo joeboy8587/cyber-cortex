@@ -23,7 +23,8 @@ import {
   HeartPulse,
   Fuel,
   Plane,
-  Target
+  Target,
+  Map as MapIcon
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useAuth } from "@/hooks/useAuth";
@@ -175,6 +176,12 @@ const navigationItems = [
     url: "/focus",
     icon: Target,
     description: "Conflicts · Deep Dive · Pairs · Exhibits"
+  },
+  {
+    title: "Data Map",
+    url: "/data-map",
+    icon: MapIcon,
+    description: "Every table · Real counts · Quality grades"
   },
   {
     title: "Daily Brief",

@@ -675,12 +675,21 @@ async function snapshot(sql: any, b: any) {
     const k = `${r.reg}|${new Date(r.ts).getTime()}|${r.lat}|${r.lng}`;
     if (seen.has(k)) return false; seen.add(k); return true;
   });
+  // Live screen contacts (from the real-time feed) are frozen alongside stored rows.
+  const live = Array.isArray(b?.contacts) ? b.contacts.slice(0, 200) : [];
+  for (const c of live) {
+    const reg = String(c?.registration ?? "").toUpperCase().slice(0, 12);
+    if (!reg) continue;
+    rows.push({ reg, hex: c?.icao ?? null, ts: c?.detected_at ?? at.toISOString(),
+      lat: Number(c?.latitude) || null, lng: Number(c?.longitude) || null, alt: Number(c?.altitude) || null,
+      src: "live_screen", operator: c?.entity ? String(c.entity).slice(0, 120) : null } as any);
+  }
   if (rows.length < 3 && b?.file !== false) return { ok: false, error: `Only ${rows.length} position reports found in that window — not enough to file.`, frozen_rows: rows.length };
   const by = new Map<string, any>();
   for (const r of rows as any[]) {
     const k = r.reg || r.hex || "UNKNOWN";
     const a = Number(r.alt);
-    const s = by.get(k) ?? { reg: k, hex: r.hex, pings: 0, min_alt: null as number | null, max_alt: 0, first: r.ts, last: r.ts };
+    const s = by.get(k) ?? { reg: k, hex: r.hex, operator: (r as any).operator ?? null, pings: 0, min_alt: null as number | null, max_alt: 0, first: r.ts, last: r.ts };
     s.pings++; s.last = r.ts;
     if (Number.isFinite(a) && a > 0) { s.min_alt = s.min_alt == null ? a : Math.min(s.min_alt, a); s.max_alt = Math.max(s.max_alt, a); }
     by.set(k, s);
@@ -694,7 +703,7 @@ async function snapshot(sql: any, b: any) {
   const shellRe = new RegExp(SHELL_KEYWORDS.join("|"));
   for (const a of all) {
     const m: any = meta.get(a.reg);
-    a.operator = m?.operator ?? null; a.type = m?.aircraft_type ?? null;
+    a.operator = m?.operator ?? a.operator ?? null; a.type = m?.aircraft_type ?? null;
     a.shell = !!a.operator && shellRe.test(String(a.operator).toUpperCase());
     a.airway = a.min_alt != null && a.min_alt >= 10000;
     a.low = a.min_alt != null && a.min_alt < 1500;

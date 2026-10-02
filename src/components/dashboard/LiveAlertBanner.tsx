@@ -90,6 +90,20 @@ export function LiveAlertBanner({
   const [cacheAgeMinutes, setCacheAgeMinutes] = useState<number | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const previousAlertsRef = useRef<Set<string>>(new Set());
+  const [freeze, setFreeze] = useState<{ state: 'idle' | 'saving' | 'saved' | 'error'; code?: string; hash?: string; at?: string; msg?: string }>({ state: 'idle' });
+  const lastFreezeRef = useRef<number>(0);
+  const freezeMoment = useCallback(async (list: FlightAlert[]) => {
+    lastFreezeRef.current = Date.now();
+    setFreeze({ state: 'saving' });
+    const { data, error } = await supabase.functions.invoke('wt-focus', {
+      body: {
+        action: 'snapshot', at: new Date().toISOString(), window_minutes: 15,
+        contacts: list.map(a => ({ registration: a.registration, altitude: a.altitude, latitude: a.latitude, longitude: a.longitude, entity: a.entity, detected_at: a.detected_at })),
+      },
+    });
+    if (error || !data?.ok) { setFreeze({ state: 'error', msg: data?.error || error?.message || 'Could not freeze' }); return; }
+    setFreeze({ state: 'saved', code: data.exhibit_code, hash: data.evidence_hash, at: new Date().toLocaleTimeString() });
+  }, []);
 
   const playAlertSound = useCallback(() => {
     if (!soundEnabled) return;
@@ -343,6 +357,15 @@ export function LiveAlertBanner({
     shellTails.size >= 2 && uniqueShellOperators.size >= 2 && lawEnforcementPresent;
   const enterpriseCritical = enterpriseCoordination; // escalates banner to CRITICAL
 
+  // Auto-freeze: a live critical coordination moment is frozen once per 30 minutes.
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  useEffect(() => {
+    const live = alerts.filter(a => !isStaleDetection(a.detected_at));
+    if (!enterpriseCritical || live.length === 0) return;
+    if (Date.now() - lastFreezeRef.current < 30 * 60 * 1000) return;
+    freezeMoment(live);
+  }, [enterpriseCritical, alerts, freezeMoment]);
+
   if (alerts.length === 0) {
     return (
       <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-3 flex items-center justify-between">
@@ -380,6 +403,19 @@ export function LiveAlertBanner({
               <Badge variant="destructive" className="animate-pulse">ENTERPRISE_COORDINATION • CRITICAL</Badge>
               <span className="text-foreground/80">
                 {shellTails.size} shell tails across {uniqueShellOperators.size} operators + state-actor overwatch detected in same scan
+              </span>
+              <span className="ml-auto flex items-center gap-2">
+                {freeze.state === 'saving' && <Badge variant="outline">Freezing this moment…</Badge>}
+                {freeze.state === 'saved' && (
+                  <Badge variant="outline" title={`Fingerprint ${freeze.hash}`}>
+                    Frozen {freeze.at} · draft {freeze.code} · {freeze.hash?.slice(0, 10)}…
+                  </Badge>
+                )}
+                {freeze.state === 'error' && <Badge variant="outline" title={freeze.msg}>Freeze failed</Badge>}
+                <Button size="sm" variant="outline" className="h-6 text-xs" disabled={freeze.state === 'saving'}
+                  onClick={(e) => { e.stopPropagation(); freezeMoment(alerts.filter(a => !isStaleDetection(a.detected_at))); }}>
+                  Freeze now
+                </Button>
               </span>
             </div>
           </div>

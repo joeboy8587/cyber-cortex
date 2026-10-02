@@ -662,14 +662,20 @@ async function snapshot(sql: any, b: any) {
   const win = Math.min(60, Math.max(5, Number(b?.window_minutes) || 15));
   const from = new Date(at.getTime() - win * 60000).toISOString();
   const to = new Date(at.getTime() + win * 60000).toISOString();
-  const rows = await sql`
+  const q = (t: string) => safe(sql.unsafe(`
     SELECT UPPER(registration) AS reg, icao_code AS hex, detection_timestamp AS ts,
-           latitude AS lat, longitude AS lng, altitude AS alt
-    FROM live_flight_detections_rows
-    WHERE detection_timestamp BETWEEN ${from} AND ${to}
-      AND latitude BETWEEN ${AOI.lat - PAD} AND ${AOI.lat + PAD}
-      AND longitude BETWEEN ${AOI.lng - PAD} AND ${AOI.lng + PAD}
-    ORDER BY detection_timestamp ASC LIMIT 20000`;
+           latitude AS lat, longitude AS lng, altitude AS alt, '${t}' AS src
+    FROM ${t}
+    WHERE detection_timestamp BETWEEN $1 AND $2
+      AND latitude BETWEEN $3 AND $4 AND longitude BETWEEN $5 AND $6
+    ORDER BY detection_timestamp ASC LIMIT 20000`, [from, to, AOI.lat - PAD, AOI.lat + PAD, AOI.lng - PAD, AOI.lng + PAD]), [] as any[]);
+  const [a1, a2] = await Promise.all([q("live_flight_detections"), q("live_flight_detections_rows")]);
+  const seen = new Set<string>();
+  const rows = [...(a1 as any[]), ...(a2 as any[])].filter((r) => {
+    const k = `${r.reg}|${new Date(r.ts).getTime()}|${r.lat}|${r.lng}`;
+    if (seen.has(k)) return false; seen.add(k); return true;
+  });
+  if (rows.length < 3 && b?.file !== false) return { ok: false, error: `Only ${rows.length} position reports found in that window — not enough to file.`, frozen_rows: rows.length };
   const by = new Map<string, any>();
   for (const r of rows as any[]) {
     const k = r.reg || r.hex || "UNKNOWN";

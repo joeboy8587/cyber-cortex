@@ -375,6 +375,42 @@ export type Database = {
         }
         Relationships: []
       }
+      data_map_census: {
+        Row: {
+          by_category: Json
+          empty_tables: number
+          id: string
+          sha256_hash: string
+          table_count: number
+          tables: Json
+          taken_at: string
+          total_bytes: number
+          total_rows: number
+        }
+        Insert: {
+          by_category?: Json
+          empty_tables: number
+          id?: string
+          sha256_hash: string
+          table_count: number
+          tables?: Json
+          taken_at?: string
+          total_bytes: number
+          total_rows: number
+        }
+        Update: {
+          by_category?: Json
+          empty_tables?: number
+          id?: string
+          sha256_hash?: string
+          table_count?: number
+          tables?: Json
+          taken_at?: string
+          total_bytes?: number
+          total_rows?: number
+        }
+        Relationships: []
+      }
       discovered_evidence_sources: {
         Row: {
           added_to_investigation: boolean

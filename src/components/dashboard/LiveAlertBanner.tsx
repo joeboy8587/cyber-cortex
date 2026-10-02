@@ -322,8 +322,10 @@ export function LiveAlertBanner({
   const criticalCount = liveAlerts.filter(a => a.threat_level === 'critical').length;
   const highCount = liveAlerts.filter(a => a.threat_level === 'high').length;
   // Count UNIQUE tails (not operators) flagged as shell-linked
+  // Airway cruise (>=10,000 ft) is noise floor, never part of a coordination count.
+  const localAlerts = alerts.filter(a => !(a.altitude >= 10000));
   const shellTails = new Set(
-    alerts
+    localAlerts
       .filter(a => a.flagged_reasons.some(r => r.startsWith('SHELL')))
       .map(a => a.registration.toUpperCase())
   );
@@ -331,7 +333,7 @@ export function LiveAlertBanner({
 
   // Enterprise coordination: multi-shell + state-actor co-occurrence in same scan
   const uniqueShellOperators = new Set(
-    alerts
+    localAlerts
       .filter(a => a.flagged_reasons.some(r => r.startsWith('SHELL')))
       .map(a => (a.entity || '').toUpperCase())
       .filter(Boolean)

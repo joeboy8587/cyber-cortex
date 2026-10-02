@@ -156,3 +156,6 @@ verify_jwt = false
 
 [functions.wt-focus]
 verify_jwt = false
+
+[functions.data-map]
+verify_jwt = false

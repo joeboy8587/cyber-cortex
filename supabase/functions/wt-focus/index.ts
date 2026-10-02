@@ -664,7 +664,7 @@ async function snapshot(sql: any, b: any) {
   const to = new Date(at.getTime() + win * 60000).toISOString();
   const rows = await sql`
     SELECT UPPER(registration) AS reg, icao_code AS hex, detection_timestamp AS ts,
-           latitude AS lat, longitude AS lng, altitude AS alt, ground_speed AS spd
+           latitude AS lat, longitude AS lng, altitude AS alt
     FROM live_flight_detections_rows
     WHERE detection_timestamp BETWEEN ${from} AND ${to}
       AND latitude BETWEEN ${AOI.lat - PAD} AND ${AOI.lat + PAD}

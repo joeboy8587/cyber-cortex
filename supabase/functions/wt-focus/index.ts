@@ -652,6 +652,94 @@ async function lockSettledFact(b: any) {
   return { ok: true, id: data?.id, evidence_hash: hash, exhibit_id: exhibitId, exhibit_error: exhibitError };
 }
 
+// ───────────── Incident snapshot: freeze a critical multi-aircraft moment ─────────────
+// Freezes every AOI detection ±window around a moment, sets airway cruise traffic aside
+// (>=10,000 ft — taxonomy integrity), hashes the frozen rows, and files a DRAFT exhibit
+// for human review. Never publishes; raw rows are untouched.
+async function snapshot(sql: any, b: any) {
+  const at = b?.at ? new Date(b.at) : new Date();
+  if (isNaN(at.getTime())) return { ok: false, error: "Bad time." };
+  const win = Math.min(60, Math.max(5, Number(b?.window_minutes) || 15));
+  const from = new Date(at.getTime() - win * 60000).toISOString();
+  const to = new Date(at.getTime() + win * 60000).toISOString();
+  const rows = await sql`
+    SELECT UPPER(registration) AS reg, icao_code AS hex, detection_timestamp AS ts,
+           latitude AS lat, longitude AS lng, altitude AS alt, ground_speed AS spd
+    FROM live_flight_detections_rows
+    WHERE detection_timestamp BETWEEN ${from} AND ${to}
+      AND latitude BETWEEN ${AOI.lat - PAD} AND ${AOI.lat + PAD}
+      AND longitude BETWEEN ${AOI.lng - PAD} AND ${AOI.lng + PAD}
+    ORDER BY detection_timestamp ASC LIMIT 20000`;
+  const by = new Map<string, any>();
+  for (const r of rows as any[]) {
+    const k = r.reg || r.hex || "UNKNOWN";
+    const a = Number(r.alt);
+    const s = by.get(k) ?? { reg: k, hex: r.hex, pings: 0, min_alt: null as number | null, max_alt: 0, first: r.ts, last: r.ts };
+    s.pings++; s.last = r.ts;
+    if (Number.isFinite(a) && a > 0) { s.min_alt = s.min_alt == null ? a : Math.min(s.min_alt, a); s.max_alt = Math.max(s.max_alt, a); }
+    by.set(k, s);
+  }
+  const all = [...by.values()];
+  const regs = all.map((a) => a.reg).filter((r) => TAIL.test(r));
+  const dossier = regs.length ? await safe(sql`
+    SELECT UPPER(registration) AS reg, operator, aircraft_type FROM aircraft_dossier
+    WHERE UPPER(registration) = ANY(string_to_array(${regs.join("|")}, '|'))`, [] as any[]) : [];
+  const meta = new Map((dossier as any[]).map((d) => [d.reg, d]));
+  const shellRe = new RegExp(SHELL_KEYWORDS.join("|"));
+  for (const a of all) {
+    const m: any = meta.get(a.reg);
+    a.operator = m?.operator ?? null; a.type = m?.aircraft_type ?? null;
+    a.shell = !!a.operator && shellRe.test(String(a.operator).toUpperCase());
+    a.airway = a.min_alt != null && a.min_alt >= 10000;
+    a.low = a.min_alt != null && a.min_alt < 1500;
+  }
+  const local = all.filter((a) => !a.airway);
+  const low = local.filter((a) => a.low);
+  const shells = local.filter((a) => a.shell);
+  const byOp = new Map<string, string[]>();
+  for (const s of shells) byOp.set(s.operator, [...(byOp.get(s.operator) ?? []), s.reg]);
+  const multiFleet = [...byOp.entries()].filter(([, t]) => t.length > 1).map(([operator, tails]) => ({ operator, tails }));
+  const hash = await sha256(JSON.stringify(rows));
+  const stamp = at.toISOString().slice(0, 10).replace(/-/g, "");
+  const attestation = `${low.length} aircraft below 1,500 ft flagged out of ${local.length} local contacts (${all.length - local.length} airway-cruise contacts set aside) in the Kern AOI, ${from} to ${to} UTC — ${rows.length} frozen position reports.`;
+  const result: any = {
+    ok: true, at: at.toISOString(), window_minutes: win, frozen_rows: rows.length, evidence_hash: hash,
+    attestation, contacts: all.sort((x, y) => (x.min_alt ?? 1e9) - (y.min_alt ?? 1e9)),
+    low_altitude: low.map((a) => a.reg), shell_tails: shells.map((a) => a.reg), multi_fleet: multiFleet,
+    airway_set_aside: all.filter((a) => a.airway).map((a) => a.reg),
+  };
+  if (b?.file === false) return result;
+
+  const db = cloud();
+  const caseId = String(b?.case_id ?? "10f585f0-eb92-4897-8a11-2a78bee39846");
+  const { data: caseRow } = await db.from("cases").select("case_code").eq("case_id", caseId).maybeSingle();
+  const code = caseRow?.case_code ?? "CASE-003-FAA";
+  const name = `${stamp}_${code}_SNAPSHOT_${at.toISOString().slice(11, 16).replace(":", "")}Z_${local.length}contacts`;
+  const desc = [
+    attestation,
+    `Below 1,500 ft: ${low.map((a) => `${a.reg} (${a.min_alt} ft)`).join(", ") || "none"}.`,
+    `Shell-registered: ${shells.map((a) => `${a.reg} — ${a.operator}`).join("; ") || "none"}.`,
+    multiFleet.length ? `Same registrant airborne with multiple tails: ${multiFleet.map((m) => `${m.operator} (${m.tails.join(", ")})`).join("; ")}.` : "",
+    `Regulatory reference: 14 CFR § 91.119(b) minimum safe altitudes over congested areas. Label: PATTERN ANOMALY — Network Context.`,
+    `Layers: behaviour (altitude, co-presence) and registry (FAA registrant) are reported separately. Source: public ADS-B/MLAT broadcasts and FAA registry, independently verifiable.`,
+  ].filter(Boolean).join("\n");
+  const { data: ex, error } = await db.from("exhibits").insert({
+    case_id: caseId, exhibit_code: await nextExhibitCode(db, code), exhibit_name: name.slice(0, 255), tier: 2,
+    evidence_type: "incident_snapshot", description: desc.slice(0, 4000),
+    legal_significance: "Frozen multi-aircraft envelope at a critical moment; queued for human review before any use.",
+    file_count: 1, promotion_rule: "focus_fire.incident_snapshot", sha256_hash: hash,
+    chain_of_custody: { frozen_at: new Date().toISOString(), window: { from, to }, rows: rows.length, contacts: result.contacts.slice(0, 60) },
+    status: "draft",
+  }).select("exhibit_id, exhibit_code").maybeSingle();
+  if (error) return { ...result, file_error: error.message };
+  await db.from("exhibit_audit_trail").insert({
+    case_id: caseId, exhibit_id: ex?.exhibit_id, action: "incident_snapshot", rule_applied: "focus_fire.incident_snapshot",
+    result_hash: hash, records_evaluated: rows.length, records_promoted: local.length, performed_by: "focus-fire",
+    metadata: { at: at.toISOString(), window_minutes: win, low: result.low_altitude, shells: result.shell_tails },
+  }).then(() => {}, () => {});
+  return { ...result, exhibit_id: ex?.exhibit_id, exhibit_code: ex?.exhibit_code, exhibit_name: name };
+}
+
 async function supersedeSettledFact(id: string, reason: string) {
   const db = cloud();
   const { error } = await db.from("settled_facts")
@@ -697,6 +785,7 @@ Deno.serve(async (req) => {
     if (action === "handoffs") {
       return json(await handoffs(sql, Math.min(90, Number(body?.days) || 30), Math.min(60, Number(body?.gap_minutes) || 20)));
     }
+    if (action === "snapshot") return json(await snapshot(sql, body));
     if (action === "fronts") {
       return json(await fronts(sql, Math.min(3650, Number(body?.days) || 365)));
     }

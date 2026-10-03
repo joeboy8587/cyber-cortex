@@ -40,6 +40,8 @@ export function PolicyViolationPanel() {
     const { data, error } = await supabase
       .from("policy_violations")
       .select("*")
+      // GHOST-AE rows are US military (DoD AE-block) aircraft, not KCSO — kept on record, hidden here.
+      .neq("rule_code", "GHOST-AE")
       .order("detected_at", { ascending: false })
       .limit(200);
     if (error) toast.error(`Load failed: ${error.message}`);
@@ -86,7 +88,7 @@ export function PolicyViolationPanel() {
         </CardTitle>
         <p className="font-mono text-xs text-muted-foreground">
           Auto-flags every KCSO flight that violates the Air Support Unit Operations Manual
-          (B-401 night/mountain, C-100 hover, A-401 surveillance, B-1102 transport, foreign-prefix ghosts).
+          (B-401 night/mountain, C-100 hover, A-401 surveillance, B-1102 transport).
         </p>
       </CardHeader>
       <CardContent className="space-y-4">

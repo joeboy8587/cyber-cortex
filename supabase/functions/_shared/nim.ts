@@ -69,10 +69,11 @@ export async function nimChat(opts: NimChatOptions): Promise<Response> {
       });
       if (res.ok) return res;
       last = res;
-      if (![503, 529, 404, 410, 429].includes(res.status)) return res;
-      console.error(`NIM model ${m} unavailable (${res.status}), trying next`);
+      const body = await res.text().catch(() => "");
+      console.error(`NIM model ${m} failed (${res.status}): ${body.slice(0, 300)}`);
     }
-    if (last) return last;
+    // All NVIDIA models failed — fall through to the Lovable AI Gateway so the user still gets an answer.
+    if (last) console.error("All NIM models failed; falling back to Lovable AI Gateway");
   }
 
 

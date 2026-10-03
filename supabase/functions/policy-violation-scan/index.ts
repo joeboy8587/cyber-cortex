@@ -128,26 +128,7 @@ function rules(lookbackDays: number): Rule[] {
         LIMIT 500
       `,
     },
-    {
-      code: "GHOST-AE",
-      title: "Foreign AE-prefix ICAO inside KCSO AOI (identity laundering signal)",
-      manual_section: "Cross-reference: Manual A-100 vs FAA Registry",
-      severity: "critical",
-      sql: `
-        SELECT icao24 AS icao, callsign, detection_timestamp AS detected_at,
-               jsonb_build_object(
-                 'altitude_ft', altitude,
-                 'lat', latitude, 'lng', longitude,
-                 'rule', 'foreign_prefix_in_aoi'
-               ) AS evidence
-        FROM live_flight_detections_rows
-        WHERE detection_timestamp >= ${since}
-          AND icao24 ILIKE 'AE%'
-          AND latitude BETWEEN 35.30 AND 35.55
-          AND longitude BETWEEN -119.15 AND -118.90
-        LIMIT 500
-      `,
-    },
+    // GHOST-AE removed: AE-prefix ICAOs are US DoD aircraft, not KCSO. Military flights belong in Posse Comitatus analysis, not KCSO manual audits.
   ];
 }
 

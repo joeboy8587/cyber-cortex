@@ -37,8 +37,9 @@ export function FARBadge({ altitudeFt, citation, description, className }: Props
           </Badge>
         </TooltipTrigger>
         <TooltipContent className="max-w-xs text-xs">
-          <div className="font-semibold mb-1">FAR Violation — {severity.toUpperCase()}</div>
+          <div className="font-semibold mb-1">Low-altitude lead — {severity.toUpperCase()}</div>
           <div>{tip}</div>
+          <div className="mt-1 text-muted-foreground">This is the raw sea-level reading, not height above ground. Bakersfield ground is ~400–500 ft, so confirm with the FAR scan before treating it as a violation.</div>
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>

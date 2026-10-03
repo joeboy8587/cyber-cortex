@@ -14,6 +14,9 @@ interface ScanResult {
   scanned?: number;
   violations_generated?: number;
   inserted?: number;
+  borderline?: number;
+  cleared_after_agl?: number;
+  terrain_unknown?: number;
 }
 
 /**
@@ -51,8 +54,9 @@ export function FARClassifierPanel() {
           FAR Low-Altitude Classifier — 14 CFR Part 91
         </CardTitle>
         <p className="font-mono text-xs text-muted-foreground">
-          Any aircraft below 1000 ft is routed through the FAA regulations table and cited
-          under 91.119, 91.13, 91.155, or 91.209. Strict rule — no exclusions.
+          Flight feeds report height above sea level, but the FAA rules use height above the ground.
+          Each sighting is converted: sea-level height (corrected for Meadows Field air pressure) minus the
+          ground height from USGS maps. It is flagged only if it is still too low after allowing for measurement error.
         </p>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -78,14 +82,17 @@ export function FARClassifierPanel() {
               <Badge variant="outline">scanned: {result.scanned ?? 0}</Badge>
               <Badge variant="secondary">violations: {result.violations_generated ?? 0}</Badge>
               <Badge variant="destructive">inserted: {result.inserted ?? 0}</Badge>
+              <Badge variant="outline">borderline (not filed): {result.borderline ?? 0}</Badge>
+              <Badge variant="outline">cleared once ground height applied: {result.cleared_after_agl ?? 0}</Badge>
+              {!!result.terrain_unknown && <Badge variant="outline">ground height unavailable: {result.terrain_unknown}</Badge>}
             </div>
           )}
         </div>
 
         <div className="rounded border p-3 bg-muted/20 text-xs font-mono space-y-1">
           <div className="font-semibold text-red-500">Citations applied</div>
-          <div>· <b>91.119(c)</b> — altitude &lt; 500 ft</div>
-          <div>· <b>91.119(b)</b> — &lt; 1000 ft over congested area (Oildale AOI, 3 nm radius)</div>
+          <div>· <b>91.119(c)</b> — under 500 ft above ground</div>
+          <div>· <b>91.119(b)</b> — under 1000 ft above ground over congested area (Oildale AOI, 3 nm radius)</div>
           <div>· <b>91.119(a)</b> — general minimum-safe-altitude fallback</div>
           <div>· <b>91.13</b> — careless/reckless (stacked when 2+ violations present)</div>
           <div>· <b>91.209</b> — night operation escalates severity one tier</div>

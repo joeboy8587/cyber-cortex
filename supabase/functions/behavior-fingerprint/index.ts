@@ -148,10 +148,6 @@ Deno.serve(async (req) => {
       });
     }
 
-    const debugSample = rows[0]
-      ? { lat: rows[0].latitude, lon: rows[0].longitude, latType: typeof rows[0].latitude, lonType: typeof rows[0].longitude, altType: typeof rows[0].altitude }
-      : null;
-
     const sessions: Session[] = [];
     for (const [id, { callsign, pings }] of byIdent) {
       let start = 0;
@@ -187,7 +183,6 @@ Deno.serve(async (req) => {
       airport_consistent_sessions: normal,
       anomalous_sessions: sessions.length - normal,
       anomalous: anomalous,
-      debug_sample: debugSample,
       skipped,
     };
     const hash = await sha256(JSON.stringify(stats));

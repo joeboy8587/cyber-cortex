@@ -479,11 +479,14 @@ Deno.serve(async (req) => {
               data: [],
               nonFatal: true,
               timedOut: isTimeout,
+              schemaError: code === '42703' || code === '42P01',
               code,
               error: rawMsg,
               message: isTimeout
                 ? 'This query timed out before completing — try narrowing the date range or adding filters.'
-                : rawMsg,
+                : (code === '42703' || code === '42P01')
+                  ? `This panel's query needs repair (it asks for a column or table that no longer exists): ${rawMsg}`
+                  : rawMsg,
             };
           }
           break;

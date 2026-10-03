@@ -86,7 +86,7 @@ export function PolicyViolationPanel() {
         </CardTitle>
         <p className="font-mono text-xs text-muted-foreground">
           Auto-flags every KCSO flight that violates the Air Support Unit Operations Manual
-          (B-401 night/mountain, C-100 hover, A-401 surveillance, B-1102 transport, foreign-prefix ghosts).
+          (B-401 night/mountain, C-100 hover, A-401 surveillance, B-1102 transport).
         </p>
       </CardHeader>
       <CardContent className="space-y-4">

@@ -7,6 +7,7 @@
 
 import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { computeAgl, judge, type AglResult } from "../_shared/agl.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -36,6 +37,7 @@ interface Detection {
   altitude: number;
   timestamp?: string | null;
   ground_speed?: number | null;
+  geo_altitude?: number | null;
 }
 
 async function sha256Hex(input: string): Promise<string> {
@@ -61,21 +63,32 @@ interface Classification {
   distance_from_aoi_nm: number;
   night: boolean;
   reasoning: string[];
+  agl?: AglResult;
+  status?: "violation" | "borderline" | "clear" | "unknown";
 }
 
 async function classify(det: Detection, sql: ReturnType<typeof postgres>): Promise<Classification> {
-  const alt = Number(det.altitude ?? 999999);
+  const rawAlt = Number(det.altitude ?? 999999);
   const reasoning: string[] = [];
   const citations: Array<{ citation: string; text: string; description: string }> = [];
 
-  if (alt >= 1000) {
-    return { severity: "none", citations: [], distance_from_aoi_nm: -1, night: false, reasoning: ["altitude >= 1000ft, no FAR minimum-altitude issue"] };
+  // Pre-screen on MSL: anything above 9,000 ft MSL cannot be under 1,000 ft AGL in Kern valley/foothills
+  if (rawAlt >= 9000) {
+    return { severity: "none", citations: [], distance_from_aoi_nm: -1, night: false, reasoning: ["MSL altitude >= 9000ft"], status: "clear" };
   }
+  const agl = await computeAgl({ lat: det.lat, lon: det.lon, altitudeFt: rawAlt, geoAltitudeFt: det.geo_altitude, timestamp: det.timestamp });
+  reasoning.push(`MSL ${agl.msl_ft}ft (${agl.altitude_source}${agl.qnh_inhg ? `, KBFL QNH ${agl.qnh_inhg}` : ""}) − terrain ${agl.terrain_ft ?? "?"}ft = ${agl.agl_ft ?? "?"}ft AGL ±${agl.margin_ft}`);
+  const status1000 = judge(agl.agl_ft, agl.margin_ft, 1000);
+  if (status1000 !== "violation") {
+    return { severity: "none", citations: [], distance_from_aoi_nm: -1, night: false, reasoning, agl, status: status1000 };
+  }
+  // Use the conservative (highest plausible) AGL for all thresholds below
+  const alt = (agl.agl_ft as number) + agl.margin_ft;
 
   const dist = haversineNm(det.lat, det.lon, AOI_LAT, AOI_LON);
   const congested = dist <= CONGESTED_RADIUS_NM;
   const night = isNight(det.timestamp);
-  reasoning.push(`altitude ${alt}ft, ${dist.toFixed(2)}nm from AOI, congested=${congested}, night=${night}`);
+  reasoning.push(`conservative AGL ${alt}ft, ${dist.toFixed(2)}nm from AOI, congested=${congested}, night=${night}`);
 
   // Fetch FAR text once for the applicable rules
   const wantedCitations = ["91.119(a)", "91.119(b)", "91.119(c)", "91.13", "91.155", "91.209"];
@@ -152,7 +165,7 @@ async function classify(det: Detection, sql: ReturnType<typeof postgres>): Promi
     reasoning.push("night operation escalated severity by one tier");
   }
 
-  return { severity, citations, distance_from_aoi_nm: dist, night, reasoning };
+  return { severity, citations, distance_from_aoi_nm: dist, night, reasoning, agl, status: "violation" };
 }
 
 const FAR_FALLBACK: Record<string, string> = {
@@ -209,7 +222,7 @@ Deno.serve(async (req) => {
                     altitude, detection_timestamp AS timestamp, speed AS ground_speed
              FROM ${t}
              WHERE altitude IS NOT NULL
-               AND altitude::int < 1000
+               AND altitude::int > 0 AND altitude::int < 2500
                AND latitude IS NOT NULL AND longitude IS NOT NULL
                AND detection_timestamp > now() - ($1 || ' hours')::interval
              ORDER BY detection_timestamp DESC
@@ -221,6 +234,7 @@ Deno.serve(async (req) => {
       }
 
       const violations: any[] = [];
+      let borderline = 0, cleared = 0, unknown = 0;
       for (const r of rows) {
         const det: Detection = {
           icao: r.icao, registration: r.registration, callsign: r.callsign,
@@ -229,46 +243,47 @@ Deno.serve(async (req) => {
         };
         if (!isFinite(det.lat) || !isFinite(det.lon) || !isFinite(det.altitude)) continue;
         const cls = await classify(det, sql);
+        if (cls.status === "borderline") borderline++;
+        else if (cls.status === "clear") cleared++;
+        else if (cls.status === "unknown") unknown++;
         if (cls.severity === "none" || cls.citations.length === 0) continue;
         const primary = cls.citations[0];
         const hash = await sha256Hex(`${det.icao}|${det.timestamp}|${det.altitude}|${det.lat}|${det.lon}`);
         violations.push({
+          icao: det.icao || det.registration || det.callsign || "unknown",
+          callsign: det.callsign,
+          detected_at: det.timestamp,
+          rule_code: primary.citation,
+          rule_title: `${primary.citation} — computed AGL below limit`,
+          manual_section: "14 CFR Part 91",
+          severity: cls.severity,
           rule_source: "FAR",
           citation: primary.citation,
           far_text: primary.text,
-          policy_code: primary.citation,
-          policy_section: "14 CFR Part 91",
-          violation_type: "low_altitude",
-          severity: cls.severity,
-          altitude_ft: det.altitude,
-          lat: det.lat,
-          lon: det.lon,
-          icao: det.icao,
-          aircraft_registration: det.registration || det.callsign,
-          detection_timestamp: det.timestamp,
-          notes: cls.citations.map((c) => `${c.citation}: ${c.description}`).join(" | "),
-          evidence_hash: hash,
+          altitude_ft: Math.round(det.altitude),
+          lat: det.lat, lon: det.lon,
+          source_table: sourceTable,
+          sha256: hash,
+          evidence: {
+            registration: det.registration, msl_reported_ft: det.altitude,
+            agl: cls.agl, all_citations: cls.citations.map((c) => `${c.citation}: ${c.description}`),
+            reasoning: cls.reasoning, method: "AGL = corrected MSL − USGS terrain; flagged only if below limit after ± margin",
+          },
         });
       }
 
       // Upsert-ish: only insert if a matching (icao, detection_timestamp, citation) doesn't exist
       let inserted = 0;
       for (const v of violations) {
-        const { data: existing } = await supa
-          .from("policy_violations")
-          .select("id")
-          .eq("icao", v.icao)
-          .eq("citation", v.citation)
-          .eq("detection_timestamp", v.detection_timestamp)
-          .limit(1);
+        const { data: existing } = await supa.from("policy_violations").select("id").eq("sha256", v.sha256).limit(1);
         if (existing && existing.length > 0) continue;
         const { error } = await supa.from("policy_violations").insert(v);
-        if (!error) inserted++;
+        if (!error) inserted++; else console.warn("insert failed:", error.message);
       }
 
       return new Response(JSON.stringify({
         ok: true, source_table: sourceTable, scanned: rows.length,
-        violations_generated: violations.length, inserted,
+        violations_generated: violations.length, inserted, borderline, cleared_after_agl: cleared, terrain_unknown: unknown,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 

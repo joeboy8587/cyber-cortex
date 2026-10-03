@@ -40,6 +40,8 @@ export function PolicyViolationPanel() {
     const { data, error } = await supabase
       .from("policy_violations")
       .select("*")
+      // GHOST-AE rows are US military (DoD AE-block) aircraft, not KCSO — kept on record, hidden here.
+      .neq("rule_code", "GHOST-AE")
       .order("detected_at", { ascending: false })
       .limit(200);
     if (error) toast.error(`Load failed: ${error.message}`);

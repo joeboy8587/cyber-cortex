@@ -141,7 +141,7 @@ Deno.serve(async (req) => {
       const id = String(row.ident);
       if (!byIdent.has(id)) byIdent.set(id, { callsign: row.callsign ?? null, pings: [] });
       byIdent.get(id)!.pings.push({
-        t: new Date(row.ts).getTime(), lat: Number(row.lat), lon: Number(row.lon),
+        t: new Date(row.ts).getTime(), lat: Number(row.latitude), lon: Number(row.longitude),
         alt: row.altitude != null ? Number(row.altitude) : null,
         spd: row.speed != null ? Number(row.speed) : null,
         hdg: row.heading != null ? Number(row.heading) : null,

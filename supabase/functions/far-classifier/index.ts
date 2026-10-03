@@ -107,7 +107,8 @@ async function classify(det: Detection, sql: ReturnType<typeof postgres>): Promi
   }
   const textFor = (c: string) => {
     const r = farRows.find((f) => (f.citation || "").includes(c));
-    return r?.text || FAR_FALLBACK[c] || "";
+    const t = r?.text && !/unavailable/i.test(r.text) ? r.text : "";
+    return t || FAR_FALLBACK[c] || "";
   };
 
   // 91.119(c) — non-congested, <500 ft or within 500 ft of person/structure

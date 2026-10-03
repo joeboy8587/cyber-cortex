@@ -384,6 +384,7 @@ export async function handleAction8(action: string, body: Record<string, any>, s
           MAX(detection_timestamp) as last_seen
         FROM live_flight_detections_rows
         WHERE taxonomy_tag IN ('military_asset', 'xxb_military')
+        AND detection_timestamp > NOW() - INTERVAL '30 days'
         AND registration IS NOT NULL AND registration != ''
         GROUP BY registration, callsign
         ORDER BY detection_count DESC
@@ -403,11 +404,11 @@ export async function handleAction8(action: string, body: Record<string, any>, s
           FROM live_flight_detections_rows
           WHERE callsign ~ '^(KNIFE|STMPD|JOLLY|COBRA|GHOST|SHADO|RAIDR|GRZLY|LOST|CNV|LBRTY|REACH|FORGE|TOPCT)[0-9]'
             AND registration IS NOT NULL AND registration != ''
-            AND detection_timestamp > NOW() - INTERVAL '90 days'
+            AND detection_timestamp > NOW() - INTERVAL '14 days'
           GROUP BY registration, callsign
           ORDER BY detection_count DESC
           LIMIT 30
-        `;
+        `.catch((e: unknown) => { console.warn('military supplemental skipped:', e instanceof Error ? e.message : e); return []; });
         // Merge, dedup by registration+callsign
         const seen = new Set(militaryFlights.map((r: any) => `${r.registration}|${r.callsign}`));
         for (const s of supplemental) {

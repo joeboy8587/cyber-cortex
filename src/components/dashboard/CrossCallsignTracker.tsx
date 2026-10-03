@@ -119,17 +119,23 @@ export default function CrossCallsignTracker() {
       // Also search by alias. Array containment (`contains`) is exact-element and
       // case-sensitive, which misses mixed-case aliases written by the OSINT scan,
       // so fetch a bounded window and filter case-insensitively client-side.
-      const { data: aliasData, error: aliasErr } = await supabase
-        .from('entity_registry')
-        .select('*')
-        .order('last_seen', { ascending: false })
-        .limit(1000);
+      // Exact alias matches across the WHOLE registry (any age), in common casings.
+      const variants = Array.from(new Set([q, q.toLowerCase(), searchQuery.trim()])).filter(Boolean);
+      const exactOr = variants.map(v => `aliases.cs.{"${v.replace(/"/g, '')}"}`).join(',');
+      const [{ data: exactData, error: exactErr }, { data: aliasData, error: aliasErr }] = await Promise.all([
+        supabase.from('entity_registry').select('*').or(exactOr).limit(100),
+        supabase.from('entity_registry').select('*').order('last_seen', { ascending: false }).limit(1000),
+      ]);
 
+      if (exactErr) throw exactErr;
       if (aliasErr) throw aliasErr;
 
-      const aliasRowMatches = (aliasData || []).filter((e: any) =>
-        (e.aliases || []).some((a: string) => typeof a === 'string' && a.toUpperCase().includes(q))
-      );
+      const byId = new Map<string, any>();
+      for (const e of exactData || []) byId.set(e.entity_id, e);
+      for (const e of aliasData || []) {
+        if ((e.aliases || []).some((a: string) => typeof a === 'string' && a.toUpperCase().includes(q))) byId.set(e.entity_id, e);
+      }
+      const aliasRowMatches = Array.from(byId.values());
 
       const aliasMatches = aliasRowMatches
         .filter((e: any) => !mapped.some(m => m.id === e.entity_id))

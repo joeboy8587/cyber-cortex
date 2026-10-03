@@ -73,16 +73,22 @@ async function liveCounts(sql: any): Promise<Record<string, number>> {
   ];
   try {
     const rows = await sql`
-      SELECT relname, GREATEST(reltuples, 0)::bigint AS estimate
-      FROM pg_class WHERE relname = ANY(${tables})
+      SELECT c.relname, c.reltuples::bigint AS estimate
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public' AND c.relkind IN ('r','m','p')
+        AND c.relname = ANY(${tables})
     `;
     const out: Record<string, number> = {};
-    for (const r of rows) out[r.relname] = Number(r.estimate);
+    // reltuples is -1 (never analyzed) or 0 for unanalyzed tables: treat as unknown, not zero.
+    for (const r of rows) { const n = Number(r.estimate); if (n > 0) out[r.relname] = n; }
     return out;
   } catch {
     return {};
   }
 }
+
+const fmtCount = (n?: number) =>
+  n && n > 0 ? `~${n.toLocaleString()}` : "count unavailable (not zero — do not treat as absent evidence)";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -158,16 +164,16 @@ Deno.serve(async (req) => {
     const databaseContext = `
 LIVE EVIDENCE STATE (fetched at ${new Date().toISOString()} — these numbers are real, pulled at query time):
 ============================================================
-- Flight detections: ~${(counts.live_flight_detections_rows ?? 0).toLocaleString()}
-- Aircraft↔biometric correlations: ~${(counts.unified_biometric_aircraft_correlation_final ?? 0).toLocaleString()}
-- Biometric monitoring records: ~${(counts.biometric_monitoring ?? 0).toLocaleString()}
-- Josiah witness logs: ~${(counts.josiah_reflections_rows ?? 0).toLocaleString()}
-- Evidence chain links (SHA-256): ~${(counts.evidence_chain_links ?? 0).toLocaleString()}
-- Physician-verified ECGs: ~${(counts.physician_verified_ecgs ?? 0).toLocaleString()}
-- Sentinel violations: ~${(counts.sentinel_violations ?? 0).toLocaleString()}
-- Shell companies tracked: ~${(counts.shell_companies ?? 0).toLocaleString()}
-- Enterprise structure records: ~${(counts.criminal_enterprise_command_structure ?? 0).toLocaleString()}
-- Biometric screenshot OCR: ~${(counts.biometric_screenshots_ocr ?? 0).toLocaleString()}
+- Flight detections: ${fmtCount(counts.live_flight_detections_rows)}
+- Aircraft↔biometric correlations: ${fmtCount(counts.unified_biometric_aircraft_correlation_final)}
+- Biometric monitoring records: ${fmtCount(counts.biometric_monitoring)}
+- Josiah witness logs: ${fmtCount(counts.josiah_reflections_rows)}
+- Evidence chain links (SHA-256): ${fmtCount(counts.evidence_chain_links)}
+- Physician-verified ECGs: ${fmtCount(counts.physician_verified_ecgs)}
+- Sentinel violations: ${fmtCount(counts.sentinel_violations)}
+- Shell companies tracked: ${fmtCount(counts.shell_companies)}
+- Enterprise structure records: ${fmtCount(counts.criminal_enterprise_command_structure)}
+- Biometric screenshot OCR: ${fmtCount(counts.biometric_screenshots_ocr)}
 
 SETTLED FACTS (locked, fingerprinted, do not re-derive — cite as established):
 ${settledBlock}

@@ -839,7 +839,8 @@ Deno.serve(async (req) => {
         _sqlReady = null;
       }
       const isBudget = msg.includes('exceeded') && msg.includes('budget');
-      return new Response(JSON.stringify({ error: msg, code: isBudget ? 'BUDGET_EXCEEDED' : undefined }), { status: isBudget ? 504 : 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      const isConn = !isBudget && /connection|connect|FATAL|too many|ECONN|timeout/i.test(msg);
+      return new Response(JSON.stringify({ error: msg, code: isBudget ? 'BUDGET_EXCEEDED' : isConn ? 'DB_UNAVAILABLE' : undefined, retryable: isBudget || isConn }), { status: isBudget ? 504 : isConn ? 503 : 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
   } catch (outerError) {

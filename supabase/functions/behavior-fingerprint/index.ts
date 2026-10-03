@@ -122,6 +122,7 @@ Deno.serve(async (req) => {
     const since = new Date(Date.now() - days * 86400000).toISOString();
     const r = BOX_NM * NM_DEG;
 
+    const ROW_CAP = 60000;
     const rows = await sql`
       SELECT COALESCE(NULLIF(UPPER(registration),''), NULLIF(UPPER(callsign),''), NULLIF(UPPER(icao24),'')) AS ident,
              UPPER(callsign) AS callsign,
@@ -132,8 +133,13 @@ Deno.serve(async (req) => {
         AND longitude BETWEEN ${AOI.lon - r * 1.22} AND ${AOI.lon + r * 1.22}
         AND latitude IS NOT NULL AND longitude IS NOT NULL
         AND altitude IS NOT NULL AND altitude > 0 AND altitude < 8000
-      ORDER BY ident, detection_timestamp
-      LIMIT 60000`;
+      ORDER BY detection_timestamp DESC
+      LIMIT ${ROW_CAP + 1}`;
+    // Keep the most recent pings across ALL aircraft (never drop whole tails alphabetically).
+    const truncated = rows.length > ROW_CAP;
+    if (truncated) rows.length = ROW_CAP;
+    rows.reverse();
+    if (truncated) skipped.push(`Row cap ${ROW_CAP} reached: only the most recent ${ROW_CAP} detections in this window were analyzed. Use a shorter window for full coverage.`);
 
     // group into per-aircraft sessions (gap > 20 min = new session)
     const byIdent = new Map<string, { callsign: string | null; pings: Ping[] }>();

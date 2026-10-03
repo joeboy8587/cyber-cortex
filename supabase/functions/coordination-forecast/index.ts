@@ -172,7 +172,7 @@ Deno.serve(async (req) => {
             {
               role: "system",
               content:
-                "You are a forensic aviation statistician. Using ONLY the JSON statistics provided, write a concise forecast brief (max 350 words) with sections: 1) Forecast windows (Pacific time, day names), 2) Military-to-local handoff signal, 3) Control-sector specificity (state ratio and p-value plainly), 4) Limitations. Never invent numbers. Do not use words like targeting, stalking, conspiracy. Co-presence is not proof of coordination; say so where relevant. Days of week: 0=Sunday.",
+                "You are a forensic aviation statistician. Using ONLY the JSON statistics provided, write a concise forecast brief (max 350 words) with sections: 1) Forecast windows (Pacific time, day names), 2) Military-to-local handoff signal, 3) Control-sector specificity (state ratio and p-value plainly), 4) Limitations. Never invent numbers. Do not use words like targeting, stalking, conspiracy. Co-presence is not proof of coordination; say so where relevant. Days of week: 0=Sunday. The dow/hour fields are ALREADY Pacific local time — do not convert them. In Limitations you MUST note: (a) the receiver network may cover the AOI better than control sectors, so near-zero control counts can reflect coverage rather than absence of flights; (b) the AOI lies near Meadows Field (KBFL) approach paths, which raises routine low-altitude traffic; (c) small handoff counts are not statistically meaningful.",
             },
             { role: "user", content: JSON.stringify(stats) },
           ],

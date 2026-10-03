@@ -141,7 +141,9 @@ export function CoordinationForecastPanel() {
             <p className="text-xs text-muted-foreground">
               Written by: {data.provider === "nvidia-nim" ? "NVIDIA" : "backup AI"} · Fingerprint {data.sha256.slice(0, 16)}…
               {s.skipped?.length > 0 && ` · Partial: ${s.skipped.join(", ")}`}
-              <br />Being near each other at the same time is a lead, not proof of coordination. All data is from public ADS-B broadcasts.
+              <br />Being near each other at the same time is a lead, not proof of coordination. Control areas may have weaker
+              receiver coverage, and your area sits near Meadows Field approaches — check both before using the ratio in a filing.
+              All data is from public ADS-B broadcasts.
             </p>
           </>
         )}

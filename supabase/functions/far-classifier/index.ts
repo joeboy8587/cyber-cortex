@@ -206,7 +206,7 @@ Deno.serve(async (req) => {
     // ---- scan: pull recent low-altitude detections from Neon, classify, upsert violations ----
     if (action === "scan") {
       const hours = Number(body.lookbackHours ?? 24);
-      const limit = Math.min(Number(body.limit ?? 500), 2000);
+      const limit = Math.min(Number(body.limit ?? 400), 600);
       // Try a couple of common detection tables
       const candidateTables = [
         "public.live_flight_detections_rows",
@@ -248,7 +248,7 @@ Deno.serve(async (req) => {
         else if (cls.status === "unknown") unknown++;
         if (cls.severity === "none" || cls.citations.length === 0) continue;
         const primary = cls.citations[0];
-        const hash = await sha256Hex(`${det.icao}|${det.timestamp}|${det.altitude}|${det.lat}|${det.lon}`);
+        const hash = await sha256Hex(`AGLv2|${det.icao}|${det.timestamp}|${det.altitude}|${det.lat}|${det.lon}`);
         violations.push({
           icao: det.icao || det.registration || det.callsign || "unknown",
           callsign: det.callsign,

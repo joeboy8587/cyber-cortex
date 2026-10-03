@@ -5,6 +5,7 @@
 
 import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { computeAgl, judge } from "../_shared/agl.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -47,7 +48,7 @@ function rules(lookbackDays: number): Rule[] {
                ) AS evidence
         FROM live_flight_detections_rows
         WHERE detection_timestamp >= ${since}
-          AND altitude IS NOT NULL AND altitude > 0 AND altitude < 2000
+          AND altitude IS NOT NULL AND altitude > 0 AND altitude < 9500
           AND latitude BETWEEN ${MOUNTAIN_BBOX.latMin} AND ${MOUNTAIN_BBOX.latMax}
           AND longitude BETWEEN ${MOUNTAIN_BBOX.lngMin} AND ${MOUNTAIN_BBOX.lngMax}
           AND EXTRACT(HOUR FROM detection_timestamp AT TIME ZONE 'America/Los_Angeles') NOT BETWEEN 6 AND 19
@@ -164,9 +165,19 @@ Deno.serve(async (req) => {
 
     for (const rule of rules(lookbackDays)) {
       try {
-        const rows = await sql.unsafe(rule.sql) as any[];
+        let rows = await sql.unsafe(rule.sql) as any[];
+        // B-401 is an AGL limit: compute height above terrain, keep only clear violations
+        if (rule.code === "B-401") {
+          const kept: any[] = [];
+          for (const r of rows) {
+            const ev = r.evidence || {};
+            const a = await computeAgl({ lat: Number(ev.lat), lon: Number(ev.lng), altitudeFt: Number(ev.altitude_ft), timestamp: r.detected_at });
+            if (judge(a.agl_ft, a.margin_ft, 2000) === "violation") kept.push({ ...r, evidence: { ...ev, agl: a } });
+          }
+          rows = kept;
+        }
         const records = await Promise.all(rows.map(async (r) => {
-          const key = `${rule.code}|${r.icao}|${r.detected_at}`;
+          const key = `${rule.code === 'B-401' ? 'AGLv2|' : ''}${rule.code}|${r.icao}|${r.detected_at}`;
           const sha = await sha256Hex(key);
           return {
             icao: r.icao,

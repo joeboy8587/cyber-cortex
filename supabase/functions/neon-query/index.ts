@@ -837,6 +837,16 @@ Deno.serve(async (req) => {
     } catch (error) {
       console.error('Neon query error:', error);
       const msg = error instanceof Error ? error.message : 'Unknown error';
+      // A slow query (Postgres 57014) is not an outage: the connection is fine.
+      // Answer 200 with a clear "too slow" flag so panels show a message instead of
+      // crashing, and the client does not retry the same slow query 4 more times.
+      const pgCode = (error as any)?.code;
+      if (pgCode === '57014' || /canceling statement due to statement timeout/i.test(msg)) {
+        return new Response(JSON.stringify({
+          error: 'This query took too long and was stopped. Try a shorter date range.',
+          code: 'QUERY_TIMEOUT', timedOut: true, retryable: false, data: [],
+        }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
       if (msg.includes('Connection') || msg.includes('timeout') || msg.includes('FATAL') || msg.includes('budget')) {
         _sql = null;
         _sqlReady = null;

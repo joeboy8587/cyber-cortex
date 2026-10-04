@@ -1,176 +1,77 @@
 import { DashboardLayout } from "@/components/DashboardLayout";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { RelationshipExplorer } from "@/components/dashboard/RelationshipExplorer";
 import { SchemaFragmentationPanel } from "@/components/dashboard/SchemaFragmentationPanel";
 import { ArchiveManifestDashboard } from "@/components/dashboard/ArchiveManifestDashboard";
 import { TableExplorer } from "@/components/dashboard/TableExplorer";
 import { SqlConsole } from "@/components/dashboard/SqlConsole";
-import { DatabaseStats } from "@/components/dashboard/DatabaseStats";
-import { NeonTableCensus } from "@/components/dashboard/NeonTableCensus";
-import DataQualityAudit from "@/components/dashboard/DataQualityAudit";
 import { DatabaseQualityControl } from "@/components/dashboard/DatabaseQualityControl";
-
-import { DataEnrichmentDashboard } from "@/components/dashboard/DataEnrichmentDashboard";
-import { UnificationPipelinePanel } from "@/components/dashboard/UnificationPipelinePanel";
-import { DataIntegrityPanel } from "@/components/dashboard/DataIntegrityPanel";
-import { DataHardeningHub } from "@/components/dashboard/DataHardeningHub";
 import { ForensicLinkageHub } from "@/components/dashboard/ForensicLinkageHub";
-import { DatabaseCoverageDashboard } from "@/components/dashboard/DatabaseCoverageDashboard";
 import { MaterializedViewsPanel } from "@/components/dashboard/MaterializedViewsPanel";
-import { MultimodalEnrichmentPanel } from "@/components/dashboard/MultimodalEnrichmentPanel";
-import { DataCoverageGuardrails } from "@/components/dashboard/DataCoverageGuardrails";
 import { DataGapFiller } from "@/components/dashboard/DataGapFiller";
-import { HistoricalEnrichmentPanel } from "@/components/dashboard/HistoricalEnrichmentPanel";
 import { ComprehensiveDataAudit } from "@/components/dashboard/ComprehensiveDataAudit";
-import { ChainOfCustodyPanel } from "@/components/dashboard/ChainOfCustodyPanel";
-import { MerkleChainPanel } from "@/components/dashboard/MerkleChainPanel";
-import { ZeroTrustDashboard } from "@/components/dashboard/ZeroTrustDashboard";
 import { DBHealthMonitor } from "@/components/dashboard/DBHealthMonitor";
 import FlaggedAircraftImporter from "@/components/dashboard/FlaggedAircraftImporter";
 import { NotionFullSyncPanel } from "@/components/dashboard/NotionFullSyncPanel";
 import { ArchiveConsolidationPanel } from "@/components/dashboard/ArchiveConsolidationPanel";
-
 import { ChronologicalTimelineRebuilder } from "@/components/dashboard/ChronologicalTimelineRebuilder";
 import { ForensicDBInventory } from "@/components/dashboard/ForensicDBInventory";
 import { XxbUnmaskPanel } from "@/components/dashboard/XxbUnmaskPanel";
 
+// Tabs mount only their active content, so panels on hidden tabs run no queries.
 export default function DataTools() {
   return (
     <DashboardLayout>
       <div className="container py-6 space-y-6">
-        {/* Page Header */}
         <div className="flex items-center gap-4">
           <div className="w-10 h-10 rounded bg-primary/10 border border-primary/30 flex items-center justify-center">
             <span className="text-primary text-lg">🗄️</span>
           </div>
           <div>
-            <h1 className="font-display text-2xl uppercase tracking-wider text-primary">
-              Data Tools Hub
-            </h1>
+            <h1 className="font-display text-2xl uppercase tracking-wider text-primary">Data Tools Hub</h1>
             <p className="font-mono text-xs text-muted-foreground">
-              DATABASE MANAGEMENT // QUALITY CONTROL // FORENSIC LINKAGE
+              Health checks live on Data Health · Seals &amp; chain of custody live on Archive Integrity
             </p>
           </div>
         </div>
 
-        {/* XXB Unmasking Engine — attribute MLAT-only ghosts to known airframes */}
-        <section>
-          <XxbUnmaskPanel />
-        </section>
+        <Tabs defaultValue="unmask">
+          <TabsList className="flex flex-wrap h-auto">
+            <TabsTrigger value="unmask">Unmasking &amp; Attribution</TabsTrigger>
+            <TabsTrigger value="schema">Table Connections</TabsTrigger>
+            <TabsTrigger value="quality">Data Quality</TabsTrigger>
+            <TabsTrigger value="maint">Maintenance &amp; Imports</TabsTrigger>
+          </TabsList>
 
-        {/* Phase 1: Forensic DB Inventory — safe, read-only audit */}
-        <section>
-          <ForensicDBInventory />
-        </section>
+          <TabsContent value="unmask" className="space-y-6">
+            <XxbUnmaskPanel />
+            <ForensicLinkageHub />
+            <FlaggedAircraftImporter />
+          </TabsContent>
 
-        {/* Table Relationship Explorer */}
-        <section>
-          <RelationshipExplorer />
-        </section>
+          <TabsContent value="schema" className="space-y-6">
+            <RelationshipExplorer />
+            <ForensicDBInventory />
+            <ArchiveManifestDashboard />
+            <SchemaFragmentationPanel />
+            <TableExplorer />
+            <SqlConsole />
+          </TabsContent>
 
-        {/* Archive Manifest — Full Connection Engine */}
-        <section>
-          <ArchiveManifestDashboard />
-        </section>
+          <TabsContent value="quality" className="space-y-6">
+            <DBHealthMonitor />
+            <ComprehensiveDataAudit />
+            <DatabaseQualityControl />
+          </TabsContent>
 
-        {/* Schema Fragmentation Analysis */}
-        <section>
-          <SchemaFragmentationPanel />
-        </section>
-
-        {/* Chronological Timeline Rebuilder - cross-table timeline */}
-        <section>
-          <ChronologicalTimelineRebuilder />
-        </section>
-
-        {/* Live DB Health Monitor - top priority */}
-        <section>
-          <DBHealthMonitor />
-        </section>
-
-        {/* Flagged Aircraft Import */}
-        <section>
-          <FlaggedAircraftImporter />
-        </section>
-
-        {/* Notion Watchtower Sync */}
-        <section>
-          <NotionFullSyncPanel />
-        </section>
-
-        {/* Comprehensive Data Audit */}
-        <section>
-          <ComprehensiveDataAudit />
-        </section>
-
-        {/* Forensic Linkage Hub */}
-        <section>
-          <ForensicLinkageHub />
-        </section>
-
-        {/* Database Coverage */}
-        <section>
-          <DatabaseCoverageDashboard />
-        </section>
-
-        {/* Table Census & Stats */}
-        <section className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-          <NeonTableCensus />
-          <DatabaseStats />
-        </section>
-
-        {/* SQL Console */}
-        <section>
-          <SqlConsole />
-        </section>
-
-        {/* Table Explorer */}
-        <section>
-          <TableExplorer />
-        </section>
-
-        {/* Data Quality */}
-        <section className="space-y-6">
-          <DataQualityAudit />
-          <DatabaseQualityControl />
-        </section>
-
-        {/* Zero-Trust Security */}
-        <section>
-          <ZeroTrustDashboard />
-        </section>
-
-        {/* Data Hardening & Chain of Custody */}
-        <section className="space-y-6">
-          <DataHardeningHub />
-          <DataIntegrityPanel />
-          <ChainOfCustodyPanel />
-          <MerkleChainPanel />
-        </section>
-
-
-        {/* Enrichment */}
-        <section className="space-y-6">
-          <UnificationPipelinePanel />
-          <DataEnrichmentDashboard />
-          <MultimodalEnrichmentPanel />
-          <HistoricalEnrichmentPanel />
-        </section>
-
-        {/* Coverage Guardrails */}
-        <section className="space-y-6">
-          <DataCoverageGuardrails />
-          <DataGapFiller />
-        </section>
-
-        {/* Archive Consolidation Engine */}
-        <section>
-          <ArchiveConsolidationPanel />
-        </section>
-
-        {/* Materialized Views */}
-        <section>
-          <MaterializedViewsPanel />
-        </section>
+          <TabsContent value="maint" className="space-y-6">
+            <ChronologicalTimelineRebuilder />
+            <DataGapFiller />
+            <ArchiveConsolidationPanel />
+            <MaterializedViewsPanel />
+            <NotionFullSyncPanel />
+          </TabsContent>
+        </Tabs>
       </div>
     </DashboardLayout>
   );

@@ -41,6 +41,7 @@ import GhostAircraftForensics from "@/components/dashboard/GhostAircraftForensic
 import SquawkDeceptionDashboard from "@/components/dashboard/SquawkDeceptionDashboard";
 import { ObfuscationDetectionMatrix } from "@/components/dashboard/ObfuscationDetectionMatrix";
 import { ZeroFootClassifier } from "@/components/dashboard/ZeroFootClassifier";
+import { AltitudeSuppressionPanel } from "@/components/dashboard/AltitudeSuppressionPanel";
 import { NightOpsDashboard } from "@/components/dashboard/NightOpsDashboard";
 import { OpenFieldStagingPanel } from "@/components/dashboard/OpenFieldStagingPanel";
 import { EnrichedAircraftIntelligencePanel } from "@/components/dashboard/EnrichedAircraftIntelligencePanel";
@@ -236,6 +237,9 @@ export default function Surveillance() {
             </section>
             <section>
               <EnrichedAircraftIntelligencePanel />
+            </section>
+            <section>
+              <AltitudeSuppressionPanel />
             </section>
             <section>
               <ZeroFootClassifier />

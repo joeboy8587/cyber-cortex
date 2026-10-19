@@ -25,6 +25,8 @@ export function TrainingReadinessPanel() {
   const [review, setReview] = useState<Row[]>([]);
   const [days, setDays] = useState(30);
   const [busy, setBusy] = useState<string | null>(null);
+  const [progress, setProgress] = useState<number | null>(null);
+  const [span, setSpan] = useState<{ earliest: string; latest: string } | null>(null);
 
   const load = useCallback(async () => {
     const c = { ...counts };
@@ -39,15 +41,18 @@ export function TrainingReadinessPanel() {
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  const sweep = async (scope: "flights" | "policy_flags") => {
+  const sweep = async (scope: "flights" | "policy_flags" | "sealed_archive") => {
     setBusy(scope);
-    let cursor: string | undefined; let total = 0; let rounds = 0;
+    let cursor: string | undefined = scope === "sealed_archive" ? (localStorage.getItem("tr_sealed_cursor") ?? undefined) : undefined;
+    if (cursor === "done") { setBusy(null); return toast.info("The whole sealed archive is already sorted."); }
+    let total = 0; let rounds = 0;
     try {
       do {
         const { data, error } = await supabase.functions.invoke("training-label-sweep", { body: { scope, days, cursor } });
         if (error || data?.error) throw new Error(data?.error ?? error?.message);
         total += data.labeled; cursor = data.next_cursor ?? undefined; rounds++;
-      } while (cursor && rounds < 10);
+        if (scope === "sealed_archive") { localStorage.setItem("tr_sealed_cursor", cursor ?? "done"); if (data.span) setSpan(data.span); if (data.total_pages) setProgress(Math.min(100, Math.round((Number(cursor ?? data.total_pages) / data.total_pages) * 100))); }
+      } while (cursor && rounds < (scope === "sealed_archive" ? 40 : 10));
       toast.success(`Sorted ${total.toLocaleString()} records${cursor ? " (more remain — press again to continue)" : ""}.`);
     } catch (e) {
       toast.error(`Sorting stopped: ${e instanceof Error ? e.message : e}`);
@@ -112,8 +117,14 @@ export function TrainingReadinessPanel() {
         <Button size="sm" variant="secondary" onClick={() => sweep("policy_flags")} disabled={!!busy}>
           <RefreshCw className={`h-4 w-4 mr-1 ${busy === "policy_flags" ? "animate-spin" : ""}`} />Sort rule flags
         </Button>
+        <Button size="sm" variant="secondary" onClick={() => sweep("sealed_archive")} disabled={!!busy}>
+          <RefreshCw className={`h-4 w-4 mr-1 ${busy === "sealed_archive" ? "animate-spin" : ""}`} />Sort sealed archive (earliest records)
+        </Button>
         <Button size="sm" variant="outline" onClick={exportCsv} disabled={!!busy}><Download className="h-4 w-4 mr-1" />Export</Button>
       </div>
+      {progress != null && (
+        <p className="text-sm mb-4">Sealed archive: about {progress}% sorted{span ? ` — last batch covered ${new Date(span.earliest).toLocaleDateString()} to ${new Date(span.latest).toLocaleDateString()}` : ""}. Press again to continue; it picks up where it stopped. The archive itself is only read, never changed.</p>
+      )}
       <h4 className="font-semibold mb-2">Needs your decision (watchlist aircraft)</h4>
       {review.length === 0 ? <p className="text-sm text-muted-foreground">Nothing waiting right now.</p> : (
         <div className="space-y-2">

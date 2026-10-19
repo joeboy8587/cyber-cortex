@@ -52,7 +52,7 @@ export function TrainingReadinessPanel() {
         if (error || data?.error) throw new Error(data?.error ?? error?.message);
         total += data.labeled; cursor = data.next_cursor ?? undefined; rounds++;
         if (scope === "sealed_archive") { localStorage.setItem("tr_sealed_cursor", cursor ?? "done"); if (data.span) setSpan(data.span); if (data.total_pages) setProgress(Math.min(100, Math.round((Number(cursor ?? data.total_pages) / data.total_pages) * 100))); }
-      } while (cursor && rounds < 10);
+      } while (cursor && rounds < (scope === "sealed_archive" ? 40 : 10));
       toast.success(`Sorted ${total.toLocaleString()} records${cursor ? " (more remain — press again to continue)" : ""}.`);
     } catch (e) {
       toast.error(`Sorting stopped: ${e instanceof Error ? e.message : e}`);

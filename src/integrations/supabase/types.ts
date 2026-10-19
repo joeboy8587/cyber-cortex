@@ -1442,6 +1442,99 @@ export type Database = {
           },
         ]
       }
+      training_label_sweeps: {
+        Row: {
+          counts: Json
+          created_at: string
+          id: string
+          result_sha256: string
+          rule_version: string
+          run_by: string | null
+          scanned: number
+          scope: string
+          window_days: number | null
+        }
+        Insert: {
+          counts?: Json
+          created_at?: string
+          id?: string
+          result_sha256: string
+          rule_version: string
+          run_by?: string | null
+          scanned?: number
+          scope: string
+          window_days?: number | null
+        }
+        Update: {
+          counts?: Json
+          created_at?: string
+          id?: string
+          result_sha256?: string
+          rule_version?: string
+          run_by?: string | null
+          scanned?: number
+          scope?: string
+          window_days?: number | null
+        }
+        Relationships: []
+      }
+      training_labels: {
+        Row: {
+          created_at: string
+          decided_by: string | null
+          id: string
+          label: string
+          observed_at: string | null
+          reason_code: string
+          reason_text: string
+          rule_version: string
+          sha256: string
+          source_db: string
+          source_id: string
+          source_table: string
+          subject: string | null
+          superseded: boolean
+          superseded_reason: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          decided_by?: string | null
+          id?: string
+          label: string
+          observed_at?: string | null
+          reason_code: string
+          reason_text: string
+          rule_version: string
+          sha256: string
+          source_db?: string
+          source_id: string
+          source_table: string
+          subject?: string | null
+          superseded?: boolean
+          superseded_reason?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          decided_by?: string | null
+          id?: string
+          label?: string
+          observed_at?: string | null
+          reason_code?: string
+          reason_text?: string
+          rule_version?: string
+          sha256?: string
+          source_db?: string
+          source_id?: string
+          source_table?: string
+          subject?: string | null
+          superseded?: boolean
+          superseded_reason?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       unmasked_hq_locations: {
         Row: {
           ai_assessment: string | null

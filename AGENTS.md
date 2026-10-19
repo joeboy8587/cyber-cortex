@@ -1,0 +1,1 @@
+- Training labels: AI-training readiness lives in training_labels (rule-versioned, superseded never overwritten); rules are pure in _shared/training_rules.ts — keeps training data auditable and reproducible.

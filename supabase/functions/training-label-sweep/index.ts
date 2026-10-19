@@ -140,5 +140,7 @@ Deno.serve(async (req) => {
   const resultHash = await sha(JSON.stringify({ scope, days, cursor, counts, ids: final.map(r => r.sha256) }));
   await admin.from("training_label_sweeps").insert({ scope, window_days: days, rule_version: RULE_VERSION, counts, scanned, result_sha256: resultHash, run_by: u.user.id });
 
-  return json({ scope, scanned, labeled: final.length, counts, next_cursor: nextCursor, result_sha256: resultHash, bulk_threshold: BULK_TIMESTAMP_THRESHOLD });
+  const pages = (ctx as any)._pages ?? null;
+  const span = rows.length ? { earliest: rows.reduce((a:any,r:any)=>r.observed_at<a?r.observed_at:a, rows[0].observed_at), latest: rows.reduce((a:any,r:any)=>r.observed_at>a?r.observed_at:a, rows[0].observed_at) } : null;
+  return json({ scope, scanned, total_pages: pages, span, labeled: final.length, counts, next_cursor: nextCursor, result_sha256: resultHash, bulk_threshold: BULK_TIMESTAMP_THRESHOLD });
 });

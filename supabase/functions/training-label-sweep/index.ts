@@ -119,7 +119,7 @@ Deno.serve(async (req) => {
         rows.push({ source_db: "neon", source_table: srcTable,
           source_id: `${r.icao_code ?? r.registration ?? "?"}|${iso}`, subject: r.registration || r.icao_code, observed_at: iso, ...d });
       }
-    } finally { await sql.end({ timeout: 2 }).catch(() => {}); }
+    } catch (e) { await sql.end({ timeout: 2 }).catch(() => {}); return json({ error: e instanceof Error ? e.message : String(e) }, 500); } finally { await sql.end({ timeout: 2 }).catch(() => {}); }
   }
 
   // Dedupe on source_id (same aircraft+time can appear twice)

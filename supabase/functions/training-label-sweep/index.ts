@@ -71,13 +71,33 @@ Deno.serve(async (req) => {
     const sql = postgres(NEON, { ssl: "require", max: 1, idle_timeout: 10, prepare: false });
     try {
       await sql.unsafe(`SET statement_timeout = '25s'`);
-      const until = cursor ?? new Date().toISOString();
-      const since = new Date(Date.now() - days * 86400000).toISOString();
-      const data: any[] = await sql`
-        SELECT icao_code, registration, callsign, detection_timestamp AS ts, altitude, speed, on_ground, taxonomy_tag
-        FROM live_flight_detections_rows
-        WHERE detection_timestamp > ${since} AND detection_timestamp < ${until}
-        ORDER BY detection_timestamp DESC LIMIT ${BATCH}`;
+      const isSealed = scope === "sealed_archive";
+      let data: any[];
+      if (isSealed) {
+        // Read-only page-block scan; the sealed archive is never modified.
+        const page = Math.max(0, parseInt(cursor ?? "0", 10) || 0);
+        const raw: any[] = await sql.unsafe(
+          `SELECT to_jsonb(t) AS j FROM ${SEALED} t WHERE t.ctid >= '(${page},0)'::tid AND t.ctid < '(${page + SEALED_PAGES},0)'::tid`);
+        data = raw.map(({ j }) => ({
+          icao_code: j.icao24 ?? j.icao_code ?? null, registration: j.registration ?? null, callsign: j.callsign ?? null,
+          ts: j.detection_timestamp, altitude: j.altitude, speed: j.speed ?? j.ground_speed ?? null,
+          on_ground: j.on_ground ?? null, taxonomy_tag: j.taxonomy_tag ?? null,
+        })).filter(r => r.ts);
+        const [{ pages }] = await sql.unsafe(
+          `SELECT c.relpages::int AS pages FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='quarantine' AND c.relname='evidence_flight_dump_20260103_sealed'`);
+        if (page + SEALED_PAGES < Math.max(pages, 1) || raw.length > 0) nextCursor = String(page + SEALED_PAGES);
+        if (page + SEALED_PAGES >= pages && raw.length === 0) nextCursor = null;
+        (ctx as any)._pages = pages;
+      } else {
+        const until = cursor ?? new Date().toISOString();
+        const since = new Date(Date.now() - days * 86400000).toISOString();
+        data = await sql`
+          SELECT icao_code, registration, callsign, detection_timestamp AS ts, altitude, speed, on_ground, taxonomy_tag
+          FROM live_flight_detections_rows
+          WHERE detection_timestamp > ${since} AND detection_timestamp < ${until}
+          ORDER BY detection_timestamp DESC LIMIT ${BATCH}`;
+        if (data.length === BATCH) nextCursor = new Date(data[data.length - 1].ts).toISOString();
+      }
       scanned = data.length;
       const regs = [...new Set(data.map(r => String(r.registration ?? "").toUpperCase()).filter(Boolean))];
       if (regs.length) {
@@ -86,6 +106,7 @@ Deno.serve(async (req) => {
           for (const f of faa) ctx.faaMatched.add(String(f.n_number).toUpperCase());
         } catch { /* FAA view unavailable — no FAA-based proven labels this batch */ }
       }
+      const srcTable = isSealed ? SEALED : "live_flight_detections_rows";
       const tsCount = new Map<string, number>();
       for (const r of data) { const k = new Date(r.ts).toISOString(); tsCount.set(k, (tsCount.get(k) ?? 0) + 1); }
       for (const r of data) {
@@ -95,10 +116,9 @@ Deno.serve(async (req) => {
           altitude: r.altitude == null ? null : Number(r.altitude), speed: r.speed == null ? null : Number(r.speed),
           on_ground: r.on_ground, taxonomy_tag: r.taxonomy_tag, sameTimestampCount: tsCount.get(iso) ?? 1,
         }, ctx);
-        rows.push({ source_db: "neon", source_table: "live_flight_detections_rows",
+        rows.push({ source_db: "neon", source_table: srcTable,
           source_id: `${r.icao_code ?? r.registration ?? "?"}|${iso}`, subject: r.registration || r.icao_code, observed_at: iso, ...d });
       }
-      if (data.length === BATCH) nextCursor = new Date(data[data.length - 1].ts).toISOString();
     } finally { await sql.end({ timeout: 2 }).catch(() => {}); }
   }
 

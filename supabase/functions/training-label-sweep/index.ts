@@ -18,10 +18,12 @@ const UNSOURCED = ["A0B312"];
 const BATCH = 5000;
 
 const Body = z.object({
-  scope: z.enum(["flights", "policy_flags"]).default("flights"),
+  scope: z.enum(["flights", "policy_flags", "sealed_archive"]).default("flights"),
   days: z.number().int().min(1).max(90).default(30),
-  cursor: z.string().datetime().optional(), // continue older than this time
+  cursor: z.string().max(40).optional(), // flights: ISO time; sealed_archive: page number
 });
+const SEALED = "quarantine.evidence_flight_dump_20260103_sealed";
+const SEALED_PAGES = 400; // disk pages per call (read-only TID range scan)
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });

@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
+import { behavioralFactors, behavioralCategory, hasBehavioralBasis, type AircraftReasons } from '../_shared/sentinel_reasons.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -348,6 +349,7 @@ interface LiveViolation {
   altitude?: number;
   coordinates?: { lat: number; lng: number };
   relatedAircraft?: string[];
+  aircraft_reasons?: AircraftReasons[];
 }
 
 interface LearnedPattern {
@@ -790,6 +792,34 @@ serve(async (req) => {
     }
 
 
+    // Read accumulated, dated behavioral findings; never infer them from ownership.
+    const historyByTail = new Map<string, any[]>();
+    let historyAvailable = false;
+    try {
+      const activeTails = [...tailsSeen];
+      if (activeTails.length) {
+        const history: any[] = await withTimeout(
+          sql`SELECT registration, flag_type, description, created_at
+            FROM watchtower_autonomous_flags
+            WHERE UPPER(registration) = ANY(${activeTails})
+              AND auto_resolved = false
+            ORDER BY created_at DESC LIMIT 600`,
+          6000, 'behavioral_history'
+        );
+        for (const h of history) {
+          if (!behavioralCategory(String(h.flag_type))) continue;
+          const tail = String(h.registration).toUpperCase().trim();
+          const entries = historyByTail.get(tail) || [];
+          entries.push(h);
+          historyByTail.set(tail, entries);
+        }
+      }
+      historyAvailable = true;
+    } catch (e) {
+      console.warn('Behavioral history unavailable:', e instanceof Error ? e.message : e);
+      proactiveAlerts.push('Historical behavioral reasons could not be retrieved. Watchlist membership and ownership are not substitutes for those reasons.');
+    }
+
     // ========== STEP 1.9: MULTI-FACTOR THREAT PROFILE (per aircraft) ==========
     // One ping is not a threat. Each aircraft is scored on the combination of
     // warning signs it shows in this window; a straight, short pass with one
@@ -935,7 +965,11 @@ serve(async (req) => {
       const ownOpMatch = Boolean(d.shell_auto_detected) ||
         KNOWN_SHELL_OPERATORS.some(op => ownOp.includes(op)) || ownOpKeywordHits >= 2;
       // Merely being registered to a holding company is one point, not a threat.
-      return (regMatch || ownOpMatch) && isThreat(d);
+      const tail = tailOf(d);
+      const profile = profiles.get(tail);
+      return (regMatch || ownOpMatch) && isThreat(d) && hasBehavioralBasis(
+        profile?.factors || [], (historyByTail.get(tail) || []).map(h => String(h.flag_type))
+      );
     });
     if (shellActivity.length > 0) {
       const uniqueShell = [...new Set(shellActivity.map((d: any) => d.registration || d.callsign).filter(Boolean))];
@@ -943,7 +977,7 @@ serve(async (req) => {
       violations.push({
         type: 'SHELL_COMPANY', severity: uniqueShell.length >= 2 ? 'critical' : 'high',
         registration: uniqueShell.join(', '),
-        details: `${uniqueShell.length} aircraft scoring ${THREAT_SCORE_MIN}+ warning points over the AOI (${uniqueShell.map(t => `${t}: ${profiles.get(String(t).toUpperCase())?.factors.join(', ') || ''}`).join('; ')}) are registered to holding-company / leasing entities rather than named end users${shellOperators.length ? ` — registrants of record: ${shellOperators.slice(0, 3).join(', ')}` : ''}`,
+        details: `${uniqueShell.length} aircraft meet the multi-factor behavioral threshold. Holding/leasing ownership is context, not the reason for raising them${shellOperators.length ? ` — feed-reported registrants (FAA verification required): ${shellOperators.slice(0, 3).join(', ')}` : ''}.`,
         timestamp: new Date().toISOString(), relatedAircraft: uniqueShell as string[]
       });
     }
@@ -1416,6 +1450,32 @@ serve(async (req) => {
           details: `Known repeat offender with ${pattern.count} historical detections is currently active`,
           timestamp: new Date().toISOString()
         });
+      }
+    }
+
+    // Include the same aircraft-specific rationale in screen, export and AI context.
+    for (const v of violations) {
+      const tails = [...new Set([...(v.relatedAircraft || []), ...v.registration.split(',')]
+        .map(t => t.trim().toUpperCase()).filter(t => profiles.has(t)))];
+      v.aircraft_reasons = tails.map(tail => {
+        const factors = profiles.get(tail)?.factors || [];
+        const historical = (historyByTail.get(tail) || []).slice(0, 8).map(h => ({
+          description: String(h.description || h.flag_type),
+          observed_at: h.created_at ? new Date(h.created_at).toISOString() : null,
+          source: `watchtower_autonomous_flags / ${h.flag_type}`,
+        }));
+        return {
+          registration: tail, current: behavioralFactors(factors), historical,
+          context: factors.filter(f => !behavioralFactors([f]).length),
+          history_status: !historyAvailable ? 'unavailable' as const : historical.length ? 'available' as const : 'not_found' as const,
+        };
+      });
+      for (const reason of v.aircraft_reasons) {
+        v.details += `\n\n${reason.registration} — Current window: ${reason.current.join('; ') || 'No behavioral factors measured in this window'}.`;
+        v.details += `\nHistorical behavioral findings: ${reason.historical.length
+          ? reason.historical.map(h => `${h.description} [recorded ${h.observed_at || 'date unavailable'}; ${h.source}]`).join('; ')
+          : reason.history_status === 'unavailable' ? 'Unavailable — not an all-clear.' : 'No supporting behavioral flags retrieved from the active flag source; original watchlist basis remains unverified.'}`;
+        if (reason.context.length) v.details += `\nContext only: ${reason.context.join('; ')}. These do not establish behavior or intent.`;
       }
     }
 

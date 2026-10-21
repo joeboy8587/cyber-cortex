@@ -271,7 +271,7 @@ export function JosiahSentinelMonitor() {
           <td>${severityIcon(v.severity)} ${v.severity.toUpperCase()}</td>
           <td>${v.type.replace(/_/g, ' ')}</td>
           <td>${v.altitude ? v.altitude + ' ft' : '—'}</td>
-          <td>${v.details}</td>
+          <td>${v.details.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br/>')}</td>
           <td>${new Date(v.timestamp).toLocaleString()}</td>
         </tr>
       `).join('');
@@ -572,7 +572,7 @@ ${report.ai_synthesis ? `
                               {getSeverityBadge(violation.severity)}
                               <Badge variant="outline">{violation.type.replace(/_/g, ' ')}</Badge>
                             </div>
-                            <p className="text-sm text-muted-foreground mt-1">{violation.details}</p>
+                            <p className="text-sm text-muted-foreground mt-1 whitespace-pre-line break-words">{violation.details}</p>
                             {violation.altitude && (
                               <p className="text-xs text-red-400 mt-1">Altitude: {violation.altitude} ft</p>
                             )}

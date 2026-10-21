@@ -798,8 +798,9 @@ serve(async (req) => {
     try {
       const activeTails = [...tailsSeen];
       if (activeTails.length) {
+        if (!sbSql) throw new Error('Historical flag connection unavailable');
         const history: any[] = await withTimeout(
-          sql`SELECT registration, flag_type, description, created_at
+          sbSql`SELECT registration, flag_type, description, created_at
             FROM watchtower_autonomous_flags
             WHERE UPPER(registration) = ANY(${activeTails})
               AND auto_resolved = false
@@ -1792,6 +1793,11 @@ REGISTRATION | ACTION | PRIORITY (critical/high/medium)`;
           if (aoiPct > 0) parts.push(`${aoiPct}% of its track sits inside the 10-mile AOI ring.`);
           if (peakHours.length) parts.push(`It returns at ${peakHours.join(', ')}.`);
           if (kt) parts.push(`Already on the learned-threat list as ${kt.threat_type}, escalation level ${kt.escalation_level}.`);
+          const rationale = violations.flatMap(v => v.aircraft_reasons || []).find(a => a.registration === tail);
+          if (rationale) {
+            parts.push(`Current-window behavior: ${rationale.current.join('; ') || 'No behavioral factors measured'}.`);
+            parts.push(`Historical behavioral findings: ${rationale.historical.map(h => `${h.description} [${h.observed_at || 'date unavailable'}; ${h.source}]`).join('; ') || (rationale.history_status === 'unavailable' ? 'unavailable' : 'original watchlist basis not retrieved')}.`);
+          }
 
           dossiers.push({
             registration: tail,

@@ -13,6 +13,8 @@
 - [x] Deploy and verify all four reads and the signed-in page (all returned real data with no page errors; two safeguard tests passed).
 
 # FAA registry refresh and archive enrichment
-- [ ] Validate the uploaded registry against the current FAA master and retained snapshots.
-- [ ] Add non-destructive FAA enrichment for detection tables, including the sealed archive.
-- [ ] Verify registry provenance and enrichment without rewriting original evidence.
+- [x] Validate the uploaded registry: 316,765 rows but only 202,896 distinct registrations; 113,869 identical repeated rows, no conflicts. SHA-256: 428c651d662fb37dfc33c1bb4a642b3f91cc30df14b97417d0a8530c018cec08. Do not promote this as a complete registry.
+- [x] Link and verify the main archive connection (My Neon (2)); confirmed 312,743 FAA master records (catalog estimate), live/unified detections and retained unsealed source.
+- [ ] Refresh FAA identity using a complete validated FAA MASTER + ACFTREF snapshot. Blocked: uploaded CSV repeats rows and lacks complete registry coverage; aircraft-reference snapshot not uploaded.
+- [ ] Add non-destructive FAA enrichment for detection tables, including the retained sealed-archive source. Blocked: complete registry validation above; no source rows or existing views changed.
+- [ ] Verify enrichment and provenance after the complete registry is available.

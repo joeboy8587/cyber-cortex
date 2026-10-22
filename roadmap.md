@@ -11,3 +11,8 @@
 - [x] Diagnose and remove the shared 120-second timeout cause for all four reported actions.
 - [x] Keep failed section reads explicit instead of returning false empty results or blanking the page.
 - [x] Deploy and verify all four reads and the signed-in page (all returned real data with no page errors; two safeguard tests passed).
+
+# FAA registry refresh and archive enrichment
+- [ ] Validate the uploaded registry against the current FAA master and retained snapshots.
+- [ ] Add non-destructive FAA enrichment for detection tables, including the sealed archive.
+- [ ] Verify registry provenance and enrichment without rewriting original evidence.

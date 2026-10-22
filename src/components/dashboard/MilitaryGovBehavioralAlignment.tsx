@@ -6,6 +6,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { supabase } from '@/integrations/supabase/client';
+import { neonQuery } from '@/lib/neonQueryRetry';
 import { toast } from 'sonner';
 import { 
   Shield, 
@@ -70,19 +71,19 @@ export function MilitaryGovBehavioralAlignment() {
   const [loading, setLoading] = useState(false);
   const [computing, setComputing] = useState(false);
   const [initialized, setInitialized] = useState(true); // Set to true since the query is now derived
+  const [readError, setReadError] = useState<string | null>(null);
+  const [windowDays, setWindowDays] = useState<number | null>(null);
 
   const fetchAlignments = useCallback(async () => {
     setLoading(true);
+    setReadError(null);
     try {
-      const { data, error } = await supabase.functions.invoke('neon-query', {
-        body: { action: 'getMilitaryGovBehavioralAlignment' }
-      });
+      const { data, error } = await neonQuery({ action: 'getMilitaryGovBehavioralAlignment' }, 0);
 
-      if (error) {
-        console.error('Fetch error:', error);
-        setInitialized(false);
-        return;
-      }
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      if (!data?.data) throw new Error('Alignment results could not be loaded.');
+      setWindowDays(data.scope?.windowDays ?? null);
 
       const result = data?.data;
       if (!result || result.notInitialized) {
@@ -94,7 +95,7 @@ export function MilitaryGovBehavioralAlignment() {
       }
     } catch (err) {
       console.error('Error fetching military/gov alignments:', err);
-      setInitialized(false);
+      setReadError(err instanceof Error ? err.message : 'Alignment results could not be loaded. Try Refresh.');
     } finally {
       setLoading(false);
     }
@@ -258,6 +259,8 @@ export function MilitaryGovBehavioralAlignment() {
         </div>
       </div>
 
+      {readError && <p role="alert" className="mb-4 text-sm text-destructive">{readError} Existing results, if shown, have not been refreshed.</p>}
+      {windowDays && <p className="mb-4 text-sm text-muted-foreground">Last {windowDays} days · complete recent window, not the full archive</p>}
       {/* Classification Legend */}
       <div className="bg-indigo-950/30 border border-indigo-500/30 rounded-lg p-4 mb-6">
         <div className="flex items-start gap-3">

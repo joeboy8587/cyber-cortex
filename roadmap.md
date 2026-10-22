@@ -8,6 +8,6 @@
 - [x] Deploy and verify Josiah chat answers end-to-end (live test replied via Mistral).
 
 # Taxonomy and behavioral alignment timeouts
-- [ ] Diagnose and remove the shared 120-second timeout cause for all four reported actions.
-- [ ] Keep failed section reads explicit instead of returning false empty results or blanking the page.
-- [ ] Deploy and verify all four reads and the signed-in page.
+- [x] Diagnose and remove the shared 120-second timeout cause for all four reported actions.
+- [x] Keep failed section reads explicit instead of returning false empty results or blanking the page.
+- [x] Deploy and verify all four reads and the signed-in page (all returned real data with no page errors; two safeguard tests passed).

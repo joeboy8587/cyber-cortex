@@ -183,22 +183,13 @@ BEHAVIORAL GUIDELINES:
 
 PRIMARY AOI: User Residence (35.437649, -119.022639), Oildale.`;
 
-    // Call Lovable AI Gateway (Gemini 3 Pro Preview)
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-3.1-pro-preview",
-        messages: [
-          { role: "system", content: systemPrompt },
-          ...messages
-        ],
-        stream: true,
-        max_tokens: 8192,
-      }),
+    // Primary: user's own Mistral key; fallback: Lovable AI Gateway
+    const response = await callChat({
+      messages: [
+        { role: "system", content: systemPrompt },
+        ...messages
+      ],
+      max_tokens: 8192,
     });
 
     if (!response.ok) {

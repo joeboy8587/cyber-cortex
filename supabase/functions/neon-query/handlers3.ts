@@ -1,4 +1,5 @@
 import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
+import { RECENT_DETECTIONS_CTE, dashboardReadScope } from './dashboard_reads.ts';
 
 type SQL = ReturnType<typeof postgres>;
 
@@ -152,22 +153,28 @@ export async function handleAction3(action: string, body: Record<string, any>, s
       return { data: { allTables } };
     }
 
-    case 'getTaxonomy':
+    case 'getTaxonomy': {
+      const taxonomy = await sql`SELECT tag, domain, description, detection_pattern, priority, created_at
+        FROM id_taxonomy ORDER BY priority DESC`;
+      return { data: taxonomy };
+    }
     case 'taxonomyStats': {
       try {
-        const taxonomy = await sql`
+        const taxonomy = await sql.unsafe(`
+          WITH ${RECENT_DETECTIONS_CTE}
           SELECT COALESCE(taxonomy_tag, 'untagged') as tag, COUNT(*)::int as count,
             COUNT(CASE WHEN flagged = true THEN 1 END)::int as flagged_count,
             ROUND(AVG(COALESCE(altitude, 0))::numeric, 0)::int as avg_altitude,
-            COUNT(DISTINCT registration)::int as unique_aircraft
-          FROM live_flight_detections_rows
+            COUNT(DISTINCT registration)::int as unique_aircraft,
+            MIN(detection_timestamp)::text as first_seen, MAX(detection_timestamp)::text as last_seen
+          FROM recent_detections
           GROUP BY taxonomy_tag
           ORDER BY count DESC
-        `;
-        return { data: taxonomy };
+        `);
+        return { data: taxonomy, scope: dashboardReadScope() };
       } catch (e) {
         console.error('taxonomyStats error:', e);
-        return { data: [] };
+        throw e;
       }
     }
 

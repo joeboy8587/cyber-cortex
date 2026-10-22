@@ -1,2 +1,3 @@
 - Training labels: AI-training readiness lives in training_labels (rule-versioned, superseded never overwritten); rules are pure in _shared/training_rules.ts — keeps training data auditable and reproducible.
 - Sentinel report rationale separates current observations, dated historical flags and identity context using pure shared reason rules; source gaps remain explicit to avoid circular watchlist justification.
+- Bundle the GPU helper from the canonical scripts source as raw text and download it synchronously as a Blob; this avoids static-file navigation failures in the preview.

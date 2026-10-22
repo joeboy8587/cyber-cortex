@@ -5,8 +5,21 @@ import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
 import { Cpu, Download, Upload, Loader2, FileCode, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
+import gpuHelperScript from "../../../scripts/gpu-embed-aircraft.py?raw";
 
 type Props = { embedded: number; pending?: number; onImported?: () => void };
+
+function downloadGpuHelper() {
+  const blob = new Blob([gpuHelperScript], { type: "text/x-python;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "gpu-embed-aircraft.py";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30_000);
+}
 
 export function GpuEmbeddingPanel({ embedded, pending = 0, onImported }: Props) {
   const [exporting, setExporting] = useState(false);
@@ -195,12 +208,10 @@ export function GpuEmbeddingPanel({ embedded, pending = 0, onImported }: Props) 
           Upload embeddings
         </Button>
 
-        <a href="/scripts/gpu-embed-aircraft.py" download="gpu-embed-aircraft.py">
-          <Button size="sm" variant="secondary" type="button">
-            <FileCode className="w-3 h-3 mr-2" />
-            Download GPU helper script
-          </Button>
-        </a>
+        <Button size="sm" variant="secondary" type="button" onClick={downloadGpuHelper}>
+          <FileCode className="w-3 h-3 mr-2" />
+          Download GPU helper script
+        </Button>
       </div>
       <div className="text-xs text-muted-foreground space-y-1">
         <p>

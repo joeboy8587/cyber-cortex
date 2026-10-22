@@ -34,8 +34,8 @@ function acquireSlot(): Promise<void> {
 function releaseSlot() {
   _inflight--;
   if (_queue.length > 0) {
-    const next = _queue.shift()!;
-    next();
+    const next = _queue.shift();
+    next?.();
   }
 }
 

@@ -9,6 +9,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { supabase } from '@/integrations/supabase/client';
+import { neonQuery } from '@/lib/neonQueryRetry';
 import { toast } from 'sonner';
 import { 
   Database, RefreshCw, Tag, Filter, Radar, Plane, 
@@ -95,6 +96,9 @@ export function XXBTaxonomyPanel() {
   const [activeTab, setActiveTab] = useState('taxonomy');
   const [unclassifiedCount, setUnclassifiedCount] = useState<number | null>(null);
   const statsRef = useRef<HTMLDivElement>(null);
+  const [taxonomyError, setTaxonomyError] = useState<string | null>(null);
+  const [statsError, setStatsError] = useState<string | null>(null);
+  const [windowDays, setWindowDays] = useState<number | null>(null);
 
   const createTaxonomyTable = useCallback(async () => {
     setIsCreating(true);
@@ -122,61 +126,31 @@ export function XXBTaxonomyPanel() {
 
   const loadTaxonomy = useCallback(async () => {
     setIsLoading(true);
+    setTaxonomyError(null);
     try {
-      // First try the dedicated action
-      const { data, error } = await supabase.functions.invoke('neon-query', {
-        body: { action: 'getTaxonomy' }
-      });
-      
-      if (!error && data?.data && !data?.data?.notInitialized && !data?.error?.includes('does not exist')) {
-        setTaxonomy(data?.data || []);
-        setTableInitialized(true);
-        return;
-      }
-      
-      // Fallback: query id_taxonomy directly (8 rows exist)
-      const { data: directData } = await supabase.functions.invoke('neon-query', {
-        body: {
-          action: 'customQuery',
-          query: `SELECT tag, domain, description, detection_pattern, priority, created_at, throttle_window FROM id_taxonomy ORDER BY priority DESC`
-        }
-      });
-      
-      if (directData && Array.isArray(directData) && directData.length > 0) {
-        setTaxonomy(directData);
-        setTableInitialized(true);
-      } else {
-        setTableInitialized(false);
-      }
+      const { data, error } = await neonQuery({ action: 'getTaxonomy' }, 0);
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      if (!Array.isArray(data?.data)) throw new Error('Taxonomy definitions could not be loaded.');
+      setTaxonomy(data.data);
+      setTableInitialized(true);
     } catch (err) {
       console.error('Load taxonomy error:', err);
-      // Last resort fallback
-      try {
-        const { data: fallback } = await supabase.functions.invoke('neon-query', {
-          body: { action: 'customQuery', query: `SELECT * FROM id_taxonomy ORDER BY priority DESC` }
-        });
-        if (fallback && Array.isArray(fallback) && fallback.length > 0) {
-          setTaxonomy(fallback);
-          setTableInitialized(true);
-        } else {
-          setTableInitialized(false);
-        }
-      } catch {
-        setTableInitialized(false);
-      }
+      setTaxonomyError(err instanceof Error ? err.message : 'Taxonomy definitions could not be loaded.');
     } finally {
       setIsLoading(false);
     }
   }, []);
 
   const loadStats = useCallback(async () => {
+    setStatsError(null);
     try {
-      const { data, error } = await supabase.functions.invoke('neon-query', {
-        body: { action: 'taxonomyStats' }
-      });
+      const { data, error } = await neonQuery({ action: 'taxonomyStats' }, 0);
       
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
+      if (!Array.isArray(data?.data)) throw new Error('Taxonomy statistics could not be loaded.');
+      setWindowDays(data.scope?.windowDays ?? null);
       
       if (data?.data?.notInitialized) {
         setStats([]);
@@ -189,7 +163,7 @@ export function XXBTaxonomyPanel() {
       // Calculate unclassified percentage for dark-noise audit
       // The DB returns null taxonomy_tag which gets coalesced to 'unclassified' in the query
       const unclassified = statsData.find((s: TaxonomyStats) => 
-        s.tag === 'unclassified' || s.tag === null
+        s.tag === 'unclassified' || s.tag === 'untagged' || s.tag === null
       );
       if (unclassified) {
         const total = statsData.reduce((acc: number, s: TaxonomyStats) => acc + Number(s.count), 0);
@@ -200,6 +174,7 @@ export function XXBTaxonomyPanel() {
       }
     } catch (err) {
       console.error('Load stats error:', err);
+      setStatsError(err instanceof Error ? err.message : 'Taxonomy statistics could not be loaded.');
     }
   }, []);
 
@@ -301,6 +276,15 @@ export function XXBTaxonomyPanel() {
         icon={<Tag className="h-5 w-5" />}
         className="col-span-full"
       >
+        {(taxonomyError || statsError) && (
+          <div role="alert" className="mb-4 text-sm text-destructive">
+            <p>{taxonomyError || statsError} Existing results, if shown, have not been refreshed.</p>
+            <Button variant="outline" size="sm" onClick={() => { loadTaxonomy(); loadStats(); }}>
+              <RefreshCw className="mr-2 h-4 w-4" />Retry
+            </Button>
+          </div>
+        )}
+        {windowDays && <p className="mb-4 text-sm text-muted-foreground">Statistics: last {windowDays} days · complete recent window, not the full archive</p>}
         {/* Dark-noise audit warning with quick-fix buttons */}
         {unclassifiedCount !== null && unclassifiedCount > 5 && (
           <div className="mb-4 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg">
@@ -383,7 +367,7 @@ export function XXBTaxonomyPanel() {
           </TabsList>
 
           <TabsContent value="taxonomy" className="space-y-4">
-            {!tableInitialized ? (
+            {isLoading ? <p className="py-8 text-muted-foreground">Loading taxonomy definitions…</p> : taxonomyError ? null : !tableInitialized ? (
               <div className="flex flex-col items-center gap-4 py-8">
                 <Database className="h-12 w-12 text-muted-foreground" />
                 <p className="text-muted-foreground">Taxonomy table not initialized</p>

@@ -1,4 +1,5 @@
 import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
+import { RECENT_DETECTIONS_CTE, dashboardReadScope } from './dashboard_reads.ts';
 
 type SQL = ReturnType<typeof postgres>;
 
@@ -8,7 +9,7 @@ export async function handleAction(action: string, body: Record<string, any>, sq
     case 'getBehavioralAlignment': {
       try {
         const alignments = await sql.unsafe(`
-          WITH candidates AS (
+          WITH ${RECENT_DETECTIONS_CTE}, candidates AS (
             SELECT
               registration as aircraft_tail,
               COUNT(*) as detection_count,
@@ -19,7 +20,7 @@ export async function handleAction(action: string, body: Record<string, any>, sq
               SUM(CASE WHEN COALESCE(speed, 0) < 80 THEN 1 ELSE 0 END) as loiter_count,
               MIN(COALESCE(detection_timestamp, created_at)) as first_detection,
               MAX(COALESCE(detection_timestamp, created_at)) as last_detection
-            FROM live_flight_detections_rows
+            FROM recent_detections
             WHERE registration IS NOT NULL
               AND registration != ''
               AND (
@@ -92,10 +93,10 @@ export async function handleAction(action: string, body: Record<string, any>, sq
           uniqueEntities: new Set(alignments.map((a: any) => a.entity_name)).size,
           uniqueAircraft: new Set(alignments.map((a: any) => a.aircraft_tail)).size,
         } : { totalRecords: 0, tier1Probationary: 0, tier2Watch: 0, highMatchAlerts: 0, uniqueEntities: 0, uniqueAircraft: 0 };
-        return { data: { alignments: alignments || [], summary } };
+        return { data: { alignments: alignments || [], summary }, scope: dashboardReadScope() };
       } catch (e) {
         console.error('getBehavioralAlignment error:', e);
-        return { data: { alignments: [], summary: null } };
+        throw e;
       }
     }
 
@@ -222,7 +223,7 @@ export async function handleAction(action: string, body: Record<string, any>, sq
     case 'getMilitaryGovBehavioralAlignment': {
       try {
         const alignments = await sql.unsafe(`
-          WITH military_gov_patterns AS (
+          WITH ${RECENT_DETECTIONS_CTE}, military_gov_patterns AS (
             SELECT
               CASE
                 WHEN callsign ~ '^(REACH|PAT|RCH|EVAC)' THEN 'Military Transport'
@@ -249,7 +250,7 @@ export async function handleAction(action: string, body: Record<string, any>, sq
               SUM(CASE WHEN speed < 80 THEN 1 ELSE 0 END) as loiter_count,
               MIN(detection_timestamp) as first_detection,
               MAX(detection_timestamp) as last_detection
-            FROM live_flight_detections_rows
+            FROM recent_detections
             WHERE (callsign ~ '^(REACH|PAT|RCH|EVAC|PHI|CAL|CARE|AIR1|LIFE|CHP|N[0-9]+HP|CBP|ICE|DHS)'
               OR registration ~ '^N[789][0-9]{2}(FA|KC|AM)'
               OR taxonomy_tag IN ('xxb_military', 'xxb_tier1_priority', 'xxb_kcso', 'military_asset', 'tier1_priority', 'tier0_kcso')
@@ -287,10 +288,10 @@ export async function handleAction(action: string, body: Record<string, any>, sq
           militaryContracts: alignmentData.filter((a: any) => a.classification === 'MILITARY_CONTRACT' || a.classification === 'TIER_WATCH_MILITARY_CONTRACT').length,
           govAgencies: alignmentData.filter((a: any) => a.classification === 'GOV_AGENCY' || a.classification === 'FEDERAL_AGENCY').length
         };
-        return { data: { alignments: alignmentData, summary } };
+        return { data: { alignments: alignmentData, summary }, scope: dashboardReadScope() };
       } catch (e) {
         console.error('getMilitaryGovBehavioralAlignment error:', e);
-        return { data: { alignments: [], summary: null, notInitialized: true } };
+        throw e;
       }
     }
 

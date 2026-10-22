@@ -6,6 +6,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { supabase } from '@/integrations/supabase/client';
+import { neonQuery } from '@/lib/neonQueryRetry';
 import { toast } from 'sonner';
 import { 
   Network, 
@@ -57,15 +58,19 @@ export function ShellBehavioralAlignment() {
   const [loading, setLoading] = useState(false);
   const [computing, setComputing] = useState(false);
   const [initialized, setInitialized] = useState(true);
+  const [readError, setReadError] = useState<string | null>(null);
+  const [windowDays, setWindowDays] = useState<number | null>(null);
 
   const fetchAlignments = useCallback(async () => {
     setLoading(true);
+    setReadError(null);
     try {
-      const { data, error } = await supabase.functions.invoke('neon-query', {
-        body: { action: 'getBehavioralAlignment' }
-      });
+      const { data, error } = await neonQuery({ action: 'getBehavioralAlignment' }, 0);
 
       if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      if (!data?.data) throw new Error('Alignment results could not be loaded.');
+      setWindowDays(data.scope?.windowDays ?? null);
 
       if (data.data?.notInitialized) {
         setInitialized(false);
@@ -78,6 +83,7 @@ export function ShellBehavioralAlignment() {
       }
     } catch (err) {
       console.error('Error fetching alignments:', err);
+      setReadError(err instanceof Error ? err.message : 'Alignment results could not be loaded. Try Refresh.');
       toast.error('Failed to fetch behavioral alignment data');
     } finally {
       setLoading(false);
@@ -204,6 +210,8 @@ export function ShellBehavioralAlignment() {
         </div>
       </div>
 
+      {readError && <p role="alert" className="mb-4 text-sm text-destructive">{readError} Existing results, if shown, have not been refreshed.</p>}
+      {windowDays && <p className="mb-4 text-sm text-muted-foreground">Last {windowDays} days · complete recent window, not the full archive</p>}
       {/* Summary Stats */}
       {summary && (
         <div className="grid grid-cols-2 md:grid-cols-6 gap-4 mb-6">

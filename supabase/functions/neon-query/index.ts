@@ -1,4 +1,5 @@
 import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
+import { DASHBOARD_READ_ACTIONS, DASHBOARD_STATEMENT_TIMEOUT_MS } from './dashboard_reads.ts';
 // All handlers lazy-loaded to avoid BOOT_ERROR from combined file size exceeding Deno parse limits
 let _handleAction: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
 let _handleAction2: ((action: string, body: Record<string, any>, sql: any) => Promise<unknown>) | null = null;
@@ -206,7 +207,7 @@ async function getHandler8() {
   return _handleAction8;
 }
 
-const VERSION = "2.13.0";
+const VERSION = "2.13.1";
 console.log(`neon-query v${VERSION} booting...`);
 
 const DEFAULT_CUSTOM_QUERY_TIMEOUT_MS = 18000;
@@ -810,7 +811,17 @@ Deno.serve(async (req) => {
           for (const [actionSet, getHandler] of handlerMap) {
             if (actionSet.has(action)) {
               const handler = await getHandler();
-              result = await handler(action, body, sql);
+              if (DASHBOARD_READ_ACTIONS.has(action)) {
+                // Poolers may discard startup settings; SET LOCAL must share
+                // the transaction/connection that runs the actual read.
+                result = await sql.begin(async (tx) => {
+                  await tx`SELECT set_config('statement_timeout', ${String(DASHBOARD_STATEMENT_TIMEOUT_MS)}, true),
+                    set_config('lock_timeout', '3000', true)`;
+                  return await handler(action, body, tx);
+                });
+              } else {
+                result = await handler(action, body, sql);
+              }
               handled = true;
               break;
             }
@@ -841,17 +852,17 @@ Deno.serve(async (req) => {
       // Answer 200 with a clear "too slow" flag so panels show a message instead of
       // crashing, and the client does not retry the same slow query 4 more times.
       const pgCode = (error as any)?.code;
-      if (pgCode === '57014' || /canceling statement due to statement timeout/i.test(msg)) {
+      const isBudget = msg.includes('exceeded') && msg.includes('budget');
+      if (isBudget || pgCode === '57014' || /canceling statement due to statement timeout/i.test(msg)) {
         return new Response(JSON.stringify({
           error: 'This query took too long and was stopped. Try a shorter date range.',
           code: 'QUERY_TIMEOUT', timedOut: true, retryable: false, data: [],
         }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
-      if (msg.includes('Connection') || msg.includes('timeout') || msg.includes('FATAL') || msg.includes('budget')) {
+      if (msg.includes('Connection') || msg.includes('timeout') || msg.includes('FATAL')) {
         _sql = null;
         _sqlReady = null;
       }
-      const isBudget = msg.includes('exceeded') && msg.includes('budget');
       const isConn = !isBudget && /connection|connect|FATAL|too many|ECONN|timeout/i.test(msg);
       return new Response(JSON.stringify({ error: msg, code: isBudget ? 'BUDGET_EXCEEDED' : isConn ? 'DB_UNAVAILABLE' : undefined, retryable: isBudget || isConn }), { status: isBudget ? 504 : isConn ? 503 : 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }

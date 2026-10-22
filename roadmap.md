@@ -6,3 +6,8 @@
 # Josiah chat AI gateway errors
 - [x] Wire Mistral (user's own key, already saved as MISTRAL_API_KEY) as fallback for Josiah chat and the agent orchestrator, bypassing the workspace credit block.
 - [x] Deploy and verify Josiah chat answers end-to-end (live test replied via Mistral).
+
+# Taxonomy and behavioral alignment timeouts
+- [x] Diagnose and remove the shared 120-second timeout cause for all four reported actions.
+- [x] Keep failed section reads explicit instead of returning false empty results or blanking the page.
+- [x] Deploy and verify all four reads and the signed-in page (all returned real data with no page errors; two safeguard tests passed).

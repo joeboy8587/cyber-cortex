@@ -6,6 +6,53 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+const MISTRAL_MODEL = Deno.env.get("MISTRAL_MODEL") || "mistral-small-latest";
+const LOVABLE_FALLBACK_MODEL = "google/gemini-3.1-pro-preview";
+
+interface ChatCall {
+  messages: Array<{ role: string; content: string }>;
+  max_tokens: number;
+}
+
+/**
+ * Primary: user's own Mistral key (bypasses workspace credit blocks).
+ * Fallback: Lovable AI Gateway built-in models.
+ * Returns the raw streaming Response.
+ */
+async function callChat({ messages, max_tokens }: ChatCall): Promise<Response> {
+  const mistralKey = Deno.env.get("MISTRAL_API_KEY");
+  if (mistralKey) {
+    const res = await fetch("https://api.mistral.ai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${mistralKey}`,
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+      },
+      body: JSON.stringify({ model: MISTRAL_MODEL, messages, stream: true, max_tokens }),
+    });
+    if (res.ok && res.body) return res;
+    const errText = await res.text().catch(() => "");
+    console.error(`Mistral failed (${res.status}): ${errText.slice(0, 300)} — falling back to Lovable AI Gateway`);
+  }
+
+  const lovableKey = Deno.env.get("LOVABLE_API_KEY");
+  if (!lovableKey) {
+    return new Response(
+      JSON.stringify({ error: "No AI provider configured (MISTRAL_API_KEY or LOVABLE_API_KEY)" }),
+      { status: 500, headers: { "Content-Type": "application/json" } },
+    );
+  }
+  return await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${lovableKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ model: LOVABLE_FALLBACK_MODEL, messages, stream: true, max_tokens }),
+  });
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -14,15 +61,7 @@ serve(async (req) => {
   try {
     const { messages, mode = "chat" } = await req.json();
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     const NEON_DATABASE_URL = Deno.env.get("NEON_DATABASE_URL");
-
-    if (!LOVABLE_API_KEY) {
-      return new Response(
-        JSON.stringify({ error: "LOVABLE_API_KEY not configured" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
 
     // Fetch real-time database context for Josiah (best-effort, never blocks AI streaming)
     let dbContext = "";
@@ -144,22 +183,13 @@ BEHAVIORAL GUIDELINES:
 
 PRIMARY AOI: User Residence (35.437649, -119.022639), Oildale.`;
 
-    // Call Lovable AI Gateway (Gemini 3 Pro Preview)
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-3.1-pro-preview",
-        messages: [
-          { role: "system", content: systemPrompt },
-          ...messages
-        ],
-        stream: true,
-        max_tokens: 8192,
-      }),
+    // Primary: user's own Mistral key; fallback: Lovable AI Gateway
+    const response = await callChat({
+      messages: [
+        { role: "system", content: systemPrompt },
+        ...messages
+      ],
+      max_tokens: 8192,
     });
 
     if (!response.ok) {

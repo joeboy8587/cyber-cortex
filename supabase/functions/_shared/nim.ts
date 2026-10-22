@@ -72,11 +72,41 @@ export async function nimChat(opts: NimChatOptions): Promise<Response> {
       const body = await res.text().catch(() => "");
       console.error(`NIM model ${m} failed (${res.status}): ${body.slice(0, 300)}`);
     }
-    // All NVIDIA models failed — fall through to the Lovable AI Gateway so the user still gets an answer.
-    if (last) console.error("All NIM models failed; falling back to Lovable AI Gateway");
+    // All NVIDIA models failed — fall through to Mistral, then the Lovable AI Gateway.
+    if (last) console.error("All NIM models failed; falling back to Mistral / Lovable AI Gateway");
   }
 
-
+  // Middle fallback: user's own Mistral key — bypasses workspace credit blocks
+  // that refuse Lovable AI Gateway calls with 403.
+  const mistralKey = Deno.env.get("MISTRAL_API_KEY");
+  if (mistralKey) {
+    // Try models in order — some tiers don't include the large model.
+    const mistralModels = [
+      Deno.env.get("MISTRAL_MODEL") || "mistral-small-latest",
+      "open-mistral-nemo",
+    ].filter((m, i, a) => a.indexOf(m) === i);
+    for (const m of mistralModels) {
+      const res = await fetch("https://api.mistral.ai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${mistralKey}`,
+          "Content-Type": "application/json",
+          Accept: stream ? "text/event-stream" : "application/json",
+        },
+        body: JSON.stringify({
+          model: m,
+          messages,
+          stream,
+          ...(temperature !== undefined ? { temperature } : {}),
+          ...(max_tokens !== undefined ? { max_tokens } : {}),
+        }),
+      });
+      if (res.ok && res.body) return res;
+      const body = await res.text().catch(() => "");
+      console.error(`Mistral model ${m} failed (${res.status}): ${body.slice(0, 300)}`);
+    }
+    console.error("All Mistral models failed — trying Lovable AI Gateway");
+  }
 
   const lovableKey = Deno.env.get("LOVABLE_API_KEY");
   if (!lovableKey) {

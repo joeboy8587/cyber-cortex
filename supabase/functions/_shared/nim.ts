@@ -80,24 +80,32 @@ export async function nimChat(opts: NimChatOptions): Promise<Response> {
   // that refuse Lovable AI Gateway calls with 403.
   const mistralKey = Deno.env.get("MISTRAL_API_KEY");
   if (mistralKey) {
-    const res = await fetch("https://api.mistral.ai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${mistralKey}`,
-        "Content-Type": "application/json",
-        Accept: stream ? "text/event-stream" : "application/json",
-      },
-      body: JSON.stringify({
-        model: Deno.env.get("MISTRAL_MODEL") || "mistral-large-latest",
-        messages,
-        stream,
-        ...(temperature !== undefined ? { temperature } : {}),
-        ...(max_tokens !== undefined ? { max_tokens } : {}),
-      }),
-    });
-    if (res.ok && res.body) return res;
-    const body = await res.text().catch(() => "");
-    console.error(`Mistral fallback failed (${res.status}): ${body.slice(0, 300)} — trying Lovable AI Gateway`);
+    // Try models in order — some tiers don't include the large model.
+    const mistralModels = [
+      Deno.env.get("MISTRAL_MODEL") || "mistral-small-latest",
+      "open-mistral-nemo",
+    ].filter((m, i, a) => a.indexOf(m) === i);
+    for (const m of mistralModels) {
+      const res = await fetch("https://api.mistral.ai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${mistralKey}`,
+          "Content-Type": "application/json",
+          Accept: stream ? "text/event-stream" : "application/json",
+        },
+        body: JSON.stringify({
+          model: m,
+          messages,
+          stream,
+          ...(temperature !== undefined ? { temperature } : {}),
+          ...(max_tokens !== undefined ? { max_tokens } : {}),
+        }),
+      });
+      if (res.ok && res.body) return res;
+      const body = await res.text().catch(() => "");
+      console.error(`Mistral model ${m} failed (${res.status}): ${body.slice(0, 300)}`);
+    }
+    console.error("All Mistral models failed — trying Lovable AI Gateway");
   }
 
   const lovableKey = Deno.env.get("LOVABLE_API_KEY");

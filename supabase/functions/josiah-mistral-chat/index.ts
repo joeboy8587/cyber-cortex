@@ -6,7 +6,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const MISTRAL_MODEL = Deno.env.get("MISTRAL_MODEL") || "mistral-large-latest";
+const MISTRAL_MODEL = Deno.env.get("MISTRAL_MODEL") || "mistral-small-latest";
 const LOVABLE_FALLBACK_MODEL = "google/gemini-3.1-pro-preview";
 
 interface ChatCall {

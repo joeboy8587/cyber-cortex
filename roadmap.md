@@ -4,5 +4,5 @@
 - [x] Verify four rule tests and the signed-in live report flow without changing raw evidence.
 
 # Josiah chat AI gateway errors
-- [ ] Wire Mistral (user's own key, already saved as MISTRAL_API_KEY) as Josiah chat's primary model, falling back to the built-in models.
-- [ ] Deploy and verify Josiah chat answers end-to-end.
+- [x] Wire Mistral (user's own key, already saved as MISTRAL_API_KEY) as fallback for Josiah chat and the agent orchestrator, bypassing the workspace credit block.
+- [x] Deploy and verify Josiah chat answers end-to-end (live test replied via Mistral).

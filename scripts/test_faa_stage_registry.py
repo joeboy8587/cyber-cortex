@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import unittest
 
 spec = importlib.util.spec_from_file_location("faa_stage_registry", "scripts/faa-stage-registry.py")
@@ -13,7 +14,8 @@ class StagingSafetyTests(unittest.TestCase):
         statement = stage.insert_statement("master_staging", ["n_number", "name"], [{"n_number": "913KC", "name": "O'BRIEN"}])
         self.assertIn('INSERT INTO faa_registry_20261021."master_staging"', statement["query"])
         self.assertNotIn("O'BRIEN", statement["query"])
-        self.assertEqual(statement["params"][0][0]["name"], "O'BRIEN")
+        self.assertIsInstance(statement["params"][0], str)
+        self.assertEqual(json.loads(statement["params"][0])[0]["name"], "O'BRIEN")
 
     def test_evidence_tables_cannot_be_import_targets(self):
         with self.assertRaises(ValueError):

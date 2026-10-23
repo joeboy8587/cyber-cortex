@@ -67,7 +67,7 @@ def insert_statement(table, columns, rows):
     fields = ",".join('"' + c + '" text' for c in columns)
     return {
         "query": f'INSERT INTO {SCHEMA}."{table}" ({quoted}) SELECT {quoted} FROM jsonb_to_recordset($1::jsonb) AS r({fields})',
-        "params": [rows],
+        "params": [json.dumps(rows, separators=(",", ":"))],
     }
 
 

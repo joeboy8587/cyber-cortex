@@ -2,3 +2,4 @@
 - Sentinel report rationale separates current observations, dated historical flags and identity context using pure shared reason rules; source gaps remain explicit to avoid circular watchlist justification.
 - Bundle the GPU helper from the canonical scripts source as raw text and download it synchronously as a Blob; this avoids static-file navigation failures in the preview.
 - Taxonomy definitions are separate from detection statistics; recent taxonomy/alignment reads declare their complete date scope and enforce transaction-local SQL timeouts because pooled connections can discard startup settings.
+- FAA release imports use isolated dated staging plus previous-registry snapshots and atomic batch receipts through the Neon connector; current public registry matches must remain separate from historical ownership and missing/withheld identity so enrichment cannot manufacture conclusions.

@@ -37,6 +37,15 @@ Deno.serve(async (req) => {
     const body = req.method === "POST" ? await req.json().catch(() => ({})) : {};
     const action = body.action || "buildAndAudit";
 
+    // Legacy rebuild uses cascading DROP and predates release provenance.
+    // Never let it erase the protected, connector-managed release views.
+    if (action === "buildAndAudit" || action === "build") {
+      return new Response(JSON.stringify({
+        ok: false,
+        error: "Legacy rebuild is retired. FAA release enrichment is managed through validated, dated registry staging; existing views and detections are unchanged.",
+      }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     // ── 1. Build canonical FAA-enriched detection views ────────────────────
     if (action === "buildAndAudit" || action === "build") {
       // Canonical identity view over the FULL FAA registry (faa_master is the

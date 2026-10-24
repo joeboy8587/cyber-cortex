@@ -36,7 +36,7 @@ export function FaaReleaseIdentity({ registration, reportedHex }: { registration
     <div className="flex flex-wrap items-center gap-2">
       <Badge variant="outline">FAA release {identity.registry_release_date}</Badge>
       <Badge variant={identity.identity_status === 'ICAO_FAA_MISMATCH' ? 'destructive' : 'secondary'}>
-        {current ? identity.identity_status.replaceAll('_', ' ') : identity.registry_record_scope.replaceAll('_', ' ')}
+        {current ? identity.identity_status.replace(/_/g, ' ') : identity.registry_record_scope.replace(/_/g, ' ')}
       </Badge>
     </div>
     <p>{current ? identity.registrant_name || 'Registrant withheld or unavailable' : 'No match in the current public release'}</p>

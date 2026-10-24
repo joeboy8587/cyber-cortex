@@ -6,6 +6,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { supabase } from "@/integrations/supabase/client";
 import { Loader2, Plane, ShieldAlert, Users, Fingerprint, Copy } from "lucide-react";
 import { toast } from "sonner";
+import { FaaReleaseIdentity } from './FaaReleaseIdentity';
 
 type Props = { registration: string | null };
 
@@ -66,17 +67,18 @@ export function AircraftDossier({ registration }: Props) {
               <Plane className="w-4 h-4 text-primary" />
               <span className="font-display text-xl tracking-wide">{p.registration}</span>
               {p.faa_matched
-                ? <Badge variant="secondary" className="text-[10px]">FAA MATCHED</Badge>
-                : <Badge variant="destructive" className="text-[10px]">NO FAA RECORD</Badge>}
+                ? <Badge variant="secondary" className="text-[10px]">SAVED FAA MATCH</Badge>
+                : <Badge variant="outline" className="text-[10px]">SAVED IDENTITY UNRESOLVED</Badge>}
             </div>
             <div className="text-xs text-muted-foreground font-mono mt-1">
               {p.aircraft_type || "Type unknown"} · HEX {p.icao24 || "—"}
               {p.year_manufactured ? ` · ${p.year_manufactured}` : ""}
             </div>
             <div className="text-xs mt-1">
-              {p.operator || <span className="text-muted-foreground">Unregistered operator</span>}
+              {p.operator || <span className="text-muted-foreground">Operator unavailable</span>}
               {p.operator_city ? ` · ${[p.operator_city, p.operator_state].filter(Boolean).join(", ")}` : ""}
             </div>
+            <FaaReleaseIdentity registration={p.registration} reportedHex={p.icao24} />
           </div>
           <Badge variant={Number(p.risk_score) >= 60 ? "destructive" : "secondary"} className="font-mono">
             RISK {Number(p.risk_score || 0).toFixed(0)}

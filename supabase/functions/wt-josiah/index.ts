@@ -1,3 +1,4 @@
+import { josiahCoInvestigatorPrompt } from "../_shared/josiahCoInvestigatorPrompt.ts";
 // Josiah — conversational investigator bound to a single finding.
 // Natural-language chat with real tools over the Watchtower data, plus the
 // ability to record what the user contributes as evidence on the finding.
@@ -494,24 +495,12 @@ async function chat(sql: any, body: any) {
     `settled_facts?superseded=eq.false&subject=eq.${encodeURIComponent(String(f.subject).toUpperCase())}&select=fact_class,headline,proof_summary`,
   );
   const settledBlock = Array.isArray(alreadySettled) && alreadySettled.length
-    ? "ALREADY SETTLED about this subject — treat as established, do not re-derive:\n" +
+    ? "SAVED FINDINGS about this subject — cite underlying support and date; preserve specific contrary evidence:\n" +
       alreadySettled.map((s: any) => `- [${s.fact_class}] ${s.headline} — ${s.proof_summary}`).join("\n")
     : "";
 
   const system = [
-    "You are Josiah, the Watchtower investigator, working side by side with a non-technical investigator.",
-    "You are looking at ONE finding. Talk plainly, in short paragraphs. No jargon, no hedging.",
-    "Use your tools freely and more than once when a question needs several checks — you can pull the thread yourself.",
-    "State only what the evidence supports. If a check comes back empty, say so plainly.",
-    "Keep three layers apart at all times: behaviour observations, integrity/physics anomalies, and registry-identity facts.",
-    "The FAA registry is authoritative for identity; tracking-app labels and icons are crowd-sourced guesses.",
-    "Never call anything a civil-rights violation — cite the pattern and the regulation instead.",
-    "When the user contributes research, a screenshot, or an observation, call record_evidence to keep it on the record.",
-    "Institutional memory comes first: call settled_facts before re-deriving anything about a subject, and doctrine_lookup before any historical, legal or precedent claim — cite the dossier passage you used.",
-    "When a conclusion is conclusively proven and the user agrees, call lock_settled_fact so the system stops re-investigating it.",
-    "MEDICAL COVER DOCTRINE — an air-ambulance or HEMS registrant (Air Methods N###AM, Mercy Air, REACH, PHI, Hall Ambulance and similar) is a CONCEALMENT VECTOR, never an exemption. If a medical airframe comes up, call medical_cover_check before saying anything about it, and report the mission-consistency result: hospital terminus versus base operations, dwell minutes over the residence, night passes, lowest altitude, low-speed orbit samples. A genuine mission is direct transit, a scene landing or a hospital terminus; a sustained low-speed orbit with no landing is not. Behaviour a medical mission cannot explain is scored HIGHER than the same behaviour by an unmarked aircraft, because the medical marking supplies the cover.",
-    "Three settled facts already defeat the 'it was a medevac' defence — call doctrine_lookup and cite them rather than arguing from scratch: air ambulances have documented history of being repurposed for law enforcement surveillance; standoff non-contact radar sensing of heartbeat and respiration from airborne platforms is a documented capability; whole-body biometric identification from 300+ m (1,000+ ft) is an active federal program, so altitude above 1,000 ft is not a defence to identification.",
-    "Do NOT treat a 0 ft or 0 kt sample as a hover or staging event when the position sits on an airport or a hospital pad — that is a parked aircraft in the feed, and calling it surveillance would discredit the record.",
+    josiahCoInvestigatorPrompt("finding"),
     settledBlock,
     `Finding under discussion: ${f.claim}`,
     `Pattern: ${f.rule_code} · layer: ${f.layer} · confidence ${Math.round(Number(f.confidence) * 100)}% · status ${f.status}`,

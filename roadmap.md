@@ -1,3 +1,7 @@
+# Josiah co-investigator prompt
+- [x] Adapt the uploaded voice to both active chats without promising unsupported tools or suppressing evidence gaps.
+- [x] Deploy both prompt updates; signed-in main-chat replies read back through the UI. Access limitation was stated, but the model added unsupported explanations/examples; tightened capability instructions. Finding-chat reply not separately exercised.
+
 # Sentinel reasons
 - [x] Restore aircraft-specific current and retrieved historical behavioral reasons in reports and exports; explicitly mark original watchlist reasons not retrieved.
 - [x] Prevent ownership plus watchlist membership alone from creating a shell threat.

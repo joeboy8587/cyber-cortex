@@ -1,3 +1,7 @@
+# Legacy flight source isolation
+- [ ] Trace whether the Lovable live tracker generates synthetic records or imports provider observations; verify legacy versus canonical source relationships.
+- [ ] Remove confirmed contaminated legacy reads from evidence workflows without deleting raw records; verify source safeguards.
+
 # Josiah co-investigator prompt
 - [x] Adapt the uploaded voice to both active chats without promising unsupported tools or suppressing evidence gaps.
 - [x] Deploy both prompt updates; signed-in main-chat replies read back through the UI. Access limitation was stated, but the model added unsupported explanations/examples; tightened capability instructions. Finding-chat reply not separately exercised.

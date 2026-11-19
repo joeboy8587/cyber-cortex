@@ -88,7 +88,25 @@ export default function ICAORecyclingDashboard() {
         body: { action: "icaoRecyclingScan", timeWindow: "180 days" },
       });
       if (fnError) throw fnError;
-      setData(result?.data ?? result);
+      const raw = result?.data ?? result;
+      if (!raw || typeof raw !== "object" || raw.error) {
+        throw new Error(raw?.error || "The scan returned no results. Please try again.");
+      }
+      const sum = raw.summary ?? {};
+      setData({
+        hexSharing: Array.isArray(raw.hexSharing) ? raw.hexSharing : [],
+        shellFleet: Array.isArray(raw.shellFleet) ? raw.shellFleet : [],
+        kcsoTagged: Array.isArray(raw.kcsoTagged) ? raw.kcsoTagged : [],
+        militaryDualHex: Array.isArray(raw.militaryDualHex) ? raw.militaryDualHex : [],
+        summary: {
+          totalRecycledHexes: Number(sum.totalRecycledHexes) || 0,
+          totalShellAssets: Number(sum.totalShellAssets) || 0,
+          totalKcsoTagged: Number(sum.totalKcsoTagged) || 0,
+          totalMilitarySpoofs: Number(sum.totalMilitarySpoofs) || 0,
+          highestRecycleCount: Number(sum.highestRecycleCount) || 0,
+        },
+        analyzedAt: raw.analyzedAt ?? new Date().toISOString(),
+      });
     } catch (e: any) {
       setError(e.message);
     } finally {

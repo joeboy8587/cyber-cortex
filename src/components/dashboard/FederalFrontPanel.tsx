@@ -30,6 +30,24 @@ interface HitRow {
   low_pings: number | null;
 }
 
+interface CandidateRow {
+  tail: string;
+  hex: string;
+  registrant: string;
+  city: string;
+  state: string;
+  linked_to: string | null;
+  reason: string;
+}
+
+interface SquawkRow {
+  squawk: string;
+  hex: string | null;
+  tail: string | null;
+  pings: number;
+  last_seen: string;
+}
+
 interface CallsignRow {
   callsign: string;
   registration: string | null;
@@ -57,6 +75,8 @@ export default function FederalFrontPanel() {
   const [fleet, setFleet] = useState<FleetRow[]>([]);
   const [hits, setHits] = useState<HitRow[]>([]);
   const [callsigns, setCallsigns] = useState<CallsignRow[]>([]);
+  const [candidates, setCandidates] = useState<CandidateRow[]>([]);
+  const [squawks, setSquawks] = useState<SquawkRow[] | null>(null);
   const [ranAt, setRanAt] = useState<string | null>(null);
 
   const scan = useCallback(async () => {
@@ -118,6 +138,53 @@ export default function FederalFrontPanel() {
         LIMIT 25
       `);
       setCallsigns(csRows);
+
+      // Wiseman method 1+2: same mailing address as a documented front, or the
+      // "three letters + LEASING/AVIATION" naming pattern. Leads only, never proof.
+      try {
+        const cand = await runQuery<CandidateRow>(`
+          WITH known AS (
+            SELECT DISTINCT upper(name) AS name, upper(trim(street)) AS street,
+                   left(coalesce(zip_code,''),5) AS zip
+            FROM faa_master WHERE upper(name) ~ '(${FRONT_REGEX})' AND coalesce(trim(street),'') <> ''
+          )
+          SELECT * FROM (
+          SELECT DISTINCT ON (m.n_number)
+                 upper('N'||m.n_number) AS tail, upper(replace(m.mode_s_code_hex,' ','')) AS hex,
+                 upper(m.name) AS registrant, coalesce(m.city,'') AS city, coalesce(m.state,'') AS state,
+                 k.name AS linked_to,
+                 CASE WHEN k.name IS NOT NULL THEN 'SHARED ADDRESS' ELSE 'NAME PATTERN' END AS reason
+          FROM faa_master m
+          LEFT JOIN known k ON k.street = upper(trim(m.street)) AND k.zip = left(coalesce(m.zip_code,''),5)
+          WHERE upper(m.name) !~ '(${FRONT_REGEX})'
+            AND (k.name IS NOT NULL OR upper(m.name) ~ '^[A-Z]{3} (LEASING|AVIATION)( |,|$)')
+          ORDER BY m.n_number, (k.name IS NULL)
+          ) c ORDER BY (reason = 'SHARED ADDRESS') DESC, linked_to, tail
+          LIMIT 600
+        `);
+        setCandidates(cand);
+      } catch (e: any) {
+        toast.error(`Lookalike check failed: ${e.message}`);
+      }
+
+      // Wiseman method 3: squawk 4414/4415. Only the older flight list stores squawk,
+      // so known test-fixture hexes (ABC…) are excluded and results are labelled.
+      try {
+        const sq = await runQuery<SquawkRow>(`
+          SELECT coalesce(squawk, squawk_code)::text AS squawk, upper(icao24) AS hex,
+                 max(upper(registration)) AS tail, count(*)::int AS pings, max(detection_timestamp) AS last_seen
+          FROM live_flight_detections_rows
+          WHERE coalesce(squawk, squawk_code)::text IN ('4414','4415')
+            AND upper(coalesce(icao24,'')) NOT LIKE 'ABC%'
+          GROUP BY 1, 2
+          ORDER BY pings DESC
+          LIMIT 50
+        `, 25000);
+        setSquawks(sq);
+      } catch (e: any) {
+        setSquawks(null);
+        toast.error(`Squawk 4414/4415 check failed: ${e.message}`);
+      }
       setRanAt(new Date().toLocaleString());
     } catch (e: any) {
       toast.error(`Front-company scan failed: ${e.message}`);
@@ -373,6 +440,71 @@ export default function FederalFrontPanel() {
 
         <div>
           <h3 className="mb-2 font-display text-sm uppercase tracking-wider">
+            Lookalike companies (Wiseman method)
+          </h3>
+          <p className="mb-2 text-xs text-muted-foreground">
+            Companies not on the documented list that either share a mailing address with a known front, or follow the
+            "three letters + Leasing/Aviation" naming pattern. These are leads to research, not proof of federal ownership.
+          </p>
+          {candidates.length ? (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Tail</TableHead>
+                  <TableHead>Hex</TableHead>
+                  <TableHead>Registrant</TableHead>
+                  <TableHead>Why flagged</TableHead>
+                  <TableHead>Registered city</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {candidates.slice(0, 100).map((c) => (
+                  <TableRow key={c.tail}>
+                    <TableCell className="font-mono font-bold">{c.tail}</TableCell>
+                    <TableCell className="font-mono text-xs">{c.hex}</TableCell>
+                    <TableCell className="text-xs">{c.registrant}</TableCell>
+                    <TableCell>
+                      <Badge variant={c.reason === "SHARED ADDRESS" ? "destructive" : "outline"} className="text-[10px]">
+                        {c.reason}
+                        {c.linked_to ? ` · ${c.linked_to}` : ""}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-xs">{[c.city, c.state].filter(Boolean).join(", ")}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          ) : (
+            <p className="text-xs text-muted-foreground">{loading ? "Checking…" : "No lookalike companies found."}</p>
+          )}
+          {candidates.length > 100 && (
+            <p className="mt-1 text-xs text-muted-foreground">Showing 100 of {candidates.length}.</p>
+          )}
+        </div>
+
+        <div>
+          <h3 className="mb-2 font-display text-sm uppercase tracking-wider">Squawk 4414 / 4415 sightings</h3>
+          {squawks === null ? (
+            <p className="text-xs text-muted-foreground">{loading ? "Checking…" : "Squawk check unavailable right now."}</p>
+          ) : squawks.length ? (
+            <div className="flex flex-wrap gap-2">
+              {squawks.map((q) => (
+                <Badge key={`${q.squawk}-${q.hex}`} variant="secondary" className="font-mono">
+                  {q.squawk} · {q.tail || q.hex || "unknown"} · {q.pings} pings · {new Date(q.last_seen).toLocaleDateString()}
+                </Badge>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">No 4414/4415 squawks recorded.</p>
+          )}
+          <p className="mt-1 text-xs text-muted-foreground">
+            From the older flight list (known test records removed). Verify each sighting against the original feed
+            before using it as evidence.
+          </p>
+        </div>
+
+        <div>
+          <h3 className="mb-2 font-display text-sm uppercase tracking-wider">
             Tradecraft callsign monitor (JENNA / JENA / ROSS, last 90 days)
           </h3>
           {callsigns.length ? (
@@ -385,7 +517,7 @@ export default function FederalFrontPanel() {
             </div>
           ) : (
             <p className="text-xs text-muted-foreground">
-              No matching callsigns in the window. Squawk 4414/4415 monitoring still requires squawk capture in ingest.
+              No matching callsigns in the window.
             </p>
           )}
         </div>

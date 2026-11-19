@@ -208,9 +208,16 @@ export async function handleAction4(action: string, body: Record<string, any>, s
         ? `AND latitude BETWEEN 35.0 AND 36.0 AND longitude BETWEEN -119.5 AND -118.0`
         : '';
 
-      const [hexSharing, shellFleet, kcsoTagged, militaryDualHex] = await Promise.all([
+      // Each section runs on its own with a 25s database limit, so one slow
+      // section no longer makes the whole scan fail (and show all zeros).
+      const bounded = (q: string) => sql.begin(async (tx: any) => {
+        await tx.unsafe(`SET LOCAL statement_timeout = '25s'`);
+        return await tx.unsafe(q);
+      });
+      const noFixture = `AND upper(coalesce(icao_code,'')) NOT LIKE 'ABC%'`;
+      const settled = await Promise.allSettled([
         // 1. ICAO hex codes used by multiple registrations (recycling/sharing)
-        sql.unsafe(`
+        bounded(`
           SELECT
             icao_code as hex_code,
             COUNT(DISTINCT registration)::int as registration_count,
@@ -227,7 +234,7 @@ export async function handleAction4(action: string, body: Record<string, any>, s
           WHERE icao_code IS NOT NULL AND icao_code != ''
             AND registration IS NOT NULL AND registration != '' AND registration != 'N/A'
             AND detection_timestamp > NOW() - INTERVAL '${timeWindow}'
-            ${geoFilter}
+            ${geoFilter} ${noFixture}
           GROUP BY icao_code
           HAVING COUNT(DISTINCT registration) >= 2
           ORDER BY COUNT(DISTINCT registration) DESC, total_detections DESC
@@ -235,7 +242,7 @@ export async function handleAction4(action: string, body: Record<string, any>, s
         `),
 
         // 2. Shell company fleet — aircraft tagged with shell/medical/unknown taxonomy
-        sql.unsafe(`
+        bounded(`
           SELECT
             registration,
             icao_code,
@@ -253,14 +260,14 @@ export async function handleAction4(action: string, body: Record<string, any>, s
                  OR registration LIKE '%AM' OR registration LIKE '%LLC%')
             AND registration IS NOT NULL AND registration != '' AND registration != 'N/A'
             AND detection_timestamp > NOW() - INTERVAL '${timeWindow}'
-            ${geoFilter}
+            ${geoFilter} ${noFixture}
           GROUP BY registration, icao_code, taxonomy_tag
           ORDER BY detections DESC
           LIMIT 80
         `),
 
         // 3. KCSO-tagged aircraft cross-reference
-        sql.unsafe(`
+        bounded(`
           SELECT
             registration,
             icao_code,
@@ -275,14 +282,14 @@ export async function handleAction4(action: string, body: Record<string, any>, s
           WHERE taxonomy_tag LIKE '%kcso%'
             AND registration IS NOT NULL AND registration != '' AND registration != 'N/A'
             AND detection_timestamp > NOW() - INTERVAL '${timeWindow}'
-            ${geoFilter}
+            ${geoFilter} ${noFixture}
           GROUP BY registration, icao_code, taxonomy_tag
           ORDER BY detections DESC
           LIMIT 50
         `),
 
         // 4. Military dual-hex detection — military hex codes broadcasting civilian IDs
-        sql.unsafe(`
+        bounded(`
           WITH military_hexes AS (
             SELECT DISTINCT icao_code
             FROM live_flight_detections_rows
@@ -295,7 +302,7 @@ export async function handleAction4(action: string, body: Record<string, any>, s
                 OR callsign LIKE 'STMPD%' OR callsign LIKE 'KOME%'
               )
               AND detection_timestamp > NOW() - INTERVAL '${timeWindow}'
-              ${geoFilter}
+              ${geoFilter} ${noFixture}
           ),
           civilian_aliases AS (
             SELECT
@@ -311,25 +318,36 @@ export async function handleAction4(action: string, body: Record<string, any>, s
               MIN(d.detection_timestamp) as first_seen,
               MAX(d.detection_timestamp) as last_seen
             FROM live_flight_detections_rows d
-            LEFT JOIN LATERAL (
-              SELECT DISTINCT icao_code FROM live_flight_detections_rows
-              WHERE registration = d.registration
-                AND icao_code != d.icao_code
-                AND detection_timestamp > NOW() - INTERVAL '${timeWindow}'
-              LIMIT 1
-            ) d2 ON true
+            LEFT JOIN (
+              SELECT registration, MIN(icao_code) AS icao_code
+              FROM live_flight_detections_rows
+              WHERE detection_timestamp > NOW() - INTERVAL '${timeWindow}'
+                AND registration IS NOT NULL AND registration != ''
+                AND icao_code NOT LIKE 'AE%' AND icao_code NOT LIKE 'AF%'
+                ${geoFilter} ${noFixture}
+              GROUP BY registration
+            ) d2 ON d2.registration = d.registration AND d2.icao_code != d.icao_code
             WHERE d.icao_code IN (SELECT icao_code FROM military_hexes)
               AND d.registration IS NOT NULL AND d.registration != '' AND d.registration != 'N/A'
               AND d.detection_timestamp > NOW() - INTERVAL '${timeWindow}'
-              ${geoFilter}
+              ${geoFilter} AND upper(d.icao_code) NOT LIKE 'ABC%'
             GROUP BY d.icao_code, d.registration, d2.icao_code
             ORDER BY detections DESC
           )
           SELECT * FROM civilian_aliases LIMIT 50
-        `).catch(() => []),
+        `),
       ]);
+      const names = ['Hex Recycling', 'Shell Fleet', 'KCSO Assets', 'Military Spoofing'];
+      const incompleteSections: string[] = [];
+      const [hexSharing, shellFleet, kcsoTagged, militaryDualHex] = settled.map((r, i) => {
+        if (r.status === 'fulfilled') return r.value as any[];
+        console.warn(`icaoRecyclingScan section ${names[i]} failed:`, String((r as any).reason?.message ?? r.reason));
+        incompleteSections.push(names[i]);
+        return [] as any[];
+      });
 
       return {
+        incompleteSections,
         hexSharing,
         shellFleet,
         kcsoTagged,

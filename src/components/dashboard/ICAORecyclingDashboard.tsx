@@ -73,6 +73,7 @@ interface ScanResult {
     highestRecycleCount: number;
   };
   analyzedAt: string;
+  incompleteSections?: string[];
 }
 
 export default function ICAORecyclingDashboard() {
@@ -106,6 +107,7 @@ export default function ICAORecyclingDashboard() {
           highestRecycleCount: Number(sum.highestRecycleCount) || 0,
         },
         analyzedAt: raw.analyzedAt ?? new Date().toISOString(),
+        incompleteSections: Array.isArray(raw.incompleteSections) ? raw.incompleteSections : [],
       });
     } catch (e: any) {
       setError(e.message);
@@ -145,6 +147,11 @@ export default function ICAORecyclingDashboard() {
           </Button>
         }
       >
+        {data?.incompleteSections && data.incompleteSections.length > 0 && (
+          <div className="p-3 mb-3 text-sm text-destructive bg-destructive/10 rounded">
+            These sections took too long and did not finish, so their zero is NOT a real result: {data.incompleteSections.join(", ")}. Press Scan to try again.
+          </div>
+        )}
         {error && (
           <div className="p-4 text-sm text-destructive bg-destructive/10 rounded">{error}</div>
         )}

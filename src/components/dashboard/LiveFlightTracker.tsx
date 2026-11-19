@@ -213,9 +213,10 @@ export function LiveFlightTracker() {
     setFaaClassifier({ status: 'running' });
     try {
       const { data, error } = await supabase.functions.invoke('neon-faa-enrich', {
-        body: { action: 'buildAndAudit' }
+        body: { action: 'audit' }
       });
       if (error) throw error;
+      if (data?.ok === false) throw new Error(data.error);
       const health = data?.join_health_unified || {};
       setFaaClassifier({
         status: 'ok',
@@ -223,7 +224,7 @@ export function LiveFlightTracker() {
         ghosts: Number(health.ghosts || 0),
         mismatches: Number(health.mismatches || 0),
       });
-      toast.success('FAA classifier refreshed');
+      toast.success(`FAA check done (registry ${data?.registry_release_date ?? ''}, last 7 days)`);
       fetchLiveFlights();
     } catch (e: any) {
       setFaaClassifier({ status: 'error' });

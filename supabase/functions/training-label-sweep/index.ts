@@ -93,14 +93,18 @@ Deno.serve(async (req) => {
         if (page + SEALED_PAGES >= pages && raw.length === 0) nextCursor = null;
         (ctx as any)._pages = pages;
       } else {
-        const until = cursor ?? new Date().toISOString();
+        // Keyset cursor "ISO|icao" so bulk rows sharing one timestamp are never skipped or repeated.
+        const [cTs, cIcao] = (cursor ?? "").split("|");
+        const until = cTs || new Date().toISOString();
+        const untilIcao = cTs ? (cIcao ?? "") : "\uffff";
         const since = new Date(Date.now() - days * 86400000).toISOString();
         data = await sql`
           SELECT icao_code, registration, callsign, detection_timestamp AS ts, altitude, speed, on_ground, taxonomy_tag
           FROM live_flight_detections_rows
-          WHERE detection_timestamp > ${since} AND detection_timestamp < ${until}
-          ORDER BY detection_timestamp DESC LIMIT ${BATCH}`;
-        if (data.length === BATCH) nextCursor = new Date(data[data.length - 1].ts).toISOString();
+          WHERE detection_timestamp > ${since}
+            AND (detection_timestamp, COALESCE(icao_code,'')) < (${until}::timestamptz, ${untilIcao})
+          ORDER BY detection_timestamp DESC, COALESCE(icao_code,'') DESC LIMIT ${BATCH}`;
+        if (data.length === BATCH) { const l = data[data.length - 1]; nextCursor = `${new Date(l.ts).toISOString()}|${String(l.icao_code ?? "").slice(0, 12)}`; }
       }
       scanned = data.length;
       const regs = [...new Set(data.map(r => String(r.registration ?? "").toUpperCase()).filter(Boolean))];

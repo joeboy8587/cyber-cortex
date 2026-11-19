@@ -37,6 +37,29 @@ Deno.serve(async (req) => {
     const body = req.method === "POST" ? await req.json().catch(() => ({})) : {};
     const action = body.action || "buildAndAudit";
 
+    // Read-only audit against the current FAA release (faa_master via v_faa_identity).
+    if (action === "audit") {
+      const rows = await sql.unsafe(`
+        SELECT faa_identity->>'identity_status' AS status, COUNT(DISTINCT UPPER(registration)) AS regs
+        FROM v_faa_enriched_live_all
+        WHERE registration IS NOT NULL AND registration <> ''
+          AND detection_timestamp >= now() - interval '7 days'
+        GROUP BY 1`);
+      const by: Record<string, number> = {};
+      for (const r of rows) by[String(r.status)] = Number(r.regs);
+      const rel = await sql.unsafe(`SELECT MAX(registry_release_date)::text AS d FROM v_faa_identity`);
+      return new Response(JSON.stringify({
+        ok: true, action, window: "last 7 days", registry_release_date: rel[0]?.d ?? null,
+        by_status: by,
+        join_health_unified: {
+          regs_matched: by["IDENTITY_CONFIRMED"] ?? 0,
+          mismatches: by["ICAO_FAA_MISMATCH"] ?? 0,
+          ghosts: by["PUBLIC_REGISTRY_UNAVAILABLE"] ?? 0,
+        },
+        note: "Not in the public registry is not proof of spoofing; records may be withheld.",
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     // Legacy rebuild uses cascading DROP and predates release provenance.
     // Never let it erase the protected, connector-managed release views.
     if (action === "buildAndAudit" || action === "build") {

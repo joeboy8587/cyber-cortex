@@ -43,7 +43,9 @@ export function TrainingReadinessPanel() {
 
   const sweep = async (scope: "flights" | "policy_flags" | "sealed_archive") => {
     setBusy(scope);
-    let cursor: string | undefined = scope === "sealed_archive" ? (localStorage.getItem("tr_sealed_cursor") ?? undefined) : undefined;
+    const ck = scope === "sealed_archive" ? "tr_sealed_cursor" : scope === "flights" ? `tr_flights_cursor_${days}` : null;
+    let cursor: string | undefined = ck ? (localStorage.getItem(ck) ?? undefined) : undefined;
+    if (scope === "flights" && cursor === "done") { localStorage.removeItem(ck!); cursor = undefined; }
     if (cursor === "done") { setBusy(null); return toast.info("The whole sealed archive is already sorted."); }
     let total = 0; let rounds = 0;
     try {
@@ -51,6 +53,7 @@ export function TrainingReadinessPanel() {
         const { data, error } = await supabase.functions.invoke("training-label-sweep", { body: { scope, days, cursor } });
         if (error || data?.error) throw new Error(data?.error ?? error?.message);
         total += data.labeled; cursor = data.next_cursor ?? undefined; rounds++;
+        if (scope === "flights") localStorage.setItem(ck!, cursor ?? "done");
         if (scope === "sealed_archive") { localStorage.setItem("tr_sealed_cursor", cursor ?? "done"); if (data.span) setSpan(data.span); if (data.total_pages) setProgress(Math.min(100, Math.round((Number(cursor ?? data.total_pages) / data.total_pages) * 100))); }
       } while (cursor && rounds < (scope === "sealed_archive" ? 40 : 10));
       toast.success(`Sorted ${total.toLocaleString()} records${cursor ? " (more remain — press again to continue)" : ""}.`);

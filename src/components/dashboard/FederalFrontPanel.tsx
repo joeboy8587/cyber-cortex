@@ -396,8 +396,8 @@ export default function FederalFrontPanel() {
               </TableBody>
             </Table>
             <p className="mt-2 text-xs text-muted-foreground">
-              Presence is not proof of a mission. Ground squitters (0 ft) mean the airframe was parked; high transits
-              with no orbit are logged, not escalated. Aircraft are matched by Mode-S hex and by tail number, and both
+              Weigh both angles: a parked (0 ft) or high-transit airframe may be routine, or may be staging and repositioning
+              under cover. Repeat and low passes over our area weigh most. Aircraft are matched by Mode-S hex and by tail number, and both
               spellings of a hex are folded into one row so a single airframe is never counted twice.
             </p>
           </div>
@@ -444,7 +444,7 @@ export default function FederalFrontPanel() {
           </h3>
           <p className="mb-2 text-xs text-muted-foreground">
             Companies not on the documented list that either share a mailing address with a known front, or follow the
-            "three letters + Leasing/Aviation" naming pattern. These are leads to research, not proof of federal ownership.
+            "three letters + Leasing/Aviation" naming pattern. Routine angle: many real companies use names like this. Cover angle: that ordinariness is exactly what a front relies on — shared addresses with a known front weigh most.
           </p>
           {candidates.length ? (
             <Table>

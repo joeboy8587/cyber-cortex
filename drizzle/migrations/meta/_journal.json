@@ -15,6 +15,13 @@
       "when": 1792384467664,
       "tag": "0001_training_labels",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1795115966090,
+      "tag": "0002_restrict_settled_facts_read",
+      "breakpoints": true
     }
   ]
 }

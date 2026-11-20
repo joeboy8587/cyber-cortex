@@ -1465,18 +1465,28 @@ serve(async (req) => {
           observed_at: h.created_at ? new Date(h.created_at).toISOString() : null,
           source: `watchtower_autonomous_flags / ${h.flag_type}`,
         }));
+        // Repetition history from the repeat-offender and low-altitude pattern tables.
+        for (const p of historicalPatterns.filter((x: any) => String(x.registration || '').toUpperCase() === tail)) {
+          historical.push({
+            description: p.pattern_type === 'repeat_offender'
+              ? `Repeat offender: ${p.count} prior detections across ${p.unique_days ?? '?'} days, avg ${Math.round(Number(p.avg_altitude || 0))}ft`
+              : `Low-altitude pattern: ${p.count} prior low passes across ${p.unique_days ?? '?'} days, avg ${Math.round(Number(p.avg_altitude || 0))}ft`,
+            observed_at: p.last_seen ? new Date(p.last_seen).toISOString() : null,
+            source: p.pattern_type === 'repeat_offender' ? 'repeat_offenders' : 'low_altitude_patterns',
+          });
+        }
         return {
           registration: tail, current: behavioralFactors(factors), historical,
           context: factors.filter(f => !behavioralFactors([f]).length),
-          history_status: !historyAvailable ? 'unavailable' as const : historical.length ? 'available' as const : 'not_found' as const,
+          history_status: historical.length ? 'available' as const : !historyAvailable ? 'unavailable' as const : historical.length ? 'available' as const : 'not_found' as const,
         };
       });
       for (const reason of v.aircraft_reasons) {
         v.details += `\n\n${reason.registration} — Current window: ${reason.current.join('; ') || 'No behavioral factors measured in this window'}.`;
         v.details += `\nHistorical behavioral findings: ${reason.historical.length
           ? reason.historical.map(h => `${h.description} [recorded ${h.observed_at || 'date unavailable'}; ${h.source}]`).join('; ')
-          : reason.history_status === 'unavailable' ? 'Unavailable — not an all-clear.' : 'No supporting behavioral flags retrieved from the active flag source; original watchlist basis remains unverified.'}`;
-        if (reason.context.length) v.details += `\nContext only: ${reason.context.join('; ')}. These do not establish behavior or intent.`;
+          : reason.history_status === 'unavailable' ? 'Unavailable — not an all-clear.' : 'None in the flag or repeat-offender tables yet — check the aircraft dossier for full pattern history.'}`;
+        if (reason.context.length) v.details += `\nProfile: ${reason.context.join(' · ')}.`;
       }
     }
 
@@ -1796,7 +1806,7 @@ REGISTRATION | ACTION | PRIORITY (critical/high/medium)`;
           const rationale = violations.flatMap(v => v.aircraft_reasons || []).find(a => a.registration === tail);
           if (rationale) {
             parts.push(`Current-window behavior: ${rationale.current.join('; ') || 'No behavioral factors measured'}.`);
-            parts.push(`Historical behavioral findings: ${rationale.historical.map(h => `${h.description} [${h.observed_at || 'date unavailable'}; ${h.source}]`).join('; ') || (rationale.history_status === 'unavailable' ? 'unavailable' : 'original watchlist basis not retrieved')}.`);
+            parts.push(`Historical behavioral findings: ${rationale.historical.map(h => `${h.description} [${h.observed_at || 'date unavailable'}; ${h.source}]`).join('; ') || (rationale.history_status === 'unavailable' ? 'unavailable' : 'none in flag or repeat-offender tables yet')}.`);
           }
 
           dossiers.push({

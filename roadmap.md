@@ -1,3 +1,8 @@
+# Independent raw live detections
+- [x] Create an append-only Neon raw observation table, without copying legacy records.
+- [x] Save original provider observations before filtering, identity enrichment, or flagging; retain the existing writer independently.
+- [x] Verify both writes on fresh signed-in live collections: raw inserted 1, existing updated 1; read back verified SHA-256 and no added analysis fields. Six preservation/failure-isolation tests pass; tracker displays raw-copy status.
+
 # Legacy flight source isolation
 - [ ] Trace whether the Lovable live tracker generates synthetic records or imports provider observations; verify legacy versus canonical source relationships.
 - [ ] Remove confirmed contaminated legacy reads from evidence workflows without deleting raw records; verify source safeguards.

@@ -2,6 +2,8 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
 import { crypto } from "https://deno.land/std@0.168.0/crypto/mod.ts";
 import { resolveFaaIdentities, decideIdentity } from "../_shared/faaIdentity.ts";
+import { createClient } from 'npm:@supabase/supabase-js@2';
+import { saveRawResponse, type RawSource, type RawWriteStatus } from '../_shared/rawDetections.ts';
 
 
 const corsHeaders = {
@@ -428,6 +430,41 @@ serve(async (req) => {
     const KERN_BOUNDS = { lamin: 35.20, lamax: 35.60, lomin: -119.25, lomax: -118.75 };
 
     if (action === 'fetchKernCounty' || action === 'fetchFlights') {
+      // Validate the caller before using the server-only raw-stream connector.
+      const token = req.headers.get('Authorization')?.replace(/^Bearer /, '');
+      const authUrl = Deno.env.get('SUPABASE_URL');
+      const anonKey = Deno.env.get('SUPABASE_ANON_KEY');
+      if (!token || !authUrl || !anonKey) {
+        return new Response(JSON.stringify({ error: 'Sign in to collect live detections.' }),
+          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      const authClient = createClient(authUrl, anonKey, { global: { headers: { Authorization: `Bearer ${token}` } } });
+      const { data: claims, error: authError } = await authClient.auth.getClaims(token);
+      if (authError || !claims?.claims) {
+        return new Response(JSON.stringify({ error: 'Sign in to collect live detections.' }),
+          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      const rawWrite: RawWriteStatus = { attempted: 0, inserted: 0, polls: [], error: null };
+      const captureRaw = async (source: RawSource, response: Record<string, unknown>) => {
+        const result = await saveRawResponse(source, response, new Date().toISOString(), async (query, params) => {
+          const key = Deno.env.get('LOVABLE_API_KEY');
+          const connectionKey = Deno.env.get('NEON_API_KEY');
+          if (!key || !connectionKey) throw new Error('Raw stream connector is not configured');
+          const saved = await fetch('https://connector-gateway.lovable.dev/neon/sql', {
+            method: 'POST', headers: { Authorization: `Bearer ${key}`, 'X-Connection-Api-Key': connectionKey, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query, params }),
+          });
+          if (!saved.ok) {
+            const details = await saved.text();
+            throw new Error(`Raw stream write failed [${saved.status}]: ${details}. Check saved rows before retrying.`);
+          }
+          return await saved.json();
+        });
+        rawWrite.attempted += result.attempted;
+        rawWrite.inserted += result.inserted;
+        rawWrite.polls.push(...result.polls);
+        rawWrite.error = result.error ?? rawWrite.error;
+      };
       let flights: any[] = [];
       let apiSuccess = false;
       let apiError: string | null = null;
@@ -452,6 +489,7 @@ serve(async (req) => {
           );
           if (rapidResp && rapidResp.ok) {
             const rapidData = await rapidResp.json();
+            await captureRaw('rapidapi_adsbx', rapidData);
             const ac = rapidData.ac || rapidData.aircraft || [];
             console.log(`RapidAPI ADSBX returned ${ac.length} aircraft`);
             if (ac.length > 0) {
@@ -499,6 +537,7 @@ serve(async (req) => {
         if (response?.ok) {
           try {
             const data = await response.json();
+            await captureRaw('opensky', data);
             if (data.states && Array.isArray(data.states)) {
               flights = data.states.map((state: any[]) => ({
                 icao24: state[0], callsign: (state[1] || '').trim(),
@@ -531,6 +570,7 @@ serve(async (req) => {
           );
           if (adsbResp && adsbResp.ok) {
             const adsbData = await adsbResp.json();
+            await captureRaw('adsb_lol', adsbData);
             const ac = adsbData.ac || adsbData.aircraft || [];
             if (ac.length > 0) {
               flights = ac.filter((a: any) => a.lat && a.lon && !a.gnd).map((a: any) => ({
@@ -619,6 +659,7 @@ serve(async (req) => {
           return new Response(JSON.stringify({
             success: true, flights: transformedCached, count: transformedCached.length,
             source: 'cached', apiError, timestamp: new Date().toISOString(),
+            rawWrite,
             cacheNewestAt: newest ? new Date(newest).toISOString() : null,
             cacheAgeMinutes: newest ? Math.round((Date.now() - newest) / 60000) : null,
             aoi: 'kern_county'
@@ -630,6 +671,7 @@ serve(async (req) => {
         return new Response(JSON.stringify({
           success: false, flights: [], count: 0, source: 'none',
           apiError: apiError || 'No data available', timestamp: new Date().toISOString()
+          , rawWrite
         }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
 
@@ -974,6 +1016,7 @@ serve(async (req) => {
         inserted,
         updated,
         dbWriteError,
+        rawWrite,
         stats,
         source: dataSource,
         apiError,

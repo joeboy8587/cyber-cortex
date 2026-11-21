@@ -47,6 +47,7 @@ export function LiveFlightTracker() {
   const [activeSource, setActiveSource] = useState<string>('—');
   const [dataSource, setDataSource] = useState<'all' | 'live' | 'surveillance'>('all');
   const [faaClassifier, setFaaClassifier] = useState<{ status: string; matched?: number; ghosts?: number; mismatches?: number } | null>(null);
+  const [rawCapture, setRawCapture] = useState<{ inserted: number; attempted: number; error: string | null } | null>(null);
 
   // Fetch live flights from OpenSky Network API (FREE) - focused on Kern County
   const fetchFromOpenSky = useCallback(async () => {
@@ -70,6 +71,10 @@ export function LiveFlightTracker() {
 
       setApiConnected(true);
       setActiveSource(data?.source || 'unknown');
+      setRawCapture(data?.rawWrite ?? null);
+      if (data?.rawWrite?.error) {
+        toast.error(data.rawWrite.error);
+      }
       console.log(`Live tracker source=${data?.source} returned ${data?.count || 0} flights, inserted ${data?.inserted || 0}`);
 
       if (data?.inserted > 0) {
@@ -270,6 +275,15 @@ export function LiveFlightTracker() {
       icon={<Radio className="w-5 h-5 text-primary animate-pulse" />}
     >
       <div className="p-4 space-y-4">
+        {rawCapture && (
+          <div className={rawCapture.error ? 'text-sm text-destructive' : 'text-sm text-muted-foreground'} role="status">
+            {rawCapture.error
+              ? `Raw copy incomplete: ${rawCapture.inserted} / ${rawCapture.attempted} saved`
+              : activeSource === 'cached'
+                ? 'Cached display — no new raw observations'
+                : `Raw copy: ${rawCapture.inserted} / ${rawCapture.attempted} observations saved`}
+          </div>
+        )}
         {/* Control Bar */}
         <div className="flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-2">

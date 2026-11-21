@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
+import { toast } from 'sonner';
 
 interface FlightAlert {
   id: string;
@@ -260,6 +261,7 @@ export function LiveAlertBanner({
       });
 
       const allFlights: any[] = [];
+      if (liveResult.data?.rawWrite?.error) toast.error(liveResult.data.rawWrite.error);
       setFeedSource(liveResult.data?.source || 'live');
       setCacheAgeMinutes(
         typeof liveResult.data?.cacheAgeMinutes === 'number' ? liveResult.data.cacheAgeMinutes : null

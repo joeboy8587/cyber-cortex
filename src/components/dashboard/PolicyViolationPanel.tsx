@@ -58,8 +58,10 @@ export function PolicyViolationPanel() {
         body: { lookbackDays: days },
       });
       if (error) throw error;
+      if (!data?.ok) throw new Error(data?.error || "No policy scan result returned");
       setScanReport(data);
-      toast.success(`Scan complete — ${data?.totalInserted ?? 0} new violations recorded`);
+      if (data.complete === false) toast.warning(`Partial scan — ${data.totalInserted ?? 0} findings saved; open checks shown below`);
+      else toast.success(`Scan complete — ${data.totalInserted ?? 0} new policy findings saved`);
       await load();
     } catch (e: any) {
       toast.error(`Scan failed: ${e?.message || e}`);
@@ -87,8 +89,7 @@ export function PolicyViolationPanel() {
           KCSO Air Support Policy Violation Engine
         </CardTitle>
         <p className="font-mono text-xs text-muted-foreground">
-          Auto-flags every KCSO flight that violates the Air Support Unit Operations Manual
-          (B-401 night/mountain, C-100 hover, A-401 surveillance, B-1102 transport).
+          Documented fleet · night/mountain · repeated low/slow observations · mission and transport checks
         </p>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -115,7 +116,11 @@ export function PolicyViolationPanel() {
 
         {scanReport && (
           <div className="rounded border border-orange-500/30 bg-orange-500/5 p-3 text-xs font-mono space-y-1">
-            <div>Scanned {scanReport.lookbackDays}d · inserted <b>{scanReport.totalInserted}</b> new violations</div>
+            <div>Selected window {scanReport.lookbackDays}d · saved <b>{scanReport.totalInserted}</b> new policy findings · checked {scanReport.scanned} sightings</div>
+            {scanReport.complete === false && <div role="status" className="text-warning">Partial scan — saved findings retained; no all-clear.</div>}
+            {scanReport.capped && <div>Latest 600 fleet observations only; not the full archive.</div>}
+            {scanReport.received === 0 && <div>No documented-fleet sightings in the independent raw feed for this window; historical records were not re-scanned.</div>}
+            {scanReport.issues?.map((issue: string) => <div key={issue} className="text-warning">{issue}</div>)}
             <div className="flex flex-wrap gap-2 mt-1">
               {scanReport.rules?.map((r: any) => (
                 <Badge key={r.rule_code} variant="outline">
@@ -135,6 +140,9 @@ export function PolicyViolationPanel() {
                 <th className="text-left p-2">Callsign</th>
                 <th className="text-left p-2">Rule</th>
                 <th className="text-left p-2">Section</th>
+                <th className="text-right p-2">MSL ft</th>
+                <th className="text-right p-2">Ground ft</th>
+                <th className="text-right p-2">AGL ft</th>
                 <th className="text-left p-2">Severity</th>
               </tr>
             </thead>
@@ -146,11 +154,14 @@ export function PolicyViolationPanel() {
                   <td className="p-2">{v.callsign || "—"}</td>
                   <td className="p-2"><b>{v.rule_code}</b> {v.rule_title}</td>
                   <td className="p-2 text-muted-foreground">{v.manual_section}</td>
+                  <td className="p-2 text-right">{v.evidence?.msl_reported_ft == null ? "—" : Math.round(v.evidence.msl_reported_ft)}</td>
+                  <td className="p-2 text-right">{v.evidence?.agl?.terrain_ft ?? "—"}</td>
+                  <td className="p-2 text-right whitespace-nowrap">{v.evidence?.agl?.agl_ft == null ? "Not calculated" : `${v.evidence.agl.agl_ft} ±${v.evidence.agl.margin_ft}`}</td>
                   <td className="p-2"><Badge className={sevColor(v.severity)}>{v.severity}</Badge></td>
                 </tr>
               ))}
               {violations.length === 0 && (
-                <tr><td colSpan={6} className="p-6 text-center text-muted-foreground">
+                <tr><td colSpan={9} className="p-6 text-center text-muted-foreground">
                   No violations recorded yet. Click "Run Policy Scan" to evaluate the last {days} days.
                 </td></tr>
               )}

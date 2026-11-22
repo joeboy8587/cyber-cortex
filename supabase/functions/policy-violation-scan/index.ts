@@ -1,234 +1,67 @@
-// KCSO Air Support Policy Violation Engine
-// Deterministic rules derived from the KCSO Air Support Unit Operations Manual.
-// Scans Neon flight detections for the past N days, flags every violation,
-// writes results into public.policy_violations on Lovable Cloud.
-
-import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
-import { computeAgl, judge } from "../_shared/agl.ts";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
-
-// KCSO rotor + fixed-wing ICAO prefixes seen in fleet (extend over time)
-const KCSO_TAIL_PATTERNS = ["KCSO", "STAR", "AIR1", "AIR2", "AIR3"];
-const KCSO_CALLSIGN_LIKE = "(callsign ILIKE 'KCSO%' OR callsign ILIKE 'STAR%' OR callsign ILIKE 'AIR%')";
-
-// AOI / Kern mountainous terrain crude bbox (Tehachapi + Greenhorn + Piute)
-const MOUNTAIN_BBOX = {
-  latMin: 35.0, latMax: 35.95,
-  lngMin: -118.95, lngMax: -118.10,
-};
-
-interface Rule {
-  code: string;
-  title: string;
-  manual_section: string;
-  severity: "low" | "medium" | "high" | "critical";
-  sql: string; // SELECT icao, callsign, detected_at, evidence (jsonb) FROM ...
-}
-
-function rules(lookbackDays: number): Rule[] {
-  const since = `NOW() - INTERVAL '${lookbackDays} days'`;
-  return [
-    {
-      code: "B-401",
-      title: "Night VFR below 2000ft AGL in mountainous terrain",
-      manual_section: "KCSO Air Support B-401",
-      severity: "high",
-      sql: `
-        SELECT icao24 AS icao, callsign,
-               detection_timestamp AS detected_at,
-               jsonb_build_object(
-                 'altitude_ft', altitude,
-                 'lat', latitude, 'lng', longitude,
-                 'rule', 'night_vfr_low_alt_mountain'
-               ) AS evidence
-        FROM live_flight_detections_rows
-        WHERE detection_timestamp >= ${since}
-          AND altitude IS NOT NULL AND altitude > 0 AND altitude < 9500
-          AND latitude BETWEEN ${MOUNTAIN_BBOX.latMin} AND ${MOUNTAIN_BBOX.latMax}
-          AND longitude BETWEEN ${MOUNTAIN_BBOX.lngMin} AND ${MOUNTAIN_BBOX.lngMax}
-          AND EXTRACT(HOUR FROM detection_timestamp AT TIME ZONE 'America/Los_Angeles') NOT BETWEEN 6 AND 19
-          AND ${KCSO_CALLSIGN_LIKE}
-        LIMIT 500
-      `,
-    },
-    {
-      code: "C-100-HOVER",
-      title: "Sustained low-altitude hover outside SAR window",
-      manual_section: "KCSO Air Support C-100 (Helicopter Ops)",
-      severity: "high",
-      sql: `
-        WITH lowslow AS (
-          SELECT icao24, callsign, detection_timestamp, altitude, speed, latitude, longitude
-          FROM live_flight_detections_rows
-          WHERE detection_timestamp >= ${since}
-            AND altitude IS NOT NULL AND altitude < 500
-            AND speed IS NOT NULL AND speed < 30
-            AND ${KCSO_CALLSIGN_LIKE}
-        ),
-        cluster AS (
-          SELECT icao24, callsign,
-                 MIN(detection_timestamp) AS start_ts,
-                 MAX(detection_timestamp) AS end_ts,
-                 COUNT(*) AS pings,
-                 AVG(altitude) AS avg_alt
-          FROM lowslow
-          GROUP BY icao24, callsign, date_trunc('hour', detection_timestamp)
-          HAVING COUNT(*) >= 6
-        )
-        SELECT icao24 AS icao, callsign, start_ts AS detected_at,
-               jsonb_build_object(
-                 'duration_min', EXTRACT(EPOCH FROM (end_ts - start_ts))/60,
-                 'pings', pings, 'avg_alt_ft', avg_alt,
-                 'rule', 'sustained_hover_low_alt'
-               ) AS evidence
-        FROM cluster
-        LIMIT 500
-      `,
-    },
-    {
-      code: "A-401",
-      title: "Aerial Surveillance with no concurrent CAD/dispatch trigger",
-      manual_section: "KCSO Air Support A-401 (Mission Authorization)",
-      severity: "medium",
-      sql: `
-        SELECT icao24 AS icao, callsign, detection_timestamp AS detected_at,
-               jsonb_build_object(
-                 'altitude_ft', altitude,
-                 'rule', 'surveillance_loiter_no_cad'
-               ) AS evidence
-        FROM live_flight_detections_rows
-        WHERE detection_timestamp >= ${since}
-          AND altitude BETWEEN 600 AND 1800
-          AND ${KCSO_CALLSIGN_LIKE}
-          AND EXTRACT(HOUR FROM detection_timestamp AT TIME ZONE 'America/Los_Angeles') BETWEEN 22 AND 23
-        LIMIT 500
-      `,
-    },
-    {
-      code: "B-1102",
-      title: "Executive transport profile — no manifest expected",
-      manual_section: "KCSO Air Support B-1102 (Transport)",
-      severity: "medium",
-      sql: `
-        SELECT icao24 AS icao, callsign, detection_timestamp AS detected_at,
-               jsonb_build_object(
-                 'altitude_ft', altitude,
-                 'ground_speed_kts', speed,
-                 'rule', 'exec_transport_profile'
-               ) AS evidence
-        FROM live_flight_detections_rows
-        WHERE detection_timestamp >= ${since}
-          AND altitude BETWEEN 5000 AND 12000
-          AND speed > 130
-          AND ${KCSO_CALLSIGN_LIKE}
-        LIMIT 500
-      `,
-    },
-    // GHOST-AE removed: AE-prefix ICAOs are US DoD aircraft, not KCSO. Military flights belong in Posse Comitatus analysis, not KCSO manual audits.
-  ];
-}
-
-async function sha256Hex(text: string): Promise<string> {
-  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
-  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
-}
-
-Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
-
-  const neonUrl = Deno.env.get("NEON_DATABASE_URL");
-  const supaUrl = Deno.env.get("SUPABASE_URL");
-  const supaKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  if (!neonUrl || !supaUrl || !supaKey) {
-    return new Response(JSON.stringify({ error: "missing config" }), {
-      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
-
-  let sql: ReturnType<typeof postgres> | null = null;
+import { z } from 'npm:zod@3';
+import { computeAglBatch } from '../_shared/agl.ts';
+import { policyMatches, repeatedPositions } from '../_shared/policyAltitudeRules.ts';
+import { readScanFlights, SCAN_SOURCE } from '../_shared/scanFlights.ts';
+import { scanClient, saveScanRecords, scanHash, respondScan } from '../_shared/scanSupport.ts';
+const Input = z.object({ lookbackDays: z.number().int().min(1).max(90).default(14), dryRun: z.boolean().default(false) });
+const DEFINITIONS = [
+  { code: 'B-401', title: 'Night/mountain low-altitude pattern', section: 'KCSO Air Support B-401', gaps: ['Manual provision and applicability require source verification', 'Night VFR conditions require sunset/weather checks'] },
+  { code: 'C-100-HOVER', title: 'Repeated low/slow observations', section: 'KCSO Air Support C-100', gaps: ['Mission / SAR status not retrieved', 'Low ground speed is not hover or indicated airspeed'] },
+  { code: 'A-401', title: 'Late-night mission-authorization check', section: 'KCSO Air Support A-401', gaps: ['CAD/dispatch authorization not retrieved; absence cannot be inferred'] },
+  { code: 'B-1102', title: 'Transport-profile review', section: 'KCSO Air Support B-1102', gaps: ['Manifest and mission purpose not retrieved; absence cannot be inferred'] },
+];
+Deno.serve(async req => {
+  const deadline = Date.now() + 100_000;
+  if (req.method === 'OPTIONS') return respondScan({ ok: true });
+  if (req.method !== 'POST') return respondScan({ error: 'Method not allowed' }, 405);
   try {
-    const body = await req.json().catch(() => ({}));
-    const lookbackDays = Math.min(Math.max(Number(body.lookbackDays) || 14, 1), 90);
-    const dryRun = body.dryRun === true;
-
-    sql = postgres(neonUrl, { ssl: "require", max: 1, idle_timeout: 30, prepare: false });
-    await sql.unsafe(`SET statement_timeout = '60000'`).catch(() => {});
-
-    const supa = createClient(supaUrl, supaKey);
-    const report: any[] = [];
+    const client = await scanClient(req);
+    const input = Input.safeParse(await req.json().catch(() => null));
+    if (!input.success) return respondScan({ error: 'Invalid policy scan input', issues: input.error.flatten() }, 400);
+    const { lookbackDays, dryRun } = input.data;
+    const { data: fleet, error: fleetError } = await client.from('kcso_fleet').select('tail_number');
+    if (fleetError) throw new Error('Documented KCSO fleet could not be retrieved; no callsign-based ownership guesses used.');
+    const registrations = (fleet || []).map(r => r.tail_number.trim().toUpperCase());
+    if (!registrations.length) throw new Error('Documented KCSO fleet is empty; scan not run.');
+    const source = await readScanFlights(lookbackDays * 24, 600, registrations);
+    const batch = await computeAglBatch(source.flights.map(d => ({ lat: d.lat, lon: d.lon, altitudeFt: d.altitude, timestamp: d.timestamp })));
+    const rows = source.flights.map((d, i) => ({ ...d, agl: batch.results[i] })).filter(d => d.agl != null);
+    const report: Record<string, any>[] = [], issues: string[] = [];
+    const unknown = rows.filter(d => d.agl?.agl_ft == null).length;
+    if (unknown) issues.push(`${unknown} sightings have no ground-height result; altitude checks remain open.`);
     let totalInserted = 0;
-
-    for (const rule of rules(lookbackDays)) {
-      try {
-        let rows = await sql.unsafe(rule.sql) as any[];
-        // B-401 is an AGL limit: compute height above terrain, keep only clear violations
-        if (rule.code === "B-401") {
-          const kept: any[] = [];
-          for (const r of rows) {
-            const ev = r.evidence || {};
-            const a = await computeAgl({ lat: Number(ev.lat), lon: Number(ev.lng), altitudeFt: Number(ev.altitude_ft), timestamp: r.detected_at });
-            if (judge(a.agl_ft, a.margin_ft, 2000) === "violation") kept.push({ ...r, evidence: { ...ev, agl: a } });
-          }
-          rows = kept;
-        }
-        const records = await Promise.all(rows.map(async (r) => {
-          const key = `${rule.code === 'B-401' ? 'AGLv2|' : ''}${rule.code}|${r.icao}|${r.detected_at}`;
-          const sha = await sha256Hex(key);
-          return {
-            icao: r.icao,
-            callsign: r.callsign,
-            detected_at: r.detected_at,
-            rule_code: rule.code,
-            rule_title: rule.title,
-            manual_section: rule.manual_section,
-            severity: rule.severity,
-            evidence: r.evidence,
-            source_table: "live_flight_detections_rows",
-            sha256: sha,
-          };
-        }));
-
-        if (!dryRun && records.length > 0) {
-          // Dedup against existing sha256 batch
-          const shas = records.map(r => r.sha256);
-          const { data: existing } = await supa
-            .from("policy_violations")
-            .select("sha256")
-            .in("sha256", shas);
-          const existingSet = new Set((existing || []).map((e: any) => e.sha256));
-          const fresh = records.filter(r => !existingSet.has(r.sha256));
-          if (fresh.length > 0) {
-            const { error } = await supa.from("policy_violations").insert(fresh);
-            if (error) throw error;
-            totalInserted += fresh.length;
-          }
-        }
-
-        report.push({
-          rule_code: rule.code,
-          rule_title: rule.title,
-          severity: rule.severity,
-          matches: records.length,
-        });
-      } catch (e: any) {
-        report.push({ rule_code: rule.code, error: String(e?.message || e) });
-      }
+    for (const rule of DEFINITIONS) {
+      let matches = rows.filter(d => policyMatches(rule.code, d));
+      if (rule.code === 'C-100-HOVER') matches = repeatedPositions(matches);
+      const records = await Promise.all(matches.map(async d => ({ icao: d.icao || d.registration || 'unknown', callsign: d.callsign,
+        detected_at: d.timestamp, rule_code: rule.code, rule_title: `${rule.title} — policy review`,
+        manual_section: rule.section, severity: rule.code === 'B-401' || rule.code === 'C-100-HOVER' ? 'high' : 'medium',
+        rule_source: 'POLICY_REVIEW', source_table: SCAN_SOURCE, altitude_ft: Math.round(d.altitude), lat: d.lat, lon: d.lon,
+        sha256: await scanHash(['POLICY_AGL_REVIEW_v3', rule.code, d.source_id, d.source_hash]),
+        evidence: { registration: d.registration, source_id: d.source_id, source_sha256: d.source_hash, poll_id: d.poll_id,
+          msl_reported_ft: d.altitude, geometric_altitude_reported_ft: d.geo_altitude, agl: d.agl, ground_speed_kts: d.ground_speed,
+          timestamp_source: d.timestamp_source, evidence_status: 'POLICY_REVIEW', gaps: rule.gaps,
+          aircraft_identity_basis: 'Reported registration matches documented kcso_fleet; not inferred from callsign. FAA identity check remains separate.',
+          rule_version: 'POLICY_AGL_REVIEW_v3',
+          routine_angle: 'Check actual mission, dispatch and authorized operating provisions.',
+          cover_angle: 'Check repeated location/timing and low-flight geometry against the stated mission; paperwork alone does not settle the pattern.',
+        } })));
+      const saved = dryRun ? { inserted: 0, error: null } : await saveScanRecords(client, records, deadline);
+      totalInserted += saved.inserted;
+      if (saved.error) issues.push(`${rule.code}: ${saved.error}`);
+      report.push({ rule_code: rule.code, rule_title: rule.title, matches: records.length, inserted: saved.inserted,
+        complete: saved.error == null && (rule.code === 'B-1102' || unknown === 0), error: saved.error,
+        evidence_status: 'POLICY_REVIEW' });
+      // Stop after an ambiguous write; don't compound a saving failure.
+      if (saved.error) break;
     }
-
-    return new Response(JSON.stringify({
-      ok: true, lookbackDays, dryRun, totalInserted, rules: report,
-      generated_at: new Date().toISOString(),
-    }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-  } catch (e: any) {
-    return new Response(JSON.stringify({ error: String(e?.message || e) }), {
-      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  } finally {
-    try { await sql?.end({ timeout: 5 }); } catch {}
+    return respondScan({ ok: true, complete: issues.length === 0 && !source.capped, issues, lookbackDays, dryRun, totalInserted,
+      rules: report, source_table: SCAN_SOURCE, source_scope: 'Independent raw feed; documented fleet registrations only',
+      received: source.received, scanned: source.flights.length, capped: source.capped, terrain_unknown: unknown,
+      terrain: batch.terrain, date_scope: { lookbackDays, basis: 'Receipt time', latest_batch_limit: 600 },
+      generated_at: new Date().toISOString() });
+  } catch (e) {
+    console.error('Policy scan failed', e);
+    return respondScan({ error: e instanceof Error ? e.message : 'Policy scan did not finish', complete: false }, (e as { status?: number }).status ?? 503);
   }
 });

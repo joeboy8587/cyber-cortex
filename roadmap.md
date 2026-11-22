@@ -1,7 +1,8 @@
 # FAR and policy scan reliability
-- [ ] Verify FAA altitude-rule applicability and remove unsupported automatic citations.
-- [ ] Bound and share concurrent ground-height lookups across FAR and policy scans; batch saves and report incomplete sections honestly.
-- [ ] Verify rule/timeout tests and signed-in scan results without altering existing observations or findings.
+- [x] Preserve original sea-level altitude and show separately calculated above-ground height, terrain elevation, and measurement uncertainty in scan findings. Original raw 200 ft and source SHA-256 read back unchanged; saved finding retains terrain 373 ft, pressure correction 171 ft and nominal AGL -2 ±150 ft (a measurement/context review, not literal underground flight).
+- [x] Verify FAA altitude-rule applicability and remove unsupported automatic citations. Source-checked 91.119 provisions; endangerment, weather, lights and indicated-airspeed rules require their own evidence. Low-flight reviews stay visible; current FAA category uses registration AND hex in the preserved release.
+- [x] Bound and share concurrent ground-height lookups across FAR and policy scans; batch saves and report incomplete sections honestly. Eight terrain workers share a 20-second budget, lowest reported flights first; exact coordinates and one shared METAR read; 200-record saves preserve earlier confirmed batches, with a 100-second request save budget. Slow full-registry view join replaced by bounded indexed release lookup.
+- [x] Verify 20 altitude/timeout/save tests plus six raw-preservation regression tests; signed-in FAR returned eight findings and saved six new ones in 24 seconds, after two earlier verified saves. UI read-back shows MSL/terrain/AGL; no horizontal page overflow at 889×634. This remains a partial latest-600 scan: 520 ground heights were unavailable/deferred, never cleared. Policy returned in three seconds with zero documented-fleet observations in the independent raw stream; nonempty policy flow cannot be verified without matching real observations. Historical rescanning and other altitude displays are unchanged.
 
 # Legal analysis and correlation timeout
 - [x] Update Legal Analyst and Amy's sharp war-room prompt with routine/cover analysis and explicit retrieval gaps; exclude fixed narrative counts and contaminated flight summaries from their model context.

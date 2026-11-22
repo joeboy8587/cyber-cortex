@@ -1,109 +1,95 @@
-// AGL (height above ground) computation.
-// ADS-B reports MSL altitude: barometric (pressure altitude, standard 29.92 inHg)
-// or geometric (GNSS). 14 CFR 91.119 and KCSO manual limits are AGL.
-//   AGL = corrected MSL − terrain elevation (USGS 3DEP via EPQS)
-// Baro is corrected with KBFL altimeter setting (QNH) when a METAR within
-// 90 min is available; otherwise an uncertainty margin is widened.
-// Raw records are never modified — results are attached as evidence.
-
+// Derived AGL only: original observations are never changed.
+// Barometric pressure altitude needs contemporaneous QNH. GNSS ellipsoid heights
+// cannot be treated as MSL without a known geoid/datum conversion.
+import { prepareTerrain, terrainKey, elevationValue, validPoint } from './terrainBatch.ts';
 export interface AglResult {
-  msl_ft: number;
-  altitude_source: "geometric" | "baro_qnh_corrected" | "baro_uncorrected";
-  qnh_inhg: number | null;
-  qnh_correction_ft: number;
-  terrain_ft: number | null;
-  agl_ft: number | null;
-  margin_ft: number; // ± uncertainty
-  terrain_source: string;
+  msl_ft: number; altitude_source: 'geometric' | 'baro_qnh_corrected' | 'baro_uncorrected';
+  qnh_inhg: number | null; qnh_correction_ft: number; terrain_ft: number | null;
+  agl_ft: number | null; margin_ft: number; terrain_source: string;
+  datum_note: string; qnh_station: string | null;
 }
-
-const terrainCache = new Map<string, number | null>();
-
+type AglInput = { lat: number; lon: number; altitudeFt: number; geoAltitudeFt?: number | null; timestamp?: string | null };
+type Metar = { t: number; altim: number };
+const terrainCache = new Map<string, { value: number; expires: number }>();
+async function terrainFetch(lat: number, lon: number, signal: AbortSignal) {
+  if (!validPoint({ lat, lon })) return null;
+  const key = terrainKey({ lat, lon });
+  const cached = terrainCache.get(key);
+  if (cached && cached.expires > Date.now()) return cached.value;
+  const r = await fetch(`https://epqs.nationalmap.gov/v1/json?x=${lon}&y=${lat}&units=Feet&wkid=4326&includeDate=false`, { signal });
+  if (!r.ok) return null;
+  const j = await r.json();
+  const value = elevationValue(j?.value);
+  if (value != null) {
+    if (terrainCache.size >= 5000) terrainCache.clear();
+    terrainCache.set(key, { value, expires: Date.now() + 24 * 3600_000 });
+  }
+  return value;
+}
 export async function terrainElevationFt(lat: number, lon: number): Promise<number | null> {
-  // ~100 m grid cache
-  const key = `${lat.toFixed(3)},${lon.toFixed(3)}`;
-  if (terrainCache.has(key)) return terrainCache.get(key)!;
-  let val: number | null = null;
-  try {
-    const url = `https://epqs.nationalmap.gov/v1/json?x=${lon}&y=${lat}&units=Feet&wkid=4326&includeDate=false`;
-    const r = await fetch(url, { signal: AbortSignal.timeout(6000) });
-    if (r.ok) {
-      const j = await r.json();
-      const v = Number(j?.value);
-      if (isFinite(v) && v > -1000) val = v;
-    }
-  } catch { /* leave null */ }
-  terrainCache.set(key, val);
-  return val;
+  try { return await terrainFetch(lat, lon, AbortSignal.timeout(4_000)); } catch { return null; }
 }
-
-let metarCache: Array<{ t: number; altim: number }> | null = null;
-
-async function loadKbflMetars(): Promise<Array<{ t: number; altim: number }>> {
-  if (metarCache) return metarCache;
-  metarCache = [];
-  try {
-    const r = await fetch("https://aviationweather.gov/api/data/metar?ids=KBFL&format=json&hours=360", { signal: AbortSignal.timeout(8000) });
-    if (r.ok) {
+let metarCache: { rows: Metar[]; expires: number } | null = null;
+let metarPending: Promise<Metar[]> | null = null;
+async function loadKbflMetars(): Promise<Metar[]> {
+  if (metarCache && metarCache.expires > Date.now()) return metarCache.rows;
+  if (metarPending) return metarPending;
+  metarPending = (async () => {
+    try {
+      const r = await fetch('https://aviationweather.gov/api/data/metar?ids=KBFL&format=json&hours=360', { signal: AbortSignal.timeout(8_000) });
+      if (!r.ok) return [];
       const arr = await r.json();
-      for (const m of arr || []) {
+      if (!Array.isArray(arr)) return [];
+      const rows: Metar[] = [];
+      for (const m of arr) {
         const t = Number(m.obsTime) * 1000;
-        let a = Number(m.altim); // hPa in this API
-        if (!isFinite(t) || !isFinite(a)) continue;
-        if (a > 100) a = a / 33.8639; // hPa → inHg
-        metarCache.push({ t, altim: a });
+        let altim = Number(m.altim);
+        if (altim > 100) altim /= 33.8639;
+        if (Number.isFinite(t) && altim >= 27 && altim <= 33) rows.push({ t, altim });
       }
-    }
-  } catch { /* none */ }
-  return metarCache;
+      if (rows.length) metarCache = { rows, expires: Date.now() + 5 * 60_000 };
+      return rows;
+    } catch { return []; }
+  })();
+  try { return await metarPending; } finally { metarPending = null; }
 }
-
 export async function qnhAt(iso?: string | null): Promise<number | null> {
+  return qnhFrom(await loadKbflMetars(), iso);
+}
+function qnhFrom(rows: Metar[], iso?: string | null): number | null {
   if (!iso) return null;
   const ts = new Date(iso).getTime();
-  if (!isFinite(ts)) return null;
-  const list = await loadKbflMetars();
-  let best: { t: number; altim: number } | null = null;
-  for (const m of list) if (!best || Math.abs(m.t - ts) < Math.abs(best.t - ts)) best = m;
-  if (!best || Math.abs(best.t - ts) > 90 * 60 * 1000) return null;
-  return best.altim;
+  if (!Number.isFinite(ts)) return null;
+  let best: Metar | null = null;
+  for (const m of rows) if (!best || Math.abs(m.t - ts) < Math.abs(best.t - ts)) best = m;
+  return !best || Math.abs(best.t - ts) > 90 * 60_000 ? null : best.altim;
 }
-
-export async function computeAgl(opts: {
-  lat: number; lon: number; altitudeFt: number; geoAltitudeFt?: number | null; timestamp?: string | null;
-}): Promise<AglResult> {
-  const terrain = await terrainElevationFt(opts.lat, opts.lon);
-  let msl = opts.altitudeFt;
-  let source: AglResult["altitude_source"] = "baro_uncorrected";
-  let qnh: number | null = null;
-  let corr = 0;
-  let margin = 300; // uncorrected baro: weather can shift ±300 ft
-
-  if (opts.geoAltitudeFt != null && isFinite(opts.geoAltitudeFt) && opts.geoAltitudeFt > 0) {
-    msl = opts.geoAltitudeFt;
-    source = "geometric";
-    margin = 150; // GNSS vertical + DEM error
-  } else {
-    qnh = await qnhAt(opts.timestamp);
-    if (qnh != null) {
-      corr = Math.round((qnh - 29.92) * 1000); // ~1000 ft per inHg
-      msl = opts.altitudeFt + corr;
-      source = "baro_qnh_corrected";
-      margin = 150; // 25-ft ADS-B quantisation + altimetry + DEM
-    }
-  }
-  const agl = terrain == null ? null : Math.round(msl - terrain);
-  return {
-    msl_ft: Math.round(msl), altitude_source: source, qnh_inhg: qnh ? Number(qnh.toFixed(2)) : null,
-    qnh_correction_ft: corr, terrain_ft: terrain == null ? null : Math.round(terrain),
-    agl_ft: agl, margin_ft: margin, terrain_source: "USGS 3DEP (EPQS)",
-  };
+export function deriveAgl(opts: AglInput, terrain: number | null, qnh: number | null): AglResult {
+  // KBFL QNH is only a local correction, not a county-wide weather assumption.
+  const local = Math.abs(opts.lat - 35.4336) <= 0.25 && Math.abs(opts.lon + 119.0568) <= 0.30;
+  const setting = local ? qnh : null;
+  const correction = setting == null ? 0 : Math.round((setting - 29.92) * 1000);
+  const msl = opts.altitudeFt + correction;
+  return { msl_ft: Math.round(msl), altitude_source: setting == null ? 'baro_uncorrected' : 'baro_qnh_corrected',
+    qnh_inhg: setting == null ? null : Number(setting.toFixed(2)), qnh_correction_ft: correction,
+    terrain_ft: terrain == null ? null : Math.round(terrain), agl_ft: terrain == null ? null : Math.round(msl - terrain),
+    margin_ft: setting == null ? 300 : 150, terrain_source: 'USGS 3DEP (EPQS)',
+    datum_note: 'Pressure altitude corrected where local QNH is available; GNSS altitude retained separately, datum not verified. Uncertainty margins are screening allowances, not certified error bounds.',
+    qnh_station: setting == null ? null : 'KBFL' };
 }
-
-/** "violation" only if still below limit after the full margin; "borderline" if within margin. */
-export function judge(aglFt: number | null, marginFt: number, limitFt: number): "violation" | "borderline" | "clear" | "unknown" {
-  if (aglFt == null) return "unknown";
-  if (aglFt + marginFt < limitFt) return "violation";
-  if (aglFt - marginFt < limitFt) return "borderline";
-  return "clear";
+export async function computeAgl(opts: AglInput): Promise<AglResult> {
+  const [terrain, qnh] = await Promise.all([terrainElevationFt(opts.lat, opts.lon), qnhAt(opts.timestamp)]);
+  return deriveAgl(opts, terrain, qnh);
+}
+export async function computeAglBatch(inputs: AglInput[]) {
+  // Prime one shared METAR fetch in parallel with the bounded terrain workers.
+  const [terrain, metars] = await Promise.all([prepareTerrain(inputs, { lookup: (p, signal) => terrainFetch(p.lat, p.lon, signal) }), loadKbflMetars()]);
+  const results = inputs.map(opts => deriveAgl(opts, terrain.values.get(terrainKey(opts)) ?? null, qnhFrom(metars, opts.timestamp)));
+  return { results, terrain: { unique: terrain.unique, attempted: terrain.attempted, resolved: terrain.resolved, deferred: terrain.deferred, budgetMs: terrain.budgetMs } };
+}
+export function judge(aglFt: number | null, marginFt: number, limitFt: number): 'violation' | 'borderline' | 'clear' | 'unknown' {
+  if (aglFt == null || !Number.isFinite(aglFt)) return 'unknown';
+  if (aglFt + marginFt < limitFt) return 'violation';
+  if (aglFt - marginFt < limitFt) return 'borderline';
+  return 'clear';
 }

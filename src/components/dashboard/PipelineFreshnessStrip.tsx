@@ -69,9 +69,11 @@ export function PipelineFreshnessStrip() {
     if (!job) return;
     setRunning(stage);
     try {
-      const { error } = await supabase.functions.invoke(job.fn, { body: job.body });
+      const { data, error } = await supabase.functions.invoke(job.fn, { body: job.body });
       if (error) throw error;
-      toast({ title: `${stage} updated`, description: "New results are being written now." });
+      if (job.fn === "policy-violation-scan" && !data?.ok) throw new Error(data?.error || "No scan result returned");
+      toast({ title: data?.complete === false ? `${stage}: partial scan` : `${stage} updated`,
+        description: job.fn === "policy-violation-scan" ? `${data?.totalInserted ?? 0} findings saved. ${data?.capped ? "Latest 600 observations only. " : ""}${data?.issues?.join(" ") || ""}` : "New results are being written now." });
       setTimeout(load, 3000);
     } catch (e) {
       toast({

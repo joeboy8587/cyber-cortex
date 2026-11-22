@@ -7,17 +7,13 @@
 //   5. ghost_fleet using icao_hex instead of icao24
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
+import { corsHeaders } from 'npm:@supabase/supabase-js@2/cors';
+import { loadFleetIdentities } from '../_shared/kcsoOwnership.ts';
+import { hasCurrentKcsoOwnership, type FleetIdentity } from '../_shared/kcsoOwnershipRules.ts';
+import { scanClient } from '../_shared/scanSupport.ts';
+import { z } from 'npm:zod@3';
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
-
-// Confirmed KCSO fleet (Kern County Sheriff's Office)
-const KCSO_FLEET = [
-  "N912KC", "N913KC", "N788FA", "N597E",
-  "N197E", "N397E", "N497E",
-];
+const Input = z.object({ mode: z.enum(['audit', 'fix']).default('audit') });
 
 // Detections tables we care about (some may not exist — handled gracefully)
 const DETECTION_TABLES = [
@@ -44,7 +40,8 @@ async function listColumns(sql: any, table: string): Promise<string[]> {
   return r.map((x: any) => x.column_name);
 }
 
-async function audit(sql: any) {
+async function audit(sql: any, fleet: FleetIdentity[]) {
+  const confirmed = fleet.filter(hasCurrentKcsoOwnership).map(r => r.registration);
   const report: Record<string, any> = { tables: {}, kcso: [], issues: [] };
 
   for (const t of [
@@ -83,8 +80,8 @@ async function audit(sql: any) {
                ${icaoCol} AS icao,
                ${govCol ? govCol : "NULL"} AS government_link
         FROM aircraft
-        WHERE ${regCol} = ANY('{${KCSO_FLEET.join(",")}}')
-      `);
+        WHERE ${regCol} = ANY($1::text[])
+      `, [confirmed]);
       report.kcso = list;
       for (const row of list) {
         if (!row.icao) report.issues.push(`aircraft.${icaoCol} NULL for ${row.reg}`);
@@ -113,7 +110,7 @@ async function audit(sql: any) {
   return report;
 }
 
-async function applyFixes(sql: any) {
+async function applyFixes(sql: any, fleet: FleetIdentity[]) {
   const out: Record<string, any> = {};
 
   await sql.unsafe(`SET statement_timeout = '120s'`);
@@ -186,7 +183,7 @@ async function applyFixes(sql: any) {
     }
   }
 
-  // FIX 4 — government_link flag for KCSO fleet
+  // FIX 4 — positive current FAA ownership only; do not clear historical operational links.
   if (await tableExists(sql, "aircraft")) {
     const ac = await listColumns(sql, "aircraft");
     const regCol = ac.includes("tail_number") ? "tail_number" : "registration";
@@ -196,10 +193,10 @@ async function applyFixes(sql: any) {
     const r = await sql.unsafe(`
       UPDATE aircraft
       SET government_link = TRUE
-      WHERE ${regCol} = ANY('{${KCSO_FLEET.join(",")}}')
+      WHERE ${regCol} = ANY($1::text[])
         AND (government_link IS NULL OR government_link = FALSE)
-    `);
-    out.fix4_kcso_government_flag = { rows_updated: r.count, fleet: KCSO_FLEET };
+    `, [fleet.filter(hasCurrentKcsoOwnership).map(r => r.registration)]);
+    out.fix4_kcso_government_flag = { rows_updated: r.count, fleet: fleet.filter(hasCurrentKcsoOwnership).map(r => r.registration), basis: 'CURRENT_FAA_REGISTRANT', historical_links_unchanged: true };
   }
 
   // FIX 5 — quarantine + clean corrupt ICAO data in live_flight_detections_rows
@@ -284,16 +281,18 @@ serve(async (req) => {
 
   const sql = postgres(NEON, { ssl: "require", max: 1, idle_timeout: 20 });
   try {
-    const body = await req.json().catch(() => ({}));
-    const mode: "audit" | "fix" = body.mode === "fix" ? "fix" : "audit";
+    await scanClient(req);
+    const body = Input.parse(await req.json());
+    const mode = body.mode;
+    const fleet = await loadFleetIdentities();
 
-    const before = await audit(sql);
+    const before = await audit(sql, fleet);
     let fixes: Record<string, any> | null = null;
     let after: Record<string, any> | null = null;
 
     if (mode === "fix") {
-      fixes = await applyFixes(sql);
-      after = await audit(sql);
+      fixes = await applyFixes(sql, fleet);
+      after = await audit(sql, fleet);
     }
 
     return new Response(JSON.stringify({

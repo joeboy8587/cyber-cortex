@@ -1,3 +1,8 @@
+# KCSO ownership tag correction
+- [ ] Require current FAA registrant confirmation for new KCSO ownership tags; preserve fleet-list associations separately.
+- [ ] Remove registration-based ownership shortcuts from network display and schema repair.
+- [ ] Show current identity corrections alongside preserved historical flags; verify real four-aircraft results and rule tests.
+
 # FAR and policy scan reliability
 - [x] Preserve original sea-level altitude and show separately calculated above-ground height, terrain elevation, and measurement uncertainty in scan findings. Original raw 200 ft and source SHA-256 read back unchanged; saved finding retains terrain 373 ft, pressure correction 171 ft and nominal AGL -2 ±150 ft (a measurement/context review, not literal underground flight).
 - [x] Verify FAA altitude-rule applicability and remove unsupported automatic citations. Source-checked 91.119 provisions; endangerment, weather, lights and indicated-airspeed rules require their own evidence. Low-flight reviews stay visible; current FAA category uses registration AND hex in the preserved release.

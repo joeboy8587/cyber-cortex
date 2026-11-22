@@ -1,4 +1,6 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
+import { FleetIdentityReview } from './FleetIdentityReview';
+import { fleetOwnershipStatus, type FleetIdentity } from '../../../supabase/functions/_shared/kcsoOwnershipRules';
 import { CyberPanel } from "@/components/ui/cyber-panel";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -91,6 +93,10 @@ export function AutonomousWatchtower() {
   const [typeDistribution, setTypeDistribution] = useState<TypeDistribution[]>([]);
   const [activeTab, setActiveTab] = useState<'live' | 'history' | 'trends'>('live');
   const [loadingHistory, setLoadingHistory] = useState(true);
+  const [fleetIdentities, setFleetIdentities] = useState<FleetIdentity[]>([]);
+  const identityByReg = useMemo(() => new Map(fleetIdentities.map(row => [row.registration, row])), [fleetIdentities]);
+  const identityRegistrations = useMemo(() => [...new Set([...historicalFlags, ...(scanResult?.flags ?? [])]
+    .map(flag => flag.registration?.toUpperCase()).filter((reg): reg is string => !!reg && /^N[0-9][A-Z0-9]{0,5}$/.test(reg)))].slice(0, 196), [historicalFlags, scanResult]);
 
   // Load persisted flags on mount
   const loadHistoricalFlags = useCallback(async () => {
@@ -112,7 +118,8 @@ export function AutonomousWatchtower() {
         const day = (f.created_at || '').slice(0, 10);
         if (!day) continue;
         if (!dayMap.has(day)) dayMap.set(day, { critical: 0, high: 0, medium: 0, total: 0 });
-        const d = dayMap.get(day)!;
+        const d = dayMap.get(day);
+        if (!d) continue;
         d.total++;
         if (f.severity === 'critical') d.critical++;
         else if (f.severity === 'high') d.high++;
@@ -225,6 +232,12 @@ export function AutonomousWatchtower() {
                     )}
                   </div>
                   <p className="text-xs mt-1 leading-relaxed">{flag.description}</p>
+                  {flag.registration && identityByReg.get(flag.registration.toUpperCase()) &&
+                    fleetOwnershipStatus(identityByReg.get(flag.registration.toUpperCase()) as FleetIdentity) === 'FLEET_LIST_IDENTITY_CONFLICT' && (
+                    <p className="text-xs mt-1 font-medium text-destructive">
+                      Current FAA correction: {identityByReg.get(flag.registration.toUpperCase())?.registrant_name}, not a KCSO registrant. Above is the preserved historical flag; behavioral and coordination leads remain open.
+                    </p>
+                  )}
                   {flag.created_at && (
                     <p className="text-[10px] text-muted-foreground mt-1">
                       <Clock className="w-3 h-3 inline mr-1" />
@@ -309,6 +322,8 @@ export function AutonomousWatchtower() {
             </Button>
           ))}
         </div>
+
+        <FleetIdentityReview registrations={identityRegistrations} onIdentities={setFleetIdentities} />
 
         {scanning && (
           <div className="text-center py-6">

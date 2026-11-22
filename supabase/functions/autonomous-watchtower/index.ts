@@ -1,14 +1,15 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { corsHeaders } from 'npm:@supabase/supabase-js@2/cors';
+import { loadFleetIdentities } from '../_shared/kcsoOwnership.ts';
+import { hasCurrentKcsoOwnership, fleetOwnershipStatus, type FleetIdentity } from '../_shared/kcsoOwnershipRules.ts';
+import { scanClient } from '../_shared/scanSupport.ts';
+import { z } from 'npm:zod@3';
 
 const VERSION = "4.1.0"; // Population-Scale Reclassification
 console.log(`autonomous-watchtower v${VERSION} booting...`);
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
-};
+const Input = z.object({ mode: z.enum(['full_scan']).default('full_scan') });
 
 // ===== ABSOLUTE CERTAINTY PROTOCOL THRESHOLDS =====
 const RULES = {
@@ -85,12 +86,14 @@ serve(async (req) => {
   }
 
   try {
-    const { mode = "full_scan" } = await req.json().catch(() => ({}));
+    const authenticatedClient = await scanClient(req);
+    const input = Input.safeParse(await req.json().catch(() => null));
+    if (!input.success) return new Response(JSON.stringify({ error: 'Valid scan mode required' }),
+      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    const { mode } = input.data;
 
     const NEON_DATABASE_URL = Deno.env.get("NEON_DATABASE_URL");
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
-    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
     if (!NEON_DATABASE_URL) {
       return new Response(JSON.stringify({ error: "NEON_DATABASE_URL not configured" }),
@@ -106,8 +109,7 @@ serve(async (req) => {
       // initial `SET` statement) so no query can silently run without a cap.
       connection: { statement_timeout: 20000 },
     });
-    const supabase = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
-      ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY) : null;
+    const supabase = authenticatedClient;
 
     const scanId = `acp-${Date.now()}`;
     const flags: AutonomousFlag[] = [];
@@ -357,6 +359,7 @@ serve(async (req) => {
       let threatTierMap = new Map<string, any>();
       let enrichedProfileMap = new Map<string, any>();
       let kcsoFleetSet = new Set<string>();
+      let fleetIdentityMap = new Map<string, FleetIdentity>();
       try {
         const [enrichedProfiles, kcsoFleet] = await Promise.all([
           sql`
@@ -367,18 +370,21 @@ serve(async (req) => {
               AND (is_kcso_fleet = true OR is_shell_company = true OR max_threat_score >= 50)
             ORDER BY total_detections DESC LIMIT 300
           `.catch((e: any) => { console.warn("aircraft_profiles_enriched query:", e.message); return []; }),
-          sql`SELECT tail_number FROM kcso_fleet WHERE tail_number IS NOT NULL`
-            .catch((e: any) => { console.warn("kcso_fleet query:", e.message); return []; }),
+          loadFleetIdentities().catch((e: Error) => {
+            learningInsights.push(`Current FAA fleet identity unavailable: ${e.message}. No KCSO ownership inferred from the fleet list.`);
+            return [] as FleetIdentity[];
+          }),
         ]);
-        for (const k of kcsoFleet as any[]) {
-          if (k.tail_number) kcsoFleetSet.add(String(k.tail_number).toUpperCase());
+        for (const k of kcsoFleet) {
+          fleetIdentityMap.set(k.registration, k);
+          if (hasCurrentKcsoOwnership(k)) kcsoFleetSet.add(k.registration);
         }
-        learningInsights.push(`v4.1 KCSO FLEET: ${kcsoFleetSet.size} known KCSO tail numbers loaded`);
+        learningInsights.push(`KCSO current FAA ownership: ${kcsoFleetSet.size} confirmed; ${kcsoFleet.filter(k => fleetOwnershipStatus(k) === 'FLEET_LIST_IDENTITY_CONFLICT').length} fleet-list identity conflicts. Associations and behavioral history remain separate.`);
         // threat_tiers is keyed by detection_id (not registration) — use enriched profiles instead for threat scoring
         for (const p of enrichedProfiles) {
-          enrichedProfileMap.set(p.registration, p);
+          enrichedProfileMap.set(p.registration, { ...p, is_kcso_fleet: kcsoFleetSet.has(String(p.registration).toUpperCase()) });
           if (Number(p.max_threat_score || 0) >= 50) {
-            threatTierMap.set(p.registration, { threat_score: p.max_threat_score, is_kcso: p.is_kcso_fleet, is_shell: p.is_shell_company });
+            threatTierMap.set(p.registration, { threat_score: p.max_threat_score, is_kcso: kcsoFleetSet.has(String(p.registration).toUpperCase()), is_shell: p.is_shell_company });
           }
         }
         learningInsights.push(`v4.0 THREAT TIERS: ${threatTierMap.size} high-threat aircraft loaded, ${enrichedProfileMap.size} enriched profiles (KCSO/shell/high-risk)`);
@@ -549,6 +555,9 @@ serve(async (req) => {
             min_altitude_ft: stats.minAlt === 99999 ? null : stats.minAlt,
             max_altitude_ft: stats.maxAlt,
             kcso_fleet: isKcso,
+            fleet_identity: fleetIdentityMap.get(REG) ?? null,
+            ownership_basis: isKcso ? 'CURRENT_FAA_REGISTRANT' : null,
+            fleet_list_association: fleetIdentityMap.get(REG)?.listed_in_fleet ?? false,
             shell_company: isShell,
             confirmed_bio_correlations: hasConfirmedBio,
             threshold_collapses: collapseInfo?.collapse_count || 0,

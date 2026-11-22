@@ -1,7 +1,9 @@
 # KCSO ownership tag correction
-- [ ] Require current FAA registrant confirmation for new KCSO ownership tags; preserve fleet-list associations separately.
-- [ ] Remove registration-based ownership shortcuts from network display and schema repair.
-- [ ] Show current identity corrections alongside preserved historical flags; verify real four-aircraft results and rule tests.
+- [x] Export a read-only four-aircraft raw-detection/FAA audit: 79 N528AM receipts, zero matching independent-raw receipts for the other three through 2026-11-22 10:16:04 UTC. Zero above-60,000-foot values in this scope; 73 numeric barometric altitudes and six ground contacts. Summary, full observations, notes and verified SHA-256 manifest saved to the existing FAA audit collection; no raw or historical records changed.
+- [x] Guard autonomous altitude means/deviations/ranges against missing/above-60,000-foot values without manufacturing 99,999-foot fallback measurements; retain genuine zero. Three altitude tests and eight ownership tests plus six raw-preservation tests pass. Deployed; full autonomous legacy-source scan not rerun.
+- [x] Require current FAA registrant confirmation for new KCSO ownership tags; preserve fleet-list associations separately. Sheriff Office/Department names accepted; county registration alone leaves operator attribution open. Identity lookup failure never confirms ownership.
+- [x] Remove registration-based ownership shortcuts from network display and schema repair. No broad schema repair executed, and existing government-link records remain unchanged.
+- [x] Show current identity corrections alongside preserved historical flags; verified signed-in review and refresh with real four-aircraft results at desktop, 889×634 and mobile. No page errors or review overflow; current county registrant is separately labeled, not a false identity conflict.
 
 # FAR and policy scan reliability
 - [x] Preserve original sea-level altitude and show separately calculated above-ground height, terrain elevation, and measurement uncertainty in scan findings. Original raw 200 ft and source SHA-256 read back unchanged; saved finding retains terrain 373 ft, pressure correction 171 ft and nominal AGL -2 ±150 ft (a measurement/context review, not literal underground flight).

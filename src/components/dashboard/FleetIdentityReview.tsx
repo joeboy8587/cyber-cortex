@@ -41,7 +41,7 @@ export function FleetIdentityReview({ registrations, onIdentities }: {
     </div>
     {loading && <p role="status" className="text-xs text-muted-foreground">Checking current registrants…</p>}
     {issue && <p role="alert" className="text-xs text-destructive">{issue}</p>}
-    {review.map(row => <div key={row.registration} className="flex flex-wrap items-start justify-between gap-2 border-b border-border py-2 text-xs">
+    {review.map(row => <div key={row.registration} className="flex flex-col sm:flex-row sm:justify-between items-start gap-2 border-b border-border py-2 text-xs">
       <div className="min-w-0 flex-1">
         <p className="font-semibold">{row.registration} · {row.registrant_name ?? 'Current public identity unavailable'}</p>
         <p className="text-muted-foreground">FAA release {row.registry_release_date} · {row.faa_hex ?? 'Hex unavailable'}</p>

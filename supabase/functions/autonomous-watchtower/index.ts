@@ -5,6 +5,7 @@ import { loadFleetIdentities } from '../_shared/kcsoOwnership.ts';
 import { hasCurrentKcsoOwnership, fleetOwnershipStatus, type FleetIdentity } from '../_shared/kcsoOwnershipRules.ts';
 import { scanClient } from '../_shared/scanSupport.ts';
 import { z } from 'npm:zod@3';
+import { observedAltitude, extendAltitudeRange } from '../_shared/observedAltitude.ts';
 
 const VERSION = "4.1.0"; // Population-Scale Reclassification
 console.log(`autonomous-watchtower v${VERSION} booting...`);
@@ -141,7 +142,8 @@ serve(async (req) => {
       // a LIMIT on the GROUP BY so a registration explosion can't blow the budget either.
       const baselineStats: any[] = await budgeted('baseline_stats', [], 15000, () => sql`
         SELECT registration, COUNT(*)::int as total_detections,
-          AVG(altitude::numeric) as mean_altitude, STDDEV(altitude::numeric) as stddev_altitude,
+          AVG(altitude::numeric) FILTER (WHERE altitude::numeric <= 60000) as mean_altitude,
+          STDDEV(altitude::numeric) FILTER (WHERE altitude::numeric <= 60000) as stddev_altitude,
           AVG(speed::numeric) as mean_speed, STDDEV(speed::numeric) as stddev_speed,
           MIN(detection_timestamp) as first_seen, MAX(detection_timestamp) as last_seen,
           COUNT(DISTINCT DATE(detection_timestamp))::int as active_days
@@ -194,7 +196,7 @@ serve(async (req) => {
           sql`
             SELECT taxonomy_tag, network_classification, COUNT(*)::int as count,
               COUNT(DISTINCT registration) as unique_aircraft,
-              AVG(altitude::numeric) as avg_altitude
+              AVG(altitude::numeric) FILTER (WHERE altitude::numeric <= 60000) as avg_altitude
             FROM live_flight_detections_rows
             WHERE detection_timestamp > NOW() - INTERVAL '30 days'
               AND taxonomy_tag IS NOT NULL AND taxonomy_tag != ''
@@ -203,7 +205,7 @@ serve(async (req) => {
           `,
           sql`
             SELECT registration, taxonomy_tag, network_classification, COUNT(*)::int as count,
-              AVG(altitude::numeric) as avg_alt, MIN(detection_timestamp) as first_seen,
+              AVG(altitude::numeric) FILTER (WHERE altitude::numeric <= 60000) as avg_alt, MIN(detection_timestamp) as first_seen,
               MAX(detection_timestamp) as last_seen
             FROM live_flight_detections_rows
             WHERE detection_timestamp > NOW() - INTERVAL '30 days'
@@ -415,7 +417,7 @@ serve(async (req) => {
         const multiModalQueries = await Promise.all([
           sql`SELECT aircraft_registration as registration, violation_type as threat_type,
                 COUNT(*)::int as total_violations,
-                AVG(altitude::numeric) as avg_altitude,
+                AVG(altitude::numeric) FILTER (WHERE altitude::numeric <= 60000) as avg_altitude,
                 MIN(detection_timestamp) as first_seen, MAX(detection_timestamp) as last_seen
               FROM sentinel_violations
               WHERE aircraft_registration IS NOT NULL AND aircraft_registration != ''
@@ -479,18 +481,19 @@ serve(async (req) => {
       // ===== PHASE 3.5: PRE-CONFIRMED BAD-ACTOR PRESENCE (v4.1) =====
       // Any aircraft already linked to KCSO/shell/biometric harm/ADA violations/threshold collapse
       // that was DETECTED in the last 24h is auto-flagged — no fresh statistical anomaly required.
-      const last24hRegs = new Map<string, { count: number; minAlt: number; maxAlt: number; firstTs: any; lastTs: any }>();
+      const last24hRegs = new Map<string, { count: number; minAlt: number | null; maxAlt: number | null; firstTs: any; lastTs: any }>();
       for (const d of recentDetections) {
         const reg = d.registration;
         if (!reg) continue;
-        const alt = Number(d.altitude || 0);
+        const alt = observedAltitude(d.altitude);
         const cur = last24hRegs.get(reg);
         if (!cur) {
-          last24hRegs.set(reg, { count: 1, minAlt: alt || 99999, maxAlt: alt, firstTs: d.detection_timestamp, lastTs: d.detection_timestamp });
+          last24hRegs.set(reg, { count: 1, minAlt: alt, maxAlt: alt, firstTs: d.detection_timestamp, lastTs: d.detection_timestamp });
         } else {
           cur.count++;
-          if (alt > 0 && alt < cur.minAlt) cur.minAlt = alt;
-          if (alt > cur.maxAlt) cur.maxAlt = alt;
+          const range = extendAltitudeRange({ min: cur.minAlt, max: cur.maxAlt }, alt);
+          cur.minAlt = range.min;
+          cur.maxAlt = range.max;
           cur.lastTs = d.detection_timestamp;
         }
       }
@@ -548,11 +551,11 @@ serve(async (req) => {
           flag_type: 'PRE_CONFIRMED_PRESENCE',
           severity: isCritical ? 'critical' : isHigh ? 'high' : 'medium',
           registration: reg,
-          description: `${reg} (pre-confirmed: ${reasons.join(', ')}) detected ${stats.count}x in last 24h, alt ${stats.minAlt}–${stats.maxAlt}ft [${tier}]`,
+          description: `${reg} (pre-confirmed: ${reasons.join(', ')}) detected ${stats.count}x in last 24h, alt ${stats.minAlt === null ? 'not measured' : `${stats.minAlt}–${stats.maxAlt}ft`} [${tier}]`,
           evidence_summary: {
             reasons,
             detection_count_24h: stats.count,
-            min_altitude_ft: stats.minAlt === 99999 ? null : stats.minAlt,
+            min_altitude_ft: stats.minAlt,
             max_altitude_ft: stats.maxAlt,
             kcso_fleet: isKcso,
             fleet_identity: fleetIdentityMap.get(REG) ?? null,
@@ -581,13 +584,14 @@ serve(async (req) => {
       for (const d of recentDetections) {
         const baseline = baselineMap.get(d.registration);
         if (!baseline || !baseline.stddev_altitude || Number(baseline.stddev_altitude) === 0) continue;
-        const alt = Number(d.altitude || 0);
-        if (alt <= 0) continue;
+        const alt = observedAltitude(d.altitude);
+        if (alt === null || alt <= 0) continue;
         const zScore = Math.abs(alt - Number(baseline.mean_altitude)) / Number(baseline.stddev_altitude);
         if (zScore > RULES.altitudeAnomalyStdDevs && alt < Number(baseline.mean_altitude)) {
           const reg = d.registration || 'UNKNOWN';
           if (!altAnomalyByReg.has(reg)) altAnomalyByReg.set(reg, []);
-          altAnomalyByReg.get(reg)!.push(d);
+          const group = altAnomalyByReg.get(reg);
+          if (group) group.push(d);
         }
       }
 
@@ -679,9 +683,9 @@ serve(async (req) => {
 
       // 4c. Physics violations
       const physicsViolations = recentDetections.filter((d: any) => {
-        const alt = Number(d.altitude || 0);
+        const alt = observedAltitude(d.altitude);
         const speed = Number(d.speed || 0);
-        return alt < 0 || speed > 600 || (speed > 0 && speed < 5 && alt > 0 && alt < 200);
+        return speed > 600 || (alt !== null && (alt < 0 || (speed > 0 && speed < 5 && alt > 0 && alt < 200)));
       });
 
       if (physicsViolations.length > 0) {
@@ -689,7 +693,8 @@ serve(async (req) => {
         for (const d of physicsViolations) {
           const reg = d.registration || d.callsign || 'UNKNOWN';
           if (!byReg.has(reg)) byReg.set(reg, []);
-          byReg.get(reg)!.push(d);
+          const group = byReg.get(reg);
+          if (group) group.push(d);
         }
         for (const [reg, dets] of byReg) {
           const sources = buildCorroborationSources(reg, ['flight_telemetry']);
@@ -772,7 +777,7 @@ serve(async (req) => {
             WHERE lf.registration IS NOT NULL
           )
           SELECT registration, COUNT(*)::int as correlation_count,
-            AVG(heart_rate) as avg_hr, AVG(altitude::numeric) as avg_alt,
+            AVG(heart_rate) as avg_hr, AVG(altitude::numeric) FILTER (WHERE altitude::numeric <= 60000) as avg_alt,
             AVG(time_delta_sec) as avg_delta
           FROM correlated
           GROUP BY registration HAVING COUNT(*) >= 2

@@ -110,14 +110,16 @@ serve(async (req) => {
         if (NEON_DATABASE_URL) {
           const sql = postgres(NEON_DATABASE_URL, {
             ssl: "require", max: 1, idle_timeout: 10, connect_timeout: 10,
+            connection: { statement_timeout: 5000 },
           });
           try {
-            dbContext = await cap(getDbContext(sql), {} as Record<string, unknown>, 25_000);
+            dbContext = await cap(getDbContext(sql), { retrievalGaps: ['Context retrieval exceeded its time budget; sources were not fully checked.'] } as Record<string, unknown>, 25_000);
             relevantDocuments = await cap(getDocumentsForAgent(sql, config.docTags), "", 10_000);
           } catch (e) {
+            dbContext.retrievalGaps = ['Investigation context could not be completely retrieved.'];
             console.warn("db context failed (non-fatal):", (e as Error).message);
           } finally {
-            await sql.end().catch(() => {});
+            await sql.end({ timeout: 1 }).catch(() => {});
           }
         }
 
@@ -140,7 +142,9 @@ serve(async (req) => {
           20_000,
         );
         // Keep the payload small — huge contexts are the main cause of slow first tokens.
-        const contextString = JSON.stringify({ dbContext, agentContext }).slice(0, 60_000);
+        const contextString = JSON.stringify(agentType === 'legal_analyst' || agentType === 'amy'
+          ? { agentContext, contextNote: 'Use only the source-labeled runtime data in the system prompt. Original FAA identity and aircraft-specific dossier were not retrieved here.' }
+          : { dbContext, agentContext }).slice(0, 60_000);
 
         const response = await callAI(systemPrompt, message, contextString, provider);
 

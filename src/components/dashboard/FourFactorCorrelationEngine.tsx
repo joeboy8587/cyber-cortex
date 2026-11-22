@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { unwrapCorrelationResult } from '@/lib/correlationResults';
 import {
   Layers,
   RefreshCw,
@@ -78,10 +79,10 @@ interface BradfordHillScore {
   registration: string;
   detection_count: number;
   unique_days: number;
-  avg_altitude: number;
-  min_altitude: number;
+  avg_altitude: number | null;
+  min_altitude: number | null;
   bio_correlations: number;
-  bradford_hill_score: number;
+  bradford_hill_score: number | null;
 }
 
 interface FourFactorEvent {
@@ -385,21 +386,22 @@ export const FourFactorCorrelationEngine = () => {
       });
 
       if (error) throw new Error(error.message);
-      
-      const scores = (data?.data?.scores || []).map((s: any) => ({
+      const result = unwrapCorrelationResult<{ scores: Array<Record<string, unknown>> }>(data);
+      if (!Array.isArray(result.scores)) throw new Error('Saved scores did not return');
+      const scores = result.scores.map((s: any) => ({
         registration: s.registration,
         detection_count: parseInt(s.detection_count || '0'),
         unique_days: parseInt(s.unique_days || '0'),
-        avg_altitude: parseInt(s.avg_altitude || '0'),
-        min_altitude: parseInt(s.min_altitude || '0'),
+        avg_altitude: s.avg_altitude == null ? null : Number(s.avg_altitude),
+        min_altitude: s.min_altitude == null ? null : Number(s.min_altitude),
         bio_correlations: parseInt(s.bio_correlations || '0'),
-        bradford_hill_score: parseFloat(s.bradford_hill_score || '0')
+        bradford_hill_score: s.bradford_hill_score === null ? null : Number(s.bradford_hill_score)
       }));
 
       setBradfordScores(scores);
       toast({
         title: 'Bradford Hill Analysis Complete',
-        description: `Calculated causation scores for ${scores.length} aircraft`,
+        description: `Retrieved saved historical scores and links for ${scores.length} aircraft`,
       });
     } catch (err) {
       console.error('Bradford Hill calculation failed:', err);
@@ -669,7 +671,7 @@ export const FourFactorCorrelationEngine = () => {
                 body: { action: 'populateCorrelations', timeWindowMinutes: 5, batchSize: 2000, day },
               });
               if (error) throw new Error(error.message);
-              if (data?.error) throw new Error(data.error);
+              unwrapCorrelationResult(data);
               toast({
                 title: 'Correlation population started',
                 description: `Inserted batch for ${day}. Total now: ${data?.data?.totalInTable ?? 'n/a'}`,
@@ -861,7 +863,7 @@ export const FourFactorCorrelationEngine = () => {
           <div className="flex items-center gap-2 mb-3">
             <Scale className="h-4 w-4 text-yellow-400" />
             <span className="font-medium text-yellow-400">
-              Bradford Hill Causation Scores (Prosecutorial Ranking)
+              Saved Historical Bradford Hill Scores
             </span>
             <Badge variant="outline" className="ml-auto">
               {bradfordScores.length} aircraft analyzed
@@ -870,7 +872,7 @@ export const FourFactorCorrelationEngine = () => {
           <ScrollArea className="h-[300px]">
             {bradfordScores.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
-                Click "Bradford Hill" to calculate causation scores
+                No saved scores retrieved
               </div>
             ) : (
               <div className="space-y-2">
@@ -878,9 +880,9 @@ export const FourFactorCorrelationEngine = () => {
                   <div 
                     key={score.registration} 
                     className={`p-3 rounded-lg border ${
-                      score.bradford_hill_score >= 40 
+                      (score.bradford_hill_score ?? 0) >= 40
                         ? 'border-red-500/50 bg-red-500/10' 
-                        : score.bradford_hill_score >= 25
+                        : (score.bradford_hill_score ?? 0) >= 25
                         ? 'border-orange-500/30 bg-orange-500/5'
                         : 'border-border/30 bg-background/50'
                     }`}
@@ -894,13 +896,13 @@ export const FourFactorCorrelationEngine = () => {
                         </Badge>
                       </div>
                       <Badge className={
-                        score.bradford_hill_score >= 40 
+                        (score.bradford_hill_score ?? 0) >= 40
                           ? 'bg-red-500/30 text-red-400 border-red-500/50 text-lg font-bold'
-                          : score.bradford_hill_score >= 25
+                          : (score.bradford_hill_score ?? 0) >= 25
                           ? 'bg-orange-500/20 text-orange-400 border-orange-500/30'
                           : 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30'
                       }>
-                        {score.bradford_hill_score.toFixed(1)} BH
+                        {score.bradford_hill_score === null ? 'No saved score' : `${score.bradford_hill_score.toFixed(1)} saved BH`}
                       </Badge>
                     </div>
                     <div className="grid grid-cols-4 gap-2 text-xs text-muted-foreground">
@@ -911,10 +913,10 @@ export const FourFactorCorrelationEngine = () => {
                         <span className="text-foreground">{score.bio_correlations}</span> bio matches
                       </div>
                       <div>
-                        Avg: <span className="text-foreground">{score.avg_altitude.toLocaleString()}</span> ft
+                        Avg: <span className="text-foreground">{score.avg_altitude?.toLocaleString(undefined, { maximumFractionDigits: 0 }) ?? '—'}</span> ft
                       </div>
                       <div>
-                        Min: <span className="text-foreground">{score.min_altitude.toLocaleString()}</span> ft
+                        Min: <span className="text-foreground">{score.min_altitude?.toLocaleString() ?? '—'}</span> ft
                       </div>
                     </div>
                   </div>

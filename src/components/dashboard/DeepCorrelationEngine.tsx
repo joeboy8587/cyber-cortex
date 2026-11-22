@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { supabase } from "@/integrations/supabase/client";
+import { unwrapCorrelationResult } from '@/lib/correlationResults';
 
 interface TableCorrelation {
   source_table: string;
@@ -28,7 +29,7 @@ interface CorrelationStats {
   total_biometric_records: number;
   total_flight_records: number;
   total_ocr_records: number;
-  existing_correlations: number;
+  existing_correlations: number | null;
   potential_correlations: number;
   orphaned_biometrics: number;
   orphaned_flights: number;
@@ -37,12 +38,12 @@ interface CorrelationStats {
 interface AircraftBioLink {
   registration: string;
   bio_correlations: number;
-  peak_heart_rate: number;
-  min_hrv: number;
+  peak_heart_rate: number | null;
+  min_hrv: number | null;
   stress_events: number;
-  bradford_hill_score: number;
+  bradford_hill_score: number | null;
   detection_count: number;
-  avg_altitude: number;
+  avg_altitude: number | null;
 }
 
 export function DeepCorrelationEngine() {
@@ -54,6 +55,8 @@ export function DeepCorrelationEngine() {
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
   const hasFetched = useRef(false);
+  const [analysisIssues, setAnalysisIssues] = useState<string[]>([]);
+  const [correlationScope, setCorrelationScope] = useState<string | null>(null);
 
   // Helper to safely extract array data from neon-query response
   const safeExtractData = (response: any): any[] => {
@@ -71,6 +74,7 @@ export function DeepCorrelationEngine() {
 
   const fetchCorrelationData = useCallback(async () => {
     setLoading(true);
+    const issues: string[] = [];
     try {
       // Get table counts for biometric, flight, and OCR data - using individual safe queries
       const tableQueries = [
@@ -110,25 +114,31 @@ export function DeepCorrelationEngine() {
 
       // Get Bradford Hill scores with aircraft-biometric links
       try {
-        const { data: bradfordData } = await supabase.functions.invoke("populate-correlations", {
+        const { data, error } = await supabase.functions.invoke("populate-correlations", {
           body: { action: "calculateBradfordHillScores" }
         });
-
-        if (bradfordData?.scores && Array.isArray(bradfordData.scores)) {
-          setAircraftBioLinks(bradfordData.scores.slice(0, 20));
-        }
+        if (error) throw error;
+        const bradfordData = unwrapCorrelationResult<{ scores: AircraftBioLink[]; scope?: { firstFlight: string; lastFlight: string } }>(data);
+        if (!Array.isArray(bradfordData.scores)) throw new Error('Saved scores did not return');
+        setAircraftBioLinks(bradfordData.scores.slice(0, 20));
+        if (bradfordData.scope) setCorrelationScope(`Stored history: ${bradfordData.scope.firstFlight ?? 'No matching start date'} → ${bradfordData.scope.lastFlight ?? 'No matching end date'} · ±5 minutes`);
       } catch (err) {
+        issues.push(`Saved scores: ${err instanceof Error ? err.message : 'Read did not finish'}`);
         console.warn("Bradford Hill scores fetch failed:", err);
       }
 
       // Get actual flight-biometric correlation count
-      let flightBioCount = 0;
+      let flightBioCount: number | null = null;
       try {
-        const { data: flightBioData } = await supabase.functions.invoke("populate-correlations", {
+        const { data, error } = await supabase.functions.invoke("populate-correlations", {
           body: { action: "findFlightBiometricCorrelations", timeWindowMinutes: 5, batchSize: 5000 }
         });
-        flightBioCount = flightBioData?.count || 0;
+        if (error) throw error;
+        const result = unwrapCorrelationResult<{ count: number }>(data);
+        if (typeof result.count !== 'number') throw new Error('Link count did not return');
+        flightBioCount = result.count;
       } catch (err) {
+        issues.push(`Aircraft–health links: ${err instanceof Error ? err.message : 'Read did not finish'}`);
         console.warn("Flight-biometric correlations fetch failed:", err);
       }
 
@@ -203,15 +213,15 @@ export function DeepCorrelationEngine() {
         counts.bio_extended_count +
         counts.bio_data_count;
 
-      setStats({
+      setStats(previous => ({
         total_biometric_records: totalBio,
         total_flight_records: counts.flight_count,
         total_ocr_records: counts.ocr_holding_count + counts.ocr_screenshot_count,
-        existing_correlations: flightBioCount || counts.correlation_count,
+        existing_correlations: flightBioCount ?? previous?.existing_correlations ?? null,
         potential_correlations: Math.min(totalBio, 10000),
         orphaned_biometrics: orphanedBio.orphaned,
         orphaned_flights: orphanedFlightCount
-      });
+      }));
 
       // Build correlation matrix
       const corrMatrix: TableCorrelation[] = [];
@@ -285,6 +295,7 @@ export function DeepCorrelationEngine() {
     } catch (error) {
       console.error("Failed to fetch correlation data:", error);
     } finally {
+      setAnalysisIssues(issues);
       setLoading(false);
     }
   }, []);
@@ -296,23 +307,29 @@ export function DeepCorrelationEngine() {
     try {
       // Step 1: Populate temporal correlations (batch-insert into correlation tables)
       setProgress(20);
-      await supabase.functions.invoke("populate-correlations", {
+      const temporal = await supabase.functions.invoke("populate-correlations", {
         body: { action: "populateTemporalCorrelations", windowMinutes: 30, batchSize: 1000 }
       });
+      if (temporal.error) throw temporal.error;
+      unwrapCorrelationResult(temporal.data);
 
       setProgress(40);
       
       // Step 2: Calculate Bradford Hill scores
-      await supabase.functions.invoke("populate-correlations", {
+      const scores = await supabase.functions.invoke("populate-correlations", {
         body: { action: "calculateBradfordHillScores" }
       });
+      if (scores.error) throw scores.error;
+      unwrapCorrelationResult(scores.data);
 
       setProgress(60);
 
       // Step 3: Get four-factor convergence days
-      await supabase.functions.invoke("populate-correlations", {
+      const days = await supabase.functions.invoke("populate-correlations", {
         body: { action: "findFourFactorDays" }
       });
+      if (days.error) throw days.error;
+      unwrapCorrelationResult(days.data);
 
       setProgress(80);
 
@@ -321,6 +338,7 @@ export function DeepCorrelationEngine() {
       
       setProgress(100);
     } catch (error) {
+      setAnalysisIssues([error instanceof Error ? error.message : 'Deep correlation did not finish']);
       console.error("Deep correlation failed:", error);
     } finally {
       setRunning(false);
@@ -339,6 +357,8 @@ export function DeepCorrelationEngine() {
       icon={<GitBranch className="w-5 h-5 text-primary" />}
     >
       <div className="p-4 space-y-4">
+        {analysisIssues.length > 0 && <div role="alert" className="text-sm text-destructive">Incomplete analysis — previous results retained.<ul>{analysisIssues.map(issue => <li key={issue}>{issue}</li>)}</ul></div>}
+        {correlationScope && <div className="text-xs text-muted-foreground break-words">{correlationScope}</div>}
         {/* Control Bar */}
         <div className="flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-2">
@@ -381,9 +401,9 @@ export function DeepCorrelationEngine() {
             </div>
             <div className="bg-card/50 border border-success/30 rounded-lg p-3 text-center">
               <div className="text-2xl font-mono font-bold text-success">
-                {stats.existing_correlations.toLocaleString()}
+                {stats.existing_correlations?.toLocaleString() ?? 'Not retrieved'}
               </div>
-              <div className="text-xs text-muted-foreground">Active Correlations</div>
+              <div className="text-xs text-muted-foreground">Stored Historical Links</div>
             </div>
             <div className="bg-card/50 border border-destructive/30 rounded-lg p-3 text-center">
               <div className="text-2xl font-mono font-bold text-destructive">
@@ -449,7 +469,7 @@ export function DeepCorrelationEngine() {
           <div className="space-y-3">
             <h4 className="font-display text-sm text-muted-foreground uppercase tracking-wider flex items-center gap-2">
               <Activity className="w-4 h-4 text-destructive" />
-              Aircraft → Biometric Links (Bradford Hill Ranked)
+              Aircraft → Biometric Links (Saved Historical Scores)
             </h4>
             <ScrollArea className="h-64">
               <div className="space-y-2 pr-2">
@@ -457,9 +477,9 @@ export function DeepCorrelationEngine() {
                   <div 
                     key={idx} 
                     className={`p-3 rounded-lg border ${
-                      link.bradford_hill_score > 50 
+                      (link.bradford_hill_score ?? 0) > 50
                         ? 'bg-destructive/10 border-destructive/40' 
-                        : link.bradford_hill_score > 30 
+                        : (link.bradford_hill_score ?? 0) > 30
                         ? 'bg-warning/10 border-warning/40' 
                         : 'bg-card/50 border-border'
                     }`}
@@ -469,9 +489,9 @@ export function DeepCorrelationEngine() {
                         <Plane className="w-4 h-4 text-primary" />
                         <span className="font-mono font-bold">{link.registration}</span>
                         <Badge 
-                          variant={link.bradford_hill_score > 50 ? "destructive" : link.bradford_hill_score > 30 ? "secondary" : "outline"}
+                          variant={(link.bradford_hill_score ?? 0) > 50 ? "destructive" : (link.bradford_hill_score ?? 0) > 30 ? "secondary" : "outline"}
                         >
-                          BH: {link.bradford_hill_score}
+                          Saved BH: {link.bradford_hill_score ?? 'Not stored'}
                         </Badge>
                       </div>
                       <Badge variant="outline" className="text-xs">
@@ -488,11 +508,11 @@ export function DeepCorrelationEngine() {
                         <div className="text-muted-foreground">Stress Events</div>
                       </div>
                       <div className="text-center p-1 bg-background/50 rounded">
-                        <div className="font-mono font-bold">{Math.round(link.peak_heart_rate)}</div>
+                        <div className="font-mono font-bold">{link.peak_heart_rate === null ? '—' : Math.round(link.peak_heart_rate)}</div>
                         <div className="text-muted-foreground">Peak HR</div>
                       </div>
                       <div className="text-center p-1 bg-background/50 rounded">
-                        <div className="font-mono font-bold">{Math.round(link.avg_altitude)}ft</div>
+                        <div className="font-mono font-bold">{link.avg_altitude === null ? '—' : `${Math.round(link.avg_altitude)}ft`}</div>
                         <div className="text-muted-foreground">Avg Alt</div>
                       </div>
                     </div>

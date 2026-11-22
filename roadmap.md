@@ -1,3 +1,8 @@
+# Legal analysis and correlation timeout
+- [x] Update Legal Analyst and Amy's sharp war-room prompt with routine/cover analysis and explicit retrieval gaps; exclude fixed narrative counts and contaminated flight summaries from their model context.
+- [x] Replace the two failing unbounded correlation reads with canonical read-only, provenance-preserving reads; bound all legacy action execution and connection cleanup. Do not treat timeouts or missing scores as zeros.
+- [x] Verify seven deadline/result tests and signed-in UI: 41,552 historical links returned in 3.9s, 100 aircraft displayed with saved-score labels, Legal Analyst replied and saved without page errors. Legal-history source reads still report missing relations; they are explicit gaps, not proof of absent history. Prompt adherence improved, but model prose remains variable.
+
 # Home-adaptive live checks
 - [x] Use 15-second checks within a 3 km home boundary and 60 seconds otherwise, in both live views; preserve both writers.
 - [x] Verify six cadence tests plus six raw-preservation tests; signed-in tracker switched to 15 seconds and completed two paid-feed collections, each saving 18/18 raw observations. Historical display read still reports an existing DB error, but no longer blocks live collections.

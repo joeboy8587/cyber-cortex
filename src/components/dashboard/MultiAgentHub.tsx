@@ -241,9 +241,13 @@ export function MultiAgentHub() {
           if (data === "[DONE]") continue;
           try {
             const parsed = JSON.parse(data);
+            if (parsed.error) throw new Error(String(parsed.error));
             const content = parsed.choices?.[0]?.delta?.content;
             if (content) onChunk(content);
-          } catch { /* skip */ }
+          } catch (error) {
+            if (error instanceof SyntaxError) continue;
+            throw error;
+          }
         }
       }
     }

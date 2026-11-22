@@ -1,5 +1,6 @@
 import { AGENT_CONFIGS, GHOST_FLEET_REGISTRY, type AgentContext } from "./agent-configs.ts";
 import { buildDoctrineHeader, fetchPopulationScaleStats } from "../_shared/doctrine.ts";
+import { buildLegalWarRoomPrompt } from '../_shared/legalWarRoomPrompt.ts';
 
 export async function buildAgentSystemPrompt(
   agentType: string,
@@ -8,6 +9,10 @@ export async function buildAgentSystemPrompt(
   relevantDocuments: string,
 ) {
   const config = AGENT_CONFIGS[agentType as keyof typeof AGENT_CONFIGS];
+
+  if (agentType === 'legal_analyst' || agentType === 'amy') {
+    return buildLegalWarRoomPrompt(config.name, dbContext, agentContext, relevantDocuments);
+  }
 
   // Live population-scale stats — never hardcode again.
   const stats = await fetchPopulationScaleStats(

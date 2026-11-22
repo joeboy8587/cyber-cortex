@@ -1,60 +1,27 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
+import { createClient } from 'npm:@supabase/supabase-js@2';
+import { corsHeaders } from 'npm:@supabase/supabase-js@2/cors';
+import { z } from 'npm:zod@3';
+import { readCanonicalCorrelations } from './canonical.ts';
+import { withAnalysisDeadline } from '../_shared/analysisDeadline.ts';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
-};
+const Input = z.object({
+  action: z.enum(['getCorrelationStats', 'findFlightBiometricCorrelations', 'findFourFactorDays',
+    'findKCSOBiometricCorrelations', 'calculateBradfordHillScores', 'getComprehensiveSummary',
+    'populateCorrelations', 'populateTemporalCorrelations', 'populateBradfordHillFast', 'populateFourFactorEvents']),
+  timeWindowMinutes: z.number().int().min(1).max(30).default(5),
+  windowMinutes: z.number().int().min(1).max(30).optional(),
+  batchSize: z.number().int().min(1).max(5000).default(500),
+  day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value => {
+    const parsed = new Date(value + 'T00:00:00Z');
+    return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+  }, 'Invalid calendar date').optional(),
+});
 
-type ColSet = Set<string>;
-
-const toColSet = (rows: Array<{ column_name: string }>): ColSet => new Set(rows.map((r) => r.column_name));
-
-const pickFirstExisting = (cols: ColSet, candidates: string[]) =>
-  candidates.find((c) => cols.has(c));
-
-const buildUnifiedBiometricsUnion = (tableCols: Record<string, ColSet>) => {
-  const tables = Object.keys(tableCols);
-
-  const tsCandidates = [
-    'measurement_timestamp',
-    'timestamp',
-    'reading_timestamp',
-    'recorded_at',
-    'created_at',
-    'created_timestamp',
-  ];
-  const hrCandidates = ['heart_rate', 'hr', 'bpm', 'pulse'];
-  const hrvCandidates = ['hrv', 'heart_rate_variability', 'variability'];
-
-  const selects: string[] = [];
-
-  // Normalize timestamps so every SELECT in the UNION returns the same type (timestamptz)
-  const tsExpr = (col: string) => `NULLIF((${col})::text, '')::timestamptz`;
-
-  for (const table of tables) {
-    const cols = tableCols[table];
-    const ts = pickFirstExisting(cols, tsCandidates);
-    const hr = pickFirstExisting(cols, hrCandidates);
-    const hrv = pickFirstExisting(cols, hrvCandidates);
-
-    // Need at least a timestamp + heart rate to be useful
-    if (!ts || !hr) continue;
-
-    const hrvExpr = hrv ? `${hrv}::numeric` : 'NULL::numeric';
-
-    selects.push(
-      `SELECT ${tsExpr(ts)} as ts, ${hr}::numeric as heart_rate, ${hrvExpr} as hrv, '${table}' as source FROM ${table} WHERE ${ts} IS NOT NULL AND NULLIF((${ts})::text, '') IS NOT NULL`
-    );
-  }
-
-  // If nothing matches, return an empty result set instead of erroring
-  if (selects.length === 0) {
-    return `SELECT NULL::timestamptz as ts, NULL::numeric as heart_rate, NULL::numeric as hrv, 'none'::text as source WHERE false`;
-  }
-
-  return selects.join('\nUNION ALL\n');
-};
+const respond = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
+  status, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+});
 
 serve(async (req) => {
   console.log('populate-correlations: Received request', req.method);
@@ -63,26 +30,28 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
-  const databaseUrl = Deno.env.get('NEON_DATABASE_URL');
-  
-  if (!databaseUrl) {
-    console.error('NEON_DATABASE_URL is not configured');
-    return new Response(
-      JSON.stringify({ error: 'Database connection not configured' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
-  }
-
+  if (req.method !== 'POST') return respond({ error: 'Method not allowed' }, 405);
+  const authHeader = req.headers.get('Authorization');
+  if (!authHeader?.startsWith('Bearer ')) return respond({ error: 'Unauthorized' }, 401);
+  const url = Deno.env.get('SUPABASE_URL');
+  const anon = Deno.env.get('SUPABASE_ANON_KEY');
+  if (!url || !anon) return respond({ error: 'Authentication unavailable' }, 503);
+  const client = createClient(url, anon, { global: { headers: { Authorization: authHeader } } });
+  const { data: claims, error: authError } = await client.auth.getClaims(authHeader.slice(7));
+  if (authError || !claims?.claims) return respond({ error: 'Unauthorized' }, 401);
+  const input = Input.safeParse(await req.json().catch(() => null));
+  if (!input.success) return respond({ error: 'Invalid analysis request', details: input.error.flatten().fieldErrors }, 400);
+  const body = input.data;
+  const { action, timeWindowMinutes, batchSize, day } = body;
   let sql: ReturnType<typeof postgres> | null = null;
-  
+
   try {
-    const body = await req.json().catch(() => ({}));
-    const { action, timeWindowMinutes = 5, batchSize = 500, day } = body as {
-      action?: string;
-      timeWindowMinutes?: number;
-      batchSize?: number;
-      day?: string;
-    };
+    if (action === 'findFlightBiometricCorrelations' || action === 'calculateBradfordHillScores') {
+      const result = await readCanonicalCorrelations(action, timeWindowMinutes, batchSize, day);
+      return respond({ data: result });
+    }
+    const databaseUrl = Deno.env.get('NEON_DATABASE_URL');
+    if (!databaseUrl) return respond({ error: 'Database connection not configured' }, 503);
 
     console.log('populate-correlations: Action:', action);
 
@@ -98,10 +67,12 @@ serve(async (req) => {
       max: 1,
       idle_timeout: 20,
       connect_timeout: 10,
+      connection: { statement_timeout: 20_000 },
     });
 
     let result;
 
+    const runAction = async (sql: ReturnType<typeof postgres>) => {
     switch (action) {
       case 'getCorrelationStats': {
         console.log('getCorrelationStats: Fetching table stats...');
@@ -119,11 +90,11 @@ serve(async (req) => {
           if (!existingTables.has(table)) return 0;
           try {
             // Use faster approximate count for large tables
-            const r = await sql!.unsafe(`SELECT reltuples::bigint AS cnt FROM pg_class WHERE relname = $1`, [table]);
+            const r = await sql.unsafe(`SELECT reltuples::bigint AS cnt FROM pg_class WHERE relname = $1`, [table]);
             const approx = Number((r as any)[0]?.cnt || 0);
             if (approx > 0) return approx;
             // Fallback to exact count for empty/small tables
-            const exact = await sql!.unsafe(`SELECT COUNT(*) as cnt FROM ${table} LIMIT 1`);
+            const exact = await sql.unsafe(`SELECT COUNT(*) as cnt FROM ${table} LIMIT 1`);
             return Number((exact as any)[0]?.cnt || 0);
           } catch (e) {
             console.error(`Error counting ${table}:`, e);
@@ -140,77 +111,6 @@ serve(async (req) => {
           josiah_count: await getCnt('josiah_reflections_rows')
         };
         console.log('getCorrelationStats: Complete', result);
-        break;
-      }
-
-
-      case 'findFlightBiometricCorrelations': {
-        // Find flights that occurred within timeWindow of biometric events
-        console.log(
-          `Finding flight-biometric correlations with ${timeWindowMinutes} minute window across available biometric tables...`
-        );
-
-        // Discover schemas so we never reference non-existent columns
-        const biometricTables = [
-          'biometric_monitoring',
-          'integrated_biometric_data',
-          'biometrics_rows',
-          'biometric_readings_extended',
-          'biometric_data_rows',
-        ];
-
-        const colRows = await sql`
-          SELECT table_name, column_name
-          FROM information_schema.columns
-          WHERE table_schema = 'public'
-            AND table_name = ANY(${biometricTables}::text[])
-        `;
-
-        const tableCols: Record<string, ColSet> = {};
-        for (const t of biometricTables) tableCols[t] = new Set();
-        for (const r of colRows as unknown as Array<{ table_name: string; column_name: string }>) {
-          if (!tableCols[r.table_name]) tableCols[r.table_name] = new Set();
-          tableCols[r.table_name].add(r.column_name);
-        }
-
-        const unionSql = buildUnifiedBiometricsUnion(tableCols);
-
-        const querySql = `
-          WITH unified_biometrics AS (
-            ${unionSql}
-          )
-          SELECT 
-            f.registration,
-            f.detection_timestamp as flight_time,
-            f.altitude,
-            f.callsign,
-            b.ts as bio_time,
-            b.heart_rate,
-            b.hrv,
-            b.source as biometric_source,
-            EXTRACT(EPOCH FROM (f.detection_timestamp - b.ts))/60 as time_diff_minutes
-          FROM live_flight_detections_rows f
-          JOIN unified_biometrics b ON 
-            ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.ts))) <= ($1::int * 60)
-          WHERE f.detection_timestamp IS NOT NULL 
-            AND f.registration IS NOT NULL
-          ORDER BY f.detection_timestamp DESC
-          LIMIT $2::int
-        `;
-
-        const correlations = await sql.unsafe(querySql, [timeWindowMinutes, batchSize]);
-
-        const sourceBreakdown: Record<string, number> = {};
-        for (const c of correlations as any[]) {
-          sourceBreakdown[c.biometric_source] = (sourceBreakdown[c.biometric_source] || 0) + 1;
-        }
-
-        console.log(`Found ${correlations.length} flight-biometric correlations`);
-        result = {
-          count: correlations.length,
-          sourceBreakdown,
-          sample: (correlations as any[]).slice(0, 10),
-        };
         break;
       }
 
@@ -317,101 +217,6 @@ serve(async (req) => {
       }
 
 
-      case 'calculateBradfordHillScores': {
-        // Calculate Bradford Hill causation scores for aircraft
-        console.log('Calculating Bradford Hill scores with available biometric schemas...');
-
-        const biometricTables = [
-          'biometric_monitoring',
-          'integrated_biometric_data',
-          'biometrics_rows',
-          'biometric_readings_extended',
-          'biometric_data_rows',
-        ];
-
-        const colRows = await sql`
-          SELECT table_name, column_name
-          FROM information_schema.columns
-          WHERE table_schema = 'public'
-            AND table_name = ANY(${biometricTables}::text[])
-        `;
-
-        const tableCols: Record<string, ColSet> = {};
-        for (const t of biometricTables) tableCols[t] = new Set();
-        for (const r of colRows as unknown as Array<{ table_name: string; column_name: string }>) {
-          if (!tableCols[r.table_name]) tableCols[r.table_name] = new Set();
-          tableCols[r.table_name].add(r.column_name);
-        }
-
-        const unionSql = buildUnifiedBiometricsUnion(tableCols);
-
-        const scoresSql = `
-          WITH unified_biometrics AS (
-            ${unionSql}
-          ),
-          aircraft_stats AS (
-            SELECT 
-              registration,
-              COUNT(*) as detection_count,
-              COUNT(DISTINCT DATE(detection_timestamp)) as unique_days,
-              ROUND(AVG(COALESCE(altitude, 0))::numeric, 0) as avg_altitude,
-              MIN(COALESCE(altitude, 9999)) as min_altitude
-            FROM live_flight_detections_rows
-            WHERE registration IS NOT NULL
-            GROUP BY registration
-            HAVING COUNT(*) > 5
-          ),
-          bio_correlation_counts AS (
-            SELECT 
-              f.registration,
-              COUNT(*) as bio_correlations,
-              MAX(b.heart_rate) as peak_hr,
-              MIN(b.hrv) as min_hrv,
-              COUNT(CASE WHEN b.heart_rate > 100 THEN 1 END) as stress_events
-            FROM live_flight_detections_rows f
-            JOIN unified_biometrics b ON 
-              ABS(EXTRACT(EPOCH FROM (f.detection_timestamp - b.ts))) <= 300
-            WHERE f.detection_timestamp IS NOT NULL
-            GROUP BY f.registration
-          )
-          SELECT 
-            a.registration,
-            a.detection_count,
-            a.unique_days,
-            a.avg_altitude,
-            a.min_altitude,
-            COALESCE(bc.bio_correlations, 0) as bio_correlations,
-            COALESCE(bc.peak_hr, 0) as peak_heart_rate,
-            COALESCE(bc.min_hrv, 0) as min_hrv,
-            COALESCE(bc.stress_events, 0) as stress_events,
-            ROUND((
-              LEAST(a.detection_count / 10.0, 20) +
-              LEAST(a.unique_days / 5.0, 10) +
-              LEAST(COALESCE(bc.bio_correlations, 0) / 5.0, 15) +
-              LEAST(COALESCE(bc.stress_events, 0) / 3.0, 15) +
-              CASE WHEN a.min_altitude < 1000 THEN 10 
-                   WHEN a.min_altitude < 1500 THEN 7
-                   WHEN a.min_altitude < 2000 THEN 4
-                   ELSE 2 END +
-              LEAST(COALESCE(bc.bio_correlations, 0) / 10.0, 10)
-            )::numeric, 1) as bradford_hill_score
-          FROM aircraft_stats a
-          LEFT JOIN bio_correlation_counts bc ON a.registration = bc.registration
-          ORDER BY bradford_hill_score DESC
-          LIMIT 100
-        `;
-
-        const scores = await sql.unsafe(scoresSql, []);
-
-        console.log(`Calculated Bradford Hill scores for ${scores.length} aircraft`);
-        result = {
-          count: scores.length,
-          scores,
-        };
-        break;
-      }
-
-
       case 'getComprehensiveSummary': {
         // Get comprehensive evidence summary with safe table access
         console.log('Generating comprehensive evidence summary...');
@@ -426,7 +231,7 @@ serve(async (req) => {
           
           const safeCount = async (table: string): Promise<number> => {
             if (!existingTables.has(table)) return 0;
-            const r = await sql!.unsafe(`SELECT COUNT(*) as cnt FROM ${table}`);
+            const r = await sql.unsafe(`SELECT COUNT(*) as cnt FROM ${table}`);
             return Number((r as any)[0]?.cnt || 0);
           };
           
@@ -437,7 +242,7 @@ serve(async (req) => {
             ocr_patterns: await safeCount('ocr_aircraft_holding_patterns'),
             ecgs: await safeCount('physician_verified_ecgs'),
             unique_aircraft: existingTables.has('live_flight_detections_rows') 
-              ? Number((await sql!.unsafe(`SELECT COUNT(DISTINCT registration) as cnt FROM live_flight_detections_rows`) as any)[0]?.cnt || 0)
+              ? Number((await sql.unsafe(`SELECT COUNT(DISTINCT registration) as cnt FROM live_flight_detections_rows`) as any)[0]?.cnt || 0)
               : 0
           };
           
@@ -867,7 +672,9 @@ serve(async (req) => {
         throw new Error(`Unknown action: ${action}`);
     }
 
-    await sql.end();
+    };
+    await withAnalysisDeadline(runAction(sql), 35_000);
+    await sql.end({ timeout: 1 });
 
     return new Response(
       JSON.stringify({ data: result }),
@@ -879,21 +686,24 @@ serve(async (req) => {
     console.error('Correlation engine error:', error);
     if (sql) {
       try {
-        await sql.end();
+        await sql.end({ timeout: 1 });
       } catch (e) {
         console.error('Error closing connection:', e);
       }
     }
     const code = String((err as any)?.code || '');
-    const isTimeout = code === '57014' || /statement timeout|timed out/i.test(error.message || '');
+    const isTimeout = code === '57014' || code === 'ANALYSIS_TIMEOUT' || /statement timeout|timed out|TimeoutError|AbortError/i.test(error.message || error.name || '');
     if (isTimeout) {
-      // Timeouts are not fatal — return an empty, clearly-labelled result so the page stays up.
+      // An incomplete request is not a zero-result scan; callers retain their last result.
       return new Response(
         JSON.stringify({
-          data: { correlations: [], scores: [], rows: [] },
+          data: null,
+          complete: false,
           nonFatal: true,
           timedOut: true,
-          message: 'This analysis took too long to finish. Try a shorter date range and run it again.',
+          message: action.startsWith('populate')
+            ? 'Correlation update did not finish. Some earlier batches may have saved; refresh before rerunning. This is not a zero-result scan.'
+            : 'Correlation analysis did not finish. Previous results are unchanged; this is not a zero-result scan.',
         }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );

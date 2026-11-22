@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
 import { toast } from 'sonner';
+import { HOME_POLLING, livePollingInterval } from '@/lib/livePolling';
 
 interface FlightAlert {
   id: string;
@@ -78,7 +79,7 @@ const CRITICAL_REGISTRATIONS = ['N912KC', 'N913KC', 'N743AM', 'N139HP', 'N156HP'
 
 export function LiveAlertBanner({
   lowAltitudeThreshold = 1500,
-  autoRefreshInterval = 30000,
+  autoRefreshInterval = HOME_POLLING.normalMs,
   soundEnabled: initialSoundEnabled = true,
   onAlertClick
 }: LiveAlertBannerProps) {
@@ -87,6 +88,8 @@ export function LiveAlertBanner({
   const [soundEnabled, setSoundEnabled] = useState(initialSoundEnabled);
   const [expanded, setExpanded] = useState(true);
   const [lastCheck, setLastCheck] = useState<Date>(new Date());
+  const [pollInterval, setPollInterval] = useState<number>(autoRefreshInterval);
+  const fetchingRef = useRef(false);
   const [feedSource, setFeedSource] = useState<string>('live');
   const [cacheAgeMinutes, setCacheAgeMinutes] = useState<number | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -253,6 +256,8 @@ export function LiveAlertBanner({
   }, [lowAltitudeThreshold]);
 
   const fetchAlerts = useCallback(async () => {
+    if (fetchingRef.current) return;
+    fetchingRef.current = true;
     setLoading(true);
     try {
       // Fetch from live API only (DB supplement removed — was causing 150s timeouts)
@@ -261,14 +266,20 @@ export function LiveAlertBanner({
       });
 
       const allFlights: any[] = [];
+      if (liveResult.error || (liveResult.data?.error && !liveResult.data?.success)) {
+        setPollInterval(HOME_POLLING.normalMs);
+        return;
+      }
+      const liveFlights = Array.isArray(liveResult.data?.flights) ? liveResult.data.flights : [];
+      setPollInterval(livePollingInterval(liveFlights, liveResult.data?.source || 'unknown'));
       if (liveResult.data?.rawWrite?.error) toast.error(liveResult.data.rawWrite.error);
       setFeedSource(liveResult.data?.source || 'live');
       setCacheAgeMinutes(
         typeof liveResult.data?.cacheAgeMinutes === 'number' ? liveResult.data.cacheAgeMinutes : null
       );
 
-      if (liveResult.data?.flights) {
-        for (const f of liveResult.data.flights) {
+      if (liveFlights.length) {
+        for (const f of liveFlights) {
           allFlights.push(f);
         }
       }
@@ -311,18 +322,23 @@ export function LiveAlertBanner({
       setAlerts(newAlerts);
       setLastCheck(new Date());
     } catch (err) {
+      setPollInterval(HOME_POLLING.normalMs);
       console.error('Alert system error:', err);
     } finally {
+      fetchingRef.current = false;
       setLoading(false);
     }
   }, [classifyFlight, playAlertSound]);
 
   useEffect(() => {
     fetchAlerts();
-    const interval = setInterval(fetchAlerts, autoRefreshInterval);
-    return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoRefreshInterval]);
+  }, []);
+
+  useEffect(() => {
+    const interval = setInterval(fetchAlerts, pollInterval);
+    return () => clearInterval(interval);
+  }, [fetchAlerts, pollInterval]);
 
   const dismissAlert = (alertId: string) => {
     setAlerts(prev => prev.filter(a => a.id !== alertId));
@@ -370,13 +386,14 @@ export function LiveAlertBanner({
 
   if (alerts.length === 0) {
     return (
-      <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-3 flex items-center justify-between">
+      <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-3 flex flex-wrap gap-2 items-center justify-between">
         <div className="flex items-center gap-2">
           <Radio className="w-4 h-4 text-green-500 animate-pulse" />
           <span className="text-sm text-green-500 font-medium">Airspace Clear</span>
           <span className="text-xs text-muted-foreground">
             Last check: {lastCheck.toLocaleTimeString()}
           </span>
+          <span className="text-xs text-muted-foreground" role="status">Checks: {pollInterval / 1000}s{pollInterval === HOME_POLLING.fastMs ? ' · Near home (3 km)' : ''}</span>
         </div>
         <Button size="sm" variant="ghost" onClick={fetchAlerts} disabled={loading}>
           <Radio className={cn("w-4 h-4", loading && "animate-spin")} />
@@ -462,6 +479,7 @@ export function LiveAlertBanner({
                 )}
               </div>
               <div className="text-xs text-muted-foreground flex items-center gap-2">
+                <span role="status">Checks: {pollInterval / 1000}s{pollInterval === HOME_POLLING.fastMs ? ' · Near home (3 km)' : ''}</span>
                 {criticalCount > 0 && (
                   <Badge variant="destructive" className="text-xs">{criticalCount} Critical</Badge>
                 )}

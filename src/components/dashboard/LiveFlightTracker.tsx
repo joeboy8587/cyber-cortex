@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { CyberPanel } from "@/components/ui/cyber-panel";
 import { Plane, RefreshCw, AlertTriangle, Shield, Radio, Eye, Wifi, WifiOff, Database, Satellite } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { useNeonDatabase, UnifiedFlight } from "@/hooks/useNeonDatabase";
 import { toast } from "sonner";
+import { HOME_POLLING, livePollingInterval } from '@/lib/livePolling';
 
 interface FlightStats {
   total_active: number;
@@ -25,6 +26,7 @@ interface FlightStats {
 export function LiveFlightTracker() {
   const { isLoading: dbLoading } = useNeonDatabase();
   const [flights, setFlights] = useState<UnifiedFlight[]>([]);
+  const [dbFlights, setDbFlights] = useState<UnifiedFlight[]>([]);
   const [dbConnected, setDbConnected] = useState<boolean | null>(null);
   const [stats, setStats] = useState<FlightStats>({
     total_active: 0,
@@ -48,6 +50,26 @@ export function LiveFlightTracker() {
   const [dataSource, setDataSource] = useState<'all' | 'live' | 'surveillance'>('all');
   const [faaClassifier, setFaaClassifier] = useState<{ status: string; matched?: number; ghosts?: number; mismatches?: number } | null>(null);
   const [rawCapture, setRawCapture] = useState<{ inserted: number; attempted: number; error: string | null } | null>(null);
+  const [pollInterval, setPollInterval] = useState<number>(HOME_POLLING.normalMs);
+  const fetchingRef = useRef(false);
+  const dbFetchingRef = useRef(false);
+
+  // Keep the slower historical display read independent of fresh paid collections.
+  const fetchDbFlights = useCallback(async () => {
+    if (dbFetchingRef.current) return;
+    dbFetchingRef.current = true;
+    try {
+      const { data, error } = await supabase.functions.invoke('neon-query', {
+        body: { action: 'getKernCountyFlights', limit: 200 }
+      });
+      setDbConnected(!error && Array.isArray(data));
+      if (!error && Array.isArray(data)) setDbFlights(data);
+    } catch {
+      setDbConnected(false);
+    } finally {
+      dbFetchingRef.current = false;
+    }
+  }, []);
 
   // Fetch live flights from OpenSky Network API (FREE) - focused on Kern County
   const fetchFromOpenSky = useCallback(async () => {
@@ -58,18 +80,22 @@ export function LiveFlightTracker() {
       });
 
       if (error) {
+        setPollInterval(HOME_POLLING.normalMs);
         console.error('OpenSky fetch error:', error);
         setApiConnected(false);
         return null;
       }
 
       if (data?.error && !data?.success) {
+        setPollInterval(HOME_POLLING.normalMs);
         console.error('OpenSky API error:', data.error);
         setApiConnected(false);
         return null;
       }
 
       setApiConnected(true);
+      const liveFlights = Array.isArray(data?.flights) ? data.flights : [];
+      setPollInterval(livePollingInterval(liveFlights, data?.source || 'unknown'));
       setActiveSource(data?.source || 'unknown');
       setRawCapture(data?.rawWrite ?? null);
       if (data?.rawWrite?.error) {
@@ -82,8 +108,9 @@ export function LiveFlightTracker() {
       }
       
       // Return the flights directly from API response for immediate display
-      return data?.flights || [];
+      return liveFlights;
     } catch (err) {
+      setPollInterval(HOME_POLLING.normalMs);
       console.error('OpenSky exception:', err);
       setApiConnected(false);
       return null;
@@ -91,28 +118,13 @@ export function LiveFlightTracker() {
   }, []);
 
   const fetchLiveFlights = useCallback(async () => {
+    if (fetchingRef.current) return;
+    fetchingRef.current = true;
     setLoading(true);
     
     try {
       // Fetch fresh data from OpenSky Network (FREE API) - this also stores to DB
       const liveApiFlights = await fetchFromOpenSky();
-      
-      // Also get recent data from database (Kern County focused, last 7 days)
-      let dbFlights: UnifiedFlight[] = [];
-      try {
-        const { data, error } = await supabase.functions.invoke('neon-query', {
-          body: { action: 'getKernCountyFlights', limit: 200 }
-        });
-        if (!error && data) {
-          dbFlights = Array.isArray(data) ? data : [];
-          setDbConnected(true);
-        } else {
-          setDbConnected(false);
-        }
-      } catch (dbErr) {
-        console.warn('DB fetch error, using API data only:', dbErr);
-        setDbConnected(false);
-      }
       
       // Merge: prefer live API data, fallback to DB data
       const apiFlightsTransformed: UnifiedFlight[] = (liveApiFlights || [])
@@ -210,9 +222,10 @@ export function LiveFlightTracker() {
       console.error("Failed to fetch live flights:", error);
       toast.error("Failed to fetch flight data");
     } finally {
+      fetchingRef.current = false;
       setLoading(false);
     }
-  }, [fetchFromOpenSky, dataSource]);
+  }, [fetchFromOpenSky, dataSource, dbFlights]);
 
   const runFaaClassifier = useCallback(async () => {
     setFaaClassifier({ status: 'running' });
@@ -238,16 +251,21 @@ export function LiveFlightTracker() {
   }, [fetchLiveFlights]);
 
   useEffect(() => {
+    fetchDbFlights();
+    const interval = setInterval(fetchDbFlights, HOME_POLLING.normalMs);
+    return () => clearInterval(interval);
+  }, [fetchDbFlights]);
+
+  useEffect(() => {
     fetchLiveFlights();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     if (!autoRefresh) return;
-    const interval = setInterval(fetchLiveFlights, 60000);
+    const interval = setInterval(fetchLiveFlights, pollInterval);
     return () => clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoRefresh]);
+  }, [autoRefresh, fetchLiveFlights, pollInterval]);
 
   const getThreatBadge = (level: string) => {
     switch (level) {
@@ -285,6 +303,9 @@ export function LiveFlightTracker() {
           </div>
         )}
         {/* Control Bar */}
+        <div className="text-xs text-muted-foreground" role="status">
+          {autoRefresh ? `Checks: ${pollInterval / 1000}s · ${pollInterval === HOME_POLLING.fastMs ? 'Aircraft within 3 km of home' : 'Normal pace'}` : 'Live checks paused'}
+        </div>
         <div className="flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-2">
             <Button

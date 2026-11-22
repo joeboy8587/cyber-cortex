@@ -48,7 +48,6 @@ const Index = () => {
         <section>
           <LiveAlertBanner 
             lowAltitudeThreshold={1500} 
-            autoRefreshInterval={30000}
             soundEnabled={true}
           />
         </section>

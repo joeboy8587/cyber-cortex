@@ -1,3 +1,7 @@
+# Home-adaptive live checks
+- [x] Use 15-second checks within a 3 km home boundary and 60 seconds otherwise, in both live views; preserve both writers.
+- [x] Verify six cadence tests plus six raw-preservation tests; signed-in tracker switched to 15 seconds and completed two paid-feed collections, each saving 18/18 raw observations. Historical display read still reports an existing DB error, but no longer blocks live collections.
+
 # Independent raw live detections
 - [x] Create an append-only Neon raw observation table, without copying legacy records.
 - [x] Save original provider observations before filtering, identity enrichment, or flagging; retain the existing writer independently.

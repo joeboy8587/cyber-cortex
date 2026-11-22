@@ -447,7 +447,11 @@ async function build(sql: ReturnType<typeof postgres>, body: Record<string, unkn
   const t0 = Date.now();
 
 
-  const rows = await sql.unsafe(`
+  // Pooled connections can discard the startup statement_timeout, so set it
+  // transaction-locally; otherwise the server default (~10s) cancels the rebuild.
+  const rows = await sql.begin(async (tx) => {
+    await tx.unsafe(`SET LOCAL statement_timeout = 85000`);
+    return await tx.unsafe(`
     WITH base AS (
       SELECT UPPER(TRIM(d.registration)) AS reg,
              d.icao24, d.callsign, d.detection_timestamp AS ts,
@@ -519,7 +523,7 @@ async function build(sql: ReturnType<typeof postgres>, body: Record<string, unkn
         SELECT REPLACE(dst, 'AC:', ''), REPLACE(src, 'AC:', ''), weight,
                ROW_NUMBER() OVER (PARTITION BY dst ORDER BY weight DESC)
         FROM entity_graph_edges WHERE edge_type = 'copresence' AND dst LIKE 'AC:%'
-      ) p GROUP BY reg
+      ) p WHERE reg IN (SELECT reg FROM agg) GROUP BY reg
     )
     INSERT INTO aircraft_dossier (
       registration, icao24, faa_matched, operator, operator_type, operator_city, operator_state,
@@ -608,6 +612,7 @@ async function build(sql: ReturnType<typeof postgres>, body: Record<string, unkn
       signature_hash = EXCLUDED.signature_hash, window_days = EXCLUDED.window_days, updated_at = NOW()
     RETURNING registration
   `);
+  });
 
   return { ok: true, profiles: rows.length, days, part, parts: REG_BUCKETS.length, range: [lo, hi], ms: Date.now() - t0 };
 }

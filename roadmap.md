@@ -1,3 +1,8 @@
+# FAR and policy scan reliability
+- [ ] Verify FAA altitude-rule applicability and remove unsupported automatic citations.
+- [ ] Bound and share concurrent ground-height lookups across FAR and policy scans; batch saves and report incomplete sections honestly.
+- [ ] Verify rule/timeout tests and signed-in scan results without altering existing observations or findings.
+
 # Legal analysis and correlation timeout
 - [x] Update Legal Analyst and Amy's sharp war-room prompt with routine/cover analysis and explicit retrieval gaps; exclude fixed narrative counts and contaminated flight summaries from their model context.
 - [x] Replace the two failing unbounded correlation reads with canonical read-only, provenance-preserving reads; bound all legacy action execution and connection cleanup. Do not treat timeouts or missing scores as zeros.

@@ -53,6 +53,8 @@ export function LiveFlightTracker() {
   const [pollInterval, setPollInterval] = useState<number>(HOME_POLLING.normalMs);
   const fetchingRef = useRef(false);
   const dbFetchingRef = useRef(false);
+  const dbFlightsRef = useRef<UnifiedFlight[]>([]);
+  const lastApiFlightsRef = useRef<any[] | null>(null);
 
   // Keep the slower historical display read independent of fresh paid collections.
   const fetchDbFlights = useCallback(async () => {
@@ -63,7 +65,7 @@ export function LiveFlightTracker() {
         body: { action: 'getKernCountyFlights', limit: 200 }
       });
       setDbConnected(!error && Array.isArray(data));
-      if (!error && Array.isArray(data)) setDbFlights(data);
+      if (!error && Array.isArray(data)) { dbFlightsRef.current = data; setDbFlights(data); }
     } catch {
       setDbConnected(false);
     } finally {
@@ -117,14 +119,19 @@ export function LiveFlightTracker() {
     }
   }, []);
 
-  const fetchLiveFlights = useCallback(async () => {
+  // reuseApi=true re-merges the last live result with new DB rows without another paid poll.
+  const fetchLiveFlights = useCallback(async (reuseApi?: unknown) => {
     if (fetchingRef.current) return;
+    const dbFlights = dbFlightsRef.current;
     fetchingRef.current = true;
     setLoading(true);
     
     try {
       // Fetch fresh data from OpenSky Network (FREE API) - this also stores to DB
-      const liveApiFlights = await fetchFromOpenSky();
+      const liveApiFlights = reuseApi === true && lastApiFlightsRef.current
+        ? lastApiFlightsRef.current
+        : await fetchFromOpenSky();
+      if (reuseApi !== true) lastApiFlightsRef.current = liveApiFlights;
       
       // Merge: prefer live API data, fallback to DB data
       const apiFlightsTransformed: UnifiedFlight[] = (liveApiFlights || [])
@@ -225,7 +232,7 @@ export function LiveFlightTracker() {
       fetchingRef.current = false;
       setLoading(false);
     }
-  }, [fetchFromOpenSky, dataSource, dbFlights]);
+  }, [fetchFromOpenSky, dataSource]);
 
   const runFaaClassifier = useCallback(async () => {
     setFaaClassifier({ status: 'running' });
@@ -251,9 +258,11 @@ export function LiveFlightTracker() {
   }, [fetchLiveFlights]);
 
   useEffect(() => {
-    fetchDbFlights();
-    const interval = setInterval(fetchDbFlights, HOME_POLLING.normalMs);
+    const loadDb = async () => { await fetchDbFlights(); fetchLiveFlights(true); };
+    loadDb();
+    const interval = setInterval(loadDb, HOME_POLLING.normalMs);
     return () => clearInterval(interval);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchDbFlights]);
 
   useEffect(() => {

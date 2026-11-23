@@ -28,7 +28,7 @@ export function rawFlight(row: Record<string, any>) {
     received_at: row.received_at, aircraft_type: row.type_aircraft ?? null,
     registry_record_scope: row.registry_record_scope ?? null, data_source: row.data_source };
 }
-export async function readScanFlights(hours: number, limit: number, registrations?: string[]) {
+export async function readScanFlights(hours: number, limit: number, registrations?: string[], maxAltitudeFt?: number) {
   const rows = await scanRead(`WITH recent AS MATERIALIZED (
     SELECT id, poll_id, received_at, data_source, response_metadata, icao_code, registration, callsign,
       latitude, longitude, payload, sha256_hash
@@ -36,13 +36,17 @@ export async function readScanFlights(hours: number, limit: number, registration
     WHERE received_at >= now() - ($1::int * interval '1 hour')
       AND latitude IS NOT NULL AND longitude IS NOT NULL
       AND ($3::text[] IS NULL OR UPPER(registration) = ANY($3::text[]))
+      AND ($4::numeric IS NULL OR (CASE
+        WHEN data_source = 'opensky' AND jsonb_typeof(payload->7) = 'number' THEN (payload->>7)::numeric * 3.28084
+        WHEN data_source <> 'opensky' AND jsonb_typeof(payload->'alt_baro') = 'number' THEN (payload->>'alt_baro')::numeric
+      END) BETWEEN 1 AND $4::numeric)
     ORDER BY received_at DESC, id DESC LIMIT $2::int
   ) SELECT r.*, f.type_aircraft,
       CASE WHEN f.n_number IS NOT NULL THEN 'CURRENT_RELEASE' ELSE NULL END AS registry_record_scope
     FROM recent r LEFT JOIN faa_registry_20261021.master_staging f
       ON f.n_number = REGEXP_REPLACE(UPPER(r.registration), '^N', '')
       AND UPPER(f.mode_s_code_hex) = UPPER(r.icao_code)
-    ORDER BY r.received_at DESC, r.id DESC LIMIT $2::int`, [hours, limit + 1, registrations ?? null]);
+    ORDER BY r.received_at DESC, r.id DESC LIMIT $2::int`, [hours, limit + 1, registrations ?? null, maxAltitudeFt ?? null]);
   return { flights: rows.slice(0, limit).map(rawFlight).filter((f): f is NonNullable<typeof f> => f != null),
     received: Math.min(rows.length, limit), capped: rows.length > limit, source: SCAN_SOURCE };
 }

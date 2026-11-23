@@ -35,7 +35,7 @@ Deno.serve(async req => {
         agl, evidence_status: 'ALTITUDE_REVIEW', regulations: FAR_REVIEW } });
     }
     const limit = Math.min(input.limit, 600);
-    const source = await readScanFlights(input.lookbackHours, limit);
+    const source = await readScanFlights(input.lookbackHours, limit, undefined, 9000);
     // Spend the finite terrain budget on the lowest reported flights first.
     const flights = [...source.flights].sort((a, b) => a.altitude - b.altitude);
     let regulationGap: string | null = null;

@@ -22,6 +22,13 @@
       "when": 1795115966090,
       "tag": "0002_restrict_settled_facts_read",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1795484299300,
+      "tag": "0003_restrict_data_map_census",
+      "breakpoints": true
     }
   ]
 }

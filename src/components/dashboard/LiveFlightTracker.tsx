@@ -77,6 +77,9 @@ export function LiveFlightTracker() {
   const fetchFromOpenSky = useCallback(async () => {
     try {
       console.log('Fetching from OpenSky Network (Kern County focus)...');
+      // Live collection requires a signed-in investigator; skip quietly when signed out.
+      const { data: { session: liveSession } } = await supabase.auth.getSession();
+      if (!liveSession) { setPollInterval(HOME_POLLING.normalMs); setApiConnected(false); return null; }
       const { data, error } = await supabase.functions.invoke("opensky-fetch", {
         body: { action: "fetchKernCounty" }
       });

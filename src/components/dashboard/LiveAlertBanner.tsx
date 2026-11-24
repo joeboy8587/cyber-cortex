@@ -261,6 +261,9 @@ export function LiveAlertBanner({
     setLoading(true);
     try {
       // Fetch from live API only (DB supplement removed — was causing 150s timeouts)
+      // Live collection requires a signed-in investigator; skip quietly when signed out.
+      const { data: { session: liveSession } } = await supabase.auth.getSession();
+      if (!liveSession) { setPollInterval(HOME_POLLING.normalMs); return; }
       const liveResult = await supabase.functions.invoke("opensky-fetch", {
         body: { action: "fetchKernCounty" }
       });
